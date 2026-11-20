@@ -178,6 +178,16 @@ type temporalReleaseClient struct {
 	namespace string
 }
 
+func (c temporalReleaseClient) DescribeWorkerDeployment(ctx context.Context, in *workflowservice.DescribeWorkerDeploymentRequest) (*workflowservice.DescribeWorkerDeploymentResponse, error) {
+	in.Namespace = c.namespace
+	return c.Client.WorkflowService().DescribeWorkerDeployment(ctx, in)
+}
+
+func (c temporalReleaseClient) DescribeWorkerDeploymentVersion(ctx context.Context, in *workflowservice.DescribeWorkerDeploymentVersionRequest) (*workflowservice.DescribeWorkerDeploymentVersionResponse, error) {
+	in.Namespace = c.namespace
+	return c.Client.WorkflowService().DescribeWorkerDeploymentVersion(ctx, in)
+}
+
 func (c temporalReleaseClient) DescribeTaskQueue(ctx context.Context, in *workflowservice.DescribeTaskQueueRequest) (*workflowservice.DescribeTaskQueueResponse, error) {
 	in.Namespace = c.namespace
 	return c.Client.WorkflowService().DescribeTaskQueue(ctx, in)

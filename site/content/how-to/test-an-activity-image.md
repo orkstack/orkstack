@@ -88,3 +88,4 @@ A local run is a new activity with its own idempotency key. It never reuses the 
 - [OCI Activity Contract, section 10.4](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#104-running-one-task-locally): running one task locally
 - [Activity images and the `op` convention](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#activity-images-and-the-op-convention): the `op` shape the test expects
 - [Build an activity image](/docs/activities/build-an-image/): the image this page tests
+- [Event source images, "Testing a source image"](https://github.com/orkstack/orkstack/blob/main/docs/EVENT_SOURCE_IMAGES.md#testing-a-source-image): `orkctl service test`, the same kind of check for an event source's image

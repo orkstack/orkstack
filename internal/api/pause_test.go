@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
@@ -158,6 +159,57 @@ func TestPauseRun_SendFailures(t *testing.T) {
 		}
 		if tc.code == connect.CodeUnavailable && !strings.Contains(err.Error(), "request pause-") {
 			t.Errorf("an unanswered request does not name its id: %v", err)
+		}
+	}
+}
+
+// A pause holds the run's running child runs, and their own clocks keep
+// running as the parent's do: a child run whose timeout ends before the pause
+// does fails then, and its composed task with it. The warnings say so for
+// every such child below the run, its own children included; one that cannot
+// be read is named, never passed over; one already past its timeout, or ending
+// after the pause, is not warned of.
+func TestPauseRun_WarnsOfAChildRunWhoseTimeoutEndsFirst(t *testing.T) {
+	f := pauseFixture(t, &fakeCapabilities{})
+	now := time.Now()
+	soon := timestamppb.New(now.Add(time.Hour).UTC().Truncate(time.Second))
+	later := timestamppb.New(now.Add(engine.DefaultRunPauseTimeout + time.Hour))
+	child := func(task, id string, status orkstackv1.Status) *orkstackv1.TaskRun {
+		return &orkstackv1.TaskRun{TaskId: task, Status: status, Child: &orkstackv1.TaskChild{RunId: id}}
+	}
+	f.runs.Save(&orkstackv1.Run{Id: "ork-r", Status: orkstackv1.Status_STATUS_RUNNING, Pausable: true, OrkflowName: "hello-ork",
+		TaskRuns: []*orkstackv1.TaskRun{
+			child("build", "ork-c", orkstackv1.Status_STATUS_RUNNING),
+			child("slow", "ork-s", orkstackv1.Status_STATUS_RUNNING),
+			child("gone", "ork-missing", orkstackv1.Status_STATUS_RUNNING),
+			child("done", "ork-d", orkstackv1.Status_STATUS_SUCCEEDED),
+		}})
+	f.runs.Save(&orkstackv1.Run{Id: "ork-c", Status: orkstackv1.Status_STATUS_RUNNING, OrkflowName: "build",
+		Timeout:  &orkstackv1.RunTimeout{Deadline: soon},
+		TaskRuns: []*orkstackv1.TaskRun{child("inner", "ork-g", orkstackv1.Status_STATUS_RUNNING)}})
+	f.runs.Save(&orkstackv1.Run{Id: "ork-g", Status: orkstackv1.Status_STATUS_RUNNING, OrkflowName: "inner",
+		Timeout: &orkstackv1.RunTimeout{Deadline: soon}})
+	f.runs.Save(&orkstackv1.Run{Id: "ork-s", Status: orkstackv1.Status_STATUS_RUNNING, OrkflowName: "slow",
+		Timeout: &orkstackv1.RunTimeout{Deadline: later}})
+	f.runs.Save(&orkstackv1.Run{Id: "ork-d", Status: orkstackv1.Status_STATUS_SUCCEEDED, OrkflowName: "done",
+		Timeout: &orkstackv1.RunTimeout{Deadline: soon}})
+
+	resp, err := f.runClient().PauseRun(context.Background(), connect.NewRequest(&orkstackv1.PauseRunRequest{RunId: "ork-r", DryRun: true}))
+	must.OKf(t, err, "PauseRun dry run")
+	got := strings.Join(resp.Msg.GetWarnings(), "\n")
+	at := soon.AsTime().Format(time.RFC3339)
+	for _, want := range []string{
+		"child run ork-c (composed task build)'s timeout ends at " + at + ", before this pause does; it will then fail, and composed task build with it",
+		"child run ork-g (composed task inner of child run ork-c)'s timeout ends at " + at + ", before this pause does; it will then fail, and composed task inner with it",
+		"child run ork-missing (composed task gone) could not be read, so its timeout was not checked",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warnings\n%s\nlack %q", got, want)
+		}
+	}
+	for _, not := range []string{"child run ork-s ", "child run ork-d "} {
+		if strings.Contains(got, not) {
+			t.Errorf("warns of %s, whose timeout ends after the pause or which has ended:\n%s", not, got)
 		}
 	}
 }

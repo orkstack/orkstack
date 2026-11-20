@@ -4,9 +4,9 @@ import "strings"
 
 // The OrkStack dashboard (uid orkstack): a top row that always loads, then
 // collapsed area rows, each named by the question it answers (prod-kit
-// design §2.3). Rows whose metrics are not yet exported (schedules,
-// webhooks, HTTP and event triggers, concurrency limits, resumes, retention
-// cleanup) are added with the change that exports them.
+// design §2.3). Every series of the schedule, webhook, trigger,
+// concurrency, cleanup and GC areas is drawn
+// (TestDashboards_EveryAreaSeriesIsDrawn).
 
 // sel selects runs by the shared variables. When runs can be resumed and a
 // resumed run counts again (ork.run.resumed), sel gains
@@ -67,7 +67,7 @@ func topRow() []panel {
 }
 
 func areaRows() []row {
-	return []row{
+	rows := []row{
 		{title: "Are runs and tasks succeeding?", panels: []panel{
 			series("Runs by status", "Runs that finished, per second, by status.", unitOps,
 				q(`sum by (status) (rate(`+with("ork_runs_total", sel)+`[$__rate_interval]))`, "{{status}}")),
@@ -93,6 +93,10 @@ func areaRows() []row {
 				q(`count by (ork_pool) (ork_orker_present{`+pools+`})`, "{{ork_pool}} Orkers")).sized(24, 8),
 			series("Oldest waiting task, by pool", "How long each pool's longest-waiting task has waited. One that never clears while Orkers poll may belong to a release whose Orkers were stopped.", unitSeconds,
 				q(`max by (ork_pool) (ork_pool_backlog_age_seconds{`+pools+`})`, "{{ork_pool}}")),
+			series("Tasks waiting, by release", "With versioning on, each pool's waiting tasks by the release they wait for; unversioned is what the total holds beyond them, so together they come to the pool's total, approximately. Tasks of a release that never clear while the pool polls belong to a release whose Orkers stopped: a stranded release, not demand.", unitShort,
+				q(`max by (ork_pool, ork_release) (ork_pool_release_backlog_tasks{`+pools+`})`, "{{ork_pool}} {{ork_release}}")).withNoValue("no reading by release: versioning off, or not read yet"),
+			series("Oldest waiting task, by release", "With versioning on, how long each release's longest-waiting task of each pool has waited; unversioned tasks have no age of their own. One that grows while the others clear is a stranded release.", unitSeconds,
+				q(`max by (ork_pool, ork_release) (ork_pool_release_backlog_age_seconds{`+pools+`})`, "{{ork_pool}} {{ork_release}}")).withNoValue("no reading by release: versioning off, or not read yet"),
 			series("Tasks arriving and handed out, by pool", "The cluster's own recent rates for each pool.", unitOps,
 				q(`max by (ork_pool) (ork_pool_tasks_add_rate_per_second{`+pools+`})`, "{{ork_pool}} arriving"),
 				q(`max by (ork_pool) (ork_pool_tasks_dispatch_rate_per_second{`+pools+`})`, "{{ork_pool}} handed out")),
@@ -103,9 +107,8 @@ func areaRows() []row {
 				q(`sum by (ork_cordon_cause) (ork_orker_cordoned{`+pools+`})`, "{{ork_cordon_cause}}")),
 			series("Wait before an Orker begins a task, p95", "Seconds from the cluster scheduling a task's first attempt to an Orker beginning it, at the 95th percentile.", unitSeconds,
 				q(`histogram_quantile(0.95, sum by (le, ork_pool) (rate(ork_deployment_orker_task_wait_duration_seconds_bucket{`+pools+`}[$__rate_interval])))`, "{{ork_pool}}")),
-			series("CPU reserved against capacity", "Per Orker that declares a capacity, the cpu it admits tasks within and what stands reserved; the 20 most reserved.", unitShort,
-				q(`topk(20, sum by (ork_orker_id) (ork_orker_capacity_reserved_cpu))`, "{{ork_orker_id}} reserved"),
-				q(`topk(20, sum by (ork_orker_id) (ork_orker_capacity_cpu))`, "{{ork_orker_id}} capacity")),
+			series("CPU reserved, share of capacity", "Per Orker that declares a capacity, the share of the cpu it admits tasks within that stands reserved; the 20 most reserved.", unitPercent,
+				q(`topk(20, max by (ork_orker_id) (ork_orker_capacity_reserved_cpu / (ork_orker_capacity_cpu > 0)))`, "{{ork_orker_id}}")),
 			series("Open pins, by pool", "Pins held open now: groups of tasks sharing one Orker.", unitShort,
 				q(`sum by (ork_pool) (ork_orker_open_pins{`+pools+`})`, "{{ork_pool}}")),
 		}},
@@ -119,6 +122,10 @@ func areaRows() []row {
 			series("Memo writes by outcome", "Memo writes after a miss; a failed one costs only the next run's hit.", unitOps,
 				q(`sum by (outcome) (rate(ork_orker_memo_writes_total{ork_namespace=~"$namespace"}[$__rate_interval]))`, "{{outcome}}")),
 		}},
+		schedulesRow(),
+		webhooksRow(),
+		triggersRow(),
+		concurrencyRow(),
 		{title: "Is the engine, Temporal and object storage healthy?", panels: []panel{
 			series("API requests by code", "Requests to the engine's API, per second, by result code.", unitOps,
 				q(`sum by (rpc_code) (rate(rpc_server_call_duration_seconds_count[$__rate_interval]))`, "{{rpc_code}}")),
@@ -149,7 +156,7 @@ func areaRows() []row {
 			series("Census passes skipped", "Periodic reads that feed gauges and were skipped by their budget; a gauge whose census is skipped is stale.", unitOps,
 				q(`sum by (ork_census) (rate(ork_census_skipped_total[$__rate_interval]))`, "{{ork_census}}")),
 		}},
-		{title: "Is the artifact GC reclaiming space?", panels: []panel{
+		{title: "Are retention cleanup and the artifact GC reclaiming space?", panels: append(append(cleanupPanels(), []panel{
 			stat("GC mode", "What the artifact GC does: off, dry_run (reports what it would delete) or delete.", unitNone,
 				qi(`max by (mode) (ork_gc_mode) == 1`, "{{mode}}")).withThresholds(neutral()...).withNoValue("not reported"),
 			stat("GC held", "1 while the GC deletes nothing for a reason it reports.", unitBool,
@@ -163,7 +170,25 @@ func areaRows() []row {
 				q(`max(ork_gc_lag_seconds)`, "lag")),
 			series("Bytes written by OrkStack against reclaimed", "Store bytes OrkStack's own flows wrote, beside what the GC reclaimed. Never the bucket's total.", unitBytes,
 				q(`sum(rate(ork_store_bytes_total{ork_store_operation=~"put|multipart"}[$__rate_interval]))`, "written"),
-				q(`sum(rate(ork_deployment_gc_bytes_total{outcome="deleted"}[$__rate_interval]))`, "reclaimed")),
-		}},
+				q(`sum(rate(ork_deployment_gc_bytes_total{outcome="deleted"}[$__rate_interval]))`, "reclaimed"),
+				q(`sum(rate(ork_cleanup_bytes_total[$__rate_interval]))`, "removed by retention cleanup")),
+		}...), gcPanels()...)},
+	}
+	more := morePanels()
+	for i := range rows {
+		rows[i].panels = append(rows[i].panels, more[rows[i].title]...)
+	}
+	return rows
+}
+
+// morePanels are each row's own instruments beyond its first panels
+// (areas.go), by row title; TestDashboards_MorePanelsFindTheirRows holds
+// every title to a row.
+func morePanels() map[string][]panel {
+	return map[string][]panel{
+		"Are runs and tasks succeeding?":                      runsMorePanels(),
+		"Are there enough Orkers for the work?":               orkersMorePanels(),
+		"Is the cache saving work?":                           cacheMorePanels(),
+		"Is the engine, Temporal and object storage healthy?": engineMorePanels(),
 	}
 }

@@ -1438,6 +1438,10 @@ func (d *OCIDispatcher) execute(
 		// Whether this Orker was stopping when the exit was observed: only
 		// then may the runtime's stop be typed as the stop's (emission.go).
 		failure.DuringStop = d.Stopping != nil && d.Stopping()
+		if capture.status.RuntimeWentAway {
+			failure.RuntimeWentAway = true
+			failure.Message += "; its connection to the runtime then ended, so the runtime itself went away as it stopped the container"
+		}
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 	if capture.status.Code != 0 {
@@ -2407,6 +2411,21 @@ func (d *OCIDispatcher) runContainer(
 		}
 	}()
 
+	// An attempt the stop's sweep took back after its create and before its
+	// start starts nothing: it is a never-started hand-back, and the deferred
+	// removal takes the created container (E92 §4.2). A sweep that lands
+	// once the start is in flight is the CAS's to decide, below.
+	if stageFrom(ctx).handedBack() || ctx.Err() != nil {
+		beat.setUsage(unmeasuredSampler(reasonNotRun))
+		cause := context.Cause(ctx)
+		if cause == nil {
+			// The sweep's flag is set before its cancellation reaches this
+			// context; the flag is what decides.
+			cause = errHandBack
+		}
+		return capture, FailCause(ReasonHeartbeatLost, cause,
+			"the attempt was stopped after it created its container and before it started it: %v", cause)
+	}
 	// The profiles once more, just before the start (profile_gate.go): the
 	// runtime resolves a CDI device when it starts the container, not when it
 	// creates it (design Q18), so a spec or node changed since the create is

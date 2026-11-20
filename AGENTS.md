@@ -23,10 +23,19 @@ The north star is:
 The activity model is Unix-like: it receives files, writes files, emits
 stdout/stderr, and exits. The filesystem is the canonical activity API.
 
+One kind of workload does not exit: a **service** (§3.4), a container an
+Orker keeps running and exchanges files with while it runs. An event source's
+container is one. A service is held to everything else said of an activity
+here: any OCI image, files only, no SDK.
+
 OrkStack must not become a generic workflow engine, another state machine, or
 another plugin framework. Workloads must not need a required gRPC or HTTP
 callback, SDK, sidecar protocol, message queue, custom RPC framework, or
 application-specific worker daemon.
+
+A service image is not such a daemon: no workload needs one in order to be
+executed, and what it exchanges with its Orker is the files of the Orker
+Service Contract and nothing else: no socket, no RPC, no library.
 
 ```text
 YAML Orkflow ──create─> ork ──compile──> Temporal ──dispatch──> Orker
@@ -157,7 +166,7 @@ plugin, a Temporal Activity SDK integration, an OrkStack SDK integration, or a
 custom worker service. Any OCI-compatible image should be executable. An image
 may know about OrkStack but must not need to know about it.
 
-The Orker bridges Temporal activities and OCI execution. Activity containers
+The Orker bridges Temporal activities and OCI execution. It also runs services (§3.4): an event source's container is started once and kept running. Activity containers
 must not receive Temporal credentials or APIs, object-storage credentials, or
 OrkStack control-plane credentials unless a user explicitly supplies them as
 workload secrets. The Orker is the security boundary.
@@ -185,7 +194,7 @@ was submitted, and it has none of YAML's silent coercions (`no`, `on`,
 octal-looking numbers). Documents a person authors — an Orkflow, an automation
 document, an activity interface — stay YAML, and each begins with
 `apiVersion: orkstack/v1` and its `kind:` (`Orkflow`, `Automation`,
-`ActivityInterface`, `EventSource`). Inside one, runtime data is written as YAML
+`ActivityInterface`, `EventSource`, `ServiceInterface`). Inside one, runtime data is written as YAML
 too — a task's `with:` (an http `body:`, jq `vars:`), an Orkflow's `inputs:`
 defaults, an await's `schema:`, a schedule's `input:`, an activity
 interface's `required:` and `default:` — and becomes JSON only
@@ -195,6 +204,13 @@ differently (`yes`, `0755`, `1:30`, a date), a number JSON cannot hold
 exactly, and tags, anchors, aliases and merge keys are refused, naming the
 path. Do not add a YAML input mode to the UI or CLI.
 
+A message an event source receives (§7) is opaque bytes, handed over by its
+container as a regular file. Where a source reads it to match or map, the
+Orker reads it as one JSON value under the same strict rules (a second value,
+a key written twice and invalid UTF-8 are refused), never coerced, and the
+stored artifact is always the original bytes. A service image's interface is
+an authored document of its own kind, `ServiceInterface`.
+
 ### 3.2 Exit status and logs
 
 Exit code `0` means computation succeeded; the Orker then validates and commits
@@ -203,8 +219,17 @@ Temporal workflow policy, not magic exit codes such as 42, 43, or 44. A containe
 its runtime stopped from outside (its daemon shutting down, an operator's `stop`)
 did not exit on its own, so its code says neither: it is an `InfrastructureError`
 (`CONTAINER_STOPPED_BY_RUNTIME`), told from what the runtime observed, never from
-the number. Retry belongs to that policy, and an interruption's re-dispatch to
-the interpreter (§2.1); the exit code never decides either.
+the number. It is an interruption (§4) while the Orker was stopping, or when the
+Orker observed its runtime go away during the attempt, its connection to the
+runtime ending as the runtime stopped the container; an operator's `stop`
+through a runtime that stays up is neither. Retry belongs to that policy, and
+an interruption's re-dispatch to the interpreter (§2.1); the exit code never
+decides either.
+
+A standing service has no computation to finish, so its exit code says
+nothing of success: any exit its Orker did not ask for, `0` included, ends
+that attempt as a failure (`SERVICE_EXITED`, `SERVICE_FAILED`), and whoever
+owns the service starts it again.
 
 stdout and stderr are independent logs. Capture them independently, stream them
 when possible, retain them in object storage, and associate them with the
@@ -227,6 +252,13 @@ Temporal cancellation → Orker receives it → SIGTERM
 
 The 30-second cancellation grace period is the default. Ordinary Unix signal
 handling must be enough for cleanup; no custom cancellation API is required.
+
+A service is stopped the same way, after its Orker has said so in a file
+and finished its own side of each open exchange; on SIGTERM the container
+ends the rest as its profile says and exits within the stop bound its
+context file gives. A container that cannot be stopped does not hold
+whatever owns it: after a stated bound the Orker reports it and takes no
+further service until it is gone.
 
 An Orker that is itself stopped accepts no new work: its first SIGTERM or
 SIGINT makes it ask for none (a cordon whose cause is stopping, §7), and a pin
@@ -251,6 +283,48 @@ The container must not implement Temporal heartbeats or a heartbeat IPC
 protocol. Application hangs are handled by the activity timeout. A structured
 progress mechanism is a possible later extension, not a current requirement.
 
+A service is the one exception, and it is not a Temporal heartbeat: a
+standing service says whether it is ready and healthy in a status file it
+rewrites, and reads its Orker's own beat from a file, ending itself when
+that beat stops, so that a container whose Orker is gone does not run on.
+An activity implements neither.
+
+### 3.4 Services
+
+A service is a container an Orker starts from a service image and exchanges
+files with while it runs. Treat the Orker Service Contract as a versioned
+ABI beside the Activity Contract, with one profile per kind of service (an
+event source; a credential or secret provider). An image names the contract
+and profile versions it implements in labels, and an Orker runs it only
+under versions both have. A service either stands until its Orker stops it,
+or is started for one exchange and exits; its profile says which.
+
+A service and its Orker exchange files and nothing else, in two mounts: one
+the Orker writes and the container can only read, one the container writes
+and the Orker only reads. The second is a bounded memory filesystem of the
+service's own, sized so that every file a container replaces fits twice.
+Each **lane** is one strictly sequential conversation; the
+Orker writes the first step of every exchange and the container never starts
+one; a file has a fixed name, is written and then renamed into place, and
+says which exchange it belongs to; neither side deletes. The Orker opens
+what a container wrote without following a link, copies it once, and uses
+only the copy. There is no socket, no stdin and no data on stdout, and a
+service has no `values.json`, no commit and no result.
+
+A container never handles the material of two namespaces. An Orker hosts a
+service only while it can give it that bounded filesystem and a network of
+its own from which a probe finds that no instance-metadata endpoint
+answers, nothing on the host's loopback can be opened, the cluster serves
+no caller that presents no credential, and no other container can be
+reached, unless its operator accepted one of the first, third or fourth in
+its configuration, each by its own setting (§6). An Orker that finds one
+of them otherwise while it hosts services stops hosting them. A standing
+service must end itself when its Orker's beat stops: that is the image's
+duty, which the contract test checks, because nothing of OrkStack is left on
+a host whose Orker was killed. Bash must be able to
+implement every profile with one loop per lane and no SDK; the Bash fixture
+of each profile is mandatory.
+
 ## 4. Durability, retries, and completion commits
 
 Activities are **at-least-once**. Never claim exactly-once execution for
@@ -270,7 +344,9 @@ Activities may override the policy; in the DSL a task without `retry:` makes
 exactly one attempt of its own. An **interruption** is an attempt ended by an
 infrastructure fact of its run's pinned interruption class: its Orker handed
 it back (`ORKER_STOPPED`; `CONTAINER_STOPPED_BY_RUNTIME` while the Orker was
-stopping), handed it back before it started (`ORKER_STOPPED`, and the faults
+stopping, or when it observed its runtime go away during the attempt, its
+connection to the runtime ending as the runtime stopped the container), handed
+it back before it started (`ORKER_STOPPED`, and the faults
 `ATTEMPT_STORE_UNAVAILABLE`, `RUNTIME_STATE_UNKNOWN` and `PROFILE_DRIFTED`),
 or was lost (the cluster's heartbeat timeout). It is not one of the task's
 own attempts: the interpreter runs the task again (§2.1) under budgets pinned
@@ -423,6 +499,22 @@ return a compact ActivityResult
 cleanup
 ```
 
+For a service it hosts, an Orker is also responsible for the conversation:
+
+```text
+confirm with the engine what it is about to run, and again at intervals
+check the image policy it was just given, and its own policy
+read the image's contract and profile labels
+create the two conversation mounts and the service's own network
+obtain the service's secrets, identities and credentials, and keep them fresh
+wait for the service's status
+write every first step and its own beat; read every answer without following a link
+heartbeat Temporal with the service's status, from the loop that checked every lane
+stop the service when it is cancelled, cordoned, stopping, or no longer holds it
+report a service it cannot stop, and take no other until it is gone, which it finds again at boot
+record the attempt
+```
+
 An Orker that declares a capacity (`orker.capacity`) or a `gpu` profile admits
 no task that would take its reservations above it. It reserves before it polls
 the largest request the channel it polls can carry — cpu, memory and GPU units
@@ -502,6 +594,33 @@ Prefer `no-new-privileges`, default seccomp, resource limits, isolated working
 directories, and rootless execution when supported. Initially support only
 network modes `default` and `none`. Leave named, Orker-defined network profiles
 for later; an Orkflow must not define arbitrary host-network configuration.
+
+A service's container is put on a network of its own, never the runtime's
+shared one: a NAT'd bridge named `orksvc…`, IPv4 only and cut off from other
+networks, with no other container on it. It is still network mode
+`default` to whoever writes the service, and it can reach whatever the
+host's network routes to. An Orker hosts services only while a probe from
+such a network can open no instance-metadata endpoint, cannot open the
+Orker's own admin listener, and is not served by the cluster, on any of
+its ports the Orker can know, in plaintext or over TLS, when it presents
+no credential: refused, timed out, turned away for want of a client
+certificate or answered as unauthenticated, and nothing else counts. The
+cluster's membership ports, which authenticate nobody, must not be
+reachable from there at all. OrkStack's own authentication does not cover the cluster: a
+long-lived container that could call it freely could act as any worker of
+the deployment. An operator may accept a
+reachable metadata endpoint (`ORK_ORKER_SERVICES_ALLOW_METADATA_REACH`) or
+a cluster that asks its clients for no credential
+(`ORK_ORKER_SERVICES_ALLOW_OPEN_CLUSTER`) in so many words, each of which
+every boot logs. The probe also asks whether a container on another
+service's network, or on the default one, can be reached, which is the
+host firewall's doing and not the network's
+(`ORK_ORKER_SERVICES_ALLOW_CONTAINER_REACH` accepts it), and whether
+anything on the host's loopback can be opened, which nothing accepts. A
+host that answers any of these open, twice, while it hosts services evicts
+them as a cordon would; a probe that could not be run evicts nothing. A
+service's secrets and its conversation with its Orker are held in memory,
+and out of swap where the host allows it; its container cannot dump core.
 
 Activities may request resources such as:
 
@@ -738,6 +857,23 @@ internal never appears on any of those surfaces.
   what its container is replaces its instances one at a time and only where
   the new one works; a change that does not work leaves the last one that
   did running.
+- **Service** means a container an Orker starts from a **service image** and
+  exchanges files with under the Orker Service Contract (§3.4). A **service
+  profile** is what one kind of service exchanges with its Orker; a **source
+  image** is a service image of the event-source profile. "Profile" alone
+  stays an Orker's (its devices).
+- **Instance** means one running container of an event source on one Orker;
+  a source runs `instances` of them, each a competing consumer of the same
+  broker object. A **lane** is one sequential conversation of an instance
+  with its Orker, a contract word.
+- **Source host** means an Orker configured to host instances
+  (`ORK_ORKER_EVENT_SOURCE_MAX_INSTANCES` above zero) and fit to (§3.4).
+  Every Orker still runs ordinary tasks; only a source host runs instances.
+- **Receipt** means the immutable record of what was decided about one
+  message delivery: accepted (with its run), a duplicate, filtered,
+  rejected, released, dead-lettered or dropped. It is written by the Orker
+  that settled the delivery, and is unrelated to a webhook's delivery record
+  and to the audit trail.
 - **Origin** means the immutable record of what started a run: a kind
   (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), the
   originating object's id, a caller-supplied reference and the principal.
@@ -856,8 +992,15 @@ internal never appears on any of those surfaces.
   | stopping | the Orker, on its first stop signal; from then it accepts no new task, pin or pin creation, and what its open polls still deliver runs in flight | the process's exit | yes, until the process exits |
   | profile drift | the Orker, when a profile no longer matches what it audited, or the GPU host lock directory was replaced | a restart | no |
   | profile unavailable | the Orker, when a profile's devices or units are absent, or the GPU host lock is held by another process, or fewer usable GPU units than a task may hold | the Orker, after consecutive good checks, or once the lock is held or the units are back | yes |
+  | stuck service | the Orker, when a service container it stopped is not gone a minute after SIGKILL | the Orker, once the container is gone | no |
+
+  An event-source instance is the one thing in flight a cordon does not
+  leave alone: an operator's cordon and the stopping cordon stop it and hand
+  it back, so that it starts on another source host; a store outage leaves
+  it running, polling nothing. An Orker that cannot stop a service it hosts
+  holds a cordon of its own until that container is gone.
 - **Drain** means setting an operator's cordon on an Orker and waiting until it
-  reports no running task and no open pin. It is a client-side wait over the inventory read
+  reports no running task, no open pin and no event-source instance. It is a client-side wait over the inventory read
   (`orkctl orker drain`); nothing server-side holds drain state. An Orker's
   own wait during its stop grace is called **stopping**, never draining.
 - **Control channel** and **presence channel** are internal, exactly as
@@ -867,10 +1010,15 @@ internal never appears on any of those surfaces.
   So is the engines' presence channel, `ork-engines`, which every engine
   polls and nothing dispatches to, whose poller list is the deployment's
   engines.
+- **Source channel** and **source workflow** are internal, exactly as
+  **queue** is: the Temporal task queue `ork-source-<pool>` that a pool's
+  source hosts poll, and the engine workflow that owns one event source's
+  instances. No user-facing surface names either: a user sees a source, its
+  instances and the Orker each runs on.
 
 The Temporal mechanisms behind these words are internal, exactly as a queue is
 internal to a pool: no CLI string, UI string, HTTP body, client-rendered proto
-comment or error message names a task queue, session, Worker Deployment
+comment or error message names a task queue, session, source channel, source workflow, Worker Deployment
 Version, Signal, Timer, child workflow, parent-close policy, local activity,
 marker, Temporal memo, search attribute, visibility query, Temporal Schedule id or
 workflow id. (A proto comment on an engine-internal message may say what
@@ -968,6 +1116,11 @@ No user-facing surface may expose `queue:` or a queue name.
 `ork-pool-` prefix construction, the Orker control (`ork-orker-<id>`) and
 presence (`ork-orkers`) channels, and the engines' presence channel
 (`ork-engines`).
+
+A pool's source channel (`ork-source-<pool>`, `SourceQueueForPool`) is built
+there too, by the rule that resolves the pool, and reserved like the others:
+it carries the instances of event sources to that pool's source hosts, and
+no pool or default may be bound to a name of that shape.
 
 An empty pool and `main` both mean the deployment's configured default pool.
 Other valid pools resolve to `ork-pool-<slug>`. The reserved
@@ -1129,7 +1282,7 @@ cancellation
 ```
 
 Do not start a container merely to sleep, wait for approval, or wait until a
-future time. Do not add a custom scheduler, event bus, task queue, state
+future time. A source image's container is not that: it holds a broker connection and receives, which no Timer or Signal can do. Do not add a custom scheduler, event bus, task queue, state
 machine, or expression runtime for these operations. An awaited task
 (`await:`) is the DSL form of a Signal wait, manual approval and external
 completion: a Temporal Timer for its deadline and a Signal for its resolution,
@@ -1183,6 +1336,16 @@ output, artifact-name rules, output-size limits, SIGTERM, exit-code handling,
 and activity timeout. Keep the Bash, Go, and Python fixtures under
 `test/fixtures/`; the Bash fixture is mandatory. If Bash needs an SDK, the
 architecture has failed.
+
+`orkctl service test my-image` does the same for a service image: it runs
+the image through the code an Orker hosts services with, plays the Orker's
+side, and checks the labels, the status, what the image writes and how, a
+step's rename and sequence, a late step, the Orker's beat stopping, the stop
+sequence, and what an unasked exit means, then the image's profile (for a
+source: a quiet poll, a message's shape and bounds, each verdict, the hold
+bound, a refreshed credential). It gives the image no network unless asked
+to. Keep the Bash, Go and Python fixtures of each profile under
+`test/fixtures/`; the Bash one is mandatory.
 
 `orkctl task run` runs one task of an Orkflow locally through the same
 dispatcher, renderer and workspace, against a run's recorded bytes or local
@@ -1495,6 +1658,16 @@ live on `ORK_ADMIN_ADDR`, never the API port. Workflow code never imports
 OpenTelemetry — instrumentation is a side effect, and `RunWorkflow` must stay
 a pure function of its history (§2). Activity authors need no observability
 SDK; activity logs remain stdout/stderr.
+
+The shipped observability kit ingests metrics only by OTLP push and scrapes
+nothing; `/metrics` on `ORK_ADMIN_ADDR` stays available to any scraper.
+Shipped dashboards and alert rules (`deploy/observability/`) are optional
+deploy material, query only bounded labels, and find a run through logs,
+traces and exemplars. No UI, CLI, API or error text names or links an
+observability backend (`TestSurfaces_NameNoObservabilityBackend`). A record
+carrying a namespace leaves only on that namespace's selected sink, never on
+another by fallback; the default sink carries namespace-free counts for the
+operator.
 
 ### 11.1 Development workflow
 
@@ -1958,9 +2131,13 @@ internal/webui/        The web UI's build embedded into ork, and the handler tha
 internal/dsl/          YAML parse, validation, and Orkflow compilation
 internal/orker/        Orker runtime and OCI activity dispatch; the runtime files
                        (runtime_docker.go, runtime_dialect.go) alone name Docker or Podman
+internal/orker/servicehost/  The Orker Service Contract: the two mounts, steps, the status, the beat, stopping
+internal/orker/sourcehost/   The event-source profile: lanes, the wait, receipts, the engine client
 internal/task/         Temporal namespace, pool routing, and deployment identity
 internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
+internal/dashboards/   The shipped Grafana dashboards, generated, with the drift tests
+internal/alerts/       The shipped alert rules and runbooks, generated, with their promtool cases
 internal/archive/      Run retirement, the archive sweep and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
 internal/authn/        Who a request is from: trusted issuers, service accounts, client certificates, sign-in
@@ -1982,7 +2159,7 @@ internal/dist/         Release artifacts: binaries, archives, checksums, release
 internal/healthcheck/  The `--healthcheck` probe of ork and orker
 internal/buildinfo/    Which commit a binary was built from, as all three commands report it
 internal/hostpolicy/   The Host allowlist every listener applies (API and admin)
-images/                First-party OCI activity images; public ABI, no SDK
+images/                First-party OCI activity images and source images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing and secret masking
 pkg/triggers/          Inbound trigger registry and token hashing
@@ -1997,7 +2174,7 @@ deploy/                The development stack (Temporal, object storage, registry
                        Dockerfile, and the quickstart's source build (deploy/source/; compose.yaml at the root)
 examples/              Example Orkflows, automation documents, and custom images
 docs/                  Reference material (indexed in README.md; `CLI.md` is generated)
-test/                  Activity contract fixtures and test-only helper tools
+test/                  Activity and service contract fixtures and test-only helper tools
 scripts/               Development helpers (`make up`, `make reset`) and the proof harness
                        (`proof.sh`, the gate lists)
 .github/               CI: fast check, sharded merge gate, title check, nightly, release
@@ -2049,7 +2226,8 @@ are. A change to a behaviour a page describes updates that page too.
 Agent ownership is split as follows:
 
 - engine agents: `internal/engine`, `internal/api`, `cmd/ork`, `internal/authn`;
-- Orker/activity agents: `internal/orker`, `images/`, `cmd/orker`;
+- Orker/activity agents: `internal/orker` (its `servicehost` and
+  `sourcehost` included), `images/`, `cmd/orker`;
 - CLI agents: `cmd/orkctl`;
 - UI agents: `ui/` and `site/`;
 - artifact agents: `pkg/artifacts`;
@@ -2086,6 +2264,14 @@ Do not build:
 - a multi-cloud abstraction framework;
 - PostgreSQL, MySQL, Redis, Kafka, NATS, RabbitMQ, Elasticsearch, ZooKeeper,
   etcd, SQLite, or another required durable system.
+
+A broker is supported by a source image, never by code in `ork` or `orker`:
+neither links a broker's client library. A source image is an OCI image
+under a public contract, as an activity image is; it is not a plugin, and
+there is no loading, registration or marketplace. The set of service
+profiles an Orker hosts is closed when it is built. Event sources are
+optional and off by default (`ORK_EVENT_SOURCES_ENABLED`); NATS, SQS or any
+other broker is never an OrkStack requirement.
 
 A concurrency limit's line orders when accepted runs begin; it is Temporal
 workflow state, dispatches nothing, and is not a task queue.

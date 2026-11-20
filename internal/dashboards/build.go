@@ -11,6 +11,7 @@ import (
 	"github.com/grafana/grafana-foundation-sdk/go/cog/variants"
 	"github.com/grafana/grafana-foundation-sdk/go/common"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
+	heatmappanel "github.com/grafana/grafana-foundation-sdk/go/heatmap"
 	logspanel "github.com/grafana/grafana-foundation-sdk/go/logs"
 	lokiq "github.com/grafana/grafana-foundation-sdk/go/loki"
 	"github.com/grafana/grafana-foundation-sdk/go/prometheus"
@@ -54,8 +55,11 @@ func labelVariable(name, label, query string) cog.Builder[dashboard.VariableMode
 		Multi(true).IncludeAll(true).AllValue(".*")
 }
 
+// refID is the id of a panel's i-th query: A, B, C...
+func refID(i int) string { return string(rune('A' + i)) }
+
 func target(p panel, i int, qy query) cog.Builder[variants.Dataquery] {
-	ref := string(rune('A' + i))
+	ref := refID(i)
 	ds := datasources[p.source]
 	switch p.source {
 	case loki:
@@ -68,6 +72,9 @@ func target(p panel, i int, qy query) cog.Builder[variants.Dataquery] {
 		return b
 	default:
 		b := prometheus.NewDataqueryBuilder().RefId(ref).Datasource(ds).Expr(qy.expr).LegendFormat(qy.legend)
+		if p.kind == heatmapPanel {
+			b = b.Format(prometheus.PromQueryFormatHeatmap).Exemplar(true)
+		}
 		if qy.instant {
 			b = b.Instant()
 		} else {
@@ -117,10 +124,10 @@ func fieldLinks(p panel) map[string][]dashboard.DynamicConfigValue {
 func sizeOf(p panel) (w, h uint32) {
 	w, h = p.width, p.height
 	if w == 0 {
-		w = map[kind]uint32{statPanel: 4, timeseriesPanel: 12, logsPanel: 24, tablePanel: 24}[p.kind]
+		w = map[kind]uint32{statPanel: 4, timeseriesPanel: 12, logsPanel: 24, tablePanel: 24, heatmapPanel: 12}[p.kind]
 	}
 	if h == 0 {
-		h = map[kind]uint32{statPanel: 4, timeseriesPanel: 8, logsPanel: 8, tablePanel: 8}[p.kind]
+		h = map[kind]uint32{statPanel: 4, timeseriesPanel: 8, logsPanel: 8, tablePanel: 8, heatmapPanel: 8}[p.kind]
 	}
 	return w, h
 }
@@ -160,15 +167,30 @@ func build(p panel) cog.Builder[dashboard.Panel] {
 			b = b.OverrideByName(field, links[field])
 		}
 		return b
+	case heatmapPanel:
+		// The buckets are the histogram's own, so Grafana does not bucket
+		// again; exemplars are drawn in the accent colour.
+		return heatmappanel.NewPanelBuilder().Title(p.title).Description(p.description).Unit(p.unit).
+			Datasource(ds).Targets(targets).Span(w).Height(h).
+			Calculate(false).ExemplarsColor(colorAccent).
+			YAxis(heatmappanel.NewYAxisConfigBuilder().Unit(p.unit))
 	case tablePanel:
 		return tablepanel.NewPanelBuilder().Title(p.title).Description(p.description).Unit(p.unit).
 			Datasource(ds).Targets(targets).Span(w).Height(h).DataLinks(dataLinks(p))
 	default:
-		return timeseries.NewPanelBuilder().Title(p.title).Description(p.description).Unit(p.unit).
+		b := timeseries.NewPanelBuilder().Title(p.title).Description(p.description).Unit(p.unit).
 			Datasource(ds).Targets(targets).Span(w).Height(h).
 			Legend(common.NewVizLegendOptionsBuilder().
 				DisplayMode(common.LegendDisplayModeTable).Placement(common.LegendPlacementBottom).ShowLegend(true)).
 			DataLinks(dataLinks(p))
+		for i, qy := range p.queries {
+			if qy.dashed {
+				b = b.OverrideByQuery(refID(i), []dashboard.DynamicConfigValue{{
+					Id: "custom.lineStyle", Value: map[string]any{"fill": "dash", "dash": []float64{10, 10}},
+				}})
+			}
+		}
+		return b
 	}
 }
 
@@ -176,7 +198,7 @@ func build(p panel) cog.Builder[dashboard.Panel] {
 func orkStackDashboard() *dashboard.DashboardBuilder {
 	//lint:ignore SA1019 the classic dashboard model is what Grafana's file provisioning loads without feature toggles; the v2 schema the SDK prefers needs them
 	b := dashboard.NewDashboardBuilder("OrkStack").Uid(UIDOrkStack).
-		Description("The whole deployment: runs, Orkers and pools, the cache, the engine and its dependencies, and the artifact GC.").
+		Description("The whole deployment: runs, Orkers and pools, the cache, schedules, webhooks, HTTP triggers, concurrency limits, the engine and its dependencies, and retention cleanup with the artifact GC.").
 		Tags([]string{"orkstack"}).Readonly().Timezone(common.TimeZoneBrowser).
 		Time("now-6h", "now").Refresh("1m").Tooltip(dashboard.DashboardCursorSyncCrosshair).
 		WithVariable(datasourceVariable("prom", "Metrics", "prometheus")).
@@ -203,7 +225,7 @@ func orkStackDashboard() *dashboard.DashboardBuilder {
 func runDashboard() *dashboard.DashboardBuilder {
 	//lint:ignore SA1019 the classic dashboard model is what Grafana's file provisioning loads without feature toggles; the v2 schema the SDK prefers needs them
 	b := dashboard.NewDashboardBuilder("OrkStack / Run").Uid(UIDRun).
-		Description("One run: its spans, the engine's events, its attempts' usage and its tasks' logs.").
+		Description("One run: its spans, the engine's events, its attempts' usage against their limits, its tasks' logs and its webhook deliveries.").
 		Tags([]string{"orkstack"}).Readonly().Timezone(common.TimeZoneBrowser).
 		Time("now-6h", "now").
 		WithVariable(datasourceVariable("loki", "Logs", "loki")).

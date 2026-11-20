@@ -24,6 +24,13 @@ func profileFleet() *scriptedFleet {
 	devices := func(name string) *orkstackv1.OrkerProfile {
 		return &orkstackv1.OrkerProfile{Name: name, Kind: orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}
 	}
+	// rolling is a devices profile mid-roll: contract 2, accepting 1.
+	rolling := func(name string) *orkstackv1.OrkerProfile {
+		p := devices(name)
+		p.DefaultContract = "2"
+		p.Contracts = []*orkstackv1.OrkerProfileContract{{Label: "2", Accepts: []string{"1"}}}
+		return p
+	}
 	cause := func(c orkstackv1.ProfileCordon_Cause, profile string, r orkstackv1.ProfileCordonReason) *orkstackv1.ProfileCordon {
 		return &orkstackv1.ProfileCordon{Cause: c, Profile: profile, Reason: r, Since: since, Detail: "detail-not-listed"}
 	}
@@ -46,7 +53,7 @@ func profileFleet() *scriptedFleet {
 				ProfileCordons: []*orkstackv1.ProfileCordon{cause(drift, "a100", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED)}},
 			"orker-none": {OrkerId: "orker-none", Pool: "build"},
 			"orker-ok": {OrkerId: "orker-ok", Pool: "gpu", RunningTasks: 1,
-				Profiles: []*orkstackv1.OrkerProfile{gpu("a100", 2, 2, 1), devices("fpga")}},
+				Profiles: []*orkstackv1.OrkerProfile{gpu("a100", 2, 2, 1), rolling("fpga")}},
 			"orker-out": {OrkerId: "orker-out", Pool: "gpu", Cordoned: true,
 				Profiles:       []*orkstackv1.OrkerProfile{devices("fpga")},
 				ProfileCordons: []*orkstackv1.ProfileCordon{cause(orkstackv1.ProfileCordon_Cause(7), "fpga", orkstackv1.ProfileCordonReason(99))}},
@@ -279,5 +286,108 @@ func TestOrkerCommands_PrintOrkerTextTerminalSafe(t *testing.T) {
 	}
 	if raw := f.run("orker", "list", "--json").requireExit(t, exitOK).stdout; !strings.Contains(raw, `\u001b]0;pwned`) || strings.Contains(raw, `\\u001b`) {
 		t.Errorf("--json is not the response as it came:\n%s", raw)
+	}
+}
+
+// TestProfileContractsText: a profile's contracts read in PROFILES as its
+// labels with the default starred and what the default accepts, in get in
+// full, and a plain profile (one contract "1" accepting nothing) adds
+// nothing to either.
+func TestProfileContractsText(t *testing.T) {
+	c := func(label string, accepts ...string) *orkstackv1.OrkerProfileContract {
+		return &orkstackv1.OrkerProfileContract{Label: label, Accepts: accepts}
+	}
+	for _, tc := range []struct {
+		name        string
+		profile     *orkstackv1.OrkerProfile
+		short, long string
+	}{
+		{"none reported", &orkstackv1.OrkerProfile{}, "", ""},
+		{"plain", &orkstackv1.OrkerProfile{DefaultContract: "1", Contracts: []*orkstackv1.OrkerProfileContract{c("1")}}, "", ""},
+		{"one other label", &orkstackv1.OrkerProfile{DefaultContract: "2", Contracts: []*orkstackv1.OrkerProfileContract{c("2")}},
+			":2", "contract 2"},
+		{"rolling", &orkstackv1.OrkerProfile{DefaultContract: "2", Contracts: []*orkstackv1.OrkerProfileContract{c("2", "1")}},
+			":2 +acc 1", "contract 2 (accepts 1)"},
+		{"two, the old the default", &orkstackv1.OrkerProfile{DefaultContract: "1",
+			Contracts: []*orkstackv1.OrkerProfileContract{c("1"), c("2", "0")}},
+			":1*,2", "contracts 1 (default), 2 (accepts 0)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := profileContractsShort(tc.profile); got != tc.short {
+				t.Errorf("short = %q, want %q", got, tc.short)
+			}
+			if got := profileContractsLong(tc.profile); got != tc.long {
+				t.Errorf("long = %q, want %q", got, tc.long)
+			}
+		})
+	}
+}
+
+// TestAttemptProfilesCell: an attempt's PROFILES cell names the contract
+// each profile ran under, whether its image chose it, and the pinned label
+// it accepted when it ran under another.
+func TestAttemptProfilesCell(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		profiles []*orkstackv1.EffectiveProfile
+		want     string
+	}{
+		{"none", nil, "-"},
+		{"under a pinned contract", []*orkstackv1.EffectiveProfile{{Name: "sensor", Contract: "1", RunContracts: []string{"1"}}},
+			"sensor (contract 1)"},
+		{"by accepts", []*orkstackv1.EffectiveProfile{{Name: "sensor", Contract: "2", RunContracts: []string{"1"}}},
+			"sensor (contract 2, accepting 1)"},
+		{"needed by the image", []*orkstackv1.EffectiveProfile{{Name: "sensor", Contract: "2", RunContracts: []string{"2"}, Declared: true}},
+			"sensor (contract 2, needed by the image)"},
+		{"the Orker's escapes are shown, not obeyed", []*orkstackv1.EffectiveProfile{{Name: "sen\x1b[2Jsor", Contract: "2\tx"}},
+			`sen\u001b[2Jsor (contract 2\u0009x)`},
+		{"two profiles", []*orkstackv1.EffectiveProfile{
+			{Name: "sensor", Contract: "2", RunContracts: []string{"2"}, Declared: true}, {Name: "modem"}},
+			"sensor (contract 2, needed by the image); modem"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := attemptProfilesCell(tc.profiles); got != tc.want {
+				t.Fatalf("cell = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderAttemptList_ProfilesColumn: the PROFILES column is added only
+// when an attempt ran with a device profile, before ERROR, and a table of
+// attempts without one is unchanged.
+func TestRenderAttemptList_ProfilesColumn(t *testing.T) {
+	plain := &orkstackv1.TaskAttempt{TaskId: "read", Attempt: 1, OrkerId: "o1", Outcome: orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED}
+	profiled := &orkstackv1.TaskAttempt{TaskId: "read", Attempt: 2, OrkerId: "o2", Outcome: orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED,
+		Profiles: []*orkstackv1.EffectiveProfile{{Name: "sensor", Contract: "2", RunContracts: []string{"1"}}}}
+
+	var without strings.Builder
+	if err := renderAttemptList(&without, []*orkstackv1.TaskAttempt{plain}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(without.String(), "PROFILES") {
+		t.Fatalf("a run with no profiled attempt grew a PROFILES column:\n%s", without.String())
+	}
+	var with strings.Builder
+	if err := renderAttemptList(&with, []*orkstackv1.TaskAttempt{plain, profiled}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(with.String(), "\n")
+	if !strings.Contains(lines[0], "ORKER") || !strings.Contains(lines[0], "PROFILES") ||
+		strings.Index(lines[0], "PROFILES") > strings.Index(lines[0], "ERROR") {
+		t.Fatalf("header = %q, want PROFILES before ERROR", lines[0])
+	}
+	if !strings.Contains(lines[2], "sensor (contract 2, accepting 1)") || !strings.Contains(lines[1], " - ") {
+		t.Fatalf("rows =\n%s\nwant attempt 2's contract and a dash for attempt 1", with.String())
+	}
+}
+
+// TestProfileLine_NamesTheContracts: orkctl orker get's line for a profile
+// names its contracts beside its kind.
+func TestProfileLine_NamesTheContracts(t *testing.T) {
+	p := &orkstackv1.OrkerProfile{Name: "sensor", Kind: orkstackv1.ProfileKind_PROFILE_KIND_DEVICES, DefaultContract: "1",
+		Contracts: []*orkstackv1.OrkerProfileContract{{Label: "1"}, {Label: "2", Accepts: []string{"0"}}}}
+	if got, want := profileLine(&orkstackv1.Orker{}, p), "devices, contracts 1 (default), 2 (accepts 0)"; got != want {
+		t.Fatalf("profile line = %q, want %q", got, want)
 	}
 }

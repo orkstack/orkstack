@@ -44,6 +44,13 @@ type ExitStatus struct {
 	// itself, which is the only reason the dispatcher reads it just for a
 	// container that ended while the Orker was only waiting.
 	StoppedFromOutside bool
+	// RuntimeWentAway, with StoppedFromOutside, reports that the runtime itself
+	// went away as it stopped the container: the container's event stream,
+	// still open when the stop was heard, then ended by itself within
+	// runtimeGoneWindow. A daemon shutting down does that; an operator's stop
+	// through a daemon that stays up does not. With it, the stop is an
+	// interruption the engine re-dispatches (AGENTS.md §3.2, §4).
+	RuntimeWentAway bool
 	// StopCauseUnknown reports that whether the runtime stopped the container is
 	// unknown: its events ended before they said how it ended, or
 	// StopCauseUnrecorded. The status then stands as the workload's, and the
@@ -122,6 +129,15 @@ type Mount struct {
 // or is supplied by the security profile when the spec is built. Nothing here
 // can express anything from §9.1: there is no privileged flag, no capability
 // list to add to, no host-namespace selector, and no device list.
+// ServiceTmpfs is a service's answer filesystem as the runtime makes it.
+type ServiceTmpfs struct {
+	Path   string
+	Bytes  int64
+	Inodes int
+	// UID and GID own the filesystem's root: the Orker's own.
+	UID, GID int
+}
+
 type ContainerSpec struct {
 	// Image is the pinned reference — "{registry}/{repository}@sha256:…". A
 	// tag never reaches the runtime.
@@ -140,7 +156,8 @@ type ContainerSpec struct {
 	// the workload's /orkstack/tmp scratch bind.
 	TmpfsPath  string
 	TmpfsBytes int64
-	// Network is "none" or "default", always explicit, never implicit.
+	// Network is "none" or "default", always explicit, never implicit; or
+	// NetworkService for a service container on its own network.
 	Network string
 	// Devices are the host devices a task's device profiles pass
 	// (device_mapping.go); empty for every other task.
@@ -149,6 +166,18 @@ type ContainerSpec struct {
 	// task's bound gpu units (dispatch_units.go); empty for every other task.
 	// The runtime resolves them at start (design Q18).
 	CDIDevices []string
+	// ServiceNetworkID is the id of the service network (64 hex digits) a
+	// NetworkService container is attached to; empty with any other mode.
+	ServiceNetworkID string
+	// ServiceTmpfs is a service's bounded answer filesystem
+	// (docs/ORKER_SERVICE_CONTRACT.md): a memory filesystem of its own with a
+	// size and an inode count, owned by the Orker's uid. Nil for a task.
+	ServiceTmpfs *ServiceTmpfs
+	// NoSwap makes the container's memory-and-swap limit its memory limit,
+	// so nothing it holds in memory reaches a swap device.
+	NoSwap bool
+	// NoCoreDumps refuses the container's processes a core dump.
+	NoCoreDumps bool
 	// RunAsOrker is the §3.1 readability escape hatch: run the workload as
 	// the Orker's own user, so the Orker can read every file it writes
 	// whatever its umask. It is an intent, not a uid: the runtime renders it

@@ -85,6 +85,6 @@ var (
 	tTotal = "clamp_min(" + rTemporal("temporal_request_total") + " + " + rTemporal("temporal_long_request_total") + ", 1e-9)"
 )
 
-// integrityReasons are the attempt failures that mean stored data is not
+// IntegrityReasons are the attempt failures that mean stored data is not
 // what was written: never a workload's fault, and never retried away.
-const integrityReasons = "INPUT_ARTIFACT_CORRUPT|VALUES_CORRUPT|COMMIT_IDENTITY_MISMATCH|COMMIT_UNDECODABLE|COMMIT_STORE_NOT_CONDITIONAL|PANIC"
+const IntegrityReasons = "INPUT_ARTIFACT_CORRUPT|VALUES_CORRUPT|COMMIT_IDENTITY_MISMATCH|COMMIT_UNDECODABLE|COMMIT_STORE_NOT_CONDITIONAL|PANIC"

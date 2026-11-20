@@ -368,6 +368,11 @@ type Failure struct {
 	// read then and not when it is reported, so a container its runtime
 	// stopped just before the stop is not taken for the stop's doing.
 	DuringStop bool
+	// RuntimeWentAway: the container was stopped from outside as its runtime
+	// went away (ExitStatus.RuntimeWentAway). Named in its message, and it
+	// makes CONTAINER_STOPPED_BY_RUNTIME an interruption the Orker may emit
+	// though it was not stopping (mayEmit).
+	RuntimeWentAway bool
 }
 
 // Error implements error.

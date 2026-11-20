@@ -21,6 +21,14 @@ const (
 	// queue the engine reserves for itself.
 	poolQueuePrefix = "ork-pool-"
 
+	// sourceQueuePrefix begins every pool's source channel, which only source
+	// hosts poll for event-source instances (QueueForSource).
+	sourceQueuePrefix = "ork-source-"
+	// sourceRawPrefix begins the source channel of a raw isolation channel.
+	// "_" is in no pool name, so it neither collides with a pool's source
+	// channel nor reads back as one.
+	sourceRawPrefix = sourceQueuePrefix + "_"
+
 	// orkerQueuePrefix names every Orker's control channel:
 	// orkerQueuePrefix + orker_id. Exactly one process polls each, and it
 	// carries DescribeOrker and CordonOrker to that process and no other
@@ -99,6 +107,9 @@ func reservedQueue(queue string) error {
 	case strings.HasPrefix(queue, orkerQueuePrefix):
 		return fmt.Errorf("%w: %q is shaped like one Orker's own control channel, "+
 			"so no pool may be routed to it", ErrReservedQueue, queue)
+	case strings.HasPrefix(queue, sourceQueuePrefix):
+		return fmt.Errorf("%w: %q is shaped like a pool's source channel, which carries "+
+			"event-source instances, so no pool's tasks may be routed to it", ErrReservedQueue, queue)
 	}
 	return nil
 }
@@ -272,6 +283,43 @@ func PoolForChannel(queue string, def Route) (string, bool) {
 		return def.Pool, true
 	}
 	return PoolForQueue(queue)
+}
+
+// QueueForSource is the ONLY translation from a pool to its source channel:
+// the Temporal task queue a pool's source hosts poll for event-source
+// instances, and nothing else does. It resolves the pool by the rule a
+// task's pool resolves by (RouteForPool), so a source and a task naming one
+// pool reach one set of Orkers. The channel is "ork-source-" and the pool the
+// route answers to; for the default route of a raw isolation channel
+// (ORK_ORKER_QUEUE=ork-tasks-agent), which is nobody's pool, it is
+// "ork-source-" and that raw channel, so Orkers isolated on their own raw
+// channel keep their own source channel too.
+func QueueForSource(pool, defaultQueue string) (string, error) {
+	def, err := DefaultRoute(defaultQueue)
+	if err != nil {
+		return "", err
+	}
+	route, err := RouteForPool(pool, def.Queue)
+	if err != nil {
+		return "", err
+	}
+	if route.Queue == def.Queue {
+		if _, named := PoolForQueue(def.Queue); !named {
+			return sourceRawPrefix + def.Queue, nil
+		}
+	}
+	return sourceQueuePrefix + route.Pool, nil
+}
+
+// PoolForSourceQueue reverses QueueForSource for a named pool's source
+// channel. A source channel of a raw isolation channel, and any queue this
+// package did not build, report ok=false rather than a guessed pool.
+func PoolForSourceQueue(queue string) (string, bool) {
+	pool, found := strings.CutPrefix(queue, sourceQueuePrefix)
+	if !found || validPool(pool) != nil {
+		return "", false
+	}
+	return pool, true
 }
 
 // MaxCordonReason bounds a cordon's reason, in bytes.

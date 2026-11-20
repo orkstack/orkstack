@@ -86,7 +86,9 @@ acceptable.
 
 This profile is for one machine. A production Collector needs bearer or mTLS
 auth on its receiver and a network that activity containers cannot reach, and
-Grafana needs real sign-in.
+Grafana needs real sign-in. The kit receives only what is pushed to it, so
+Temporal's own server metrics, which Temporal offers only for scraping, are
+not in it: point your own Prometheus at the Temporal server for them.
 
 ## Dashboards
 
@@ -96,16 +98,18 @@ Grafana provisions two dashboards, read-only, in its OrkStack folder:
   minute, failure ratio, open runs, pollers and Orkers, tasks waiting, the
   oldest waiting task, Temporal and object storage, telemetry age), then
   collapsed rows, each named by the question it answers: runs and tasks,
-  Orkers and pools, the cache, the engine with Temporal and object storage,
-  and the artifact GC. Its variables are the namespace, the Orkflow and the
+  Orkers and pools, the cache, schedules, webhooks, HTTP triggers,
+  concurrency limits, the engine with Temporal and object storage, and
+  retention cleanup with the artifact GC. Its variables are the namespace, the Orkflow and the
   pool; the Orkflow variable lists names only while `telemetry.orkflow_label`
   is on (the default). Open runs, pollers and tasks waiting come from the
   engine's censuses, whose first pass waits a random part of its interval
   (up to a minute for open runs), so after an engine starts those tiles stay
   empty until it has run.
 - **OrkStack / Run** (`/d/orkstack-run?var-run=<run-id>`): one run's spans,
-  the engine's events, its attempts' usage and its tasks' logs, with a link
-  to the run's page in the OrkStack UI.
+  the engine's events, its attempts' usage with each task's memory against
+  its limit, its tasks' logs and its webhook deliveries, with a link to the
+  run's page in the OrkStack UI.
 
 They are generated from `internal/dashboards` with Grafana's own builder;
 change them there and run `go run ./internal/dashboards/cmd/gendashboards`,

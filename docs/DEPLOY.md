@@ -651,6 +651,17 @@ then the variable it becomes.
 | `orker.resources.max_gpu` | `ORK_ORKER_MAX_GPU` | `1` | `orker` | the most units of this Orker's gpu profile one task may hold, 0 to 64; a request above it is refused, never clamped, and a gpu profile under `0` refuses boot (`ORKER_PROFILE_INVALID`, naming the setting) |
 | `orker.cdi.spec_dirs` | `ORK_ORKER_CDI_SPEC_DIRS` | `/etc/cdi`, `/var/run/cdi` | `orker` | the trusted CDI spec directories a gpu profile's audit reads: absolute, clean paths that must hold every directory the container runtime reads specs from; a malformed entry refuses boot, naming the setting |
 | `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
+| `orker.event_sources.max_instances` | `ORK_ORKER_EVENT_SOURCE_MAX_INSTANCES` | `0` | `orker` | above zero makes this Orker a source host for that many event-source instances, if it is fit to host a service ([ORKER_SERVICE_CONTRACT.md](ORKER_SERVICE_CONTRACT.md)). Needs `orker.engine.url`: a source host without it refuses to boot, naming both. No release yet starts an instance |
+| `orker.event_sources.max_request.cpu`, `orker.event_sources.max_request.memory` | `ORK_ORKER_EVENT_SOURCE_MAX_REQUEST_CPU`, `ORK_ORKER_EVENT_SOURCE_MAX_REQUEST_MEMORY` | `500m`, `256Mi` | `orker` | the most one instance may ask for on this pool, and what an idle source host keeps reserved for the instance it waits for. A pool-wide setting |
+| `orker.event_sources.spool_bytes` | `ORK_ORKER_EVENT_SOURCE_SPOOL_BYTES` | `67108864` | `orker` | the most one instance's answer filesystem may hold, sized for twice its lanes' bodies. A pool-wide setting |
+| `orker.event_sources.confirm_wait_max` | `ORK_ORKER_EVENT_SOURCE_CONFIRM_WAIT_MAX` | `15m` | `orker` | how long an instance's first confirmation may wait on a judgment before the Orker gives its task back |
+| `orker.event_sources.parse_bytes` | `ORK_ORKER_EVENT_SOURCE_PARSE_BYTES` | `67108864` | `orker` | the most JSON bodies all lanes of this Orker read at once |
+| `orker.event_sources.log_bytes_per_hour` | `ORK_ORKER_EVENT_SOURCE_LOG_BYTES_PER_HOUR` | `4194304` | `orker` | an instance's log budget per stream after the first megabyte of an attempt |
+| `orker.services.allow_metadata_reach` | `ORK_ORKER_SERVICES_ALLOW_METADATA_REACH` | `false` | `orker` | `true` lets this Orker host services although a container on a service network can reach an instance-metadata endpoint; logged at every boot |
+| `orker.services.allow_open_cluster` | `ORK_ORKER_SERVICES_ALLOW_OPEN_CLUSTER` | `false` | `orker` | `true` lets this Orker host services although the cluster serves a container on a service network that presents no credential, in plaintext or over TLS without a client certificate: any tenant's long-lived container could then act as any worker of the deployment. Logged at every boot; for a trial deployment only |
+| `orker.services.allow_container_reach` | `ORK_ORKER_SERVICES_ALLOW_CONTAINER_REACH` | `false` | `orker` | `true` lets this Orker host services although a container on a service network can reach a container on another service's network or the runtime's default one; logged at every boot. For a host with one tenant |
+| `orker.services.probe_addresses` | `ORK_ORKER_SERVICES_PROBE_ADDRESSES` | *(empty)* | `orker` | a list of `host:port` no service on this host may reach, added to the reach probe: a node agent's port, an internal registry |
+| `orker.services.probe_image` | `ORK_ORKER_SERVICES_PROBE_IMAGE` | *(derived)* | `orker` | the image the reach probe runs (`orker probe reach`): unset is this release's own `ghcr.io/orkstack/orker:<version>`, signature- and build-checked; set, a copy of the orker image of this build, by digest; required on an Orker built from source |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/tmp` tmpfs. `/orkstack/tmp` is a separate bind mount, which this does not size |
@@ -1550,6 +1561,9 @@ EnvironmentFile=/etc/orkstack/orker.env
 ExecStart=/usr/local/bin/orker --config /etc/orkstack/orker.yaml
 Restart=on-failure
 NoNewPrivileges=yes
+# The stop grace (24h by default) plus its tail ("Stop timeouts").
+TimeoutStopSec=24h15min
+KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target
@@ -1642,7 +1656,13 @@ cordon keeps a stamp of its own.
 `STATE` names every cause that holds the cordon, an operator's first, as in
 `cordoned (operator; profile drifted)` or `cordoned (profile unavailable)`.
 `PROFILES` lists each profile with its kind and the cause on it, as in
-`a100 (gpu; drifted), fpga (devices)`. Under the table, each profile cause is
+`a100 (gpu; drifted), fpga (devices)`, and, for a profile of more than one
+contract or a label other than `1`, its contracts, the default of several
+starred, as in `sensor:1*,2 (devices)`, and what the default accepts, as in
+`sensor:2 +acc 1 (devices)`.
+`orkctl run attempts` names the contract each attempt ran under, as in
+`sensor (contract 2, accepting 1)` or `sensor (contract 2, needed by the
+image)`. Under the table, each profile cause is
 one line with its reason's code and how it ends. `get` gives each profile a
 line of its own, with a `gpu` profile's units, and each cause in full.
 `--json` carries `profiles` and `profileCordons` as the inventory has them.
@@ -3172,11 +3192,12 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   orders one page of the archive index (`pkg/artifacts/archive.go`). Those two
   are the whole list.
 - **Listing runs is a question the cluster answers.** At boot each engine
-  registers four search attributes on its Temporal namespace —
+  registers search attributes on its Temporal namespace (every one, and how
+  to add them by hand, is in "Temporal search attributes" below), among them
   `OrkflowNamespace` (`task.EnsureRunSearchAttributes`),
   `OrkflowOriginKind`/`OrkflowOriginId`
   (`task.EnsureRunOriginSearchAttributes`) and `OrkflowOriginRootRunId`
-  (`task.EnsureRunRootSearchAttribute`) — and stamps every run it starts
+  (`task.EnsureRunRootSearchAttribute`), and stamps every run it starts
   with the ones that apply, so `run list -n payments`, `run list --filter
   origin.kind=TRIGGER --filter origin.id=trg-…`, `run list --filter
   origin.root_run_id=ork-…` and an `origin.kind` filter on the runs page are
@@ -3185,9 +3206,8 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   property: filtered afterwards, how far a list could see would be set by how
   busy the OTHER namespaces were. Finished runs come from the archive, whose
   run, origin and root index keys begin with the namespace (`docs/STORAGE.md`).
-  All four are keywords. A Temporal 1.32 dev server (the development stack's)
-  takes 10 custom keyword attributes per namespace; measure your own visibility
-  store if the namespace holds attributes of your own.
+  All of them are keywords; Temporal's limits per visibility store are in
+  "Temporal search attributes" below.
 
   The boot line reports each answer separately
   (`INFO connected to temporal … run_namespace_index=true run_origin_index=true
@@ -3316,6 +3336,199 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   worktree's dev stack, including any process whose executable is this
   worktree's `bin/ork` or `bin/orker`, and `scripts/proof-stop.sh
   proof/<name>` stops a proof you started.
+
+### Temporal search attributes
+
+Every `ork` registers the custom search attributes below on its Temporal
+namespace (`temporal.namespace`, `ork-main` by default) at boot, before it
+serves (`internal/task/searchattr.go`). Each group is its own registration
+with its own answer, so a cluster that refuses one keeps the others. The
+boot line `INFO connected to temporal` reports each answer under the key
+the table names (`true`: the cluster indexes it). A group the cluster
+refuses does not stop the boot: the engine logs `WARN visibility does not
+index …` once, naming the attribute, and carries on without it. Only a
+Temporal namespace the cluster still cannot see after a minute fails the
+boot.
+
+<!-- search-attributes: table -->
+| Attribute | Type | Used for | Without it | Boot log key |
+|---|---|---|---|---|
+| `OrkflowNamespace` | Keyword | listing, counting and `max_running` of one OrkStack namespace's live runs | each list, count and `max_running` check walks the runs instead (a count, every live run; a list, every run), and one that cannot finish the walk fails rather than answer short | `run_namespace_index` |
+| `OrkflowOriginKind` | Keyword | filtering runs by `origin.kind` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
+| `OrkflowOriginId` | Keyword | filtering runs by `origin.id` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
+| `OrkflowOriginRootRunId` | Keyword | filtering runs by `origin.root_run_id` (everything below a root) | a list filtered by root walks every run instead, and fails rather than answer short when it cannot finish | `run_root_index` |
+| `OrkflowRunPaused` | Keyword | showing a paused run as `PAUSED` in lists, the `PAUSED` status filter, and the paused-runs count (`ork.runs.paused`) | a paused run lists as `RUNNING`, a list filtered on `PAUSED` is refused, and paused runs are not counted; once runs have written it, removing it stops them (below) | `run_paused_index` |
+| `OrkflowGatePhase` | Keyword | a concurrency gate's phase, `active` or `lingering`, so the cluster counts a namespace's active limit keys | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+| `OrkflowRunQueued` | Keyword | `true` on a run waiting for a concurrency slot | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+| `OrkflowConcurrencyHeld` | KeywordList | the gate ids a run holds, by which a rebuilding gate lists the open runs | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+| `OrkflowConcurrencyQueued` | KeywordList | the gate ids a run is queued at; a rebuilding gate lists the open runs by it too, beside `OrkflowConcurrencyHeld` | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+
+`concurrency_index` is `true` only when the four concurrency attributes and
+`OrkflowNamespace` are all usable; one already registered under another type
+makes the four unusable, and the boot names it.
+
+Never remove one while runs are open. `OrkflowRunPaused` above all: a run
+started while it was registered writes it at each pause and unpause, and
+stops there, neither progressing nor ending, until it is registered again
+(docs/LIMITATIONS.md, "Paused-run index"). The engine also reads two
+attributes the cluster owns, `TemporalWorkerDeploymentVersion` and
+`TemporalScheduledStartTime`; they need nothing from you.
+
+**When the engine cannot register them.** The engine registers them through
+Temporal's operator API. A cluster whose operator API is behind an
+authorizer that refuses the engine needs them added by someone who may:
+add them before the first engine boots, or restart the engines afterwards
+so each finds them. A command for an attribute that already exists is
+refused and changes nothing.
+
+On a self-hosted cluster, with the `temporal` CLI and a principal allowed
+to call the operator API:
+
+<!-- search-attributes: self-hosted -->
+```bash
+temporal operator search-attribute create --namespace ork-main --name OrkflowNamespace --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowOriginKind --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowOriginId --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowOriginRootRunId --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowRunPaused --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowGatePhase --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowRunQueued --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyHeld --type KeywordList
+temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyQueued --type KeywordList
+temporal operator search-attribute list --namespace ork-main
+```
+
+Temporal Cloud is not supported yet as a whole: the engine also registers
+its namespace and sets its retention, which Cloud administers itself
+(docs/LIMITATIONS.md, "Engine, cluster and gateway"). Its search attributes
+are added with `tcld`, by a user who holds Namespace Admin on the namespace
+(an Account Owner or Global Admin holds it on every namespace); Cloud names
+a namespace `<namespace>.<account>`:
+
+<!-- search-attributes: cloud -->
+```bash
+tcld namespace search-attributes add --namespace ork-main.acct1 \
+  --search-attribute OrkflowNamespace=Keyword \
+  --search-attribute OrkflowOriginKind=Keyword \
+  --search-attribute OrkflowOriginId=Keyword \
+  --search-attribute OrkflowOriginRootRunId=Keyword \
+  --search-attribute OrkflowRunPaused=Keyword \
+  --search-attribute OrkflowGatePhase=Keyword \
+  --search-attribute OrkflowRunQueued=Keyword \
+  --search-attribute OrkflowConcurrencyHeld=KeywordList \
+  --search-attribute OrkflowConcurrencyQueued=KeywordList
+```
+
+Replace `ork-main` with your `temporal.namespace`, and `acct1` with your
+account id. The newer `temporal cloud namespace search-attribute create`
+does the same, one `--name` and `--type` at a time.
+
+**Limits.** Temporal bounds custom attributes per namespace and type, and
+counts your own attributes in the same namespace against them:
+
+| Visibility store | Keyword | KeywordList |
+|---|---|---|
+| SQL (PostgreSQL 12+, MySQL 8.0.17+, SQLite 3.31.0+) | 10 | 3 |
+| Temporal Cloud | 40 | 5 |
+| Elasticsearch | no Temporal limit | no Temporal limit |
+
+OrkStack uses seven Keyword and two KeywordList attributes, so a SQL-backed
+namespace has three Keyword and one KeywordList left for your own. On Elasticsearch an attribute is shared by every
+namespace of the cluster. Temporal Cloud does not support removing a custom
+attribute (its docs send you to Temporal Support), so one added there
+stays.
+
+Sources: Temporal's [search attribute
+limits](https://docs.temporal.io/search-attribute), [self-hosted and
+Cloud creation](https://docs.temporal.io/self-hosted-guide/visibility/custom-search-attributes),
+[`tcld namespace search-attributes add`](https://docs.temporal.io/cloud/tcld/namespace)
+and [Cloud permissions](https://docs.temporal.io/cloud/users).
+
+#### Running without Temporal admin rights
+
+On a cluster another team runs, the engine's Temporal credential need not be
+an admin's. Three things then need a cluster admin, once, before the first
+engine boots: the namespace, its retention, and the search attributes above.
+With those in place every `ork` and `orker` boots on a credential that
+needs no admin access (below says exactly what it needs).
+
+**What the cluster admin creates.** The retention is the namespace's
+retention TTL, and it decides OrkStack's maximum run retention: an engine
+that may not change it takes the TTL less `engine.cleanup.retention_buffer`
+(24h by default) as the maximum, and refuses to boot when that is not
+longer than an idempotency key's life (`engine.idempotency_ttl`, 24h, plus
+5 minutes). `96h` gives the default 72h maximum. On a self-hosted cluster:
+
+```bash
+temporal operator namespace create --namespace ork-main --retention 96h
+```
+
+then the search attributes, with the self-hosted commands above. On
+Temporal Cloud (not supported yet as a whole, above), Cloud sets retention
+in whole days:
+
+```bash
+tcld namespace create --namespace ork-main --region <region> --retention-days 4 \
+  --search-attribute OrkflowNamespace=Keyword \
+  --search-attribute OrkflowOriginKind=Keyword \
+  --search-attribute OrkflowOriginId=Keyword \
+  --search-attribute OrkflowOriginRootRunId=Keyword \
+  --search-attribute OrkflowRunPaused=Keyword \
+  --search-attribute OrkflowGatePhase=Keyword \
+  --search-attribute OrkflowRunQueued=Keyword \
+  --search-attribute OrkflowConcurrencyHeld=KeywordList \
+  --search-attribute OrkflowConcurrencyQueued=KeywordList
+```
+
+**What the engine's credential then needs.** Every call `ork` and `orker`
+make, at boot and while they run, other than the three above, is one
+Temporal's own authorizer classes as read or write access to the
+namespace: starting, signalling, cancelling, describing, listing, counting
+and deleting runs, reading their history, polling and completing tasks,
+heartbeats, schedules (the concurrency census's, `ork-conc-census`, which
+any engine creates or updates at boot, and an OrkStack schedule someone
+creates), describing task queues, and, when versioning is on, setting a
+Worker Deployment's current or ramping version (`orkctl release`). Temporal
+Cloud lists most of these under its namespace Write permission.
+
+| Cluster | The engine's and the Orker's credential |
+|---|---|
+| self-hosted, Temporal's default authorizer and claim mapper | `write` on the namespace (`ork-main:write`), and `read` on the cluster (`temporal-system:read`): the SDK asks `GetSystemInfo` before its first call, and Temporal classes that as a cluster read. That default authorizer applies a cluster role to every namespace, so `temporal-system:read` also lets the credential read every other namespace's runs and histories: on a shared cluster, agree that with its admin, or have the cluster's own authorizer allow `GetSystemInfo` alone |
+| self-hosted, an authorizer of your own | what yours grants for the calls above; none needs admin access |
+| Temporal Cloud | Write permission on the namespace, held by the user or service account whose API key or certificate the engine uses |
+
+What could not be checked against Temporal Cloud's published permissions,
+which do not list them: `GetSystemInfo`, `ListSearchAttributes`,
+`DeleteWorkflowExecution`, `StartActivityExecution` (how `orkctl orker`
+reaches one Orker) and the Worker Deployment calls. Temporal's own server
+classes each as read or write access to the namespace (`GetSystemInfo` to
+the cluster).
+
+**What still needs admin rights.** Raising the maximum run retention
+(`orkctl admin retention set`) above the TTL less the buffer is refused
+until a cluster admin raises the TTL first; lowering it needs nothing. A
+search attribute a later release adds must be created by the admin before
+that release's engines boot, or the feature it serves falls back as the
+table says.
+
+**The boot lines that confirm it.**
+
+```text
+INFO connected to temporal … run_namespace_index=true run_origin_index=true run_root_index=true run_paused_index=true concurrency_index=true
+INFO retention maximum derived from the cluster: this engine may not change the namespace's retention … cluster_retention=96h0m0s max_run_retention=72h0m0s
+WARN the cluster refused to set the retention backstop; the retention it keeps covers it … cluster_retention=96h0m0s backstop=96h0m0s
+```
+
+The first line's `true`s say every attribute was found. A first boot logs
+the INFO line: it asked whether it may set the retention, was refused, and
+derived the maximum from the TTL. The WARN line appears when the TTL is
+longer than the backstop and the engine may not lower it, once per process
+for each pair of values, and then at DEBUG. Every refusal, logged or not,
+counts `ork.retention.backstop.refused{outcome="covered"}`. A namespace whose TTL
+is too short refuses the boot, naming the TTL to set and the command that
+sets it, and counts `outcome="short"`, which pages
+([RUNBOOKS.md](./RUNBOOKS.md), RetentionBackstopShort); in the cleanup loop
+it keeps the engine running on the shorter TTL.
 
 ### Temporal over TLS
 
@@ -4281,8 +4494,8 @@ the last value, `stopping` 1 included, until it expires the series.
 With the default sink exporting metrics, every engine replica reads each
 measured pool from the cluster every `engine.pool_metrics.interval` (15 s by
 default): the default pool, and each pool `engine.pool_metrics.pools` names.
-Each series carries `ork.pool` and nothing else; the pool's channel is never
-exported.
+Each series carries `ork.pool` and nothing else, except the breakdown by
+release, which adds `ork.release`; the pool's channel is never exported.
 
 | Metric | Prometheus | What it reads |
 |---|---|---|
@@ -4291,6 +4504,8 @@ exported.
 | `ork.pool.tasks.add_rate` | `ork_pool_tasks_add_rate_per_second` | tasks the pool received per second, the cluster's own recent rate (about 30 s) |
 | `ork.pool.tasks.dispatch_rate` | `ork_pool_tasks_dispatch_rate_per_second` | tasks handed to its Orkers per second, likewise |
 | `ork.pool.pollers` | `ork_pool_pollers` | the Orkers that asked the pool for work within the last 90 seconds, one per process |
+| `ork.pool.release.backlog.tasks` | `ork_pool_release_backlog_tasks` | with versioning on, the pool's waiting tasks by release (`ork.release`, a build id): each current, ramping or draining release's own count, and `unversioned`, what the total holds beyond them. The two are read moments apart, so `unversioned` is clamped at 0 and the releases may not sum to the total exactly |
+| `ork.pool.release.backlog.age` | `ork_pool_release_backlog_age_seconds` | how long each release's oldest waiting task has waited; none for `unversioned`, whose age is not measured |
 
 - **Aggregate with `max by (ork_pool)`**, never `sum`: every replica reads the
   same pool. The Orker's own gauges above are summed by pool.
@@ -4309,7 +4524,10 @@ exported.
   with pollers present that grows, or whose oldest task never clears
   (`min_over_time(ork_pool_backlog_age_seconds[30m]) > 900`), may be a
   stranded release rather than demand: `orkctl release status` names it
-  (the autoscaling paragraph under "Stop timeouts").
+  (the autoscaling paragraph under "Stop timeouts"), and
+  `ork_pool_release_backlog_tasks` shows which release's tasks wait. A
+  breakdown that cannot be read leaves the total reported and its release
+  series absent for that pass, and counts in `ork.census.failed`.
 
 #### Stop timeouts
 
@@ -4323,6 +4541,15 @@ minutes), the longest poll the cluster holds open (75 s), the wait for the
 cluster to take the results of tasks that finished (at most 15 s) and 10 s.
 With the
 24h default that is **24h15m (87,300 s)**, which the shipped bases set.
+
+The 75 s is the cluster holding the Orker's open polls after it asks to stop.
+A Temporal cluster whose namespace-level dynamic config
+`frontend.enableCancelWorkerPollsOnShutdown` is `true` cancels those polls
+when the worker shuts down, and that part of the tail then takes no time. It
+is off in the Temporal 1.32 the development stack runs, and its default
+differs between Temporal releases, so check your cluster's. It is a setting of
+your Temporal cluster: OrkStack cannot tell whether it is on, so the tail
+above keeps the 75 s either way.
 
 | Platform | Setting | Shipped or documented figure | What can cut it short |
 |---|---|---|---|
@@ -4363,7 +4590,10 @@ better (Kubernetes `controller.kubernetes.io/pod-deletion-cost` from
 Every container-runtime CLI the Orker starts runs in a process group of its
 own, so a signal sent to the Orker's whole process group — a terminal's
 Ctrl-C, `make down`, a process manager that signals the group — reaches the
-Orker alone and never a task's container. Under rootless Podman the
+Orker alone and never a task's container. That holds under Docker and under
+rootless and rootful Podman alike, with no `--sig-proxy` flag
+(`TestIntegration_AGroupSignalNeverReachesTheContainer`, which the Podman lane
+runs on both). Under rootless Podman the
 container's monitor (`conmon`) may still run inside the Orker's own service
 cgroup, where a process manager that signals the whole cgroup (systemd's
 default `KillMode=control-group`) signals the container directly; run such an
@@ -4401,6 +4631,129 @@ Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
 namespace).
 
+### Source hosts
+
+A **source host** is an Orker that runs event-source instances: one whose
+`orker.event_sources.max_instances` is above zero. No release yet starts an
+instance; this section is what a source host is made of, so that a pool can
+be prepared for one. The settings are §1's `orker.event_sources.*` and
+`orker.services.*`, and the contract its containers keep is
+[ORKER_SERVICE_CONTRACT.md](ORKER_SERVICE_CONTRACT.md).
+
+**What makes an Orker fit.** An Orker with `max_instances` above zero
+reports to the engine the contract and profile versions it hosts, whether it
+is fit to host services, and every reason it is not. It is fit only when
+none of these holds:
+
+| It is unfit when | What to do |
+|---|---|
+| it cannot make a service's bounded answer filesystem on this runtime | run Docker or Podman with tmpfs mounts that take a size, an inode count, a uid and a gid |
+| no reach probe has run, or the reach probe is not clean | see below |
+| a service container it stopped is not gone | the stuck-service cordon, below |
+| it has no engine to call | set `orker.engine.url`: a source host without it refuses to boot, naming both settings |
+
+A misconfigured `orker.event_sources.*` or `orker.services.*` value refuses
+the boot, naming the setting. Every Orker of a pool that hosts sources has
+the same values, as for every other pool-wide setting.
+
+**What a service container runs as.** Every service container runs as the
+Orker's own non-root uid, whatever its image declares, with no swap of its
+own (its memory-and-swap limit is its memory limit), no core dumps,
+`no-new-privileges` and the default seccomp profile. Its answer filesystem is
+a memory filesystem the runtime makes with a size, an inode count and the
+Orker's uid, so it is charged to the container's memory and cannot reach a
+disk. An image that needs root fails `SERVICE_RUNS_AS_ROOT`. On a host with
+swap, use encrypted swap or none: memory the host swaps out can reach the
+swap device.
+
+**The network.** A service that needs a network gets one of its own, never
+the runtime's default: a bridge, IPv4 only, which no other container joins
+and which routes out through the host's address translation, so a source
+reaches its broker wherever the host can route. It is cut off from the
+runtime's other networks: Docker keeps its bridges apart by itself and is
+told to keep containers on one network apart too
+(`com.docker.network.bridge.enable_icc=false`), and Podman is told
+`isolate=strict`. The Orker reads each network back after making it and
+refuses one the runtime did not make so. A broker on the same host is
+reached at the port it publishes on the host's address, never at its
+container's own. The Orker names its networks with the
+`ork.service` label and removes them with their containers, and at boot it
+removes every labelled network left by an earlier process of its own. That a
+network of its own keeps other containers out is the runtime's packet rules'
+doing: a daemon started without them, or a host firewall that was flushed,
+routes between such networks freely, which is why the reach probe asks.
+
+**The host's own listeners.** A service network reaches whatever the host
+routes to, and that includes the host itself: every listener bound to all
+of the host's addresses, the Orker's admin listener, a development stack and
+any other local daemon among them, unless the host's firewall closes them.
+That is a property of the host, not something the Orker sets, and the
+reach probe's second and third questions report what the host answers at a
+service network's gateway; an Orker that finds it open logs a warning at
+boot. Every service network's bridge is named `orksvc` and nine hex digits,
+so one rule closes the host to service networks and to nothing else:
+
+```bash
+iptables -I INPUT 1 -i orksvc+ -m conntrack --ctstate NEW -j DROP
+iptables -I INPUT 1 -i orksvc+ -p udp --dport 53 -j ACCEPT
+iptables -I INPUT 1 -i orksvc+ -p tcp --dport 53 -j ACCEPT
+```
+
+or, with nftables, in the host's input chain:
+
+```bash
+nft add rule inet filter input iifname "orksvc*" udp dport 53 accept
+nft add rule inet filter input iifname "orksvc*" tcp dport 53 accept
+nft add rule inet filter input iifname "orksvc*" ct state new drop
+```
+
+The two port-53 lines let Podman's resolver, which listens on each
+network's gateway, answer; Docker's resolver is inside the container, so a
+Docker-only host may leave them out. Make the rules persist with the host's
+own firewall tooling: a rule that a reload removes is one the probe finds
+missing within the hour.
+
+**The reach probe.** Before an Orker reports itself fit, and every hour, it
+runs a probe from a container on a network made as a service's is, and needs
+four clean answers:
+
+1. no instance-metadata endpoint answers, and none of the operator's
+   `orker.services.probe_addresses`;
+2. nothing bound to the host's loopback can be opened;
+3. the cluster serves no caller that presents no credential, in plaintext or
+   over TLS without a client certificate, on any service port the probe can
+   find, and none of its membership ports accepts a connection. Only a
+   refused or timed-out connection, a handshake that demands a client
+   certificate, or an `Unauthenticated` or `PermissionDenied` answer counts
+   as closed;
+4. no other container can be reached from it, and none can reach it.
+
+A deployment whose cluster asks its clients for no credential is unfit for
+sources on every host: whoever reaches it can take any tenant's tasks
+([Temporal over TLS](#temporal-over-tls)). Three settings accept a failed
+question on purpose — `orker.services.allow_metadata_reach`,
+`allow_open_cluster` and `allow_container_reach` — and each is logged at
+every boot. The probe and its canaries run the Orker's own image, as the
+device probes do ("Running a device Orker"): by default a release Orker uses
+`ghcr.io/orkstack/orker:<version>`, resolved to a digest, its cosign
+signature verified against the release key and its `org.orkstack.build`
+label held to the Orker's commit. A deployment that mirrors its images sets
+`orker.services.probe_image` to its copy, by digest (an Orker built from
+source must set it, to the orker image of its own build). Its containers run
+`orker probe reach`, a subcommand of the Orker's for its probe containers
+only, which an operator never runs. Until event sources run, the probe's
+image is held to that signature and digest, not yet judged by the
+deployment's image policy.
+
+**The stuck-service cordon.** A service container not gone a minute after
+its SIGKILL ends its attempt `SERVICE_STOP_STUCK`, and cordons its Orker with
+a cause of its own: the Orker keeps the container's reservation, keeps trying
+to remove it, and takes no new task until it is gone. The cause holds only
+while such a container exists; clearing it touches no other cause, and the
+next boot sets it again if its reap cannot remove one. A stuck service keeps
+its pool live for no submission: like an operator's cordon, it is a host to
+look at.
+
 ### What removes a task's container
 
 While an Orker lives, nothing stays. An attempt removes its container with
@@ -4413,7 +4766,7 @@ Orker that died:
 | The task succeeded, exited non-zero, wrote malformed output, timed out, was cancelled, or ignored SIGTERM; its start was refused; it was pinned (the pin's shared directory stays, by design) | nothing | | the attempt |
 | A commit or a memo answered the attempt | nothing: no container started | | |
 | The daemon refused the removal | the stopped container | until the daemon allows it | this Orker, every 30 seconds |
-| The daemon restarted under the task | the container, stopped; under `live-restore` still **running**. The attempt fails `CONTAINER_STOPPED_BY_RUNTIME` when the daemon stopped the container, and `RUNTIME_REFUSED` when it went away first, by a crash or under `live-restore`; both are retried under the task's `retry:`. On Podman, stopping the API service stops no container and `RUNTIME_REFUSED` is the only outcome | up to 30 seconds after the daemon answers | this Orker, every 30 seconds |
+| The daemon restarted under the task | the container, stopped; under `live-restore` still **running**. The attempt ends `CONTAINER_STOPPED_BY_RUNTIME` when the daemon stopped the container, and the task runs again within its run's hand-back budget, spending no attempt of its own, because the Orker saw the daemon go away; it ends `RUNTIME_REFUSED` when the daemon went away first, by a crash or under `live-restore`, retried under the task's `retry:`, since the container may still be running. On Podman, stopping the API service stops no container and `RUNTIME_REFUSED` is the only outcome | up to 30 seconds after the daemon answers | this Orker, every 30 seconds |
 | The CLI gave up on a create the daemon then finished | a container in the `created` state, which holds no cpu or memory | up to 30 seconds after it appears, if that is within 10 minutes of the create; after that, until the next boot | this Orker, every 30 seconds for 10 minutes; then its next boot |
 | The Orker was killed and restarted under the same `ORK_ORKER_ID` | the container, still **running** past its task's timeout, which is the Orker's own clock | until that boot | the replacement's boot, whatever its work root |
 | The Orker was killed and came back under another identity, or never came back | the container, **running** until its workload exits, then stopped | until an operator removes it | **you** |
@@ -6201,7 +6554,7 @@ passes. A census skipped five times in a row is logged at Warn: raise
 | Census | Gauge | Reads |
 |---|---|---|
 | `runs_open` | `ork.runs.open`: runs open in the deployment, each run counted once however many times it has carried on, and never as zero while it carries on | two counts of the cluster's run index a pass, plus a listing of the runs that carried on within the hour when there are any, each charged |
-| `pool_backlog` | `ork.pool.*`, each pool's backlog ("A pool's backlog, as metrics") | one read of each measured pool's channel every `engine.pool_metrics.interval` (15 s by default) instead of once a minute, outside the budget: its cost is what those settings choose, and a skipped pass would leave an autoscaler without its signal |
+| `pool_backlog` | `ork.pool.*`, each pool's backlog ("A pool's backlog, as metrics") | one read of each measured pool's channel every `engine.pool_metrics.interval` (15 s by default) instead of once a minute, outside the budget: its cost is what those settings choose, and a skipped pass would leave an autoscaler without its signal. With versioning on, one more read of the deployment's releases and one of each current, ramping or draining release a pass, for every pool at once |
 | `runs_paused` | `ork.runs.paused{ork.namespace}`: live runs paused (`orkctl run pause`), and `ork.runs.paused.soonest_expiry{ork.namespace}`: seconds until the soonest own pause of them ends, absent for a namespace whose paused runs are all held by a parent run's pause. Only where the cluster indexes paused runs ("The paused-run index"); a namespace once seen reads 0 when none is paused | one listing of the cluster's live paused runs a pass, each page charged |
 | `telemetry_policy` | `ork.telemetry.namespaces{routing}`: the namespaces the engine's policy cache holds, by where their records go (`default`, `named`, `named_without_metrics`, `sink_unknown`); it refreshes the cache ("Where a namespace's records go") | one listing of the namespace names and at most half the budget of namespace documents a pass (30 by default): a namespace never read first, then the others in turn, so every namespace is read again within ⌈N / 30⌉ minutes and the refresh never takes the other censuses' share |
 | `webhook_pending` | `ork.webhook.deliveries.pending{ork.age_over}`: webhook deliveries not yet settled that were queued more than `5m` and more than `1h` ago, in the deployment | two counts of the cluster's running delivery workflows a pass |
@@ -6392,6 +6745,7 @@ carry no namespace and go to the default sink.
 | `ork.cleanup.objects`, `ork.cleanup.bytes` | `ork.namespace` | engine: run-scoped objects and bytes retirement removed |
 | `ork.cleanup.passes`, `ork.cleanup.pass.duration` | `outcome` | engine, each pass: `completed` (it reached the end of the index), `drain` (it stopped at a full batch and the next pass continues at once) or `failed` (the walk itself failed: the policy, the namespace list, the index list) |
 | `ork.cleanup.errors` | `ork.cleanup.step` | engine, each failure, by the step that failed: `policy`, `namespaces`, `backstop`, `list`, `state`, `lookup`, `archive_check`, `retire`, `delete`, `mark` |
+| `ork.retention.backstop.refused` | `outcome` | engine, each time the cluster refuses the engine the right to set its namespace's retention, at boot or in a cleanup pass: `covered` (the retention it keeps is at least the backstop) or `short` (it is less; the boot refuses) |
 | `ork.cleanup.last_pass` | — | engine: unix time of the last complete walk whose every run could be read. **Alert** when cleanup is enabled and it is older than three intervals |
 | `ork.cleanup.retention_lag` | `ork.namespace` | engine, from the last walk that could tell: how far past its own due time the most overdue run the walk left unretired is, 0 when none is. Twin: `ork.deployment.cleanup.retention_lag`, the deployment maximum |
 

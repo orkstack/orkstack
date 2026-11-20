@@ -185,6 +185,10 @@ type config struct {
 	// engine is orker.engine.*: how this Orker reaches the engine's API as
 	// itself. Empty, it reaches none.
 	engine orker.EngineSettings
+	// sourceHost is orker.event_sources.* and orker.services.*; a value
+	// that cannot be read is sourceHostErr, refused at boot.
+	sourceHost    orker.SourceHostSettings
+	sourceHostErr error
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -231,7 +235,7 @@ func loadConfig() config {
 	if profilesErr != nil {
 		profilesErr = fmt.Errorf("%s: orker.profiles (%s): %w", orker.ReasonProfileInvalid, orker.ProfilesVar, profilesErr)
 	}
-	return config{
+	c := config{
 		imageLayoutRoot:    env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		registryAuthFile:   env(orker.RegistryAuthFileVar, ""),
 		temporalAddress:    env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
@@ -275,6 +279,8 @@ func loadConfig() config {
 		deployment:               task.DeploymentFromEnv(),
 		engine:                   orker.EngineSettingsFromEnv(os.Getenv),
 	}
+	c.sourceHost, c.sourceHostErr = orker.SourceHostSettingsFromEnv(os.Getenv, c.engine.URL)
+	return c
 }
 
 // envMaxPins reads ORK_ORKER_MAX_PINS.
@@ -786,6 +792,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.heartbeatErr != nil {
 		return cfg.heartbeatErr
 	}
+	// And for the source host's settings: a source host without an engine
+	// to call, or a setting this process cannot read, is refused naming it.
+	if cfg.sourceHostErr != nil {
+		return cfg.sourceHostErr
+	}
 	// And once more for the pin cap. An operator who asked for pins and got a
 	// silently-zero cap would have an Orker that refuses every pinned submit to
 	// its pool with a message about no pin host existing, which names the
@@ -931,6 +942,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// leave the one case nothing else collects — a pinned input that reached a
 	// non-pin-hosting Orker's ordinary queue — with no collector at all.
 	go activities.SweepPinLeases(ctx)
+	// The reach probe of an Orker that hosts services: until it has answered
+	// clean the Orker reports itself unfit, and it asks again every hour at an
+	// offset of its own (docs/DEPLOY.md, "Source hosts").
+	go activities.RunReachProbes(ctx, adminAddr, cfg.temporalAddress)
 	// The store watch: while object storage does not answer this Orker it holds
 	// its own cordon, so tasks wait for it without using an attempt. It ticks on
 	// the same signal context, and it is one goroutine and one small request
@@ -1452,6 +1467,9 @@ func orkerOptions(
 		// is the SAME number workerOptions turns EnableSessionWorker on with, so
 		// an Orker cannot advertise a capacity its worker does not poll for.
 		MaxPins: cfg.maxPins,
+		// Whether this Orker hosts event-source instances, and how
+		// (docs/ORKER_SERVICE_CONTRACT.md).
+		SourceHost: cfg.sourceHost,
 		// Whether Boot asks the host's instance metadata endpoints
 		// (docs/DEPLOY.md, "Keeping tasks away from the host's identity").
 		MetadataProbe: cfg.metadataProbe,

@@ -25,6 +25,8 @@ import (
 const (
 	NetworkDefault = "default"
 	NetworkNone    = "none"
+	// NetworkService is a service container on a network of its own.
+	NetworkService = "service"
 )
 
 // SeccompBuiltin names the default seccomp profile explicitly rather than

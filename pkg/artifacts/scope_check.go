@@ -33,8 +33,8 @@ var OrkerAllowedPrefixes = []string{
 	LogPrefix,
 	AttemptPrefix,
 	"metadata/probes",
-	"metadata/receipts",
-	"metadata/staging/event-sources",
+	ReceiptPrefix,
+	EventSourceStagingPrefix,
 }
 
 // ScopeCheckedPrefixes is every prefix outside the allow-list, each of which

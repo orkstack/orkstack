@@ -1,0 +1,282 @@
+//go:build linux
+
+package sourcehost
+
+import (
+	"context"
+	"encoding/json/v2"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/orkstack/orkstack/internal/orker/servicehost"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+)
+
+// fakeSource is a container that keeps the contract over real files: it
+// answers each poll from its queue of messages (or quietly), applies each
+// verdict and writes settled.json.
+type fakeSource struct {
+	ask, answer string
+	queue       []string
+	mu          sync.Mutex
+	verdicts    []Verdict
+	// settleFirst settles each message before handing it over, as an image
+	// that acknowledges without waiting for a verdict does.
+	settleFirst bool
+	// mute answers no poll: a test that plants its own step needs the fake
+	// not to overwrite it.
+	mute atomic.Bool
+}
+
+func (f *fakeSource) rename(name string, body []byte) {
+	tmp := filepath.Join(f.answer, "tmp", filepath.Base(name)+".tmp")
+	_ = os.WriteFile(tmp, body, 0o644)
+	_ = os.MkdirAll(filepath.Dir(filepath.Join(f.answer, name)), 0o755)
+	_ = os.Rename(tmp, filepath.Join(f.answer, name))
+}
+
+func (f *fakeSource) run(ctx context.Context) {
+	var seenPoll, seenVerdict int64
+	for ctx.Err() == nil {
+		time.Sleep(5 * time.Millisecond)
+		if f.mute.Load() {
+			continue
+		}
+		if raw, err := os.ReadFile(filepath.Join(f.ask, LanePath(0, StepPoll))); err == nil {
+			var p Poll
+			if json.Unmarshal(raw, &p) == nil && p.Seq > seenPoll {
+				seenPoll = p.Seq
+				f.mu.Lock()
+				if len(f.queue) == 0 {
+					f.mu.Unlock()
+					f.rename(LanePath(0, StepEmpty), []byte(`{"schemaVersion":1,"seq":`+itoa(p.Seq)+`}`))
+					continue
+				}
+				body := f.queue[0]
+				f.queue = f.queue[1:]
+				f.mu.Unlock()
+				f.rename(LanePath(0, StepBody), []byte(body))
+				if f.settleFirst {
+					f.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(p.Seq)+`,"ok":true}`))
+				}
+				f.rename(LanePath(0, StepMessage), []byte(`{"schemaVersion":1,"seq":`+itoa(p.Seq)+`,"id":"m-`+itoa(p.Seq)+`","bodyBytes":`+itoa(int64(len(body)))+`,"deliveryCount":1}`))
+			}
+		}
+		if raw, err := os.ReadFile(filepath.Join(f.ask, LanePath(0, StepVerdict))); err == nil {
+			var v Verdict
+			if json.Unmarshal(raw, &v) == nil && v.Seq > seenVerdict {
+				seenVerdict = v.Seq
+				f.mu.Lock()
+				f.verdicts = append(f.verdicts, v)
+				f.mu.Unlock()
+				f.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(v.Seq)+`,"ok":true}`))
+			}
+		}
+	}
+}
+
+func itoa(n int64) string {
+	b, _ := json.Marshal(n)
+	return string(b)
+}
+
+type memRecorder struct {
+	mu       sync.Mutex
+	receipts []Receipt
+	fail     bool
+	// failTimes fails that many records before it writes them.
+	failTimes int
+}
+
+func (r *memRecorder) Record(_ context.Context, _ HandedMessage, _ int64, rc Receipt) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fail {
+		return errors.New("store down")
+	}
+	if r.failTimes > 0 {
+		r.failTimes--
+		return errors.New("store down")
+	}
+	r.receipts = append(r.receipts, rc)
+	return nil
+}
+
+func newDriverFixture(t *testing.T, door Door, queue ...string) (*LaneDriver, *fakeSource, *memRecorder) {
+	t.Helper()
+	root := t.TempDir()
+	ask, answer := filepath.Join(root, "ask"), filepath.Join(root, "answer")
+	for _, d := range []string{ask, filepath.Join(answer, "tmp"), filepath.Join(answer, "lanes", "0")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err := servicehost.OpenAskDir(ask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	steps, err := servicehost.OpenAnswerDir(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = steps.Close() })
+	rec := &memRecorder{}
+	src := &fakeSource{ask: ask, answer: answer, queue: queue}
+	ctx, cancel := context.WithCancel(context.Background())
+	ran := make(chan struct{})
+	// The fake container stops writing before the test's directories are
+	// removed: cleanups run last-registered first.
+	t.Cleanup(func() { cancel(); <-ran })
+	go func() { defer close(ran); src.run(ctx) }()
+	j := NewJudge(judgingSource("PAID"), 1, door, &fakeStager{}, time.Now)
+	d := &LaneDriver{Index: 0, Steps: steps, Asks: a, Judge: j, Recorder: rec, Now: time.Now,
+		Limits: LaneLimits{PollWait: 20 * time.Second, Answer: 30 * time.Second, Settle: 30 * time.Second, Hold: 16 * time.Minute,
+			LeaseSeconds: 60, MaxBodyBytes: 1 << 20}}
+	return d, src, rec
+}
+
+func TestLane_ReceiptBeforeVerdict(t *testing.T) {
+	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+	d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ex, err := d.Poll(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Kind != ExchangeSettled || !ex.Settled.OK || len(rec.receipts) != 1 || rec.receipts[0].Outcome != artifacts.ReceiptAccepted {
+		t.Fatalf("exchange %+v, receipts %+v", ex, rec.receipts)
+	}
+	src.mu.Lock()
+	v := src.verdicts
+	src.mu.Unlock()
+	if len(v) != 1 || v[0].Action != ActionAck || v[0].Seq != 1 {
+		t.Fatalf("verdicts %+v", v)
+	}
+	quiet, err := d.Poll(ctx, 0)
+	if err != nil || quiet.Kind != ExchangeQuiet || d.Lane.Seq() != 2 {
+		t.Fatalf("second exchange %+v, %v", quiet, err)
+	}
+}
+
+func TestLane_RequiredReceiptHoldsTheVerdict(t *testing.T) {
+	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
+	d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+	rec.fail = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ex, err := d.Poll(ctx, 0)
+	if !errors.Is(err, ErrReceiptRequired) || ex.Kind != ExchangeHeld {
+		t.Fatalf("exchange %+v, %v", ex, err)
+	}
+	// The driver writes a verdict synchronously, so none on disk once Poll
+	// returned means none was given.
+	if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
+		t.Fatalf("a verdict was given before its required receipt was written (%v)", err)
+	}
+}
+
+func TestLane_AWaitIsHeldWithNoVerdict(t *testing.T) {
+	door := &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}}
+	d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ex, err := d.Poll(ctx, 0)
+	if err != nil || ex.Kind != ExchangeHeld || ex.Decision.Disposition != Wait || len(rec.receipts) != 0 || d.Lane.CanBegin() {
+		t.Fatalf("exchange %+v, %v: a wait holds the message and its lane", ex, err)
+	}
+	release := Decision{Disposition: Wait, Action: ActionRelease, Delay: 30, Receipt: Receipt{Outcome: artifacts.ReceiptReleased}}
+	settled, err := d.Verdict(ctx, ex.Message, release)
+	if err != nil || settled.Kind != ExchangeSettled || !d.Lane.CanBegin() {
+		t.Fatalf("release %+v, %v", settled, err)
+	}
+}
+
+// TestLane_SettledBeforeAVerdictIsAViolation: an image that settles a
+// message before the Orker gave its verdict acknowledged on its own; that
+// breaks the contract, and the Orker writes neither a receipt nor a verdict
+// for it.
+func TestLane_SettledBeforeAVerdictIsAViolation(t *testing.T) {
+	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+	d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+	src.settleFirst = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var v *servicehost.ViolationError
+	if _, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), "without a verdict") {
+		t.Fatalf("a settle before any verdict: %v", err)
+	}
+	if len(rec.receipts) != 0 {
+		t.Fatalf("receipts were written for it: %+v", rec.receipts)
+	}
+	if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
+		t.Fatalf("a verdict was written for it (%v)", err)
+	}
+}
+
+func TestLane_AStepNobodyAskedForEndsTheAttempt(t *testing.T) {
+	door := &fakeDoor{}
+	d, src, _ := newDriverFixture(t, door)
+	src.mute.Store(true)
+	src.rename(LanePath(0, StepEmpty), []byte(`{"schemaVersion":1,"seq":5}`))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var v *servicehost.ViolationError
+	if _, err := d.Poll(ctx, 0); !errors.As(err, &v) {
+		t.Fatalf("an answer ahead of the lane's seq: %v", err)
+	}
+}
+
+// TestLane_AStaleFilteredVerdictIsHeld: a FILTERED decision whose
+// confirmation aged while it waited is not written.
+func TestLane_AStaleFilteredVerdictIsHeld(t *testing.T) {
+	door := &fakeDoor{confirm: []func() (Confirmation, error){func() (Confirmation, error) { return Confirmation{}, errors.New("timeout") }}}
+	d, src, _ := newDriverFixture(t, door)
+	d.Lane.Begin()
+	stale := Decision{Disposition: Settle, Action: ActionAck, ConfirmedAt: time.Now().Add(-time.Minute),
+		Receipt: Receipt{Outcome: artifacts.ReceiptFiltered}}
+	ex, err := d.Verdict(context.Background(), HandedMessage{ID: "m"}, stale)
+	if err != nil || ex.Kind != ExchangeHeld {
+		t.Fatalf("%+v, %v", ex, err)
+	}
+	if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
+		t.Fatal("a stale FILTERED verdict was written")
+	}
+}
+
+func TestLane_AReceiptFailureIsReported(t *testing.T) {
+	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+	d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+	rec.fail = true
+	var reported []string
+	d.Failed = func(kind string, _ error) { reported = append(reported, kind) }
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ex, err := d.Poll(ctx, 0); err != nil || ex.Kind != ExchangeSettled || len(reported) != 1 || reported[0] != "receipt" {
+		t.Fatalf("%+v, %v, reported %v: a best-effort receipt that failed is told, and the message settles", ex, err, reported)
+	}
+}
+
+func TestLane_WedgedPastTheHoldEndsTheAttempt(t *testing.T) {
+	d, _, _ := newDriverFixture(t, &fakeDoor{})
+	now := time.Now()
+	d.Now = func() time.Time { return now }
+	d.Limits.Hold = time.Second
+	d.Lane.Begin()
+	d.Lane.Await(now, time.Millisecond)
+	now = now.Add(10 * time.Millisecond)
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("wedged, within the hold: %v", err)
+	}
+	now = now.Add(2 * time.Second)
+	if err := d.tick(context.Background()); !errors.Is(err, ErrUnresponsive) {
+		t.Fatalf("wedged past the hold: %v", err)
+	}
+}

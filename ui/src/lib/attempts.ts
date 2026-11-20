@@ -289,3 +289,31 @@ export interface SeedKey {
 export function seedStillCurrent(prev: SeedKey | null, runId: string, terminal: boolean): boolean {
 	return prev !== null && prev.runId === runId && prev.terminal && terminal;
 }
+
+/** One device profile an attempt ran with, as its row names it. */
+export interface AttemptProfileLabel {
+	name: string;
+	/** The contract it ran under, in `orkctl run attempts`' words; empty when unrecorded. */
+	detail: string;
+}
+
+/**
+ * attemptProfileLabels names each device profile an attempt ran with and the
+ * contract it ran under, in the words `orkctl run attempts` prints, which
+ * the timeline sets as "sensor (contract 2, accepting 1)": "contract
+ * 2, accepting 1" when it ran under a contract that accepts a pinned one,
+ * "contract 2, needed by the image" when the task's image chose it.
+ */
+export function attemptProfileLabels(attempt: TaskAttempt): AttemptProfileLabel[] {
+	return attempt.profiles.map((p) => {
+		const notes: string[] = [];
+		if (p.contract) {
+			notes.push(`contract ${p.contract}`);
+			if (p.runContracts.length > 0 && !p.runContracts.includes(p.contract)) {
+				notes.push(`accepting ${p.runContracts.join(', ')}`);
+			}
+		}
+		if (p.declared) notes.push('needed by the image');
+		return { name: p.name, detail: notes.join(', ') };
+	});
+}

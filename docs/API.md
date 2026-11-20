@@ -4103,10 +4103,21 @@ request-bound assertions with.
 
 ### ServiceHost
 
-ServiceHost is E90's; it is empty until E90 lands (v0.4.0 proto
-batch).
+ServiceHost is what an Orker says about hosting services
+(docs/ORKER_SERVICE_CONTRACT.md): the contract and profile versions it
+hosts, and whether it is fit to host them now, with every reason it is
+not.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `contract_versions` | repeated `int32` | contract_versions are the Orker Service Contract versions it hosts. |
+| `profiles` | repeated [`ServiceProfileVersions`](#serviceprofileversions) | profiles are the profiles it hosts, each with its versions. |
+| `fit` | `bool` | fit is true only when every condition holds: it can make the bounded answer filesystem, its reach probe is clean, it is in no stuck-service cordon, and it can reach an engine. |
+| `unfit` | repeated `string` | unfit names each condition that does not hold, one fixed sentence each. |
+| `max_instances` | `int32` | max_instances is the most event-source instances it runs at once; 0 means it hosts none. |
+| `instances` | `int32` | instances is how many it runs now. |
+| `max_request` | [`ResourceRequest`](#resourcerequest) | max_request is the largest request one instance may make. |
+| `probed_at` | `google.protobuf.Timestamp` | probed_at is when its last reach probe ended. |
 
 ### ServiceInterface
 
@@ -4121,6 +4132,15 @@ label, authored as `kind: ServiceInterface`.
 | `profile` | `string` | profile is the profile the image implements: "event-source". |
 | `with` | map&lt;`string`, [`FieldSchema`](#fieldschema)&gt; | with declares the keys of the image's `with:` block, in the activity interface's grammar. |
 | `event_source` | [`EventSourceDeclaration`](#eventsourcedeclaration) | event_source is what an image of the event-source profile declares. |
+
+### ServiceProfileVersions
+
+ServiceProfileVersions is one profile an Orker hosts and its versions.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the profile's name: "event-source". |
+| `versions` | repeated `int32` | versions are the profile's versions it hosts. |
 
 ### SetCurrentOrkflowVersionRequest
 

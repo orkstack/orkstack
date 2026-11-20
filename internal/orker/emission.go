@@ -35,7 +35,9 @@ func InterruptionType(reason string) string { return interruptionTypePrefix + re
 // for an attempt marked never started (a PROFILE_CHANGED of a ref with no
 // contracts is not marked, and stays under the task's policy);
 // CONTAINER_STOPPED_BY_RUNTIME only while this Orker is stopping, when its
-// own runtime going away is the stop's doing.
+// own runtime going away is the stop's doing, or when the Orker observed the
+// runtime go away as it stopped the container (Failure.RuntimeWentAway): an
+// operator's stop through a runtime that stays up is neither (AGENTS.md §3.2).
 func (f *Failure) mayEmit(stopping bool) bool {
 	switch f.Reason {
 	case ReasonOrkerStopped:
@@ -44,7 +46,7 @@ func (f *Failure) mayEmit(stopping bool) bool {
 		ReasonProfileContractNotServed, ReasonRuntimeStateUnknown:
 		return f.NeverStarted
 	case ReasonContainerStoppedByRuntime:
-		return stopping
+		return stopping || f.RuntimeWentAway
 	}
 	return false
 }

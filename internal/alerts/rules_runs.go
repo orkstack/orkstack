@@ -62,7 +62,7 @@ func runRules() []Rule {
 		},
 		{
 			Name: "IntegrityFailure", Group: g, Component: c, Severity: Critical, For: "0m",
-			Expr:        NEW(`ork_deployment_orker_tasks_total{ork_failure_reason=~"`+integrityReasons+`"}`, "15m", "ork_failure_reason"),
+			Expr:        NEW(`ork_deployment_orker_tasks_total{ork_failure_reason=~"`+IntegrityReasons+`"}`, "15m", "ork_failure_reason"),
 			Summary:     "Stored data is not what was written.",
 			Description: `An attempt failed "{{ $labels.ork_failure_reason }}": a stored object, commit or value did not match what was written, or the Orker panicked.`,
 			Meaning:     "An input artifact or stored value failed its hash, a commit is unreadable or not this task's, the object store does not honour conditional writes, or the Orker hit a bug.",

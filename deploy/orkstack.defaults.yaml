@@ -190,6 +190,21 @@ orker:
   capacity:
     cpu: ""  # orker
     memory: ""  # orker
+  event_sources:
+    max_instances: 0  # orker
+    max_request:
+      cpu: 500m  # orker
+      memory: 256Mi  # orker
+    spool_bytes: 67108864  # orker
+    confirm_wait_max: 15m  # orker
+    parse_bytes: 67108864  # orker
+    log_bytes_per_hour: 4194304  # orker
+  services:
+    allow_metadata_reach: false  # orker
+    allow_open_cluster: false  # orker
+    allow_container_reach: false  # orker
+    probe_addresses: []  # orker
+    # probe_image: ""  # orker; this release's ghcr.io/orkstack/orker:<version>, signature- and build-checked
   pins:
     max_concurrent: 0  # orker
   log:

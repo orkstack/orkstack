@@ -7,40 +7,18 @@
 # images/activity-shell/Dockerfile.
 #
 # The renderer is gomplate (https://github.com/hairyhenderson/gomplate), an
-# ordinary standalone CLI, installed as its PUBLISHED RELEASE BINARY and
-# verified against the release's SHA-256 before it is copied anywhere. There
-# is no Go build stage: the bytes that run are the bytes the project released.
+# ordinary standalone CLI, taken as the static binary of the project's own
+# image for the release, hairyhenderson/gomplate:v5.3.1, pinned by the digest
+# of its multi-arch index (linux/amd64 and linux/arm64 among them). There is
+# no Go build stage and no download: the bytes that run are the bytes the
+# project published, fixed by that digest, and a registry pull is retried by
+# the builder where a release asset fetched from github.com was refused with
+# HTTP 429 on shared CI runners.
 #
-# The checksums live here, in the Dockerfile, never in a file downloaded beside
-# the binary at build time — a checksum fetched from the same release would
-# verify nothing. For the same reason GOMPLATE_BASE_URL may point at any
-# mirror (an air-gapped builder passes
-# --build-arg GOMPLATE_BASE_URL=<mirror>, e.g. through images/Makefile's
-# DOCKER_BUILD_FLAGS): the bytes are verified whatever served them.
-#
-# TARGETARCH is set by BuildKit, so this build requires BuildKit (Docker 23+,
-# where it is the default, or DOCKER_BUILDKIT=1). On the legacy builder it is
-# empty and the build stops with "no pinned gomplate checksum for architecture
-# 'unset'". An architecture without a pinned checksum fails the same way,
-# explicitly.
-FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS gomplate
-ARG TARGETARCH
-ARG GOMPLATE_VERSION=5.3.1
-# Where the release asset is fetched; an air-gapped builder points it at a mirror.
-ARG GOMPLATE_BASE_URL=https://github.com/hairyhenderson/gomplate/releases/download
-# From checksums-v5.3.1_sha256.txt of the v5.3.1 GitHub release.
-ARG GOMPLATE_SHA256_AMD64=2a618bfb02a54dd3c76d92ae4375ccc1f33eeb0545d6565ea7c3388359cb93f8
-ARG GOMPLATE_SHA256_ARM64=d00242bd08eda5badcea34491b392437237722e7d7e00f8ed05686124a43f61b
-RUN set -eu; \
-    case "${TARGETARCH:-}" in \
-      amd64) sum="$GOMPLATE_SHA256_AMD64" ;; \
-      arm64) sum="$GOMPLATE_SHA256_ARM64" ;; \
-      *) echo "no pinned gomplate checksum for architecture '${TARGETARCH:-unset}'" >&2; exit 1 ;; \
-    esac; \
-    wget -q -O /tmp/gomplate \
-      "${GOMPLATE_BASE_URL}/v${GOMPLATE_VERSION}/gomplate_linux-${TARGETARCH}"; \
-    echo "${sum}  /tmp/gomplate" | sha256sum -c -; \
-    mkdir -p /out; install -m 0555 /tmp/gomplate /out/gomplate
+# An air-gapped builder mirrors that image by its digest and points the build
+# at the copy, e.g. through images/Makefile's DOCKER_BUILD_FLAGS:
+#   --build-context docker.io/hairyhenderson/gomplate:v5.3.1@sha256:<digest>=docker-image://<mirror>/gomplate@sha256:<digest>
+FROM docker.io/hairyhenderson/gomplate:v5.3.1@sha256:9c73c3cacc598cc9d926c67c5548901a4a4ee2223d29a2dacc910a68a5dfd684 AS gomplate
 
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
@@ -52,7 +30,7 @@ FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5
 # pinned base carries zlib 1.4.
 RUN apk add --no-cache 'zlib~1.4' 'jq~1.8' tzdata
 
-COPY --from=gomplate /out/gomplate /usr/local/bin/gomplate
+COPY --from=gomplate --chmod=0555 /gomplate /usr/local/bin/gomplate
 COPY entry.sh /usr/local/bin/entry.sh
 RUN chmod 0555 /usr/local/bin/entry.sh
 

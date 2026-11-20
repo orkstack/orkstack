@@ -399,9 +399,9 @@ func eventSourceFileKind(body *yaml.Node) error {
 	case kind.Value == dsl.KindAutomation:
 		return fmt.Errorf("line %d: kind: %s is an automation document, not an event source: apply it with orkctl automation apply; "+
 			"an event source document says kind: %s", kind.Line, dsl.KindAutomation, dsl.KindEventSource)
-	case kind.Value == dsl.KindActivityInterface:
-		return fmt.Errorf("line %d: kind: %s is an activity interface, not an event source: pack it with orkctl activity interface pack; "+
-			"an event source document says kind: %s", kind.Line, dsl.KindActivityInterface, dsl.KindEventSource)
+	case kind.Value == dsl.KindActivityInterface, kind.Value == dsl.KindServiceInterface:
+		return fmt.Errorf("line %d: kind: %s is an image's interface, not an event source: pack it with orkctl activity interface pack; "+
+			"an event source document says kind: %s", kind.Line, kind.Value, dsl.KindEventSource)
 	case kind.Value != dsl.KindEventSource:
 		return fmt.Errorf("line %d: kind %q is not an event source: an event source document says kind: %s", kind.Line, kind.Value, dsl.KindEventSource)
 	}

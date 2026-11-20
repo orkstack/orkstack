@@ -88,7 +88,10 @@ only when its text changes: a tag that moves in its registry changes
 nothing. The image is held to the deployment's and the namespace's image
 policy ([DEPLOY.md](DEPLOY.md#image-supply-chain-policy)).
 
-A source image carries the labels of the Orker Service Contract:
+A source image carries the labels of the
+[Orker Service Contract](ORKER_SERVICE_CONTRACT.md), and runs as an arbitrary
+non-root uid ([EVENT_SOURCE_IMAGES.md](EVENT_SOURCE_IMAGES.md) says how to
+build and test one):
 `org.orkstack.service.contract` (the contract versions it implements, `1`),
 `org.orkstack.service.profile` (`event-source/1`), and optionally
 `org.orkstack.service.interface`, its declared interface, packed from an

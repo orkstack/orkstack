@@ -139,6 +139,9 @@ case "$1" in
     fi
     if [ -e "$S/events" ]; then cat "$S/events"; else echo die; fi
     if [ -e "$S/eventsend" ]; then exit 0; fi
+    if [ -e "$S/eventsendafter" ]; then sleep "$(cat "$S/eventsendafter")"; exit 0; fi
+    # A daemon that goes away: its stream ends, and it answers nothing after.
+    if [ -e "$S/eventsendgone" ]; then sleep "$(cat "$S/eventsendgone")"; touch "$S/daemongone"; exit 0; fi
     exec sleep 30 ;;
   wait) if [ -e "$S/exitcode" ]; then cat "$S/exitcode"; else echo 0; fi ;;
   ps)
@@ -155,6 +158,7 @@ case "$1" in
     if [ -e "$S/rmfail-$4" ]; then echo "removal of $4 is already in progress" >&2; exit 1; fi
     exit 0 ;;
   version)
+    if [ -e "$S/daemongone" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
     if [ -e "$S/versionhang" ]; then exec sleep 30; fi
     if [ -e "$S/versionfail" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
     case "$3" in

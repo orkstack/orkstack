@@ -20,7 +20,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/event_source.proto.
  */
 export const file_orkstack_v1_event_source: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vcmtzdGFjay92MS9ldmVudF9zb3VyY2UucHJvdG8SC29ya3N0YWNrLnYxIskLCgtFdmVudFNvdXJjZRIKCgJpZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSDAoEbmFtZRgDIAEoCRIUCgxvcmtmbG93X25hbWUYBCABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAUgASgJEhMKC2Rlc2NyaXB0aW9uGAYgASgJEgwKBHVzZXMYDSABKAkSDQoFaW1hZ2UYDiABKAkSJQoEd2l0aBgPIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDAoEcG9vbBgQIAEoCRIRCglpbnN0YW5jZXMYESABKAUSLwoJcmVzb3VyY2VzGBIgASgLMhwub3Jrc3RhY2sudjEuUmVzb3VyY2VSZXF1ZXN0EiwKCGRlbGl2ZXJ5GBMgASgOMhoub3Jrc3RhY2sudjEuRGVsaXZlcnlDbGFzcxITCgtjb25jdXJyZW5jeRgUIAEoBRIqCgZmb3JtYXQYFSABKA4yGi5vcmtzdGFjay52MS5NZXNzYWdlRm9ybWF0EhEKCW1heF9ieXRlcxgWIAEoAxIlCgVtYXRjaBgXIAMoCzIWLm9ya3N0YWNrLnYxLk1hdGNoUnVsZRIjCgVpbnB1dBgYIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSLgoDbWFwGBkgAygLMiEub3Jrc3RhY2sudjEuRXZlbnRTb3VyY2UuTWFwRW50cnkSOgoJYXJ0aWZhY3RzGBogAygLMicub3Jrc3RhY2sudjEuRXZlbnRTb3VyY2UuQXJ0aWZhY3RzRW50cnkSDAoEcmF0ZRgbIAEoBRIbCg5yZWplY3RfYnJlYWtlchgcIAEoBUgAiAEBEg4KBnBhdXNlZBgdIAEoCBIsCgVwYXVzZRgeIAEoCzIdLm9ya3N0YWNrLnYxLkV2ZW50U291cmNlUGF1c2USLgoKY3JlYXRlZF9hdBgfIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBggIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxghIAEoCRISCgpjcmVhdGVkX2J5GCIgASgJEhIKCnVwZGF0ZWRfYnkYIyABKAkSEAoIYm91bmRfYnkYJCABKAkSGQoRYm91bmRfYnlfdmVyaWZpZWQYJSABKAgSFQoNY29uc2VudF9zdGFsZRgnIAEoCBImCghhc2tzX2ZvchgoIAEoCzIULm9ya3N0YWNrLnYxLkFza3NGb3ISKwoJY29uc2VudGVkGCkgASgLMhgub3Jrc3RhY2sudjEuQ29uc2VudFZpZXcSJwoHc2VjcmV0cxgqIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIsCgppZGVudGl0aWVzGCsgAygLMhgub3Jrc3RhY2sudjEuSWRlbnRpdHlSZWYSLwoLY3JlZGVudGlhbHMYLCADKAsyGi5vcmtzdGFjay52MS5DcmVkZW50aWFsUmVmEi4KA2VudhgtIAMoCzIhLm9ya3N0YWNrLnYxLkV2ZW50U291cmNlLkVudkVudHJ5EhgKEHNlcnZpY2VfcmV2aXNpb24YLiABKAMSGAoQanVkZ2luZ19yZXZpc2lvbhgvIAEoAxpACghNYXBFbnRyeRILCgNrZXkYASABKAkSIwoFdmFsdWUYAiABKAsyFC5vcmtzdGFjay52MS5NYXBSdWxlOgI4ARpKCg5BcnRpZmFjdHNFbnRyeRILCgNrZXkYASABKAkSJwoFdmFsdWUYAiABKA4yGC5vcmtzdGFjay52MS5NZXNzYWdlUGFydDoCOAEaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIRCg9fcmVqZWN0X2JyZWFrZXJKBAgHEAhKBAgIEAlKBAgJEApKBAgKEAtKBAgLEAxKBAgMEA1KBAgmECcixQEKCU1hdGNoUnVsZRIRCglhdHRyaWJ1dGUYASABKAkSDwoHcG9pbnRlchgCIAEoCRIoCgVmaWVsZBgDIAEoDjIZLm9ya3N0YWNrLnYxLk1lc3NhZ2VGaWVsZBImCgZlcXVhbHMYBCABKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWUSIgoCaW4YBSADKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWUSEwoGZXhpc3RzGAYgASgISACIAQFCCQoHX2V4aXN0cyJXCgdNYXBSdWxlEg8KB3BvaW50ZXIYASABKAkSEQoJYXR0cmlidXRlGAIgASgJEigKBWZpZWxkGAMgASgOMhkub3Jrc3RhY2sudjEuTWVzc2FnZUZpZWxkIqwBChBFdmVudFNvdXJjZVBhdXNlEiYKBWNhdXNlGAEgASgOMhcub3Jrc3RhY2sudjEuUGF1c2VDYXVzZRIMCgRjb2RlGAIgASgJEhQKDHJlZnVzYWxfY29kZRgDIAEoCRIOCgZyZWFzb24YBCABKAkSKQoFc2luY2UYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCXByaW5jaXBhbBgGIAEoCSKoAQoRRXZlbnRTb3VyY2VTdGF0dXMSLAoFc3RhdGUYASABKA4yHS5vcmtzdGFjay52MS5FdmVudFNvdXJjZVN0YXRlEg4KBnJlYXNvbhgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhAKCHdhcm5pbmdzGAQgAygJEiwKCGRlbGl2ZXJ5GBAgASgOMhoub3Jrc3RhY2sudjEuRGVsaXZlcnlDbGFzc0oECAUQECKCAgoPTWVzc2FnZU1ldGFkYXRhEgoKAmlkGAEgASgJEg8KB3N1YmplY3QYAiABKAkSMAoMcHVibGlzaGVkX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCRJACgphdHRyaWJ1dGVzGAUgAygLMiwub3Jrc3RhY2sudjEuTWVzc2FnZU1ldGFkYXRhLkF0dHJpYnV0ZXNFbnRyeRpPCg9BdHRyaWJ1dGVzRW50cnkSCwoDa2V5GAEgASgJEisKBXZhbHVlGAIgASgLMhwub3Jrc3RhY2sudjEuQXR0cmlidXRlVmFsdWVzOgI4ASIhCg9BdHRyaWJ1dGVWYWx1ZXMSDgoGdmFsdWVzGAEgAygJIk4KC01hdGNoUmVzdWx0Eg0KBWluZGV4GAEgASgFEhAKCHNlbGVjdG9yGAIgASgJEgwKBGhlbGQYAyABKAgSEAoIc2VsZWN0ZWQYBCABKAki9AEKEFNlcnZpY2VJbnRlcmZhY2USFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSDwoHcHJvZmlsZRgCIAEoCRI1CgR3aXRoGAMgAygLMicub3Jrc3RhY2sudjEuU2VydmljZUludGVyZmFjZS5XaXRoRW50cnkSOQoMZXZlbnRfc291cmNlGAQgASgLMiMub3Jrc3RhY2sudjEuRXZlbnRTb3VyY2VEZWNsYXJhdGlvbhpFCglXaXRoRW50cnkSCwoDa2V5GAEgASgJEicKBXZhbHVlGAIgASgLMhgub3Jrc3RhY2sudjEuRmllbGRTY2hlbWE6AjgBIssBChZFdmVudFNvdXJjZURlY2xhcmF0aW9uEiwKCGRlbGl2ZXJ5GAEgASgOMhoub3Jrc3RhY2sudjEuRGVsaXZlcnlDbGFzcxIXCg9tYXhfY29uY3VycmVuY3kYAiABKAUSEAoIb3JkZXJpbmcYAyABKAgSGAoLZGVhZF9sZXR0ZXIYBCABKAhIAIgBARIbCg5leHRlbmRzX2xlYXNlcxgFIAEoCEgBiAEBQg4KDF9kZWFkX2xldHRlckIRCg9fZXh0ZW5kc19sZWFzZXMivQEKC1NvdXJjZUltYWdlEgwKBG5hbWUYASABKAkSEQoJcmVmZXJlbmNlGAIgASgJEg0KBWltYWdlGAMgASgJEhkKEWNvbnRyYWN0X3ZlcnNpb25zGAQgAygFEhgKEHByb2ZpbGVfdmVyc2lvbnMYBSADKAUSMAoJaW50ZXJmYWNlGAYgASgLMh0ub3Jrc3RhY2sudjEuU2VydmljZUludGVyZmFjZRIXCg9pbnRlcmZhY2VfZXJyb3IYByABKAkqcgoNRGVsaXZlcnlDbGFzcxIeChpERUxJVkVSWV9DTEFTU19VTlNQRUNJRklFRBAAEiAKHERFTElWRVJZX0NMQVNTX0FUX0xFQVNUX09OQ0UQARIfChtERUxJVkVSWV9DTEFTU19BVF9NT1NUX09OQ0UQAipiCg1NZXNzYWdlRm9ybWF0Eh4KGk1FU1NBR0VfRk9STUFUX1VOU1BFQ0lGSUVEEAASGAoUTUVTU0FHRV9GT1JNQVRfQllURVMQARIXChNNRVNTQUdFX0ZPUk1BVF9KU09OEAIqXQoLTWVzc2FnZVBhcnQSHAoYTUVTU0FHRV9QQVJUX1VOU1BFQ0lGSUVEEAASFQoRTUVTU0FHRV9QQVJUX0JPRFkQARIZChVNRVNTQUdFX1BBUlRfTUVUQURBVEEQAiqXAQoMTWVzc2FnZUZpZWxkEh0KGU1FU1NBR0VfRklFTERfVU5TUEVDSUZJRUQQABIZChVNRVNTQUdFX0ZJRUxEX1NVQkpFQ1QQARIUChBNRVNTQUdFX0ZJRUxEX0lEEAISHgoaTUVTU0FHRV9GSUVMRF9QVUJMSVNIRURfQVQQAxIXChNNRVNTQUdFX0ZJRUxEX0dST1VQEAQqWwoKUGF1c2VDYXVzZRIbChdQQVVTRV9DQVVTRV9VTlNQRUNJRklFRBAAEhgKFFBBVVNFX0NBVVNFX09QRVJBVE9SEAESFgoSUEFVU0VfQ0FVU0VfRU5HSU5FEAIq2AIKEEV2ZW50U291cmNlU3RhdGUSIgoeRVZFTlRfU09VUkNFX1NUQVRFX1VOU1BFQ0lGSUVEEAASHQoZRVZFTlRfU09VUkNFX1NUQVRFX0FDVElWRRABEh8KG0VWRU5UX1NPVVJDRV9TVEFURV9TVEFSVElORxACEh4KGkVWRU5UX1NPVVJDRV9TVEFURV9XQUlUSU5HEAMSHQoZRVZFTlRfU09VUkNFX1NUQVRFX1BBVVNFRBAEEhsKF0VWRU5UX1NPVVJDRV9TVEFURV9IRUxEEAUSHgoaRVZFTlRfU09VUkNFX1NUQVRFX0lOVkFMSUQQBhIiCh5FVkVOVF9TT1VSQ0VfU1RBVEVfVU5SRUFDSEFCTEUQBxIfChtFVkVOVF9TT1VSQ0VfU1RBVEVfRElTQUJMRUQQCBIfChtFVkVOVF9TT1VSQ0VfU1RBVEVfREVMRVRJTkcQCUKsAQoPY29tLm9ya3N0YWNrLnYxQhBFdmVudFNvdXJjZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_activity_service, file_orkstack_v1_common, file_orkstack_v1_orkflow]);
+  fileDesc("Ch5vcmtzdGFjay92MS9ldmVudF9zb3VyY2UucHJvdG8SC29ya3N0YWNrLnYxIskLCgtFdmVudFNvdXJjZRIKCgJpZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSDAoEbmFtZRgDIAEoCRIUCgxvcmtmbG93X25hbWUYBCABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAUgASgJEhMKC2Rlc2NyaXB0aW9uGAYgASgJEgwKBHVzZXMYDSABKAkSDQoFaW1hZ2UYDiABKAkSJQoEd2l0aBgPIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDAoEcG9vbBgQIAEoCRIRCglpbnN0YW5jZXMYESABKAUSLwoJcmVzb3VyY2VzGBIgASgLMhwub3Jrc3RhY2sudjEuUmVzb3VyY2VSZXF1ZXN0EiwKCGRlbGl2ZXJ5GBMgASgOMhoub3Jrc3RhY2sudjEuRGVsaXZlcnlDbGFzcxITCgtjb25jdXJyZW5jeRgUIAEoBRIqCgZmb3JtYXQYFSABKA4yGi5vcmtzdGFjay52MS5NZXNzYWdlRm9ybWF0EhEKCW1heF9ieXRlcxgWIAEoAxIlCgVtYXRjaBgXIAMoCzIWLm9ya3N0YWNrLnYxLk1hdGNoUnVsZRIjCgVpbnB1dBgYIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSLgoDbWFwGBkgAygLMiEub3Jrc3RhY2sudjEuRXZlbnRTb3VyY2UuTWFwRW50cnkSOgoJYXJ0aWZhY3RzGBogAygLMicub3Jrc3RhY2sudjEuRXZlbnRTb3VyY2UuQXJ0aWZhY3RzRW50cnkSDAoEcmF0ZRgbIAEoBRIbCg5yZWplY3RfYnJlYWtlchgcIAEoBUgAiAEBEg4KBnBhdXNlZBgdIAEoCBIsCgVwYXVzZRgeIAEoCzIdLm9ya3N0YWNrLnYxLkV2ZW50U291cmNlUGF1c2USLgoKY3JlYXRlZF9hdBgfIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBggIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxghIAEoCRISCgpjcmVhdGVkX2J5GCIgASgJEhIKCnVwZGF0ZWRfYnkYIyABKAkSEAoIYm91bmRfYnkYJCABKAkSGQoRYm91bmRfYnlfdmVyaWZpZWQYJSABKAgSFQoNY29uc2VudF9zdGFsZRgnIAEoCBImCghhc2tzX2ZvchgoIAEoCzIULm9ya3N0YWNrLnYxLkFza3NGb3ISKwoJY29uc2VudGVkGCkgASgLMhgub3Jrc3RhY2sudjEuQ29uc2VudFZpZXcSJwoHc2VjcmV0cxgqIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIsCgppZGVudGl0aWVzGCsgAygLMhgub3Jrc3RhY2sudjEuSWRlbnRpdHlSZWYSLwoLY3JlZGVudGlhbHMYLCADKAsyGi5vcmtzdGFjay52MS5DcmVkZW50aWFsUmVmEi4KA2VudhgtIAMoCzIhLm9ya3N0YWNrLnYxLkV2ZW50U291cmNlLkVudkVudHJ5EhgKEHNlcnZpY2VfcmV2aXNpb24YLiABKAMSGAoQanVkZ2luZ19yZXZpc2lvbhgvIAEoAxpACghNYXBFbnRyeRILCgNrZXkYASABKAkSIwoFdmFsdWUYAiABKAsyFC5vcmtzdGFjay52MS5NYXBSdWxlOgI4ARpKCg5BcnRpZmFjdHNFbnRyeRILCgNrZXkYASABKAkSJwoFdmFsdWUYAiABKA4yGC5vcmtzdGFjay52MS5NZXNzYWdlUGFydDoCOAEaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIRCg9fcmVqZWN0X2JyZWFrZXJKBAgHEAhKBAgIEAlKBAgJEApKBAgKEAtKBAgLEAxKBAgMEA1KBAgmECcixQEKCU1hdGNoUnVsZRIRCglhdHRyaWJ1dGUYASABKAkSDwoHcG9pbnRlchgCIAEoCRIoCgVmaWVsZBgDIAEoDjIZLm9ya3N0YWNrLnYxLk1lc3NhZ2VGaWVsZBImCgZlcXVhbHMYBCABKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWUSIgoCaW4YBSADKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWUSEwoGZXhpc3RzGAYgASgISACIAQFCCQoHX2V4aXN0cyJXCgdNYXBSdWxlEg8KB3BvaW50ZXIYASABKAkSEQoJYXR0cmlidXRlGAIgASgJEigKBWZpZWxkGAMgASgOMhkub3Jrc3RhY2sudjEuTWVzc2FnZUZpZWxkIqwBChBFdmVudFNvdXJjZVBhdXNlEiYKBWNhdXNlGAEgASgOMhcub3Jrc3RhY2sudjEuUGF1c2VDYXVzZRIMCgRjb2RlGAIgASgJEhQKDHJlZnVzYWxfY29kZRgDIAEoCRIOCgZyZWFzb24YBCABKAkSKQoFc2luY2UYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCXByaW5jaXBhbBgGIAEoCSKoAQoRRXZlbnRTb3VyY2VTdGF0dXMSLAoFc3RhdGUYASABKA4yHS5vcmtzdGFjay52MS5FdmVudFNvdXJjZVN0YXRlEg4KBnJlYXNvbhgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhAKCHdhcm5pbmdzGAQgAygJEiwKCGRlbGl2ZXJ5GBAgASgOMhoub3Jrc3RhY2sudjEuRGVsaXZlcnlDbGFzc0oECAUQECKCAgoPTWVzc2FnZU1ldGFkYXRhEgoKAmlkGAEgASgJEg8KB3N1YmplY3QYAiABKAkSMAoMcHVibGlzaGVkX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCRJACgphdHRyaWJ1dGVzGAUgAygLMiwub3Jrc3RhY2sudjEuTWVzc2FnZU1ldGFkYXRhLkF0dHJpYnV0ZXNFbnRyeRpPCg9BdHRyaWJ1dGVzRW50cnkSCwoDa2V5GAEgASgJEisKBXZhbHVlGAIgASgLMhwub3Jrc3RhY2sudjEuQXR0cmlidXRlVmFsdWVzOgI4ASIhCg9BdHRyaWJ1dGVWYWx1ZXMSDgoGdmFsdWVzGAEgAygJIk4KC01hdGNoUmVzdWx0Eg0KBWluZGV4GAEgASgFEhAKCHNlbGVjdG9yGAIgASgJEgwKBGhlbGQYAyABKAgSEAoIc2VsZWN0ZWQYBCABKAki9AEKEFNlcnZpY2VJbnRlcmZhY2USFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSDwoHcHJvZmlsZRgCIAEoCRI1CgR3aXRoGAMgAygLMicub3Jrc3RhY2sudjEuU2VydmljZUludGVyZmFjZS5XaXRoRW50cnkSOQoMZXZlbnRfc291cmNlGAQgASgLMiMub3Jrc3RhY2sudjEuRXZlbnRTb3VyY2VEZWNsYXJhdGlvbhpFCglXaXRoRW50cnkSCwoDa2V5GAEgASgJEicKBXZhbHVlGAIgASgLMhgub3Jrc3RhY2sudjEuRmllbGRTY2hlbWE6AjgBIssBChZFdmVudFNvdXJjZURlY2xhcmF0aW9uEiwKCGRlbGl2ZXJ5GAEgASgOMhoub3Jrc3RhY2sudjEuRGVsaXZlcnlDbGFzcxIXCg9tYXhfY29uY3VycmVuY3kYAiABKAUSEAoIb3JkZXJpbmcYAyABKAgSGAoLZGVhZF9sZXR0ZXIYBCABKAhIAIgBARIbCg5leHRlbmRzX2xlYXNlcxgFIAEoCEgBiAEBQg4KDF9kZWFkX2xldHRlckIRCg9fZXh0ZW5kc19sZWFzZXMivQEKC1NvdXJjZUltYWdlEgwKBG5hbWUYASABKAkSEQoJcmVmZXJlbmNlGAIgASgJEg0KBWltYWdlGAMgASgJEhkKEWNvbnRyYWN0X3ZlcnNpb25zGAQgAygFEhgKEHByb2ZpbGVfdmVyc2lvbnMYBSADKAUSMAoJaW50ZXJmYWNlGAYgASgLMh0ub3Jrc3RhY2sudjEuU2VydmljZUludGVyZmFjZRIXCg9pbnRlcmZhY2VfZXJyb3IYByABKAkijgUKB1JlY2VpcHQSCgoCaWQYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhcKD2V2ZW50X3NvdXJjZV9pZBgDIAEoCRIZChFldmVudF9zb3VyY2VfbmFtZRgEIAEoCRIQCghwcm92aWRlchgFIAEoCRISCgptZXNzYWdlX2lkGAYgASgJEhYKDmRlbGl2ZXJ5X2NvdW50GAcgASgFEhYKDm1heF9kZWxpdmVyaWVzGAggASgFEhMKC2JvZHlfc2hhMjU2GAkgASgJEhIKCmJvZHlfYnl0ZXMYCiABKAMSLAoHb3V0Y29tZRgLIAEoDjIbLm9ya3N0YWNrLnYxLlJlY2VpcHRPdXRjb21lEg4KBnJlYXNvbhgMIAEoCRIPCgdtZXNzYWdlGA0gASgJEg4KBnJ1bl9pZBgOIAEoCRIvCgtyZWNlaXZlZF9hdBgPIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKZGVjaWRlZF9hdBgQIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMAoGYnJva2VyGBEgAygLMiAub3Jrc3RhY2sudjEuUmVjZWlwdC5Ccm9rZXJFbnRyeRINCgVjYXVzZRgSIAEoCRI0ChBsaW1pdF9jaGVja2VkX2F0GBMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgpzdXBlcnNlZGVkGBQgASgIEhAKCGluc3RhbmNlGBUgASgFEhAKCG9ya2VyX2lkGBYgASgJEhMKC3JldGlyZWRfcnVuGBcgASgIGi0KC0Jyb2tlckVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEqcgoNRGVsaXZlcnlDbGFzcxIeChpERUxJVkVSWV9DTEFTU19VTlNQRUNJRklFRBAAEiAKHERFTElWRVJZX0NMQVNTX0FUX0xFQVNUX09OQ0UQARIfChtERUxJVkVSWV9DTEFTU19BVF9NT1NUX09OQ0UQAipiCg1NZXNzYWdlRm9ybWF0Eh4KGk1FU1NBR0VfRk9STUFUX1VOU1BFQ0lGSUVEEAASGAoUTUVTU0FHRV9GT1JNQVRfQllURVMQARIXChNNRVNTQUdFX0ZPUk1BVF9KU09OEAIqXQoLTWVzc2FnZVBhcnQSHAoYTUVTU0FHRV9QQVJUX1VOU1BFQ0lGSUVEEAASFQoRTUVTU0FHRV9QQVJUX0JPRFkQARIZChVNRVNTQUdFX1BBUlRfTUVUQURBVEEQAiqXAQoMTWVzc2FnZUZpZWxkEh0KGU1FU1NBR0VfRklFTERfVU5TUEVDSUZJRUQQABIZChVNRVNTQUdFX0ZJRUxEX1NVQkpFQ1QQARIUChBNRVNTQUdFX0ZJRUxEX0lEEAISHgoaTUVTU0FHRV9GSUVMRF9QVUJMSVNIRURfQVQQAxIXChNNRVNTQUdFX0ZJRUxEX0dST1VQEAQqWwoKUGF1c2VDYXVzZRIbChdQQVVTRV9DQVVTRV9VTlNQRUNJRklFRBAAEhgKFFBBVVNFX0NBVVNFX09QRVJBVE9SEAESFgoSUEFVU0VfQ0FVU0VfRU5HSU5FEAIq2AIKEEV2ZW50U291cmNlU3RhdGUSIgoeRVZFTlRfU09VUkNFX1NUQVRFX1VOU1BFQ0lGSUVEEAASHQoZRVZFTlRfU09VUkNFX1NUQVRFX0FDVElWRRABEh8KG0VWRU5UX1NPVVJDRV9TVEFURV9TVEFSVElORxACEh4KGkVWRU5UX1NPVVJDRV9TVEFURV9XQUlUSU5HEAMSHQoZRVZFTlRfU09VUkNFX1NUQVRFX1BBVVNFRBAEEhsKF0VWRU5UX1NPVVJDRV9TVEFURV9IRUxEEAUSHgoaRVZFTlRfU09VUkNFX1NUQVRFX0lOVkFMSUQQBhIiCh5FVkVOVF9TT1VSQ0VfU1RBVEVfVU5SRUFDSEFCTEUQBxIfChtFVkVOVF9TT1VSQ0VfU1RBVEVfRElTQUJMRUQQCBIfChtFVkVOVF9TT1VSQ0VfU1RBVEVfREVMRVRJTkcQCSqIAgoOUmVjZWlwdE91dGNvbWUSHwobUkVDRUlQVF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHAoYUkVDRUlQVF9PVVRDT01FX0FDQ0VQVEVEEAESHQoZUkVDRUlQVF9PVVRDT01FX0RVUExJQ0FURRACEhwKGFJFQ0VJUFRfT1VUQ09NRV9GSUxURVJFRBADEhwKGFJFQ0VJUFRfT1VUQ09NRV9SRUpFQ1RFRBAEEhwKGFJFQ0VJUFRfT1VUQ09NRV9SRUxFQVNFRBAFEiEKHVJFQ0VJUFRfT1VUQ09NRV9ERUFEX0xFVFRFUkVEEAYSGwoXUkVDRUlQVF9PVVRDT01FX0RST1BQRUQQB0KsAQoPY29tLm9ya3N0YWNrLnYxQhBFdmVudFNvdXJjZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_activity_service, file_orkstack_v1_common, file_orkstack_v1_orkflow]);
 
 /**
  * EventSource is a namespace's object that binds one Orkflow to one source
@@ -825,6 +825,177 @@ export const SourceImageSchema: GenMessage<SourceImage> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_event_source, 10);
 
 /**
+ * Receipt is the record of one settled message delivery, written by the
+ * Orker that held it, before its verdict. A record, never read for a
+ * decision; it never holds a body, an attribute value, a credential or a
+ * broker's error text.
+ *
+ * @generated from message orkstack.v1.Receipt
+ */
+export type Receipt = Message<"orkstack.v1.Receipt"> & {
+  /**
+   * id is rcp- and the receipt's stamp.
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: string event_source_id = 3;
+   */
+  eventSourceId: string;
+
+  /**
+   * @generated from field: string event_source_name = 4;
+   */
+  eventSourceName: string;
+
+  /**
+   * provider is the source image's broker kind, as its status reported it.
+   *
+   * @generated from field: string provider = 5;
+   */
+  provider: string;
+
+  /**
+   * message_id is the message's identity.
+   *
+   * @generated from field: string message_id = 6;
+   */
+  messageId: string;
+
+  /**
+   * delivery_count is the delivery's number at the broker.
+   *
+   * @generated from field: int32 delivery_count = 7;
+   */
+  deliveryCount: number;
+
+  /**
+   * max_deliveries is the broker's delivery limit the count was compared
+   * with.
+   *
+   * @generated from field: int32 max_deliveries = 8;
+   */
+  maxDeliveries: number;
+
+  /**
+   * @generated from field: string body_sha256 = 9;
+   */
+  bodySha256: string;
+
+  /**
+   * @generated from field: int64 body_bytes = 10;
+   */
+  bodyBytes: bigint;
+
+  /**
+   * @generated from field: orkstack.v1.ReceiptOutcome outcome = 11;
+   */
+  outcome: ReceiptOutcome;
+
+  /**
+   * reason is the outcome's reason code.
+   *
+   * @generated from field: string reason = 12;
+   */
+  reason: string;
+
+  /**
+   * message is the reason's one fixed sentence; never variable text.
+   *
+   * @generated from field: string message = 13;
+   */
+  message: string;
+
+  /**
+   * run_id is the message's run, for ACCEPTED and DUPLICATE.
+   *
+   * @generated from field: string run_id = 14;
+   */
+  runId: string;
+
+  /**
+   * received_at is when the Orker took the message from its container.
+   *
+   * @generated from field: google.protobuf.Timestamp received_at = 15;
+   */
+  receivedAt?: Timestamp | undefined;
+
+  /**
+   * decided_at is when the outcome was decided.
+   *
+   * @generated from field: google.protobuf.Timestamp decided_at = 16;
+   */
+  decidedAt?: Timestamp | undefined;
+
+  /**
+   * broker holds at most 16 short facts the image reported (a stream and
+   * sequence, the SQS ids).
+   *
+   * @generated from field: map<string, string> broker = 17;
+   */
+  broker: { [key: string]: string };
+
+  /**
+   * cause is, for RELEASED, DROPPED and DEAD_LETTERED, the reason the
+   * delivery was refused or waiting for.
+   *
+   * @generated from field: string cause = 18;
+   */
+  cause: string;
+
+  /**
+   * limit_checked_at is when max_deliveries was read from the broker.
+   *
+   * @generated from field: google.protobuf.Timestamp limit_checked_at = 19;
+   */
+  limitCheckedAt?: Timestamp | undefined;
+
+  /**
+   * superseded is output only: a DEAD_LETTERED receipt followed by an
+   * ACCEPTED or DUPLICATE receipt of the same message.
+   *
+   * @generated from field: bool superseded = 20;
+   */
+  superseded: boolean;
+
+  /**
+   * instance is the instance's index that held the delivery.
+   *
+   * @generated from field: int32 instance = 21;
+   */
+  instance: number;
+
+  /**
+   * orker_id is the Orker that settled it.
+   *
+   * @generated from field: string orker_id = 22;
+   */
+  orkerId: string;
+
+  /**
+   * retired_run: a DUPLICATE answered from the started marker of a run that
+   * has since been retired.
+   *
+   * @generated from field: bool retired_run = 23;
+   */
+  retiredRun: boolean;
+};
+
+/**
+ * Describes the message orkstack.v1.Receipt.
+ * Use `create(ReceiptSchema)` to create a new message.
+ */
+export const ReceiptSchema: GenMessage<Receipt> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_event_source, 11);
+
+/**
  * DeliveryClass is what a source's image promises about a message that
  * starts no run.
  *
@@ -1053,4 +1224,60 @@ export enum EventSourceState {
  */
 export const EventSourceStateSchema: GenEnum<EventSourceState> = /*@__PURE__*/
   enumDesc(file_orkstack_v1_event_source, 5);
+
+/**
+ * ReceiptOutcome is what was decided about one message delivery.
+ *
+ * @generated from enum orkstack.v1.ReceiptOutcome
+ */
+export enum ReceiptOutcome {
+  /**
+   * @generated from enum value: RECEIPT_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: RECEIPT_OUTCOME_ACCEPTED = 1;
+   */
+  ACCEPTED = 1,
+
+  /**
+   * @generated from enum value: RECEIPT_OUTCOME_DUPLICATE = 2;
+   */
+  DUPLICATE = 2,
+
+  /**
+   * @generated from enum value: RECEIPT_OUTCOME_FILTERED = 3;
+   */
+  FILTERED = 3,
+
+  /**
+   * @generated from enum value: RECEIPT_OUTCOME_REJECTED = 4;
+   */
+  REJECTED = 4,
+
+  /**
+   * @generated from enum value: RECEIPT_OUTCOME_RELEASED = 5;
+   */
+  RELEASED = 5,
+
+  /**
+   * @generated from enum value: RECEIPT_OUTCOME_DEAD_LETTERED = 6;
+   */
+  DEAD_LETTERED = 6,
+
+  /**
+   * DROPPED is a message an at-most-once source had in hand and could not
+   * accept: it is gone.
+   *
+   * @generated from enum value: RECEIPT_OUTCOME_DROPPED = 7;
+   */
+  DROPPED = 7,
+}
+
+/**
+ * Describes the enum orkstack.v1.ReceiptOutcome.
+ */
+export const ReceiptOutcomeSchema: GenEnum<ReceiptOutcome> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_event_source, 6);
 

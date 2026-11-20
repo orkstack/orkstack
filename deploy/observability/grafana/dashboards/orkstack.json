@@ -1,7 +1,7 @@
 {
   "uid": "orkstack",
   "title": "OrkStack",
-  "description": "The whole deployment: runs, Orkers and pools, the cache, the engine and its dependencies, and the artifact GC.",
+  "description": "The whole deployment: runs, Orkers and pools, the cache, schedules, webhooks, HTTP triggers, concurrency limits, the engine and its dependencies, and retention cleanup with the artifact GC.",
   "tags": [
     "orkstack"
   ],
@@ -1299,6 +1299,265 @@
             },
             "overrides": []
           }
+        },
+        {
+          "type": "heatmap",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "exemplar": true,
+              "expr": "sum by (le) (increase(ork_run_duration_seconds_bucket{ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__interval]))",
+              "format": "heatmap",
+              "instant": false,
+              "legendFormat": "{{le}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Run duration distribution",
+          "description": "How long runs took, bucket by bucket; an exemplar opens the trace of one run of that length.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 4,
+            "y": 37
+          },
+          "repeatDirection": "h",
+          "options": {
+            "calculate": false,
+            "color": {
+              "scheme": "Oranges",
+              "fill": "dark-orange",
+              "exponent": 0.5,
+              "steps": 64,
+              "reverse": false
+            },
+            "filterValues": {
+              "le": 1e-9
+            },
+            "showValue": "auto",
+            "cellGap": 1,
+            "yAxis": {
+              "unit": "s"
+            },
+            "legend": {
+              "show": true
+            },
+            "tooltip": {
+              "mode": ""
+            },
+            "exemplars": {
+              "color": "#E39967"
+            },
+            "selectionMode": "x"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_deployment, ork_failure_reason) (((ork_deployment_orker_tasks_total{ork_failure_reason=~\"INPUT_ARTIFACT_CORRUPT|VALUES_CORRUPT|COMMIT_IDENTITY_MISMATCH|COMMIT_UNDECODABLE|COMMIT_STORE_NOT_CONDITIONAL|PANIC\"} - last_over_time(ork_deployment_orker_tasks_total{ork_failure_reason=~\"INPUT_ARTIFACT_CORRUPT|VALUES_CORRUPT|COMMIT_IDENTITY_MISMATCH|COMMIT_UNDECODABLE|COMMIT_STORE_NOT_CONDITIONAL|PANIC\"}[1d] offset $__rate_interval)) > 0) or ((ork_deployment_orker_tasks_total{ork_failure_reason=~\"INPUT_ARTIFACT_CORRUPT|VALUES_CORRUPT|COMMIT_IDENTITY_MISMATCH|COMMIT_UNDECODABLE|COMMIT_STORE_NOT_CONDITIONAL|PANIC\"} unless last_over_time(ork_deployment_orker_tasks_total{ork_failure_reason=~\"INPUT_ARTIFACT_CORRUPT|VALUES_CORRUPT|COMMIT_IDENTITY_MISMATCH|COMMIT_UNDECODABLE|COMMIT_STORE_NOT_CONDITIONAL|PANIC\"}[1d] offset $__rate_interval)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset $__rate_interval)) > 0))) > 0 or vector(0)",
+              "instant": false,
+              "legendFormat": "{{ork_failure_reason}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Integrity failures",
+          "description": "Attempts that found stored data not what was written, by reason, across every namespace, the first of a reason included. Never a workload's fault: shown even at zero.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 16,
+            "y": 37
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, ork_pool) (rate(ork_task_attempts_bucket{ork_namespace=~\"$namespace\",ork_pool=~\"$pool\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{ork_pool}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Attempts a task took, p95",
+          "description": "The attempt number tasks finished on, at the 95th percentile, by pool.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 45
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "topk(10, max by (ork_namespace, ork_task_id) (max_over_time({service_name=~\".*orker\"} | ork_record=\"usage\" | ork_usage_kind=\"summary\" | ork_namespace=~\"$namespace\" | unwrap ork_attempt [$__interval])))",
+              "legendFormat": "{{ork_namespace}} {{ork_task_id}}",
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "${loki}"
+              }
+            }
+          ],
+          "title": "Most-retried tasks",
+          "description": "The ten tasks whose attempts reached the highest attempt number, from the Orkers' usage summaries.",
+          "transparent": false,
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 45
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "topk(10, sum by (ork_namespace, ork_task_id) (sum_over_time({service_name=~\".*orker\"} | ork_record=\"usage\" | ork_usage_kind=\"summary\" | ork_namespace=~\"$namespace\" | unwrap ork_usage_cpu_seconds [$__interval])))",
+              "legendFormat": "{{ork_namespace}} {{ork_task_id}}",
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "${loki}"
+              }
+            }
+          ],
+          "title": "Tasks that used the most CPU",
+          "description": "The ten tasks whose attempts used the most CPU seconds, from the Orkers' usage summaries.",
+          "transparent": false,
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 53
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
         }
       ]
     },
@@ -1310,7 +1569,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 61
       },
       "id": 0,
       "panels": [
@@ -1362,7 +1621,7 @@
             "h": 8,
             "w": 24,
             "x": 0,
-            "y": 42
+            "y": 62
           },
           "repeatDirection": "h",
           "options": {
@@ -1411,7 +1670,105 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 50
+            "y": 70
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_pool, ork_release) (ork_pool_release_backlog_tasks{ork_pool=~\"$pool\"})",
+              "instant": false,
+              "legendFormat": "{{ork_pool}} {{ork_release}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Tasks waiting, by release",
+          "description": "With versioning on, each pool's waiting tasks by the release they wait for; unversioned is what the total holds beyond them, so together they come to the pool's total, approximately. Tasks of a release that never clear while the pool polls belong to a release whose Orkers stopped: a stranded release, not demand.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 70
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_pool, ork_release) (ork_pool_release_backlog_age_seconds{ork_pool=~\"$pool\"})",
+              "instant": false,
+              "legendFormat": "{{ork_pool}} {{ork_release}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Oldest waiting task, by release",
+          "description": "With versioning on, how long each release's longest-waiting task of each pool has waited; unversioned tasks have no age of their own. One that grows while the others clear is a stranded release.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 78
           },
           "repeatDirection": "h",
           "options": {
@@ -1471,7 +1828,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 50
+            "y": 78
           },
           "repeatDirection": "h",
           "options": {
@@ -1531,7 +1888,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 58
+            "y": 86
           },
           "repeatDirection": "h",
           "options": {
@@ -1580,7 +1937,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 58
+            "y": 86
           },
           "repeatDirection": "h",
           "options": {
@@ -1629,7 +1986,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 66
+            "y": 94
           },
           "repeatDirection": "h",
           "options": {
@@ -1660,26 +2017,15 @@
                 "type": "prometheus",
                 "uid": "${prom}"
               },
-              "expr": "topk(20, sum by (ork_orker_id) (ork_orker_capacity_reserved_cpu))",
+              "expr": "topk(20, max by (ork_orker_id) (ork_orker_capacity_reserved_cpu / (ork_orker_capacity_cpu > 0)))",
               "instant": false,
-              "legendFormat": "{{ork_orker_id}} reserved",
+              "legendFormat": "{{ork_orker_id}}",
               "range": true,
               "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${prom}"
-              },
-              "expr": "topk(20, sum by (ork_orker_id) (ork_orker_capacity_cpu))",
-              "instant": false,
-              "legendFormat": "{{ork_orker_id}} capacity",
-              "range": true,
-              "refId": "B"
             }
           ],
-          "title": "CPU reserved against capacity",
-          "description": "Per Orker that declares a capacity, the cpu it admits tasks within and what stands reserved; the 20 most reserved.",
+          "title": "CPU reserved, share of capacity",
+          "description": "Per Orker that declares a capacity, the share of the cpu it admits tasks within that stands reserved; the 20 most reserved.",
           "transparent": false,
           "datasource": {
             "type": "prometheus",
@@ -1689,7 +2035,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 66
+            "y": 94
           },
           "repeatDirection": "h",
           "options": {
@@ -1706,7 +2052,7 @@
           },
           "fieldConfig": {
             "defaults": {
-              "unit": "short",
+              "unit": "percentunit",
               "custom": {}
             },
             "overrides": []
@@ -1738,7 +2084,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 74
+            "y": 102
           },
           "repeatDirection": "h",
           "options": {
@@ -1760,6 +2106,802 @@
             },
             "overrides": []
           }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(ork_orker_containers_cpu)",
+              "instant": false,
+              "legendFormat": "all Orkers",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_orker_containers_cpu)",
+              "instant": false,
+              "legendFormat": "busiest Orker",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Live CPU of running tasks",
+          "description": "The CPU cores running attempts' containers use now: across every Orker, and on the busiest one.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 102
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(ork_orker_containers_memory_bytes)",
+              "instant": false,
+              "legendFormat": "all Orkers",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_orker_containers_memory_bytes)",
+              "instant": false,
+              "legendFormat": "largest Orker",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(ork_orker_containers_measured)",
+              "instant": false,
+              "legendFormat": "containers measured",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Live memory of running tasks",
+          "description": "The memory running attempts' containers use now, across every Orker and on the largest one, and how many containers were measured.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 110
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "topk(20, max by (ork_orker_id) (ork_orker_capacity_reserved_memory_bytes / (ork_orker_capacity_memory_bytes > 0)))",
+              "instant": false,
+              "legendFormat": "{{ork_orker_id}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Memory reserved, share of capacity",
+          "description": "Per Orker that declares a capacity, the share of the memory it admits tasks within that stands reserved; the 20 most reserved.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 110
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "bottomk(10, max by (ork_namespace, ork_task_id) (max_over_time({service_name=~\".*orker\"} | ork_record=\"usage\" | ork_usage_kind=\"summary\" | ork_namespace=~\"$namespace\" | ork_usage_memory_peak_exact=\"true\" | unwrap ork_usage_memory_peak_bytes [$__interval])) / max by (ork_namespace, ork_task_id) (max_over_time({service_name=~\".*orker\"} | ork_record=\"usage\" | ork_usage_kind=\"summary\" | ork_namespace=~\"$namespace\" | unwrap ork_reserved_memory_bytes [$__interval])))",
+              "legendFormat": "{{ork_namespace}} {{ork_task_id}}",
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "${loki}"
+              }
+            }
+          ],
+          "title": "Most over-reserved tasks",
+          "description": "The ten tasks whose attempts' peak memory was the smallest share of what they reserved: lower their request.",
+          "transparent": false,
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 118
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "clamp_min(count by (ork_pool) (ork_orker_present{ork_pool=~\"$pool\"}) - (max by (ork_pool) (ork_pool_pollers{ork_pool=~\"$pool\"}) or count by (ork_pool) (ork_orker_present{ork_pool=~\"$pool\"}) * 0), 0)",
+              "instant": false,
+              "legendFormat": "{{ork_pool}} not polling",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_pool) (ork_orker_cordoned{ork_pool=~\"$pool\"})",
+              "instant": false,
+              "legendFormat": "{{ork_pool}} cordoned",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Why nobody polls",
+          "description": "Per pool: Orkers exporting metrics that are not asking for work, beside those cordoned. A busy Orker asks for none either: see slots in use.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 118
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_pool) (ork_orker_running_tasks{ork_pool=~\"$pool\"}) / (sum by (ork_pool) (ork_orker_max_concurrent{ork_pool=~\"$pool\"}) > 0)",
+              "instant": false,
+              "legendFormat": "{{ork_pool}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Slots in use, by pool",
+          "description": "The share of each pool's slots its running tasks fill; at 1 its Orkers ask for no new work.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 126
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "count(count by (ork_pool) (ork_orker_present{ork_pool=~\"$pool\"}) unless on (ork_pool) max by (ork_pool) (ork_pool_backlog_tasks)) or vector(0)",
+              "instant": false,
+              "legendFormat": "pools",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Pools whose backlog is not measured",
+          "description": "Pools with Orkers but no backlog reading: name them in engine.pool_metrics.pools.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 126
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, ork_admission_bound) (rate(ork_orker_admission_wait_duration_seconds_bucket[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{ork_admission_bound}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_orker_admission_refusals_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "refused per second",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Admission wait, p95",
+          "description": "How long an Orker's poll waited for room before it was granted, at the 95th percentile, by what bound it, and attempts refused for a request no Orker admits.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 134
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, ork_phase) (rate(ork_orker_task_phase_duration_seconds_bucket{ork_pool=~\"$pool\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{ork_phase}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Attempt phases, p95",
+          "description": "How long each phase of an attempt took on the Orkers, at the 95th percentile.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 12,
+            "y": 134
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_orker_task_log_records_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "records {{outcome}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_orker_task_log_exports_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "batches {{outcome}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Task log export",
+          "description": "Task log records the Orkers exported, by outcome, and export batches by outcome.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 142
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_orker_attempt_records_total{ork_pool=~\"$pool\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Attempt records",
+          "description": "Attempt records the Orkers wrote, by outcome; one not written leaves an attempt without its record.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 142
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_orker_workspace_cleanup_failures_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "workspace not removed",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (reason) (rate(ork_orker_stop_watch_failures_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "end not watched: {{reason}}",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_orker_task_usage_unmeasured_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "usage unmeasured",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_orker_usage_sampler_failures_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "sampler failed",
+              "range": true,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_orker_task_oom_kills_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "stopped at the memory limit",
+              "range": true,
+              "refId": "E"
+            }
+          ],
+          "title": "Left behind or unmeasured",
+          "description": "Attempts whose workspace could not be removed, whose container's end could not be watched, whose usage could not be measured or sampled, and those stopped at their memory limit.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 150
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_transition) (rate(ork_orker_store_outage_transitions_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_transition}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Object store outages",
+          "description": "Orkers entering and leaving their store-outage cordon.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 150
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "table",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "count by (job, ork_build_id) (ork_build_info)",
+              "instant": true,
+              "legendFormat": "{{job}} {{ork_build_id}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Builds running",
+          "description": "Each build of ork and orker exporting metrics now, and how many processes run it.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 158
+          },
+          "repeatDirection": "h",
+          "options": {
+            "frameIndex": 0,
+            "showHeader": true,
+            "showTypeIcons": false,
+            "footer": {
+              "show": false,
+              "reducer": null,
+              "countRows": false
+            },
+            "cellHeight": "sm"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "align": "auto",
+                "inspect": false
+              }
+            },
+            "overrides": []
+          }
         }
       ]
     },
@@ -1771,7 +2913,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 82
+        "y": 166
       },
       "id": 0,
       "panels": [
@@ -1801,7 +2943,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 83
+            "y": 167
           },
           "repeatDirection": "h",
           "options": {
@@ -1850,7 +2992,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 83
+            "y": 167
           },
           "repeatDirection": "h",
           "options": {
@@ -1899,7 +3041,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 91
+            "y": 175
           },
           "repeatDirection": "h",
           "options": {
@@ -1948,7 +3090,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 91
+            "y": 175
           },
           "repeatDirection": "h",
           "options": {
@@ -1970,6 +3112,1920 @@
             },
             "overrides": []
           }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_orkflow_name, ork_cache_outcome) (rate(ork_tasks_total{ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\",ork_cache_outcome!=\"\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_orkflow_name}} {{ork_cache_outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Cached tasks by Orkflow and outcome",
+          "description": "Tasks of cached steps that finished, per second, by Orkflow and memo outcome.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 183
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_pool) (rate(ork_orker_memo_reused_total{ork_pool=~\"$pool\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_pool}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Results reused",
+          "description": "Memo hits that reused a result and started no container, per second, by pool.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 183
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_orker_task_phase_duration_seconds_bucket{ork_phase=\"memo\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "p95",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "vector(30)",
+              "instant": false,
+              "legendFormat": "timeout",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Memo step duration against its timeout",
+          "description": "The memo step's 95th percentile beside its 30-second timeout, after which it is a miss.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 191
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        10,
+                        10
+                      ],
+                      "fill": "dash"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "title": "Are schedules firing on time?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 199
+      },
+      "id": 0,
+      "panels": [
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome, ork_refusal_reason) (rate(ork_schedule_fires_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}} {{ork_refusal_reason}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Fires by outcome",
+          "description": "Schedule fires the engines prepared, by outcome and, for a refused one, why. An unavailable fire is tried again.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 200
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "topk(10, sum by (ork_namespace, ork_schedule) (increase(ork_schedule_fires_total{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_schedule}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Busiest schedules",
+          "description": "The ten schedules that fired most over the panel's interval. A schedule is named only while telemetry.object_labels is on.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 200
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_schedule_fire_lag_seconds_bucket{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "p95",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Fire lag, p95",
+          "description": "How long after its nominal time a fire was prepared, at the 95th percentile. A backfill is as late as the time it stands in for.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 208
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_schedule_skip_reason) (rate(ork_schedule_actions_skipped_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_schedule_skip_reason}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Actions the cluster skipped",
+          "description": "Schedule actions the cluster did not take, by why: an overlap policy, a missed catch-up window, or a full buffer.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 208
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (action) (rate(ork_schedule_requests_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{action}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Requests by action",
+          "description": "Schedule requests that succeeded, by action: what people changed, and fires and backfills asked by hand.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 216
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (state) (max by (ork_namespace, state) (ork_schedules{ork_namespace=~\"$namespace\"}))",
+              "instant": false,
+              "legendFormat": "{{state}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Schedules by state",
+          "description": "Schedules active and paused.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 216
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "count(max by (ork_namespace, ork_schedule) (ork_schedule_next_fire_seconds{ork_namespace=~\"$namespace\"}) < time() - 600) or vector(0)",
+              "instant": true,
+              "legendFormat": "overdue",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Overdue schedules",
+          "description": "Namespaces whose soonest next fire is more than 10 minutes in the past: the cluster is not firing their schedules. With telemetry.object_labels on, each schedule counts.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 224
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#5DBF82"
+                  },
+                  {
+                    "value": 1,
+                    "color": "#F27A70"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "table",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "bottomk(20, max by (ork_namespace, ork_schedule) (ork_schedule_next_fire_seconds{ork_namespace=~\"$namespace\"}) - time())",
+              "instant": true,
+              "legendFormat": "{{ork_namespace}} {{ork_schedule}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "The 20 soonest fires",
+          "description": "Seconds until the soonest next fire of each namespace, or of each schedule while telemetry.object_labels is on, soonest first.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 4,
+            "y": 224
+          },
+          "repeatDirection": "h",
+          "options": {
+            "frameIndex": 0,
+            "showHeader": true,
+            "showTypeIcons": false,
+            "footer": {
+              "show": false,
+              "reducer": null,
+              "countRows": false
+            },
+            "cellHeight": "sm"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "align": "auto",
+                "inspect": false
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_schedule_census_coverage_ratio)",
+              "instant": false,
+              "legendFormat": "coverage",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_schedule_census_unavailable_ratio)",
+              "instant": false,
+              "legendFormat": "unavailable",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Schedule census",
+          "description": "The share of schedules the last census read, and 1 while the census cannot read them; then the schedule gauges are stale.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 232
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "title": "Are webhooks delivered?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 240
+      },
+      "id": 0,
+      "panels": [
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_webhook_deliveries_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Deliveries by outcome",
+          "description": "Webhook deliveries that settled: delivered, or failed for good after their last attempt.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 241
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "topk(10, sum by (ork_namespace, ork_webhook_id) (increase(ork_webhook_deliveries_total{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_webhook_id}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Busiest webhooks",
+          "description": "The ten webhooks with the most deliveries over the panel's interval. A webhook is named only while telemetry.object_labels is on.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 241
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_webhook_class, outcome) (rate(ork_webhook_attempts_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_webhook_class}} {{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Attempts by answer",
+          "description": "Delivery attempts by what answered: the receiver's status class, a transport error, a request never sent, or one refused.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 249
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_webhook_attempt) (rate(ork_webhook_attempts_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "attempt {{ork_webhook_attempt}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Attempts by number",
+          "description": "Attempts by their place in the delivery's retry ladder.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 249
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_webhook_delivery_attempts_bucket{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "p95",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Attempts per delivery, p95",
+          "description": "How many attempts a settled delivery took, at the 95th percentile.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 257
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate(ork_webhook_delivery_latency_seconds_bucket{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Delivery latency, p95",
+          "description": "How long after it was queued a delivery settled, at the 95th percentile, by outcome.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 257
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, ork_webhook_class) (rate(ork_webhook_attempt_duration_seconds_bucket{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{ork_webhook_class}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Request duration, p95",
+          "description": "How long one attempt's request took, at the 95th percentile, by answer.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 265
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_age_over) (ork_webhook_deliveries_pending)",
+              "instant": false,
+              "legendFormat": "older than {{ork_age_over}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Deliveries pending, by age",
+          "description": "Deliveries queued and not yet settled, counted by whether they are older than each age.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 265
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (reason) (rate(ork_webhook_not_queued_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{reason}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Deliveries not queued",
+          "description": "Deliveries that could not be queued and so made no request, by why.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 273
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "logs",
+          "targets": [
+            {
+              "expr": "{service_name=~\".*ork\"} |= \"webhook delivery failed\"",
+              "legendFormat": "",
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "${loki}"
+              }
+            }
+          ],
+          "title": "Recent delivery failures",
+          "description": "The engine's lines for deliveries that failed for good, newest first. Never the URL.",
+          "transparent": false,
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 12,
+            "y": 273
+          },
+          "repeatDirection": "h",
+          "options": {
+            "showLabels": false,
+            "showCommonLabels": false,
+            "showTime": true,
+            "showLogContextToggle": false,
+            "wrapLogMessage": false,
+            "prettifyLogMessage": false,
+            "enableLogDetails": true,
+            "sortOrder": "Descending",
+            "dedupStrategy": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "run_id"
+                },
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "title": "Open the run",
+                        "url": "/d/orkstack-run?var-run=${__value.raw}"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "title": "Are triggers starting runs?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 281
+      },
+      "id": 0,
+      "panels": [
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_namespace, outcome) (rate(ork_trigger_invocations_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "HTTP trigger invocations by outcome",
+          "description": "Invocations of HTTP triggers, per second, by namespace and outcome. One that named no trigger carries no namespace.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 0,
+            "y": 282
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_deployment) (((ork_trigger_invocations_total{ork_namespace=~\"$namespace\",outcome!=\"started\"} - last_over_time(ork_trigger_invocations_total{ork_namespace=~\"$namespace\",outcome!=\"started\"}[1d] offset 1h)) > 0) or ((ork_trigger_invocations_total{ork_namespace=~\"$namespace\",outcome!=\"started\"} unless last_over_time(ork_trigger_invocations_total{ork_namespace=~\"$namespace\",outcome!=\"started\"}[1d] offset 1h)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 1h)) > 0))) > 0 or vector(0)",
+              "instant": true,
+              "legendFormat": "not started",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Invocations that started no run, 1 h",
+          "description": "HTTP trigger invocations in the last hour that started no run, whatever the reason.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 282
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#5DBF82"
+                  },
+                  {
+                    "value": 1,
+                    "color": "#E4B04E"
+                  },
+                  {
+                    "value": 50,
+                    "color": "#F27A70"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "title": "Are concurrency limits holding work back?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 290
+      },
+      "id": 0,
+      "panels": [
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit, ork_concurrency_level) (ork_concurrency_slots_used{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} {{ork_concurrency_level}} held",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit, ork_concurrency_level) (ork_concurrency_slots_limit{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} {{ork_concurrency_level}} limit",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Slots held against the limit",
+          "description": "Per limit and level, the slots held now beside the slots its active keys admit.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 291
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        10,
+                        10
+                      ],
+                      "fill": "dash"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit) (ork_concurrency_keys_active{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} active",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit) (ork_concurrency_keys_full{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} full",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Keys active and full",
+          "description": "Per limit, keys holding or queueing anything, and those with every slot held.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 299
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit, ork_concurrency_level) (ork_concurrency_queue_depth{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} {{ork_concurrency_level}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace) (ork_concurrency_queued_runs{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} runs",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Queued",
+          "description": "Runs and tasks waiting for a slot, per limit and level, and runs queued per namespace.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 299
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit, ork_concurrency_level) (ork_concurrency_queue_oldest_age_seconds{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} {{ork_concurrency_level}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Oldest queued",
+          "description": "How long the oldest queued entry has waited, per limit and level.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 307
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit, ork_concurrency_level) (ork_concurrency_queue_oldest_timeout_fraction{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} {{ork_concurrency_level}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Oldest queued, share of its bound",
+          "description": "The oldest queued entry's wait as a share of how long it may wait; at 1 it is refused.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 307
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit) (ork_concurrency_stalled_holders{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} stalled holders",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_limit) (ork_concurrency_fence_degraded{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} {{ork_concurrency_limit}} fence degraded",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace, ork_concurrency_state) (ork_concurrency_rebuilding{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "rebuilding, {{ork_concurrency_state}}",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Holders and gates in trouble",
+          "description": "Holders whose runs keep failing their workflow tasks, gates checking new holders after dropping a fence, and gates rebuilding their record.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 315
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_census_gates)",
+              "instant": false,
+              "legendFormat": "gates",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_census_unanswered)",
+              "instant": false,
+              "legendFormat": "unanswered",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_census_truncated)",
+              "instant": false,
+              "legendFormat": "truncated",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_census_unavailable)",
+              "instant": false,
+              "legendFormat": "unavailable",
+              "range": true,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace) (ork_concurrency_census_partial{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}} partial",
+              "range": true,
+              "refId": "E"
+            }
+          ],
+          "title": "Concurrency census",
+          "description": "Gates the last census read and those that did not answer; 1 while it stopped at its gate ceiling, could not run, or a namespace's gate did not answer.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 315
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_census_duration_seconds)",
+              "instant": false,
+              "legendFormat": "pass",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_census_local_age_seconds)",
+              "instant": false,
+              "legendFormat": "snapshot age",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_census_interval_seconds)",
+              "instant": false,
+              "legendFormat": "interval",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Concurrency census age",
+          "description": "How long the last census pass took, and how old each engine's snapshot is beside the census interval.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 323
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_concurrency_index_unavailable)",
+              "instant": true,
+              "legendFormat": "unavailable",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Concurrency index",
+          "description": "1 when the cluster does not index concurrency limits, so the census and submit's checks cannot count them.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 323
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bool_yes_no",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#5DBF82"
+                  },
+                  {
+                    "value": 1,
+                    "color": "#F27A70"
+                  }
+                ]
+              },
+              "noValue": "not reported"
+            },
+            "overrides": []
+          }
         }
       ]
     },
@@ -1981,7 +5037,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 99
+        "y": 331
       },
       "id": 0,
       "panels": [
@@ -2011,7 +5067,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 100
+            "y": 332
           },
           "repeatDirection": "h",
           "options": {
@@ -2071,7 +5127,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 100
+            "y": 332
           },
           "repeatDirection": "h",
           "options": {
@@ -2120,7 +5176,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 108
+            "y": 340
           },
           "repeatDirection": "h",
           "options": {
@@ -2180,7 +5236,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 108
+            "y": 340
           },
           "repeatDirection": "h",
           "options": {
@@ -2229,7 +5285,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 116
+            "y": 348
           },
           "repeatDirection": "h",
           "options": {
@@ -2278,7 +5334,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 116
+            "y": 348
           },
           "repeatDirection": "h",
           "options": {
@@ -2327,7 +5383,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 124
+            "y": 356
           },
           "repeatDirection": "h",
           "options": {
@@ -2376,7 +5432,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 124
+            "y": 356
           },
           "repeatDirection": "h",
           "options": {
@@ -2436,7 +5492,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 132
+            "y": 364
           },
           "repeatDirection": "h",
           "options": {
@@ -2485,7 +5541,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 132
+            "y": 364
           },
           "repeatDirection": "h",
           "options": {
@@ -2545,7 +5601,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 140
+            "y": 372
           },
           "repeatDirection": "h",
           "options": {
@@ -2594,7 +5650,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 140
+            "y": 372
           },
           "repeatDirection": "h",
           "options": {
@@ -2616,21 +5672,1265 @@
             },
             "overrides": []
           }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(ork_run_continuation_duration_seconds_bucket{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{phase}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_run_continuation_hold_duration_seconds_bucket{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "hold",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Carrying on: write, restore and hold, p95",
+          "description": "How long a switch's write and a whole restore took, and how long runs held new tasks first, at the 95th percentile.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 380
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_run_continuation_read_attempts_bucket{ork_namespace=~\"$namespace\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "p95",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Saved-state reads, p95",
+          "description": "The attempt each successful read of a saved state succeeded on, at the 95th percentile.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 380
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(temporal_long_request_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "polls",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(temporal_long_request_failure_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "failed",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Temporal long polls",
+          "description": "The engines' and Orkers' long polls to Temporal, and those that failed.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 388
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (job) (go_goroutine_count)",
+              "instant": false,
+              "legendFormat": "{{job}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Goroutines",
+          "description": "Goroutines of the largest process of each service.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 388
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (job) (go_memory_used_bytes)",
+              "instant": false,
+              "legendFormat": "{{job}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Go memory in use",
+          "description": "Memory the Go runtime holds in the largest process of each service.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 396
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "count by (job) (ork_build_info)",
+              "instant": false,
+              "legendFormat": "{{job}} now",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "count by (job) (count_over_time(ork_build_info[1h]))",
+              "instant": false,
+              "legendFormat": "{{job}} in the hour",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Processes seen",
+          "description": "Processes of each service exporting metrics now, beside how many the last hour saw: more in the hour means restarts.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 396
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total[$__rate_interval])) + sum(rate(otelcol_receiver_accepted_log_records_total[$__rate_interval])) + sum(rate(otelcol_receiver_accepted_spans_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "accepted",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "(sum(rate(otelcol_receiver_refused_metric_points_total[$__rate_interval])) + sum(rate(otelcol_receiver_refused_log_records_total[$__rate_interval])) + sum(rate(otelcol_receiver_refused_spans_total[$__rate_interval]))) or vector(0)",
+              "instant": false,
+              "legendFormat": "refused",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "(sum(rate(otelcol_receiver_failed_metric_points_total[$__rate_interval])) + sum(rate(otelcol_receiver_failed_log_records_total[$__rate_interval])) + sum(rate(otelcol_receiver_failed_spans_total[$__rate_interval]))) or vector(0)",
+              "instant": false,
+              "legendFormat": "failed",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Collector intake",
+          "description": "Points, records and spans the Collector accepted, refused and failed, per second.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 404
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(otelcol_exporter_queue_size)",
+              "instant": false,
+              "legendFormat": "queued",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(otelcol_exporter_queue_capacity)",
+              "instant": false,
+              "legendFormat": "capacity",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Collector exports waiting",
+          "description": "Items the Collector holds to send, against how many it can hold.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 404
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ALERTS{alertname=\"OrkStackWatchdog\",alertstate=\"firing\"}) or vector(0)",
+              "instant": true,
+              "legendFormat": "watchdog",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Alert pipeline",
+          "description": "1 while the watchdog alert, which always fires, reaches Prometheus: the rules are loaded and evaluating.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 412
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bool_yes_no",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#F27A70"
+                  },
+                  {
+                    "value": 1,
+                    "color": "#5DBF82"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
         }
       ]
     },
     {
       "type": "row",
       "collapsed": true,
-      "title": "Is the artifact GC reclaiming space?",
+      "title": "Are retention cleanup and the artifact GC reclaiming space?",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 148
+        "y": 416
       },
       "id": 0,
       "panels": [
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_cleanup_enabled_ratio)",
+              "instant": true,
+              "legendFormat": "on",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Retention cleanup",
+          "description": "Whether retention cleanup retires runs past their namespace's retention.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 417
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bool_yes_no",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#E4B04E"
+                  },
+                  {
+                    "value": 1,
+                    "color": "#5DBF82"
+                  }
+                ]
+              },
+              "noValue": "not reported"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_cleanup_interval_seconds)",
+              "instant": true,
+              "legendFormat": "interval",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_cleanup_retention_buffer_seconds)",
+              "instant": true,
+              "legendFormat": "buffer",
+              "range": false,
+              "refId": "B"
+            }
+          ],
+          "title": "Cleanup interval and buffer",
+          "description": "The cleanup interval, and how far past the maximum run retention the cluster's own backstop sits.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 417
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#6EA8F2"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_cleanup_runs_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_deployment_cleanup_runs_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "all namespaces: {{outcome}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Runs cleanup decided on",
+          "description": "Runs a cleanup pass decided on, by outcome, in the selected namespaces and in all of them.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 8,
+            "y": 417
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_cleanup_objects_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "objects",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Objects removed by cleanup",
+          "description": "Run-scoped objects retirement removed.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 20,
+            "y": 417
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_cleanup_passes_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Cleanup passes",
+          "description": "Cleanup passes by outcome.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 425
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_cleanup_pass_duration_seconds_bucket[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "p95",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Cleanup pass duration, p95",
+          "description": "How long a cleanup pass took, at the 95th percentile.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 425
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_namespace) (ork_cleanup_retention_lag_seconds{ork_namespace=~\"$namespace\"})",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_deployment_cleanup_retention_lag_seconds)",
+              "instant": false,
+              "legendFormat": "all namespaces",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "(time() - max(ork_cleanup_last_pass_seconds)) and on () (max(ork_cleanup_last_pass_seconds) > 0)",
+              "instant": false,
+              "legendFormat": "since the last complete walk",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Cleanup behind retention",
+          "description": "How far past its due time the most overdue run cleanup left unretired is, and how long since the last complete walk.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 433
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_cleanup_step) (rate(ork_cleanup_errors_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_cleanup_step}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Cleanup errors by step",
+          "description": "Cleanup failures by the step that failed; a later pass tries again.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 433
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_archive_sweep_last_success_seconds) == bool 0",
+              "instant": true,
+              "legendFormat": "archive sweep",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_cleanup_last_pass_seconds) == bool 0",
+              "instant": true,
+              "legendFormat": "cleanup walk",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_gc_last_pass_seconds) == bool 0",
+              "instant": true,
+              "legendFormat": "GC pass",
+              "range": false,
+              "refId": "C"
+            }
+          ],
+          "title": "Never completed",
+          "description": "1 for each walk that has not finished once since its engine started: the archive sweep's full pass, cleanup's complete walk, and a GC pass. Alerts fire on the same.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 0,
+            "y": 441
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#5DBF82"
+                  },
+                  {
+                    "value": 1,
+                    "color": "#E4B04E"
+                  }
+                ]
+              },
+              "noValue": "not reported"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_archive_sweep_unconfirmed)",
+              "instant": false,
+              "legendFormat": "unconfirmed",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_archive_sweep_list_failed)",
+              "instant": false,
+              "legendFormat": "index not read",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_archive_sweep_interval_too_long)",
+              "instant": false,
+              "legendFormat": "interval too long",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Archive sweep",
+          "description": "Finished runs the sweep could not confirm archived; 1 while it could not read the run index to its end, or while two intervals reach the cluster's retention.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 8,
+            "y": 441
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "(time() - max(ork_archive_sweep_last_success_seconds)) and on () (max(ork_archive_sweep_last_success_seconds) > 0)",
+              "instant": false,
+              "legendFormat": "since a full pass",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "min(ork_archive_sweep_earliest_expiry_seconds) and on () (max(ork_archive_sweep_unconfirmed) > 0)",
+              "instant": false,
+              "legendFormat": "until the first expiry",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Archive sweep timing",
+          "description": "Seconds since the last pass that saw everything, and, while runs are unconfirmed, until the first of them expires.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 20,
+            "y": 441
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_archive_sweep_runs_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Runs the archive sweep came to",
+          "description": "Finished runs with no archive, by what the sweep did: archived, failed (tried again), or expired (lost).",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 449
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
         {
           "type": "stat",
           "targets": [
@@ -2656,8 +6956,8 @@
           "gridPos": {
             "h": 4,
             "w": 4,
-            "x": 0,
-            "y": 149
+            "x": 12,
+            "y": 449
           },
           "repeatDirection": "h",
           "options": {
@@ -2715,8 +7015,8 @@
           "gridPos": {
             "h": 4,
             "w": 4,
-            "x": 4,
-            "y": 149
+            "x": 16,
+            "y": 449
           },
           "repeatDirection": "h",
           "options": {
@@ -2777,8 +7077,8 @@
           "gridPos": {
             "h": 8,
             "w": 12,
-            "x": 8,
-            "y": 149
+            "x": 20,
+            "y": 449
           },
           "repeatDirection": "h",
           "options": {
@@ -2826,8 +7126,8 @@
           "gridPos": {
             "h": 8,
             "w": 12,
-            "x": 20,
-            "y": 149
+            "x": 0,
+            "y": 457
           },
           "repeatDirection": "h",
           "options": {
@@ -2886,8 +7186,8 @@
           "gridPos": {
             "h": 8,
             "w": 12,
-            "x": 0,
-            "y": 157
+            "x": 12,
+            "y": 457
           },
           "repeatDirection": "h",
           "options": {
@@ -2934,6 +7234,17 @@
               "legendFormat": "reclaimed",
               "range": true,
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_cleanup_bytes_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "removed by retention cleanup",
+              "range": true,
+              "refId": "C"
             }
           ],
           "title": "Bytes written by OrkStack against reclaimed",
@@ -2946,8 +7257,8 @@
           "gridPos": {
             "h": 8,
             "w": 12,
-            "x": 12,
-            "y": 157
+            "x": 0,
+            "y": 465
           },
           "repeatDirection": "h",
           "options": {
@@ -2965,6 +7276,722 @@
           "fieldConfig": {
             "defaults": {
               "unit": "bytes",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_gc_grace_seconds)",
+              "instant": true,
+              "legendFormat": "grace",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "GC grace",
+          "description": "How long a retired run's objects stay before the GC may reclaim them.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 465
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#6EA8F2"
+                  }
+                ]
+              },
+              "noValue": "not reported"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_gc_store_versioned_ratio)",
+              "instant": true,
+              "legendFormat": "versioned",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Bucket keeps versions",
+          "description": "1 when the bucket keeps versions, so a GC delete only adds a delete marker and frees nothing.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 465
+          },
+          "repeatDirection": "h",
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "auto",
+            "textMode": "auto",
+            "wideLayout": true,
+            "showPercentChange": false,
+            "reduceOptions": {
+              "calcs": []
+            },
+            "percentChangeColorMode": "standard",
+            "orientation": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bool_yes_no",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "#5DBF82"
+                  },
+                  {
+                    "value": 1,
+                    "color": "#E4B04E"
+                  }
+                ]
+              },
+              "noValue": "not reported"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_gc_hold_reason) (ork_gc_held) == 1",
+              "instant": false,
+              "legendFormat": "{{ork_gc_hold_reason}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Why the GC is held",
+          "description": "1 for each reason the last pass deleted nothing.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 20,
+            "y": 465
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome, ork_gc_reason) (rate(ork_gc_objects_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}} {{ork_gc_reason}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_deployment_gc_objects_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "all namespaces: {{outcome}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Objects by outcome",
+          "description": "Objects the GC dealt with in delete mode, by outcome and why, in the selected namespaces and in all of them.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 473
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_namespace) (rate(ork_gc_bytes_total{ork_namespace=~\"$namespace\",outcome=\"deleted\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_namespace}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Reclaimed by namespace",
+          "description": "Bytes the GC deleted, by namespace.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 473
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(max by (ork_namespace, ork_gc_object_class) (ork_gc_would_delete_objects{ork_namespace=~\"$namespace\"}))",
+              "instant": false,
+              "legendFormat": "would delete",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_gc_reason) (max by (ork_namespace, ork_gc_object_class, ork_gc_reason) (ork_gc_kept_objects{ork_namespace=~\"$namespace\"}))",
+              "instant": false,
+              "legendFormat": "kept: {{ork_gc_reason}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Would delete and kept (dry run)",
+          "description": "The last complete dry-run cycle: objects it would delete, and objects it would keep, by why.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 481
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_deployment_gc_would_delete_bytes)",
+              "instant": false,
+              "legendFormat": "would delete",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Would delete in all namespaces (dry run)",
+          "description": "The last complete dry-run cycle's bytes across every namespace.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 481
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_gc_passes_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "GC passes",
+          "description": "GC passes by outcome.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 489
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_gc_pass_duration_seconds_bucket[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "p95",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "GC pass duration, p95",
+          "description": "How long a GC pass took, at the 95th percentile.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 489
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (outcome) (rate(ork_gc_runs_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Retired runs the GC came to",
+          "description": "Retired runs by outcome: finished, carried over, waiting on another run or the low-water mark, or held for good.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 497
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_gc_due_runs)",
+              "instant": false,
+              "legendFormat": "due",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_gc_waiting_runs)",
+              "instant": false,
+              "legendFormat": "waiting",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Runs due and waiting",
+          "description": "Retired runs the last pass carried over, and those waiting on another run or the low-water mark.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 497
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "(time() - max(ork_gc_last_pass_seconds)) and on () (max(ork_gc_last_pass_seconds) > 0)",
+              "instant": false,
+              "legendFormat": "since a pass",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "(time() - max(ork_gc_last_progress_seconds)) and on () (max(ork_gc_last_progress_seconds) > 0)",
+              "instant": false,
+              "legendFormat": "since progress",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Since the GC last moved",
+          "description": "Seconds since the last pass, and since the last one that finished a run or deleted an object.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 505
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max by (ork_gc_lowwater_cause) (ork_gc_lowwater_unknown) == 1",
+              "instant": false,
+              "legendFormat": "unknown: {{ork_gc_lowwater_cause}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "max(ork_gc_lowwater_chains)",
+              "instant": false,
+              "legendFormat": "open runs walked",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Low-water mark",
+          "description": "1 for the reason the last pass could not compute its low-water mark, and how many open runs its walk read.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 505
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
               "custom": {}
             },
             "overrides": []

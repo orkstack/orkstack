@@ -235,6 +235,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newReleaseCommand(g),
 		newRunCommand(g),
 		newActivityCommand(g),
+		newServiceCommand(g),
 		newTaskCommand(g),
 		newScheduleCommand(g),
 		newStatsCommand(g),

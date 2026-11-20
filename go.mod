@@ -41,6 +41,7 @@ require (
 	go.temporal.io/sdk/contrib/opentelemetry v0.8.1
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/oauth2 v0.38.0
+	golang.org/x/sys v0.49.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	tags.cncf.io/container-device-interface v1.1.1
@@ -93,7 +94,6 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261021172232-6cd571d43fbb // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect

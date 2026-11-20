@@ -21,6 +21,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // applyOptions are the flags of orkflow create and automation apply beyond
@@ -91,8 +92,8 @@ func classifyDocument(path string, source []byte, accept documentKind) (applyInp
 			in.namespace = "default"
 		}
 		return in, nil
-	case peek.Kind == dsl.KindActivityInterface:
-		return in, &activityInterfaceFile{path: path}
+	case peek.Kind == dsl.KindActivityInterface, peek.Kind == dsl.KindServiceInterface:
+		return in, &activityInterfaceFile{path: path, kind: peek.Kind}
 	case peek.Kind == dsl.KindEventSource:
 		return in, &eventSourceFile{path: path}
 	case peek.Kind == "" && peek.APIVersion == "":
@@ -135,9 +136,13 @@ func (e *wrongKindFile) Error() string {
 // image's with: contract, packed into the image at build time and never
 // applied. A directory skips it; a file named on the command line is
 // refused with this sentence.
-type activityInterfaceFile struct{ path string }
+type activityInterfaceFile struct{ path, kind string }
 
 func (e *activityInterfaceFile) Error() string {
+	if e.kind == dsl.KindServiceInterface {
+		return fmt.Sprintf("%s: kind: %s is a service interface, not an Orkflow or an automation document: pack it into a "+
+			"service image's %s label with orkctl activity interface pack", e.path, dsl.KindServiceInterface, eventsources.InterfaceLabel)
+	}
 	return fmt.Sprintf("%s: kind: %s is an activity interface, not an Orkflow or an automation document: pack it into an image's "+
 		"%s, %s and %s labels with orkctl activity interface pack, or build the image with orkctl activity build --interface",
 		e.path, dsl.KindActivityInterface, dsl.InterfaceLabel, dsl.IconLabel, dsl.DocsLabel)
@@ -216,7 +221,7 @@ func expandApplyArgs(args []string, accept documentKind) ([]applyInput, []string
 				what = "no automation document to apply"
 			}
 			return nil, nil, fmt.Errorf("%s: %s: its *.ork.yaml files are "+
-				"activity interfaces, which are packed into images", arg, what)
+				"image interfaces, which are packed into images", arg, what)
 		}
 	}
 	return inputs, skippedPaths, nil
@@ -261,8 +266,8 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 		return err
 	}
 	for _, path := range skipped {
-		fmt.Fprintf(cmd.ErrOrStderr(), "skipped %s: kind: %s is packed into an image, not stored\n",
-			path, dsl.KindActivityInterface)
+		fmt.Fprintf(cmd.ErrOrStderr(), "skipped %s: an image's interface (kind: %s or %s) is packed into an image, not stored\n",
+			path, dsl.KindActivityInterface, dsl.KindServiceInterface)
 	}
 	seen := map[string]string{}
 	for _, in := range inputs {

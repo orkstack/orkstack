@@ -346,6 +346,18 @@ var Schema = []Var{
 	// max_concurrent alone, as every Orker did before capacity existed.
 	{Path: "orker.capacity.cpu", Env: orker.CapacityCPUVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
 	{Path: "orker.capacity.memory", Env: orker.CapacityMemoryVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
+	{Path: "orker.event_sources.max_instances", Env: orker.SourceHostMaxInstancesVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultSourceHostMaxInstances)},
+	{Path: "orker.event_sources.max_request.cpu", Env: orker.SourceHostMaxRequestCPUVar, Binaries: usesOrker, Kind: KindString, Default: orker.DefaultSourceHostMaxRequestCPU},
+	{Path: "orker.event_sources.max_request.memory", Env: orker.SourceHostMaxRequestMemoryVar, Binaries: usesOrker, Kind: KindString, Default: orker.DefaultSourceHostMaxRequestMemory},
+	{Path: "orker.event_sources.spool_bytes", Env: orker.SourceHostSpoolBytesVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultSourceHostSpoolBytes)},
+	{Path: "orker.event_sources.confirm_wait_max", Env: orker.SourceHostConfirmWaitMaxVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultSourceHostConfirmWaitMax)},
+	{Path: "orker.event_sources.parse_bytes", Env: orker.SourceHostParseBytesVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultSourceHostParseBytes)},
+	{Path: "orker.event_sources.log_bytes_per_hour", Env: orker.SourceHostLogBytesPerHourVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultSourceHostLogBytesPerHour)},
+	{Path: "orker.services.allow_metadata_reach", Env: orker.ServicesAllowMetadataReachVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(false)},
+	{Path: "orker.services.allow_open_cluster", Env: orker.ServicesAllowOpenClusterVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(false)},
+	{Path: "orker.services.allow_container_reach", Env: orker.ServicesAllowContainerReachVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(false)},
+	{Path: "orker.services.probe_addresses", Env: orker.ServicesProbeAddressesVar, Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
+	{Path: "orker.services.probe_image", Env: orker.ServicesProbeImageVar, Binaries: usesOrker, Kind: KindString, Default: DerivedDefault, DerivedNote: "this release's ghcr.io/orkstack/orker:<version>, signature- and build-checked"},
 
 	// orker.pins.max_concurrent is 0 (no default constant) rather than a
 	// derived-from-code literal: hosting zero pins is the deliberate

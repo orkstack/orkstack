@@ -159,6 +159,8 @@ orkctl event-source create orders --orkflow handle-order --uses ghcr.io/acme/sou
 orkctl event-source evaluate orders --body-file order.json
 ```
 
+An Orker that hosts sources runs each source's container on a network of its own. That network reaches whatever the host routes to, the host's own listeners included, unless the host's firewall closes them; one rule on the `orksvc` bridge prefix does, and the Orker warns at boot when it finds them open.
+
 ## See also
 
 - [docs/ORKFLOW_SCHEDULES.md, "Surfaces"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#surfaces): the full command list and validation rules
@@ -168,3 +170,4 @@ orkctl event-source evaluate orders --body-file order.json
 - [docs/AUTOMATION.md, "schedules"](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#schedules) and [docs/AUTOMATION.md, "triggers"](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#triggers): declaring them in a document
 - [docs/ORKFLOW_SCHEDULES.md, "Who a schedule runs as"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#who-a-schedule-runs-as): the binder, the consent, and the record beside the schedule
 - [docs/EVENT_SOURCES.md, "Evaluate a message"](https://github.com/orkstack/orkstack/blob/main/docs/EVENT_SOURCES.md#evaluate-a-message): what an event source is, and what an evaluation says
+- [docs/DEPLOY.md, "Source hosts"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#source-hosts): a source host's network, and the firewall rule that closes the host's own listeners to it

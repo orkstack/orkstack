@@ -27,6 +27,17 @@ const (
 	PoolTasksDispatchRateMetric = "ork.pool.tasks.dispatch_rate"
 	PoolPollersMetric           = "ork.pool.pollers"
 
+	// The breakdown of a pool's backlog by release, beside the total: the
+	// tasks waiting on the pool for each live release, and the oldest one's
+	// age, labelled with the pool and the release (AttrRelease). Unversioned
+	// work is the total less every release's count, never below zero, and has
+	// no age. Only an engine whose versioning is on reports it.
+	PoolReleaseBacklogTasksMetric = "ork.pool.release.backlog.tasks"
+	PoolReleaseBacklogAgeMetric   = "ork.pool.release.backlog.age"
+	// AttrRelease is the release a breakdown series counts: a build id, or
+	// "unversioned".
+	AttrRelease = "ork.release"
+
 	// poolBacklogCensus is the census that reads them.
 	poolBacklogCensus = "pool_backlog"
 	// poolBacklogStaleAfter is how many intervals a pool's last good reading
@@ -49,6 +60,19 @@ type PoolReading struct {
 	AddRate, DispatchRate float64
 	// Pollers is the Orkers that polled within the freshness window.
 	Pollers int64
+	// Releases is the backlog by release, nil where none is reported, and
+	// ReleasesErr why it could not be read: the total still stands.
+	Releases    []PoolReleaseReading
+	ReleasesErr error
+}
+
+// PoolReleaseReading is one release's share of a pool's backlog. HasAge is
+// false where no age was measured.
+type PoolReleaseReading struct {
+	Release    string
+	Backlog    int64
+	BacklogAge time.Duration
+	HasAge     bool
 }
 
 // PoolBacklogSource is what the pool backlog census reads: Read answers one
@@ -90,7 +114,13 @@ func newPoolBacklogGauges(p *Providers, logger *slog.Logger, src PoolBacklogSour
 	pollers, err5 := meter.Int64ObservableGauge(PoolPollersMetric,
 		metric.WithDescription("Orkers of the pool that asked for work recently. A saturated, cordoned or stopping Orker asks for none, so this is not a count of the pool's Orkers."),
 		metric.WithUnit("{poller}"))
-	unavailable := errors.Join(err1, err2, err3, err4, err5)
+	releaseTasks, err6 := meter.Int64ObservableGauge(PoolReleaseBacklogTasksMetric,
+		metric.WithDescription("Approximate tasks waiting for an Orker of the pool, by release: unversioned is what the total holds beyond every release's count, never below zero."),
+		metric.WithUnit("{task}"))
+	releaseAge, err7 := meter.Float64ObservableGauge(PoolReleaseBacklogAgeMetric,
+		metric.WithDescription("How long the pool's oldest waiting task of the release has waited; none for unversioned work."),
+		metric.WithUnit("s"))
+	unavailable := errors.Join(err1, err2, err3, err4, err5, err6, err7)
 	if unavailable == nil {
 		_, unavailable = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 			mu.Lock()
@@ -106,9 +136,17 @@ func newPoolBacklogGauges(p *Providers, logger *slog.Logger, src PoolBacklogSour
 				o.ObserveFloat64(added, s.reading.AddRate, attrs)
 				o.ObserveFloat64(dispatched, s.reading.DispatchRate, attrs)
 				o.ObserveInt64(pollers, s.reading.Pollers, attrs)
+				for _, r := range s.reading.Releases {
+					byRelease := metric.WithAttributeSet(attribute.NewSet(
+						attribute.String(AttrPool, pool), attribute.String(AttrRelease, r.Release)))
+					o.ObserveInt64(releaseTasks, r.Backlog, byRelease)
+					if r.HasAge {
+						o.ObserveFloat64(releaseAge, r.BacklogAge.Seconds(), byRelease)
+					}
+				}
 			}
 			return nil
-		}, tasks, age, added, dispatched, pollers)
+		}, tasks, age, added, dispatched, pollers, releaseTasks, releaseAge)
 	}
 	if unavailable != nil {
 		// Nothing would observe a reading, so no pool is read: every pass
@@ -163,6 +201,11 @@ func newPoolBacklogGauges(p *Providers, logger *slog.Logger, src PoolBacklogSour
 				logger.Info("reads a pool's backlog again", "pool", pool)
 			}
 			failing[pool] = false
+			if err := readings[i].ReleasesErr; err != nil {
+				// The total stands; only its breakdown is absent this pass.
+				errs = append(errs, fmt.Errorf("pool %q: its backlog by release: %w", pool, err))
+				readings[i].Releases = nil
+			}
 			last[pool] = poolSample{reading: readings[i], at: at}
 		}
 		return errors.Join(errs...)

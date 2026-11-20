@@ -1,0 +1,578 @@
+package sourcehost
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/orkstack/orkstack/internal/orker/servicehost"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
+)
+
+// The event-source profile's status words (06 §5).
+var Vocabulary = servicehost.Vocabulary{
+	Reasons:  map[string]bool{"OBJECT_MISSING": true, CheckObjectInvalid: true, "NO_DEAD_LETTER": true, CheckMessageLimit: true},
+	Warnings: map[string]bool{"DELIVERY_LIMIT_LOW": true, "PULL_LIMIT_LOW": true, "MESSAGE_LIMIT_ABOVE_BOUND": true},
+	Block:    "broker",
+}
+
+// instanceTick is how often the instance's own loop runs: the beat, the
+// status, the wait and the watchdog.
+const instanceTick = 50 * time.Millisecond
+
+// doorCallBound bounds an engine call the instance makes outside a lane.
+const doorCallBound = 10 * time.Second
+
+// localInARow ends the attempt: three local receive failures in a row on a
+// lane (06 §4.3).
+const localInARow = 3
+
+// InstanceConfig is one instance's settings from its service spec and the
+// activity that hosts it.
+type InstanceConfig struct {
+	Limits        eventsources.SpecLimits
+	Park          time.Duration
+	RejectBreaker int
+	Trial         string
+	AtMostOnce    bool
+	// Rate is messages a second for the whole instance; 0 is unlimited.
+	Rate int
+}
+
+// Ending is how an instance ended: the attempt's reason ("" when it was
+// stopped), and the breaker it asked to pause the source with, if any.
+type Ending struct {
+	Reason  string
+	Detail  string
+	Paused  string
+	Retried bool
+}
+
+// Instance runs one event-source container's lanes (06, 01 §5): the beat,
+// the status, the wait and the breakers. Run owns it.
+type Instance struct {
+	Config  InstanceConfig
+	Drivers []*LaneDriver
+	Judge   *Judge
+	Door    Door
+	Steps   Steps
+	Asks    Asks
+	Now     func() time.Time
+	Started time.Time
+
+	mu       sync.Mutex
+	waiter   *Waiter
+	breakers *Breakers
+	limit    DeliveryLimit
+	// staleSince is when the status went stale, zero while it is fresh.
+	staleSince time.Time
+	status     *servicehost.StatusWatch
+	healthy    bool
+	held       map[int]*heldMessage
+	tryLane    int
+	locals     map[int]int
+	// fails counts each lane's failed receives in a row, of any kind.
+	fails    map[int]int
+	nextPoll time.Time
+	end      chan Ending
+	once     sync.Once
+}
+
+type heldMessage struct {
+	msg   HandedMessage
+	body  []byte
+	since time.Time
+	cmd   chan laneCommand
+}
+
+type laneCommand int
+
+const (
+	cmdRedecide laneCommand = iota + 1
+	cmdRelease
+)
+
+// Run runs the instance until ctx ends (a stop: Ending{} with no reason),
+// or the attempt ends for a reason of its own.
+func (in *Instance) Run(ctx context.Context) Ending {
+	in.waiter = NewWaiter(in.Config.Park, len(in.Drivers))
+	in.breakers = NewBreakers(in.Config.RejectBreaker, in.Config.Trial)
+	in.status = servicehost.NewStatusWatch(in.Started, in.Config.Limits.StartupSeconds, in.Config.Limits.StatusSeconds)
+	in.held, in.locals, in.fails, in.end = map[int]*heldMessage{}, map[int]int{}, map[int]int{}, make(chan Ending, 1)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := range in.Drivers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			in.lane(ctx, i)
+		}()
+	}
+	ending := in.loop(ctx)
+	cancel()
+	wg.Wait()
+	return ending
+}
+
+func (in *Instance) finish(e Ending) {
+	in.once.Do(func() { in.end <- e })
+}
+
+// loop is the instance's own loop: the beat every aliveSeconds, the
+// status, the wait's steps and the watchdog.
+func (in *Instance) loop(ctx context.Context) Ending {
+	var beat servicehost.Beat
+	var lastBeat time.Time
+	var lastStatus servicehost.StepID
+	alive := time.Duration(in.Config.Limits.AliveSeconds) * time.Second
+	ticker := time.NewTicker(instanceTick)
+	defer ticker.Stop()
+	for {
+		now := in.Now()
+		if now.Sub(lastBeat) >= alive {
+			if err := in.Asks.WriteJSON("alive.json", beat.Next()); err != nil {
+				return Ending{Reason: eventsources.ReasonServiceHostStalled, Retried: true, Detail: "the beat could not be written: " + err.Error()}
+			}
+			lastBeat = now
+		}
+		if e, done := in.readStatus(now, &lastStatus); done {
+			return e
+		}
+		in.mu.Lock()
+		step := in.waiter.Due(now)
+		in.mu.Unlock()
+		switch step {
+		case StepRetryOldest:
+			in.command(cmdRedecide, true)
+		case StepReleaseAll:
+			in.command(cmdRelease, false)
+			in.mu.Lock()
+			in.waiter.Released(now)
+			in.mu.Unlock()
+		case StepProbe:
+			// Bounded: the loop that asks is the one that writes the beat,
+			// which a hung engine must not stop (14 §6.1).
+			pctx, cancel := context.WithTimeout(ctx, doorCallBound)
+			err := in.Door.Probe(pctx)
+			cancel()
+			in.mu.Lock()
+			ok := err == nil && in.healthy
+			if in.waiter.Probed(ok, now) == StepTryOne {
+				in.tryLane = 0
+			}
+			in.mu.Unlock()
+		}
+		if in.unresponsive(now) {
+			return Ending{Reason: eventsources.ReasonServiceUnresponsive, Retried: true, Detail: "more than a quarter of the lanes stopped answering"}
+		}
+		select {
+		case <-ctx.Done():
+			return Ending{}
+		case e := <-in.end:
+			return e
+		case <-ticker.C:
+		}
+	}
+}
+
+// readStatus reads status.json and judges the service's health.
+func (in *Instance) readStatus(now time.Time, last *servicehost.StepID) (Ending, bool) {
+	if reader, ok := in.Steps.(interface {
+		ReadStepID(string, int64) ([]byte, servicehost.StepID, error)
+	}); ok {
+		raw, id, err := reader.ReadStepID(servicehost.StatusName, servicehost.MaxStatusBytes)
+		switch {
+		case errors.Is(err, servicehost.ErrNotYet):
+		case err != nil:
+			return violationEnding(err), true
+		default:
+			s, err := servicehost.ReadStatus(raw, Vocabulary)
+			if err != nil {
+				return violationEnding(err), true
+			}
+			s, limit := JudgeStatus(s, in.Config.AtMostOnce)
+			in.mu.Lock()
+			if limit > 0 && id != *last {
+				// Once per status written, not per look: the smaller of the
+				// last two reports holds only if a report is one sample.
+				in.limit.Observe(limit, now)
+			}
+			in.status.Observe(s, now, id != *last)
+			in.mu.Unlock()
+			*last = id
+		}
+	}
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	switch in.status.Health(now) {
+	case servicehost.HealthNeverReported:
+		return Ending{Reason: eventsources.ReasonServiceNotReady, Retried: true, Detail: "no status within startupSeconds"}, true
+	case servicehost.HealthFatal:
+		s, _ := in.status.Last()
+		return Ending{Reason: eventsources.ReasonServiceConfigRejected, Detail: fmt.Sprintf("the image cannot work with this configuration: %s %s",
+			SafeWord(s.Reason, 64), SafeWord(s.Field, 64))}, true
+	case servicehost.HealthReady:
+		in.healthy, in.staleSince = true, time.Time{}
+		return Ending{}, false
+	case servicehost.HealthNoVerdict:
+		// A status older than three statusSeconds is a late step on every
+		// lane (14 §5, rule 3); three in a row end every lane, and so the
+		// instance.
+		in.healthy = false
+		if in.staleSince.IsZero() {
+			in.staleSince = now
+		}
+		if now.Sub(in.staleSince) >= 3*time.Duration(max(in.Config.Limits.StatusSeconds, 1))*time.Second {
+			return Ending{Reason: eventsources.ReasonServiceUnresponsive, Retried: true,
+				Detail: "its status was not refreshed: three late steps on every lane"}, true
+		}
+		return Ending{}, false
+	}
+	in.healthy, in.staleSince = false, time.Time{}
+	return Ending{}, false
+}
+
+func violationEnding(err error) Ending {
+	var v *servicehost.ViolationError
+	if errors.As(err, &v) {
+		return Ending{Reason: eventsources.ReasonServiceContractViolation, Detail: v.Error()}
+	}
+	return Ending{Reason: eventsources.ReasonServiceHostStalled, Retried: true, Detail: err.Error()}
+}
+
+// unresponsive is the watchdog over every lane.
+func (in *Instance) unresponsive(now time.Time) bool {
+	lanes := make([]*servicehost.Lane, len(in.Drivers))
+	for i, d := range in.Drivers {
+		lanes[i] = &d.Lane
+	}
+	hold := time.Duration(in.Config.Limits.HoldSeconds) * time.Second
+	return servicehost.Unresponsive(lanes, now, hold)
+}
+
+// command sends cmd to the held lanes: the oldest one alone, or all.
+func (in *Instance) command(cmd laneCommand, oldestOnly bool) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	var oldest *heldMessage
+	for _, h := range in.held {
+		if oldestOnly {
+			if oldest == nil || h.since.Before(oldest.since) {
+				oldest = h
+			}
+			continue
+		}
+		select {
+		case h.cmd <- cmd:
+		default:
+		}
+	}
+	if oldest != nil {
+		select {
+		case oldest.cmd <- cmd:
+		default:
+		}
+	}
+}
+
+// mayPoll reports whether lane i may write a poll now: the service is
+// ready and healthy, the wait lets this lane poll, and the rate allows one.
+func (in *Instance) mayPoll(i int) bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if !in.healthy || i >= in.waiter.Lanes() {
+		return false
+	}
+	now := in.Now()
+	if in.Config.Rate > 0 {
+		if now.Before(in.nextPoll) {
+			return false
+		}
+		in.nextPoll = now.Add(time.Second / time.Duration(in.Config.Rate))
+	}
+	return true
+}
+
+// lane runs one lane until ctx ends or the attempt ends.
+func (in *Instance) lane(ctx context.Context, i int) {
+	d := in.Drivers[i]
+	look := time.NewTicker(lookEvery)
+	defer look.Stop()
+	for ctx.Err() == nil {
+		if !in.mayPoll(i) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-look.C:
+			}
+			continue
+		}
+		ex, err := d.Poll(ctx, in.Config.Limits.PollWaitSeconds)
+		if errors.Is(err, ErrReceiptRequired) && ex.Kind == ExchangeHeld {
+			// The verdict waits for its receipt (01 §5): the message is
+			// held and judged again after a park.
+			err = nil
+		}
+		if err != nil {
+			if ctx.Err() == nil {
+				in.finish(endingFor(err))
+			}
+			return
+		}
+		if !in.took(ctx, i, d, ex) {
+			return
+		}
+	}
+}
+
+func endingFor(err error) Ending {
+	if errors.Is(err, ErrUnresponsive) {
+		return Ending{Reason: eventsources.ReasonServiceUnresponsive, Retried: true, Detail: err.Error()}
+	}
+	return violationEnding(err)
+}
+
+// took handles one exchange's end; false ends the lane.
+func (in *Instance) took(ctx context.Context, i int, d *LaneDriver, ex Exchange) bool {
+	switch ex.Kind {
+	case ExchangeQuiet:
+		in.mu.Lock()
+		in.locals[i], in.fails[i] = 0, 0
+		in.waiter.Tried(nil, in.Now())
+		in.mu.Unlock()
+	case ExchangeReceiveFailed:
+		in.mu.Lock()
+		if ex.Error.Kind == KindLocal {
+			in.locals[i]++
+			if in.locals[i] >= localInARow {
+				in.mu.Unlock()
+				in.finish(Ending{Reason: eventsources.ReasonServiceUnresponsive, Retried: true, Detail: "three local receive failures in a row"})
+				return false
+			}
+		}
+		in.fails[i]++
+		wait := receiveBackoff(in.fails[i])
+		in.mu.Unlock()
+		// A broker that refuses or fails every receive is asked again on a
+		// back-off, never at the speed of a poll.
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(wait):
+		}
+		return true
+	case ExchangeSettled:
+		in.resetReceive(i)
+		in.mu.Lock()
+		in.breakers.Certain()
+		in.mu.Unlock()
+		return in.settled(ctx, ex)
+	case ExchangeHeld:
+		in.resetReceive(i)
+		return in.hold(ctx, i, d, ex)
+	}
+	return true
+}
+
+// resetReceive ends a lane's run of failed receives: a message was handed
+// over, so the next failure is the first in a row again.
+func (in *Instance) resetReceive(i int) {
+	in.mu.Lock()
+	in.locals[i], in.fails[i] = 0, 0
+	in.mu.Unlock()
+}
+
+// receiveBackoff is the wait after the n-th failed receive in a row on a
+// lane: 1 s doubling to at most 30 s.
+func receiveBackoff(n int) time.Duration {
+	d := time.Second
+	for i := 1; i < n && d < 30*time.Second; i++ {
+		d *= 2
+	}
+	return min(d, 30*time.Second)
+}
+
+// settled counts a settled exchange toward the breakers and the wait.
+func (in *Instance) settled(ctx context.Context, ex Exchange) bool {
+	in.mu.Lock()
+	refused := !ex.Settled.OK && ex.Settled.Error != nil && ex.Settled.Error.Kind == KindRefused
+	trip := in.breakers.Settled(refused)
+	switch ex.Decision.Receipt.Outcome {
+	case artifacts.ReceiptAccepted, artifacts.ReceiptDuplicate:
+		in.breakers.Accepted()
+		in.waiter.Accepted()
+	case artifacts.ReceiptRejected, artifacts.ReceiptDropped:
+		if ex.Decision.Disposition == Reject {
+			if t := in.breakers.Rejected(ex.Message.ID); t != "" {
+				trip = t
+			}
+		}
+	}
+	if in.waiter.Waiting() {
+		d := ex.Decision
+		in.waiter.Tried(&d, in.Now())
+	}
+	in.mu.Unlock()
+	if ex.Decision.Disposition == Pause {
+		in.finish(Ending{Detail: "the source is paused"})
+		return false
+	}
+	if trip != "" {
+		in.pause(ctx, trip)
+		return false
+	}
+	return true
+}
+
+// pause asks the engine to pause the source with code and ends the
+// instance; a request that gets no answer still ends it, and the source's
+// workflow and the engine's next answer pause it.
+func (in *Instance) pause(ctx context.Context, code string) {
+	pctx, cancel := context.WithTimeout(ctx, doorCallBound)
+	err := in.Door.RequestPause(pctx, code)
+	cancel()
+	detail := "asked to pause the source"
+	if err != nil {
+		detail = "asked to pause the source; the request got no answer: " + err.Error()
+	}
+	in.finish(Ending{Paused: code, Detail: detail})
+}
+
+// hold keeps a message whose disposition is a wait until the instance's
+// wait tells the lane what to do with it.
+func (in *Instance) hold(ctx context.Context, i int, d *LaneDriver, ex Exchange) bool {
+	h := &heldMessage{msg: ex.Message, body: ex.Body, since: in.Now(), cmd: make(chan laneCommand, 1)}
+	in.mu.Lock()
+	in.held[i] = h
+	if !ex.Decision.Uncertain {
+		// A certain decision ends a run of uncertain ones: the breaker
+		// counts five in a row.
+		in.breakers.Certain()
+	}
+	if ex.Decision.Uncertain {
+		if t := in.breakers.Uncertain(in.Now()); t != "" {
+			in.mu.Unlock()
+			in.release(ctx, d, h, ex.Decision)
+			in.pause(ctx, t)
+			return false
+		}
+	}
+	if in.waiter.Waiting() {
+		_, again := in.waiter.Tried(&ex.Decision, in.Now())
+		if again {
+			in.mu.Unlock()
+			return in.releaseOne(ctx, i, d, h, ex.Decision)
+		}
+	}
+	in.waiter.Begin(in.Now())
+	in.mu.Unlock()
+	look := time.NewTicker(lookEvery)
+	defer look.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case cmd := <-h.cmd:
+			if cmd == cmdRelease {
+				return in.releaseOne(ctx, i, d, h, ex.Decision)
+			}
+			next, err := in.Judge.Decide(ctx, h.msg, h.body)
+			if err != nil {
+				if ctx.Err() == nil {
+					in.finish(endingFor(err))
+				}
+				return false
+			}
+			in.mu.Lock()
+			in.waiter.Retried(next.Disposition != Wait, in.Now())
+			in.mu.Unlock()
+			if next.Disposition != Wait {
+				res, err := d.Verdict(ctx, h.msg, next)
+				if res.Kind == ExchangeHeld && (err == nil || errors.Is(err, ErrReceiptRequired)) {
+					// Not given yet (its receipt refused, or its
+					// confirmation aged): still held, judged again after
+					// the next park.
+					in.mu.Lock()
+					in.waiter.Begin(in.Now())
+					in.mu.Unlock()
+					continue
+				}
+				in.unhold(i)
+				if err != nil {
+					in.finish(endingFor(err))
+					return false
+				}
+				return in.settled(ctx, res)
+			}
+		case <-look.C:
+			expired, err := d.HoldExpired(ctx, h.msg)
+			if err != nil {
+				in.finish(endingFor(err))
+				return false
+			}
+			if expired {
+				in.unhold(i)
+				return true
+			}
+		}
+	}
+}
+
+func (in *Instance) unhold(i int) {
+	in.mu.Lock()
+	delete(in.held, i)
+	in.mu.Unlock()
+}
+
+// releaseOne gives a held message back, with its dead-letter receipt when
+// it is at the broker's limit.
+func (in *Instance) releaseOne(ctx context.Context, i int, d *LaneDriver, h *heldMessage, why Decision) bool {
+	in.unhold(i)
+	return in.release(ctx, d, h, why)
+}
+
+func (in *Instance) release(ctx context.Context, d *LaneDriver, h *heldMessage, why Decision) bool {
+	in.mu.Lock()
+	delay := int(in.waiter.CycleDelay() / time.Second)
+	limit, _ := in.limit.Limit()
+	in.mu.Unlock()
+	release := Decision{Disposition: Wait, Action: ActionRelease, Delay: max(delay, releaseDelaySeconds),
+		Receipt: Receipt{Outcome: artifacts.ReceiptReleased, Reason: eventsources.ReasonMessageReleasedAcceptFailing, Cause: why.Cause}}
+	if in.Config.AtMostOnce {
+		release.Receipt.Outcome, release.Receipt.Required = artifacts.ReceiptDropped, true
+	}
+	if r, ok := DeadLettered(why, h.msg.DeliveryCount, limit, in.Config.AtMostOnce); ok {
+		release.Receipt = r
+	}
+	for {
+		_, err := d.Verdict(ctx, h.msg, release)
+		if err == nil {
+			return true
+		}
+		if !errors.Is(err, ErrReceiptRequired) {
+			if ctx.Err() == nil {
+				in.finish(endingFor(err))
+			}
+			return false
+		}
+		// Its receipt is required and the store refused it: the release
+		// waits a park and is tried again, until the container's own hold
+		// bound gives the message back.
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(max(in.Config.Park, lookEvery)):
+		}
+		if expired, xerr := d.HoldExpired(ctx, h.msg); xerr != nil || expired {
+			if xerr != nil && ctx.Err() == nil {
+				in.finish(endingFor(xerr))
+				return false
+			}
+			return xerr == nil
+		}
+	}
+}

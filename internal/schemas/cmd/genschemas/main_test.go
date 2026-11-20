@@ -20,8 +20,8 @@ func TestGenschemas_WritesTheCommittedSchemas(t *testing.T) {
 	var out bytes.Buffer
 	must.OK(t, generate(root, dest, &out))
 	written := strings.Fields(out.String())
-	if len(written) != 16 {
-		t.Fatalf("wrote %v, want the five schemas, the UI's copies of the two kinds', the webhook event lists and the eight Dockerfiles", written)
+	if len(written) != 17 {
+		t.Fatalf("wrote %v, want the six schemas, the UI's copies of the two kinds', the webhook event lists and the eight Dockerfiles", written)
 	}
 	for _, path := range written {
 		got, err := os.ReadFile(filepath.Join(dest, path))

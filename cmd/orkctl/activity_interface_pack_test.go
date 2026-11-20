@@ -115,3 +115,41 @@ func TestActivityInterfacePack_AMissingFile(t *testing.T) {
 		t.Fatalf("pack of a missing file: %v", err)
 	}
 }
+
+const serviceDocument = `apiVersion: orkstack/v1
+kind: ServiceInterface
+profile: event-source
+with:
+  stream:
+    type: string
+    required: true
+event_source:
+  delivery: at-least-once
+  max_concurrency: 4
+`
+
+const serviceLabel = `{"schemaVersion":1,"profile":"event-source","with":{"stream":{"type":"string","required":true}},"eventSource":{"delivery":"DELIVERY_CLASS_AT_LEAST_ONCE","maxConcurrency":4}}`
+
+// TestActivityInterfacePack_ServiceInterface: a kind: ServiceInterface
+// document packs into its one label, interface, with the same canonical
+// bytes; any other --label is refused naming the one it has; a refusal names
+// the file.
+func TestActivityInterfacePack_ServiceInterface(t *testing.T) {
+	path := writeActivityInterface(t, serviceDocument)
+	out, err := executeAs(t, "linux", "activity", "interface", "pack", path)
+	if err != nil {
+		t.Fatalf("pack: %v\n%s", err, out)
+	}
+	if out != serviceLabel+"\n" {
+		t.Fatalf("pack printed\n%q\nwant\n%q", out, serviceLabel+"\n")
+	}
+	if out, err := executeAs(t, "linux", "activity", "interface", "pack", "--label", "icon", path); err == nil ||
+		!strings.Contains(err.Error(), "a service interface packs into one label, interface") {
+		t.Fatalf("pack --label icon = %q, %v", out, err)
+	}
+	bad := writeActivityInterface(t, strings.Replace(serviceDocument, "max_concurrency: 4", "max_concurrency: 0", 1))
+	if out, err := executeAs(t, "linux", "activity", "interface", "pack", bad); err == nil ||
+		!strings.HasPrefix(err.Error(), bad+": ") || !strings.Contains(err.Error(), "max_concurrency") || strings.Contains(out, "{") {
+		t.Fatalf("pack of a bad document = %q, %v", out, err)
+	}
+}

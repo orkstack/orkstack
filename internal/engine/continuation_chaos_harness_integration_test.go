@@ -1195,6 +1195,20 @@ func (s *chaosStack) realOrkerCallWithPolicy(name, pool string, stores *realOrke
 	wrap func(next orkerCall) orkerCall,
 ) (orkerCall, string) {
 	s.t.Helper()
+	activities, orkerID := s.realOrkerActivities(name, pool, stores, policy)
+	call := orkerCall(activities.ExecuteTask)
+	if wrap != nil {
+		call = wrap(call)
+	}
+	return call, orkerID
+}
+
+// realOrkerActivities boots a real Orker's activities, for a scenario that
+// drives more of them than ExecuteTask (its stop, its store watch, what it
+// reports of itself).
+func (s *chaosStack) realOrkerActivities(name, pool string, stores *realOrkerStores, policy *orker.SecurityPolicy,
+) (*orker.Activities, string) {
+	s.t.Helper()
 	orkerID := proof.OrkerID("chaos-" + chaosLabel(s.scenario) + "-" + name)
 	activities := orker.NewActivitiesWithOptions(stores.store, orker.Options{
 		Logs: stores.logs, Commits: stores.commits, Attempts: stores.attempts, Refs: stores.refs,
@@ -1204,11 +1218,7 @@ func (s *chaosStack) realOrkerCallWithPolicy(name, pool string, stores *realOrke
 		infraAbsent(s.t, "orker boot checks failed: %v", err)
 	}
 	s.t.Cleanup(activities.Close)
-	call := orkerCall(activities.ExecuteTask)
-	if wrap != nil {
-		call = wrap(call)
-	}
-	return call, orkerID
+	return activities, orkerID
 }
 
 // chaosWorkRoot is a fresh work root for one Orker of this test, under

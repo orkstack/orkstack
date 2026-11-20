@@ -240,7 +240,7 @@ func TestOrkflowCreate_ADirectorySkipsItsActivityInterfaces(t *testing.T) {
 	only := t.TempDir()
 	must.OK(t, os.WriteFile(filepath.Join(only, "interface.ork.yaml"), []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n"), 0o644))
 	if _, _, err := expandApplyArgs([]string{only}, orkflowDocument); err == nil ||
-		err.Error() != only+": no Orkflow to create: its *.ork.yaml files are activity interfaces, which are packed into images" {
+		err.Error() != only+": no Orkflow to create: its *.ork.yaml files are image interfaces, which are packed into images" {
 		t.Fatalf("a directory of interfaces = %v", err)
 	}
 }

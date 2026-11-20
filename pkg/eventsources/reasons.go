@@ -27,18 +27,45 @@ const (
 	ReasonIdentityUnsupported = "EVENT_SOURCE_IDENTITY_UNSUPPORTED"
 )
 
+// Reasons an attempt of a service ends with (docs/ORKER_SERVICE_CONTRACT.md):
+// the Orker's verdict on one container of one instance.
+const (
+	ReasonServiceExited            = "SERVICE_EXITED"
+	ReasonServiceFailed            = "SERVICE_FAILED"
+	ReasonServiceOOMKilled         = "SERVICE_OOM_KILLED"
+	ReasonServiceNotReady          = "SERVICE_NOT_READY"
+	ReasonServiceConfigRejected    = "SERVICE_CONFIG_REJECTED"
+	ReasonServiceUnresponsive      = "SERVICE_UNRESPONSIVE"
+	ReasonServiceHostStalled       = "SERVICE_HOST_STALLED"
+	ReasonServiceContractViolation = "SERVICE_CONTRACT_VIOLATION"
+	ReasonServiceStopStuck         = "SERVICE_STOP_STUCK"
+	// ReasonServiceRunsAsRoot is an image that declares the root user and
+	// ended before its first status: service containers run as the Orker's
+	// own non-root uid, so an image that needs root cannot work.
+	ReasonServiceRunsAsRoot = "SERVICE_RUNS_AS_ROOT"
+)
+
 // Reasons of a message (a receipt's reason, and an evaluation's).
 const (
-	ReasonMessageTooLarge           = "MESSAGE_TOO_LARGE"
-	ReasonMessageAttributesTooLarge = "MESSAGE_ATTRIBUTES_TOO_LARGE"
-	ReasonMessageIdentityInvalid    = "MESSAGE_IDENTITY_INVALID"
-	ReasonMessageTextInvalid        = "MESSAGE_TEXT_INVALID"
-	ReasonMessageNotJSON            = "MESSAGE_NOT_JSON"
-	ReasonMessageJSONTooDeep        = "MESSAGE_JSON_TOO_DEEP"
-	ReasonMessageJSONTooLarge       = "MESSAGE_JSON_TOO_LARGE"
-	ReasonMessageFieldMissing       = "MESSAGE_FIELD_MISSING"
-	ReasonMessageFieldType          = "MESSAGE_FIELD_TYPE"
-	ReasonMessageInputTooLarge      = "MESSAGE_INPUT_TOO_LARGE"
-	ReasonMessageUnprocessable      = "MESSAGE_UNPROCESSABLE"
-	ReasonMessageNotMatched         = "MESSAGE_NOT_MATCHED"
+	ReasonMessageTooLarge = "MESSAGE_TOO_LARGE"
+	// ReasonMessageDeliveriesExhausted is a message not accepted at its
+	// broker's delivery limit, given back to be dead-lettered.
+	ReasonMessageDeliveriesExhausted = "MESSAGE_DELIVERIES_EXHAUSTED"
+	// ReasonMessageReleasedHoldExpired is a message its container released
+	// itself, no verdict having come within its hold bound.
+	ReasonMessageReleasedHoldExpired = "MESSAGE_RELEASED_HOLD_EXPIRED"
+	// ReasonMessageReleasedAcceptFailing is a message given back while its
+	// instance waits: nothing was wrong with it.
+	ReasonMessageReleasedAcceptFailing = "MESSAGE_RELEASED_ACCEPT_FAILING"
+	ReasonMessageAttributesTooLarge    = "MESSAGE_ATTRIBUTES_TOO_LARGE"
+	ReasonMessageIdentityInvalid       = "MESSAGE_IDENTITY_INVALID"
+	ReasonMessageTextInvalid           = "MESSAGE_TEXT_INVALID"
+	ReasonMessageNotJSON               = "MESSAGE_NOT_JSON"
+	ReasonMessageJSONTooDeep           = "MESSAGE_JSON_TOO_DEEP"
+	ReasonMessageJSONTooLarge          = "MESSAGE_JSON_TOO_LARGE"
+	ReasonMessageFieldMissing          = "MESSAGE_FIELD_MISSING"
+	ReasonMessageFieldType             = "MESSAGE_FIELD_TYPE"
+	ReasonMessageInputTooLarge         = "MESSAGE_INPUT_TOO_LARGE"
+	ReasonMessageUnprocessable         = "MESSAGE_UNPROCESSABLE"
+	ReasonMessageNotMatched            = "MESSAGE_NOT_MATCHED"
 )

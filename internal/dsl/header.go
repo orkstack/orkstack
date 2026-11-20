@@ -24,6 +24,10 @@ const (
 	// create|update|evaluate --file (docs/EVENT_SOURCES.md); an automation
 	// document's event_sources section declares sources too.
 	KindEventSource = "EventSource"
+	// KindServiceInterface is a service image's interface, authored: it is
+	// packed into the image's org.orkstack.service.interface label and never
+	// applied (docs/ORKER_SERVICE_CONTRACT.md, "A service image").
+	KindServiceInterface = "ServiceInterface"
 )
 
 // OrkflowHeader is the canonical header, exactly as OrkStack writes it.
@@ -148,14 +152,18 @@ func checkHeader(source []byte) error {
 		return validationError("kind", fmt.Errorf("kind: %s is an activity interface, not an Orkflow: "+
 			"pack it into an image's label with orkctl activity interface pack (docs/ACTIVITY_IMAGES.md); "+
 			"an Orkflow says kind: %s", KindActivityInterface, KindOrkflow))
+	case kind.Value == KindServiceInterface:
+		return validationError("kind", fmt.Errorf("kind: %s is a service interface, not an Orkflow: "+
+			"pack it into a service image's label with orkctl activity interface pack (docs/ORKER_SERVICE_CONTRACT.md); "+
+			"an Orkflow says kind: %s", KindServiceInterface, KindOrkflow))
 	case kind.Value == KindEventSource:
 		return validationError("kind", fmt.Errorf("kind: %s is an event source, not an Orkflow: "+
 			"create it with orkctl event-source create --file (docs/EVENT_SOURCES.md); an Orkflow says kind: %s",
 			KindEventSource, KindOrkflow))
 	case kind.Value != KindOrkflow:
 		return validationError("kind", fmt.Errorf("kind %q is not a kind OrkStack reads: an Orkflow says kind: %s, "+
-			"an automation document kind: %s, an activity interface kind: %s, an event source kind: %s",
-			kind.Value, KindOrkflow, KindAutomation, KindActivityInterface, KindEventSource))
+			"an automation document kind: %s, an activity interface kind: %s, an event source kind: %s, a service interface kind: %s",
+			kind.Value, KindOrkflow, KindAutomation, KindActivityInterface, KindEventSource, KindServiceInterface))
 	}
 	return nil
 }

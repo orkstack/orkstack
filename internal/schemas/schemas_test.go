@@ -475,9 +475,10 @@ func TestSchemas_DispatcherHoldsEveryKind(t *testing.T) {
 		dsl.KindAutomation:        "#/definitions/automation",
 		dsl.KindActivityInterface: "#/definitions/activityinterface",
 		dsl.KindEventSource:       "#/definitions/eventsource",
+		dsl.KindServiceInterface:  "#/definitions/serviceinterface",
 	}
 	if got := stringsOf(dispatcher["properties"].(map[string]any)["kind"].(map[string]any)["enum"]); !reflect.DeepEqual(got,
-		[]string{dsl.KindActivityInterface, dsl.KindAutomation, dsl.KindEventSource, dsl.KindOrkflow}) {
+		[]string{dsl.KindActivityInterface, dsl.KindAutomation, dsl.KindEventSource, dsl.KindOrkflow, dsl.KindServiceInterface}) {
 		t.Errorf("the dispatcher's kind enum is %v", got)
 	}
 	if !reflect.DeepEqual(kinds, want) {
