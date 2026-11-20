@@ -591,7 +591,11 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 		future, err := s.scheduleItem(runCtx, id, index)
 		if err != nil {
 			e.settled++
-			return s.itemRefused(ctx, id, index, err)
+			if stop, ferr := s.itemRefused(ctx, id, index, err); stop {
+				return ferr
+			}
+			sent++ // a refusal emits an event: it counts toward the batch's yield
+			continue
 		}
 		inFlight[itemFlightKey(id, index)] = future
 		e.inFlight++
@@ -601,8 +605,10 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 }
 
 // itemRefused records an item the engine refused before scheduling it
-// (INPUT_TOO_LARGE), then fails the node as a failed item does.
-func (s *runState) itemRefused(ctx workflow.Context, id string, index int32, cause error) error {
+// (INPUT_TOO_LARGE), then ends it as a failed item does: a fail_fast fan-out
+// fails, and a continue one goes on unless it is past its bound or this was
+// its last item. stop says whether the dispatch loop ends, with err.
+func (s *runState) itemRefused(ctx workflow.Context, id string, index int32, cause error) (stop bool, err error) {
 	item := s.taskRuns[id].Items[index]
 	item.Status = orkstackv1.Status_STATUS_FAILED
 	item.FinishedAt = timestamppb.New(workflow.Now(ctx))
@@ -623,7 +629,54 @@ func (s *runState) itemRefused(ctx workflow.Context, id string, index int32, cau
 	if err := s.emitItem(ctx, id, index, item.Status, fmt.Sprintf("item %d failed: %s", index, cause.Error()), true); err != nil {
 		workflow.GetLogger(ctx).Error("emit item failure failed", "run_id", s.runID, "task_id", id, "error", err)
 	}
-	return s.failNodeOnItem(ctx, id, index)
+	return s.itemFailedForGood(ctx, id, index)
+}
+
+// itemFailedForGood is what an item failing for good does to its fan-out.
+// fail_fast: the node fails with it. continue: the node fails fast once more
+// items have failed than max_failed_items allows, fails once its last item
+// has ended, and otherwise goes on (stop false).
+func (s *runState) itemFailedForGood(ctx workflow.Context, id string, index int32) (stop bool, err error) {
+	e := s.eaches[id]
+	if !dsl.EachContinues(e.spec) {
+		return true, s.failNodeOnItem(ctx, id, index)
+	}
+	if limit := e.spec.GetMaxFailedItems(); limit > 0 && s.itemsFailed(id) > limit {
+		return true, s.failContinued(ctx, id, fmt.Sprintf("more than max_failed_items %d: ", limit))
+	}
+	if e.settled == e.count {
+		return true, s.failContinued(ctx, id, "")
+	}
+	return false, nil
+}
+
+// itemsFailed counts a fan-out's items that failed for good.
+func (s *runState) itemsFailed(id string) int32 {
+	var n int32
+	for _, item := range s.taskRuns[id].GetItems() {
+		if item.GetStatus() == orkstackv1.Status_STATUS_FAILED {
+			n++
+		}
+	}
+	return n
+}
+
+// failContinued fails a continue fan-out with its lowest-index failed item's
+// reason, its message counting the failures behind prefix:
+// "3 of 500 items failed; item 7: …".
+func (s *runState) failContinued(ctx workflow.Context, id, prefix string) error {
+	e := s.eaches[id]
+	for _, item := range s.taskRuns[id].GetItems() {
+		if item.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+			continue
+		}
+		index := item.GetItem()
+		return s.failNodeWith(ctx, id, index, fmt.Sprintf("%s%d of %d items failed; item %d: %s",
+			prefix, s.itemsFailed(id), e.count, index, item.GetError().GetMessage()))
+	}
+	// Every caller has seen an item fail; a fan-out without one is a bug.
+	return temporal.NewNonRetryableApplicationError(fmt.Sprintf(
+		"fan-out %q was failed for its items with none failed", id), InvalidEachCode, nil)
 }
 
 // scheduleItem is schedule for one item, with exactly these differences: the item's idempotency key and commit URI, the per-item artifact
@@ -641,14 +694,9 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 	item.ScheduledAt = timestamppb.New(workflow.Now(runCtx))
 	item.Pool = pool
 
-	commitURI := ""
-	if s.plan.CommitRoot != "" {
-		key, err := artifacts.ItemCommitKey(s.wf.GetNamespace(), s.runID, id, index)
-		if err != nil {
-			return nil, temporal.NewNonRetryableApplicationError(
-				fmt.Sprintf("task %q item %d: compose the commit uri: %v", id, index, err), "INVALID_COMMIT_KEY", err)
-		}
-		commitURI = strings.TrimSuffix(s.plan.CommitRoot, "/") + "/" + key
+	commitURI, key, err := s.commitFor(t, index, item.GetResultEpoch())
+	if err != nil {
+		return nil, err
 	}
 	input := s.executeTaskInput(t, id, pool, nil)
 	devices, err := s.deviceRefs(pool, t)
@@ -656,7 +704,7 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		return nil, err
 	}
 	input.Devices = devices
-	input.IdempotencyKey = task.ItemIdempotencyKeyFor(s.wf.GetNamespace(), s.runID, id, index)
+	input.IdempotencyKey = key
 	input.CommitUri = commitURI
 	input.Limits.ArtifactMaxCount = s.itemArtifactMax
 	input.Each = &orkstackv1.EachContext{
@@ -670,6 +718,9 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		// The source is never staged: an item reads only its own span.
 		input.Upstream = dropSource(input.GetUpstream(), e.spec.GetSource().GetArtifact())
 	}
+	if input.RunContext, err = s.runContextFor(t, item); err != nil {
+		return nil, err
+	}
 	// The input is encoded once: sized from these bytes and handed to the
 	// SDK as they are, so a fan-out's expansion does not encode each item
 	// twice. They are the bytes the SDK would have written itself
@@ -681,14 +732,18 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 			fmt.Sprintf("%s: task %q item %d: encode the activity input: %v", task.ReasonInputTooLarge, id, index, err),
 			task.CategoryContractViolation, err)
 	}
-	if err := s.checkItemInput(id, index, task.PayloadDataSize(payload)); err != nil {
+	size, err := s.userInputSize(input, task.PayloadDataSize(payload), min(s.itemInputLimit, s.planInputLimit()))
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkItemInput(id, index, size); err != nil {
 		return nil, err
 	}
 	if limit := s.historyLimit(); limit != nil {
-		s.noteCommand(runCtx, 1, s.itemInputLimit+limit.Reserve.CommandBytes)
+		s.noteCommand(runCtx, 1, s.itemInputLimit+s.runContextBound()+limit.Reserve.CommandBytes)
 		s.chargeItemDispatch()
 	}
-	activityCtx := s.taskActivityContext(runCtx, t, queue, item, itemFlightKey(id, index))
+	activityCtx := s.taskActivityContext(runCtx, t, queue, item, itemFlightKey(id, index), artifacts.Item{Index: index, Set: true})
 	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, converter.NewRawValue(payload)), nil
 }
 
@@ -696,10 +751,7 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 // already measured (size), with the shared-budget sentence when the bound is
 // the fan-outs' share rather than the plan's own limit.
 func (s *runState) checkItemInput(id string, index int32, size int64) error {
-	planLimit := s.plan.Limits.Proto().GetValuesMaxBytes()
-	if planLimit <= 0 || planLimit > task.MaxActivityInputBytes {
-		planLimit = task.MaxActivityInputBytes
-	}
+	planLimit := s.planInputLimit()
 	if s.itemInputLimit >= planLimit {
 		if err := task.CheckSize(id, size, planLimit); err != nil {
 			return temporal.NewNonRetryableApplicationError(
@@ -746,7 +798,7 @@ func (s *runState) collectItem(
 	e.settled++
 
 	result := &orkstackv1.ExecuteTaskResult{}
-	cause := future.Get(ctx, result)
+	cause := s.openFailure(future.Get(ctx, result))
 	if cause != nil {
 		// An interruption its execution listed runs the item again in its
 		// fan-out's window, or — its budgets spent — fails it with its
@@ -795,8 +847,13 @@ func (s *runState) collectItem(
 	// time it returns; this item's own event is still emitted below before
 	// that refusal goes to fail(), so every settled item has its one event,
 	// after the refused item's.
+	// A continue fan-out refills after a failed item too, unless that item
+	// took it past its bound.
+	continues := dsl.EachContinues(e.spec)
+	tripped := continues && item.GetStatus() == orkstackv1.Status_STATUS_FAILED &&
+		e.spec.GetMaxFailedItems() > 0 && s.itemsFailed(id) > e.spec.GetMaxFailedItems()
 	var refused error
-	if !draining && cause == nil {
+	if !draining && (cause == nil || (continues && !tripped && item.GetStatus() == orkstackv1.Status_STATUS_FAILED)) {
 		refused = s.dispatchItems(ctx, runCtx, id, inFlight)
 	}
 
@@ -825,11 +882,18 @@ func (s *runState) collectItem(
 
 	switch item.GetStatus() {
 	case orkstackv1.Status_STATUS_FAILED:
-		return s.failNodeOnItem(ctx, id, index)
+		if stop, err := s.itemFailedForGood(ctx, id, index); stop {
+			return err
+		}
+		return nil
 	case orkstackv1.Status_STATUS_CANCELED:
 		// Only the operator's run cancellation reaches an item's context
 		// while the run is not ending; fail() records RUN_CANCELED.
 		return cause
+	}
+	if e.settled == e.count && continues && s.itemsFailed(id) > 0 && node.GetStatus() == orkstackv1.Status_STATUS_RUNNING {
+		// The last item of a continue fan-out an earlier item failed.
+		return s.failContinued(ctx, id, "")
 	}
 	if e.settled == e.count && s.allItemsSucceeded(id) {
 		node.Status = orkstackv1.Status_STATUS_SUCCEEDED
@@ -860,10 +924,15 @@ func (s *runState) allItemsSucceeded(id string) bool {
 // item, TASK_FAILED is emitted, and the non-retryable error goes to fail().
 func (s *runState) failNodeOnItem(ctx workflow.Context, id string, index int32) error {
 	e := s.eaches[id]
+	return s.failNodeWith(ctx, id, index, fmt.Sprintf("item %d of %d failed: %s",
+		index, e.count, s.taskRuns[id].Items[index].GetError().GetMessage()))
+}
+
+// failNodeWith is failNodeOnItem with its message.
+func (s *runState) failNodeWith(ctx workflow.Context, id string, index int32, message string) error {
 	node := s.taskRuns[id]
 	item := node.Items[index]
 	itemErr := item.GetError()
-	message := fmt.Sprintf("item %d of %d failed: %s", index, e.count, itemErr.GetMessage())
 	details := fmt.Sprintf("task %q item %d", id, index)
 	if d := itemErr.GetDetails(); d != "" && d != details {
 		details += "; " + strings.TrimPrefix(d, details+"; ")
@@ -1100,4 +1169,37 @@ func ActivityTaskInput(arg any) (*orkstackv1.ExecuteTaskInput, bool) {
 		return in, true
 	}
 	return nil, false
+}
+
+// itemsNotSucceeded is the ascending indices of a fan-out's items that did
+// not succeed: failed, cancelled, or never dispatched.
+func (s *runState) itemsNotSucceeded(id string) []int32 {
+	e := s.eaches[id]
+	succeeded := make([]bool, e.count)
+	for _, item := range s.taskRuns[id].GetItems() {
+		if i := item.GetItem(); i >= 0 && i < e.count && item.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
+			succeeded[i] = true
+		}
+	}
+	var out []int32
+	for i, ok := range succeeded {
+		if !ok {
+			out = append(out, int32(i))
+		}
+	}
+	return out
+}
+
+// attemptActivityID is the activity id a task's attempts run under in an
+// admitted run (identity.ActivityID's rule: ork/<task>, or ork/<task>/<item>
+// for an item of a fan-out), and "" in every other run, which the SDK then
+// numbers as it always has.
+func (s *runState) attemptActivityID(taskID string, item artifacts.Item) string {
+	if s.plan.Identity == nil {
+		return ""
+	}
+	if !item.Set {
+		return "ork/" + taskID
+	}
+	return "ork/" + taskID + "/" + strconv.Itoa(int(item.Index))
 }

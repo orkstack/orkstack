@@ -56,7 +56,15 @@ async function signIn(page: Page, path0: string, email: string): Promise<void> {
 	await page.goto(`${ENGINE}${path0}`);
 	await expect(page).toHaveURL(/\/signin\?return=/);
 	await atDex(page, email);
-	await expect(page).toHaveURL(new RegExp(`${path0.replace(/[?]/g, '\\?')}$`));
+	// Back where it was going, in the signed-in shell. The URL is read once the
+	// shell is drawn: the shell names the namespace on every page it draws,
+	// the deployment-wide Access screens included (`?ns=default` here, where
+	// nothing chose another), and writes it as it hydrates, so reading the URL
+	// any earlier races that write. The account menu is the signed-in shell's,
+	// drawn at every width; on a phone it waits in the closed sidebar, so it is
+	// attached rather than visible.
+	await expect(page.getByTestId('account-trigger')).toBeAttached();
+	await expect(page).toHaveURL(new RegExp(`${path0.replace(/[?]/g, '\\?')}\\?ns=default$`));
 }
 
 /** atDex follows the issuer's button and fills Dex's login form as email. */

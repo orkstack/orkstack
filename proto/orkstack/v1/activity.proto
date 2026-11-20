@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package orkstack.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/common.proto";
@@ -397,12 +398,24 @@ message EachContext {
 // artifacts.ItemCommitKey(namespace, run_id, task_id, i) — the single shared
 // renderer the engine used to dispatch that item — and stages from the commit.
 message EachUpstream {
-  // count is the number of items, every one SUCCEEDED (a dependent runs only
-  // after its fan-out succeeded). 0 is legal: the fan-out expanded to nothing.
+  // count is the number of items. Every one SUCCEEDED for an ordinary
+  // dependent, which runs only after its fan-out succeeded; for a failure
+  // handler of an on_item_failure: continue fan-out, failed names those that
+  // did not. 0 is legal: the fan-out expanded to nothing.
   int32 count = 1;
   // commit_root is RunPlan.commit_root, the root every commit URI of this run
   // is composed against.
   string commit_root = 2;
+  // epochs names the resume scope of the items a resume ran again: item i's
+  // commit is then artifacts.ScopedItemCommitKey(namespace, run_id, task_id,
+  // i, epoch). An item no range covers is at scope 0, ItemCommitKey's key,
+  // so a run never resumed sends none.
+  repeated ItemEpochRun epochs = 3;
+
+  // failed is, for a failure handler of an on_item_failure: continue fan-out
+  // that failed, the indices of every item that did not succeed, ascending:
+  // they have no commit to stage.
+  repeated int32 failed = 4;
 }
 
 // ---------------------------------------------------------------- the seam
@@ -528,8 +541,113 @@ message ExecuteTaskInput {
   // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
   IdentityContext identity = 34;
 
-  // run_context is set from E86; unset until it lands (v0.4.0 proto batch).
+  // run_context is what the task may know about its run beyond its id: the
+  // run-context object's digest, the run's lineage ids, its start times, the
+  // task's scheduled time and its declared attempts. It is decided by the
+  // engine when it dispatches the task, identical across the attempts of one
+  // logical task, and never part of the memo or idempotency key. It is the
+  // one part of the input that may exceed the 256 KiB bound, by at most the
+  // run's pinned run_context bound (512 B).
   RunContext run_context = 33;
+
+  // index_lines names the fan-outs over this task's artifacts' lines whose
+  // line indexes the Orker builds as it commits them, when it can; a task
+  // that writes no such artifact, a memo hit and an adopted commit build none.
+  repeated LineIndexRequest index_lines = 36;
+}
+
+// LineIndexRequest is one line index a producer's Orker builds as it commits
+// its artifact name: the fan-out task_id's, under that fan-out's own index
+// key and limits, exactly as IndexEachLines would build it.
+message LineIndexRequest {
+  string task_id = 1;
+  string name = 2;
+  EachLineFormat format = 3;
+  int32 batch = 4;
+  int32 max_items = 5;
+  int64 values_max_bytes = 6;
+  int64 slice_max_bytes = 7;
+  int64 read_cap = 8;
+}
+
+// LineIndexBuilt is one line index a producer's Orker built: the fan-out
+// expands from it without indexing the artifact again.
+message LineIndexBuilt {
+  string task_id = 1;
+  string name = 2;
+  ArtifactRef index = 3;
+  int32 count = 4;
+  int64 total_lines = 5;
+}
+
+// ItemEpochRun is count items from first, all committed under epoch.
+message ItemEpochRun {
+  int32 first = 1;
+  int32 count = 2;
+  uint64 epoch = 3;
+}
+
+// AdoptRecordedInput is one call of a resume's read-back (engine-internal,
+// a local activity on the engine's workflow worker): the kept results to
+// read back, and the call's pinned bounds.
+message AdoptRecordedInput {
+  repeated AdoptEntry entries = 1;
+  // concurrency is the most reads in flight.
+  int32 concurrency = 2;
+  // get_timeout bounds one read's tries, at most get_tries of them.
+  google.protobuf.Duration get_timeout = 3;
+  int32 get_tries = 4;
+  // budget bounds the call's encoded result.
+  int64 budget = 5;
+}
+
+// AdoptEntry is one kept result to read back.
+message AdoptEntry {
+  string task_id = 1;
+  // item is the item's index, or -1 for the task itself.
+  int32 item = 2;
+  AdoptEntryKind kind = 3;
+  // commit_uri is where a COMMIT entry's commit lives.
+  string commit_uri = 4;
+  // expected is what that commit must name.
+  ExpectedCommit expected = 5;
+  // record_scope is the resume scope a RESOLUTION or COMPOSED record lives under.
+  uint64 record_scope = 6;
+}
+
+// AdoptEntryKind is what a read-back entry reads.
+enum AdoptEntryKind {
+  ADOPT_ENTRY_KIND_UNSPECIFIED = 0;
+  // COMMIT is an activity's commit.json.
+  ADOPT_ENTRY_KIND_COMMIT = 1;
+  // RESOLUTION is an awaited task's resolution record.
+  ADOPT_ENTRY_KIND_RESOLUTION = 2;
+  // COMPOSED is a composed task's record of its child's values.
+  ADOPT_ENTRY_KIND_COMPOSED = 3;
+}
+
+// ExpectedCommit is the identity a commit must name to be an activity's
+// result: the fields the Orker's retry-start check compares.
+message ExpectedCommit {
+  string namespace = 1;
+  string run_id = 2;
+  string task_id = 3;
+  string definition_digest = 4;
+  string idempotency_key = 5;
+  string image_index_digest = 6;
+}
+
+// AdoptRecordedResult is one call's results, in its entries' order.
+message AdoptRecordedResult {
+  repeated AdoptedEntry entries = 1;
+}
+
+// AdoptedEntry is one kept result read back: what the task's row takes, as
+// an adopted attempt's result.
+message AdoptedEntry {
+  string task_id = 1;
+  int32 item = 2;
+  ExecuteTaskResult result = 3;
 }
 
 // ReleasePinInput asks the pin host to remove the pin's shared directory.
@@ -614,6 +732,10 @@ message ExecuteTaskResult {
   // started_at, finished_at, orker_id and attempt are this attempt's; and
   // commit_adopted is false (this attempt wrote the commit).
   CacheResult cache = 15;
+
+  // line_indexes are the line indexes this attempt built while it committed
+  // (ExecuteTaskInput.index_lines); one it could not build is absent.
+  repeated LineIndexBuilt line_indexes = 16;
 }
 
 // ---------------------------------------------------------------- the commit record
@@ -655,6 +777,13 @@ message ActivityCommit {
   // §5.4 adoption of it on a retry is the ordinary one. memo_written,
   // memo_write_error and key_components are never set here.
   CacheResult cache = 19;
+
+  // recorded is set by the engine on a result it records for a run whose
+  // results the engine records (docs/TASK_IDENTITY.md, "Results the engine
+  // records"): the pool, the Orker id the caller's credential names, the
+  // admission's digest, the engine's build and the time. Never set by an
+  // Orker; unset on every other commit.
+  CommitRecording recorded = 20;
 }
 
 // ---------------------------------------------------------------- the identity records
@@ -901,10 +1030,21 @@ message DescribeOrkerResult {
   // cordoned is true while any is set.
   repeated ProfileCordon profile_cordons = 28;
 
-  // identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // identity_supported is whether this Orker serves task identity now: its
+  // engine confirmed, within the last ten minutes, that its credential names
+  // it and holds identity.token.mint and task.result.commit at its pool,
+  // and its storage credential is confirmed scoped. It alone decides.
   bool identity_supported = 33;
+  // identity_unsupported_reason says why this Orker does not serve task
+  // identity, for display and for naming the cause in a refusal; empty while
+  // identity_supported. It decides nothing.
+  string identity_unsupported_reason = 45;
+  // identity_storage is where this Orker keeps identity token and
+  // credential files: memory-backed storage, or the work root's disk.
+  IdentityStorage identity_storage = 46;
 
-  // providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+  // providers are the providers this Orker declares (ORK_PROVIDERS), which
+  // submit asks every Orker of a pool a task that names one would run on.
   repeated ProviderInfo providers = 34;
 
   // masks_secrets is whether this Orker masks a task's secrets in its logs
@@ -1134,9 +1274,97 @@ message IndexEachLinesResult {
   ArtifactRef index = 3;
 }
 
-// IdentityContext is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message IdentityContext {}
+// IdentityRef is one identity a task holds: a token for one audience,
+// minted for each attempt and refreshed while it runs
+// (docs/TASK_IDENTITY.md).
+message IdentityRef {
+  // name names the identity within its task: the file it is written to.
+  string name = 1;
+  // audience is the token's aud: one the namespace's identity policy allows.
+  string audience = 2;
+  // ttl_seconds is the token's life, held between the deployment's
+  // identity.token.min_ttl and max_ttl; 0 is identity.token.ttl.
+  int32 ttl_seconds = 3;
+  // refresh says what a refresh that keeps failing does to the attempt.
+  RefreshPolicy refresh = 4;
+}
+
+// RefreshPolicy is what a refresh that keeps failing does to the attempt.
+enum RefreshPolicy {
+  // REFRESH_POLICY_UNSPECIFIED is REFRESH_POLICY_REQUIRED.
+  REFRESH_POLICY_UNSPECIFIED = 0;
+  // REFRESH_POLICY_REQUIRED ends the attempt when its token expires
+  // unrefreshed.
+  REFRESH_POLICY_REQUIRED = 1;
+  // REFRESH_POLICY_BEST_EFFORT lets the attempt run on with an expired
+  // token.
+  REFRESH_POLICY_BEST_EFFORT = 2;
+}
+
+// CredentialRef is one credential a task holds: a bundle of files a
+// provider issues for each attempt, as the namespace's grant, and the Orker
+// keeps fresh while the container runs (docs/PROVIDERS.md). It never holds a
+// value.
+message CredentialRef {
+  // name names the credential within its task: the directory it is written
+  // to, /orkstack/credentials/<name>/. ^[a-z][a-z0-9-]{0,62}$, unique in the
+  // task.
+  string name = 1;
+  // grant is a grant of the namespace's identity policy that admits this
+  // Orkflow: which provider, and as whom.
+  string grant = 2;
+  // path is where the provider issues from, for a provider type that issues
+  // from a path; empty for a credential that is the login itself. A locator,
+  // validated and never normalized.
+  string path = 3;
+  // refresh says what a refresh that keeps failing does to the attempt.
+  RefreshPolicy refresh = 4;
+  // params are the literal parameters of a path the provider writes rather
+  // than reads: never templated, at most 16 keys and 4 KiB.
+  map<string, string> params = 5;
+}
+
+// IdentityContext is what an attempt of a task that holds an identity needs
+// to ask for its tokens (docs/TASK_IDENTITY.md), set at submit and pinned
+// in the run's plan. It is set only on a task of a run that holds one.
+message IdentityContext {
+  // issuer is the issuer the run's tokens come from.
+  string issuer = 1;
+  // identities are the task's identities, as admitted.
+  repeated IdentityRef identities = 2;
+  // credentials are the task's credentials, as admitted.
+  repeated CredentialRef credentials = 3;
+  // 4 is the grants the task uses as resolved at submit, added with
+  // providers.
+  reserved 4;
+  // admission_sha256 is the digest of the run's admission record, which a
+  // mint names.
+  string admission_sha256 = 5;
+  // digest_version is the version of the task digest the engine computed
+  // at admission, which the Orker computes again.
+  uint32 digest_version = 6;
+  // root_scope is, for a run below a root, the root's resume scope when the
+  // run was started; 0 otherwise.
+  uint64 root_scope = 7;
+  // resume_scope is the attempt's own resume scope, as
+  // MintAttemptTokensRequest.resume_scope reads it.
+  uint64 resume_scope = 8;
+  // commit_wait_seconds is how long the Orker waits for an engine at a
+  // commit, pinned when the run was submitted
+  // (identity.results.commit_wait).
+  int32 commit_wait_seconds = 20;
+}
+
+// IdentityStorage is where an Orker keeps identity token and credential
+// files.
+enum IdentityStorage {
+  IDENTITY_STORAGE_UNSPECIFIED = 0;
+  // IDENTITY_STORAGE_MEMORY is tmpfs or ramfs: the files do not outlive
+  // the host's boot.
+  IDENTITY_STORAGE_MEMORY = 1;
+  // IDENTITY_STORAGE_DISK is the work root.
+  IDENTITY_STORAGE_DISK = 2;
+}
 
 // MetadataProbe is what an Orker's boot found for one instance metadata
 // address, asked from a container on the default network as a task would ask
@@ -1298,9 +1526,20 @@ message ProfileContractPin {
   repeated string identity_digests = 2;
 }
 
-// ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
-// batch).
-message ProviderInfo {}
+// ProviderInfo is one provider an Orker declares (ORK_PROVIDERS): what
+// submit compares across a pool's Orkers. It never holds a secret: the
+// providers document holds none.
+message ProviderInfo {
+  // name is the declared name: the scheme of the provider's sources.
+  string name = 1;
+  // type is the provider's compiled-in type ("aws", "vault", "image").
+  string type = 2;
+  // image_digest is a provider image's digest; empty for any other type.
+  string image_digest = 3;
+  // contracts are the provider profile versions this Orker runs a provider
+  // image under; empty for any other type.
+  repeated int32 contracts = 4;
+}
 
 // ResultsScope is how far an Orker's storage credential reaches among
 // results: every namespace's, or only named namespaces'.
@@ -1310,9 +1549,39 @@ enum ResultsScope {
   RESULTS_SCOPE_BY_NAMESPACE = 2;
 }
 
-// RunContext is E86's; it is empty until E86 lands (v0.4.0 proto
-// batch).
-message RunContext {}
+// RunContext is a task's reference to its run's context: the facts a task
+// may read about the run it belongs to. The run's data (origin, schedule
+// fire, composed lineage) is in the run-context object, an immutable object
+// written once per run tree when it is submitted and addressed by its
+// SHA-256; the facts here are per run and per task.
+message RunContext {
+  // object_sha256 is the SHA-256 (hex) of the run tree's run-context object.
+  string object_sha256 = 1;
+  // root_run_id is the id of the run at the top of the composed chain; empty
+  // for a top-level run, whose root is itself.
+  string root_run_id = 2;
+  // parent_run_id is the id of the run that started this one; set only on a
+  // child run.
+  string parent_run_id = 3;
+  // tree_index is this run's entry in the object's entries: 0 for the root.
+  int32 tree_index = 4;
+  // created_at is when the run was created.
+  google.protobuf.Timestamp created_at = 5;
+  // started_at is when the run started executing.
+  google.protobuf.Timestamp started_at = 6;
+  // task_scheduled_at is when the task, or fan-out item, became ready and was
+  // first dispatched (TaskRun.scheduled_at).
+  google.protobuf.Timestamp task_scheduled_at = 7;
+  // declared_max_attempts is the attempts the definition's retry: declares
+  // (retry.maximum_attempts), or 1 without retry: or with a maximum of 0 or 1.
+  int32 declared_max_attempts = 8;
+  // own_attempts_before is how many of the task's own attempts earlier
+  // executions of it spent, interruptions excluded.
+  int32 own_attempts_before = 9;
+  // run_deadline is the run's deadline when its definition declares
+  // timeout: and its clock has started; unset otherwise.
+  google.protobuf.Timestamp run_deadline = 10;
+}
 
 // ServiceHost is what an Orker says about hosting services
 // (docs/ORKER_SERVICE_CONTRACT.md): the contract and profile versions it

@@ -1,0 +1,44 @@
+name: registry-mirror
+description: Make the runner's Docker daemon pull Docker Hub images through mirror.gcr.io, Google's public cache of Docker Hub, and fail unless the daemon reports the mirror (docs/PROOFS.md §5).
+
+# Docker Hub limits anonymous pulls per IP, and a hosted runner's address is
+# shared, so a proof's pulls of its Docker Hub images could be refused. The
+# daemon asks the mirror first and falls back to Docker Hub itself on a miss;
+# a pull by digest is verified against that digest either way, so nothing a
+# job runs changes. A job runs this before any container or builder of its
+# own: it restarts the daemon, which would stop them. It merges into
+# daemon.json, so a later step that sets other keys (proof-host's DNS) keeps
+# the mirror, and it fails rather than leave a daemon that silently pulls
+# from Docker Hub alone. Only a hosted runner is changed: a self-hosted one's
+# daemon is its owner's (CONTRIBUTING.md, "Linux hosts").
+
+inputs:
+  mirror:
+    description: The mirror's URL
+    required: false
+    default: https://mirror.gcr.io
+
+runs:
+  using: composite
+  steps:
+    - name: registry mirror
+      if: runner.environment == 'github-hosted'
+      shell: bash
+      env:
+        MIRROR: ${{ inputs.mirror }}
+      run: |
+        set -euo pipefail
+        file=/etc/docker/daemon.json
+        current='{}'
+        if sudo test -s "$file"; then current="$(sudo cat "$file")"; fi
+        jq --arg m "$MIRROR" '."registry-mirrors" = (((."registry-mirrors" // []) + [$m]) | unique)' <<<"$current" |
+          sudo tee "$file.new" >/dev/null
+        sudo mv "$file.new" "$file"
+        sudo systemctl restart docker
+        mirrors="$(timeout -k 5 60 docker info --format '{{json .RegistryConfig.Mirrors}}')"
+        host="${MIRROR#https://}"
+        if ! jq -e --arg h "$host" 'any(.[]; contains($h))' <<<"$mirrors" >/dev/null; then
+          echo "the Docker daemon does not report the mirror $MIRROR after its restart (it reports $mirrors)" >&2
+          exit 1
+        fi
+        echo "Docker Hub pulls go through $MIRROR (daemon mirrors: $mirrors)" | tee -a "$GITHUB_STEP_SUMMARY"

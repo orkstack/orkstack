@@ -177,6 +177,53 @@ type Config struct {
 	// id, so every binding matches by name, a unit-test posture.
 	Incarnations IncarnationStore
 
+	// NamespacePolicies keeps each namespace's identity policy
+	// (namespace_identity.go), beside its id. `ork` wires the same store
+	// as Incarnations; nil shows no policy and refuses a change to one.
+	NamespacePolicies NamespacePolicyStore
+	// Minter is the identity mint's steps 2 and 4 to 8 (identity_mint.go);
+	// nil refuses every mint IDENTITY_ENGINE_REFUSED.
+	Minter *identity.Minter
+	// IdentityUnscopedOrkers is identity.unscoped_orkers: "refuse" (the
+	// default, and any value but "report") refuses a run that holds an
+	// identity while an Orker's storage credential is not confirmed scoped.
+	IdentityUnscopedOrkers string
+	// MintObserver counts each mint's outcome; nil counts nothing.
+	MintObserver identity.MintObserver
+	// Recorder is CommitResult's steps 2 and 4 to 8 (attempt_commit.go);
+	// nil refuses every commit IDENTITY_ENGINE_REFUSED.
+	Recorder *identity.Recorder
+	// IdentityCommitWait is identity.results.commit_wait: what submit adds
+	// to the transfer budget of a run tree that holds an identity.
+	IdentityCommitWait time.Duration
+	// CommitObserver counts each CommitResult's outcome; nil counts nothing.
+	CommitObserver identity.CommitObserver
+	// IssuedRecords answers ListIssuedTokens: the records of what each
+	// granted mint issued. nil answers it unimplemented.
+	IssuedRecords IssuedLister
+
+	// IdentityAttemptsMaxExtra is identity.attempts.max_extra: the most a
+	// namespace's policy may set as attempts_extra.
+	IdentityAttemptsMaxExtra int
+	// IdentityAttemptsExtra and IdentityAttemptsMax are identity.attempts.extra
+	// and identity.attempts.max: the attempts past a task's retry policy a
+	// run is admitted when its namespace sets none, and the most attempts
+	// one task may hold an identity for.
+	IdentityAttemptsExtra, IdentityAttemptsMax int
+	// IdentityTokenTTL is identity.token.ttl, the life an admission pins for
+	// an identity that names none.
+	IdentityTokenTTL time.Duration
+	// IdentityAdmissions is where a run's admission and chain records are written
+	// (admission_submit.go). nil, with no Issuer, admits nothing: a tree
+	// that holds an identity is refused IDENTITY_NOT_CONFIGURED.
+	IdentityAdmissions AdmissionRecords
+	// EngineBuild is this engine's build, recorded in every admission it
+	// writes: ORK_BUILD_ID, or the commit the binary was built from.
+	EngineBuild string
+	// OnAdmissionOrphan counts an admission record a submit could not delete
+	// (ork.identity.admission_orphans); nil counts nothing.
+	OnAdmissionOrphan func(context.Context)
+
 	// Issuer is the task identity issuer (docs/TASK_IDENTITY.md); nil when
 	// identity.issuer is unset, and IdentityService then answers that task
 	// identity is off.
@@ -358,6 +405,18 @@ type Config struct {
 	// pins (E92); nil pins DefaultInterruptionBudgets.
 	Interruptions *engine.InterruptionBudgets
 
+	// Concurrency and GateTunables are engine.concurrency.*: what a run's
+	// concurrency limit is checked and planned with at submit, and the
+	// tunables a gate it starts runs on. Zero values are the defaults
+	// (cmd/ork always sets both, validated at boot).
+	Concurrency  engine.ConcurrencySettings
+	GateTunables engine.GateTunables
+	// ConcurrencyReader is what submit reads of the cluster for a limit's
+	// key and line checks, and for the queued runs a max_running refusal
+	// names (engine.TemporalConcurrencyReader). Nil refuses every limited
+	// run CONCURRENCY_CHECK_UNAVAILABLE and counts no queued run.
+	ConcurrencyReader engine.ConcurrencyAdmissionReader
+
 	// RunTimeoutHandlerGrace is engine.run_timeout_handler_grace: how long
 	// after a run's deadline its failure handlers may still run. Zero is a
 	// grace of zero (cmd/ork passes engine.DefaultRunTimeoutHandlerGrace for
@@ -386,6 +445,10 @@ type Config struct {
 	// written: the run snapshot store every reader resolves them from.
 	DefinitionByReference bool
 	DefinitionObjects     DefinitionObjectWriter
+	// RunContexts is where each run tree's run-context object is written
+	// (run_context.go): the run snapshot store. Unset, a run's tasks are
+	// given no run context.
+	RunContexts RunContextWriter
 
 	// SnapshotOverlays is engine.snapshot_overlays: a run tree in which some
 	// run declares more than engine.DefaultOverlayMinRows rows gets the
@@ -558,6 +621,24 @@ type Service struct {
 	schedules ScheduleController
 	// scheduleBindings is cfg.ScheduleBindings.
 	scheduleBindings ScheduleBindingStore
+	// namespacePolicies and identityAttemptsMaxExtra are cfg's.
+	namespacePolicies        NamespacePolicyStore
+	minter                   *identity.Minter
+	mintLimits               *identity.MintLimits
+	mintObserver             identity.MintObserver
+	recorder                 *identity.Recorder
+	commitLimits             *identity.MintLimits
+	identityCommitWait       time.Duration
+	commitObserver           identity.CommitObserver
+	identityUnscopedOrkers   string
+	issuedRecords            IssuedLister
+	identityAttemptsMaxExtra int
+	identityAttemptsExtra    int
+	identityAttemptsMax      int
+	identityTokenTTL         time.Duration
+	identityAdmissions       AdmissionRecords
+	engineBuild              string
+	onAdmissionOrphan        func(context.Context)
 	// incarnations is cfg.Incarnations; ids caches what it read.
 	incarnations IncarnationStore
 	// issuer is cfg.Issuer; serveDiscovery and enginePresence are their
@@ -629,6 +710,14 @@ type Service struct {
 	// interruptions is Config.Interruptions: the budgets every run this
 	// engine accepts pins (E92); nil is the defaults.
 	interruptions *engine.InterruptionBudgets
+	// concurrency and gateTunables are Config.Concurrency and
+	// Config.GateTunables, the defaults for zero values.
+	concurrency       engine.ConcurrencySettings
+	gateTunables      engine.GateTunables
+	concurrencyReader engine.ConcurrencyAdmissionReader
+	// queuedWarn spaces GetRun's warnings that a queued run's gate could
+	// not be read (applyLiveQueued): a run page polls GetRun.
+	queuedWarn warnLimiter
 	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
 	// seconds, never negative: what runTimeoutPlanFor pins.
 	runTimeoutGraceSeconds int64
@@ -638,6 +727,7 @@ type Service struct {
 	// continuation on; definitionObjects is Config.DefinitionObjects.
 	definitionByReference bool
 	definitionObjects     DefinitionObjectWriter
+	runContexts           RunContextWriter
 	// snapshotOverlays is Config.SnapshotOverlays; overlaysOff rate-limits
 	// the Warn logged while the fleet keeps a run tree off overlays.
 	snapshotOverlays bool
@@ -676,80 +766,101 @@ type Service struct {
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		orkflows:               cfg.Orkflows,
-		namespaces:             cfg.Namespaces,
-		rawQueue:               cfg.RawQueue,
-		runs:                   cfg.Runs,
-		bus:                    cfg.Bus,
-		activities:             cfg.Activities,
-		orkers:                 cfg.Orkers,
-		fleet:                  cfg.Fleet,
-		releases:               cfg.Releases,
-		capabilities:           cfg.Capabilities,
-		catalog:                cfg.Catalog,
-		resolver:               cfg.Resolver,
-		pinnedActivities:       newPinnedActivityCache(),
-		system:                 cfg.System,
-		telemetrySinks:         cfg.TelemetrySinks,
-		router:                 cfg.Router,
-		archive:                cfg.Archive,
-		logs:                   cfg.Logs,
-		artifactStore:          cfg.ArtifactStore,
-		attempts:               cfg.Attempts,
-		commits:                cfg.Commits,
-		logPoll:                cfg.LogPoll,
-		idempotency:            cfg.Idempotency,
-		onLegacyPending:        cfg.OnLegacyPending,
-		webhooks:               cfg.Webhooks,
-		triggers:               cfg.Triggers,
-		eventSources:           cfg.EventSources,
-		eventSourceSettings:    cfg.EventSourceSettings,
-		evaluations:            newNamespaceSlots(evaluationsPerNamespace),
-		inspections:            newNamespaceRate(inspectsPerMinute),
-		schedules:              cfg.Schedules,
-		scheduleBindings:       cfg.ScheduleBindings,
-		incarnations:           cfg.Incarnations,
-		issuer:                 cfg.Issuer,
-		serveDiscovery:         cfg.ServeDiscovery,
-		enginePresence:         cfg.EnginePresence,
-		ids:                    newIncarnationCache(),
-		deliveries:             cfg.Deliveries,
-		redelivery:             cfg.Redelivery,
-		notifier:               cfg.Notifier,
-		observer:               cfg.Observer,
-		admissions:             cfg.Admissions,
-		triggerMetrics:         cfg.TriggerMetrics,
-		scheduleMetrics:        cfg.ScheduleMetrics,
-		artifacts:              cfg.Artifacts,
-		limits:                 cfg.Limits,
-		eachMaxItems:           eachMaxItemsOf(cfg.EachMaxItems),
-		orkflowMaxTasks:        orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
-		historyMaxEvents:       positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
-		continuation:           continuationBudgetFor(cfg),
-		definitionByReference:  cfg.DefinitionByReference && cfg.ContinuationEnabled,
-		snapshotOverlays:       cfg.SnapshotOverlays,
-		definitionObjects:      cfg.DefinitionObjects,
-		runMaxInFlight:         int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
-		pinCreationSeconds:     pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
-		interruptions:          cfg.Interruptions,
-		runTimeoutGraceSeconds: max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
-		pausePlan:              pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
-		historyMaxBytes:        positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
-		composeMaxDepth:        composeMaxDepthOf(cfg.ComposeMaxDepth),
-		cacheMaxTTL:            cacheMaxTTLOf(cfg.CacheMaxTTL),
-		memos:                  cfg.Memos,
-		retention:              cfg.Retention,
-		retentionEnforced:      cfg.RetentionEnforced,
-		artifactReclaim:        cfg.ArtifactReclaim,
-		restoreReconciler:      cfg.RestoreReconciler,
-		acceptedRuns:           cfg.AcceptedRuns,
-		imagePolicies:          cfg.ImagePolicies,
-		signatures:             cfg.Signatures,
-		transferBudget:         cfg.TransferBudgetSeconds,
-		floorThroughput:        cfg.FloorThroughputBytesPerSecond,
-		logger:                 cfg.Logger,
-		now:                    cfg.Now,
-		newRunID:               cfg.NewRunID,
+		orkflows:                 cfg.Orkflows,
+		namespaces:               cfg.Namespaces,
+		rawQueue:                 cfg.RawQueue,
+		runs:                     cfg.Runs,
+		bus:                      cfg.Bus,
+		activities:               cfg.Activities,
+		orkers:                   cfg.Orkers,
+		fleet:                    cfg.Fleet,
+		releases:                 cfg.Releases,
+		capabilities:             cfg.Capabilities,
+		catalog:                  cfg.Catalog,
+		resolver:                 cfg.Resolver,
+		pinnedActivities:         newPinnedActivityCache(),
+		system:                   cfg.System,
+		telemetrySinks:           cfg.TelemetrySinks,
+		router:                   cfg.Router,
+		archive:                  cfg.Archive,
+		logs:                     cfg.Logs,
+		artifactStore:            cfg.ArtifactStore,
+		attempts:                 cfg.Attempts,
+		commits:                  cfg.Commits,
+		logPoll:                  cfg.LogPoll,
+		idempotency:              cfg.Idempotency,
+		onLegacyPending:          cfg.OnLegacyPending,
+		webhooks:                 cfg.Webhooks,
+		triggers:                 cfg.Triggers,
+		eventSources:             cfg.EventSources,
+		eventSourceSettings:      cfg.EventSourceSettings,
+		evaluations:              newNamespaceSlots(evaluationsPerNamespace),
+		inspections:              newNamespaceRate(inspectsPerMinute),
+		schedules:                cfg.Schedules,
+		scheduleBindings:         cfg.ScheduleBindings,
+		incarnations:             cfg.Incarnations,
+		issuer:                   cfg.Issuer,
+		serveDiscovery:           cfg.ServeDiscovery,
+		enginePresence:           cfg.EnginePresence,
+		ids:                      newIncarnationCache(),
+		deliveries:               cfg.Deliveries,
+		redelivery:               cfg.Redelivery,
+		notifier:                 cfg.Notifier,
+		observer:                 cfg.Observer,
+		identityAdmissions:       cfg.IdentityAdmissions,
+		triggerMetrics:           cfg.TriggerMetrics,
+		scheduleMetrics:          cfg.ScheduleMetrics,
+		artifacts:                cfg.Artifacts,
+		limits:                   cfg.Limits,
+		eachMaxItems:             eachMaxItemsOf(cfg.EachMaxItems),
+		orkflowMaxTasks:          orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
+		historyMaxEvents:         positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
+		continuation:             continuationBudgetFor(cfg),
+		definitionByReference:    cfg.DefinitionByReference && cfg.ContinuationEnabled,
+		snapshotOverlays:         cfg.SnapshotOverlays,
+		definitionObjects:        cfg.DefinitionObjects,
+		runMaxInFlight:           int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
+		pinCreationSeconds:       pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
+		interruptions:            cfg.Interruptions,
+		runTimeoutGraceSeconds:   max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
+		pausePlan:                pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
+		historyMaxBytes:          positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
+		composeMaxDepth:          composeMaxDepthOf(cfg.ComposeMaxDepth),
+		cacheMaxTTL:              cacheMaxTTLOf(cfg.CacheMaxTTL),
+		memos:                    cfg.Memos,
+		retention:                cfg.Retention,
+		retentionEnforced:        cfg.RetentionEnforced,
+		artifactReclaim:          cfg.ArtifactReclaim,
+		restoreReconciler:        cfg.RestoreReconciler,
+		acceptedRuns:             cfg.AcceptedRuns,
+		imagePolicies:            cfg.ImagePolicies,
+		signatures:               cfg.Signatures,
+		transferBudget:           cfg.TransferBudgetSeconds,
+		floorThroughput:          cfg.FloorThroughputBytesPerSecond,
+		logger:                   cfg.Logger,
+		now:                      cfg.Now,
+		newRunID:                 cfg.NewRunID,
+		namespacePolicies:        cfg.NamespacePolicies,
+		minter:                   cfg.Minter,
+		mintLimits:               identity.NewMintLimits(cfg.Now),
+		mintObserver:             cfg.MintObserver,
+		recorder:                 cfg.Recorder,
+		identityCommitWait:       cfg.IdentityCommitWait,
+		commitObserver:           cfg.CommitObserver,
+		commitLimits:             identity.NewCommitLimits(cfg.Now),
+		identityUnscopedOrkers:   cfg.IdentityUnscopedOrkers,
+		issuedRecords:            cfg.IssuedRecords,
+		identityAttemptsMaxExtra: cfg.IdentityAttemptsMaxExtra,
+		identityAttemptsExtra:    cfg.IdentityAttemptsExtra,
+		identityAttemptsMax:      cfg.IdentityAttemptsMax,
+		identityTokenTTL:         cfg.IdentityTokenTTL,
+		admissions:               cfg.Admissions,
+		engineBuild:              cfg.EngineBuild,
+		onAdmissionOrphan:        cfg.OnAdmissionOrphan,
+		runContexts:              cfg.RunContexts,
+		concurrency:              concurrencySettingsOf(cfg.Concurrency),
+		gateTunables:             gateTunablesOf(cfg.GateTunables),
+		concurrencyReader:        cfg.ConcurrencyReader,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -763,6 +874,18 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.logger == nil {
 		svc.logger = slog.Default()
+	}
+	// cmd/ork validates engine.concurrency.* at boot; a partly set value
+	// from anywhere else would pin zeros into every limited run's plan, so it
+	// is the defaults instead, and said.
+	if err := svc.concurrency.Check(svc.gateTunables); err != nil {
+		svc.logger.Error("the concurrency settings are not usable; using the defaults", "error", err)
+		svc.concurrency, svc.gateTunables = engine.DefaultConcurrencySettings(), engine.DefaultGateTunables()
+	}
+	if svc.runContexts == nil {
+		// Explicit, never silent: a service with nowhere to write run
+		// contexts starts runs whose tasks are given none.
+		svc.logger.Info("no run-context store is configured: tasks of the runs this service starts are given no run context")
 	}
 	svc.pools = &engine.PoolResolver{
 		Namespaces: cfg.Namespaces,
@@ -938,6 +1061,14 @@ func (s *Service) ApplyOrkflow(
 	// it, and holds the stamp above it (artifacts.AppliedStamp) so a slow
 	// replica cannot publish a version that reads as older than the one it
 	// just extended.
+	// A version that will be what the name resolves to (no version is
+	// promoted, so the newest is) is refused while a schedule or trigger
+	// follows current and it declares an artifact input.
+	if versions, verr := s.orkflows.Versions(ctx, ns.GetName(), wf.GetName()); verr != nil || versions.Current == "" {
+		if err := s.refuseArtifactInputsWithFollowers(ctx, ns.GetName(), wf); err != nil {
+			return nil, err
+		}
+	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	stored, created, err := s.orkflows.Put(ctx, wf, expected)
 	// Whatever the outcome — a failed write may still have landed — the
@@ -1172,6 +1303,10 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	if err := s.checkTaskCeiling(wf); err != nil {
 		return nil, nil, nil, err
 	}
+	// A concurrency limit's queue_timeout against the deployment's bounds.
+	if err := s.checkConcurrencyBounds(wf); err != nil {
+		return nil, nil, nil, err
+	}
 	selected, err := applyNamespace(requestedNamespace, wf.GetNamespace())
 	if err != nil {
 		return nil, nil, nil, err
@@ -1193,6 +1328,11 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 				&validationFieldError{Field: refused.Field(), Err: err})
 		}
 		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// The namespace's identity policy, the same way: what its tasks may ask
+	// for, anchored to the field; submit and the mint ask again.
+	if err := s.checkIdentityPolicy(ctx, ns, wf); err != nil {
+		return nil, nil, nil, err
 	}
 	wf.Namespace = ns.GetName()
 	resolutions, err := s.resolveImages(ctx, wf)
@@ -1235,10 +1375,16 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// Caching's apply warnings: never an ERROR, so an apply is never refused
 	// on them (docs/DSL.md "Caching").
 	issues = append(issues, cacheIssues(wf, s.cacheMaxTTL)...)
+	// Task identity's warnings: a cached or pinned identity task, and a pool
+	// more than one namespace may use (identity_warnings.go). Never an ERROR.
+	issues = append(issues, s.identityIssues(ctx, ns, wf)...)
 	// Join policies' apply warning (W1): an unguarded read of an ancestor a
 	// join can leave absent. Never an ERROR; rules 37–42 already refused in
 	// Compile.
 	issues = append(issues, dsl.JoinWarnings(wf)...)
+	// A concurrency limit the deployment could not hold now: a warning,
+	// never a refusal of the document.
+	issues = append(issues, s.concurrencyIssues(ctx, ns, wf)...)
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
@@ -1625,6 +1771,13 @@ type submission struct {
 	// (definition_ref.go).
 	start            *orkstackv1.Orkflow
 	definitionObject []byte
+	// runContextObject is the run tree's run-context object, written under
+	// the final run id before each start (run_context.go); nil when the
+	// deployment gives no run context.
+	runContextObject []byte
+	// admission is the tree's admissions as prepare decided them, nil for a
+	// tree that holds no identity; admitRun writes them for each candidate.
+	admission *admissionTree
 }
 
 // startDefinition is the definition the run's start carries.
@@ -1758,6 +1911,35 @@ func (s *Service) prepare(
 	if err := s.checkTaskCeilingAtSubmit(stored); err != nil {
 		return submission{}, err
 	}
+	// An artifact input is passed only by a composing task: no other start
+	// can bind one, so it is refused before any id is minted.
+	if err := refuseArtifactInputs(stored, origin.GetKind(), "a "+originNoun(origin.GetKind())); err != nil {
+		return submission{}, err
+	}
+	// Task identity: what the definition asks for against the namespace's
+	// policy now, and, for a run whose tree holds one, every live Orker's
+	// storage credential confirmed scoped (identity_submit.go). Each
+	// composed child's definition is held to the same in planChildren.
+	if err := s.checkIdentityAtSubmit(ctx, ns, stored, ns.GetName()); err != nil {
+		return submission{}, err
+	}
+	holds, err := s.treeAsksForIdentity(ctx, ns.GetName(), stored)
+	var binder *artifacts.AdmittedBinder
+	if err != nil {
+		return submission{}, err
+	}
+	if holds {
+		if err := s.checkStoreScopedForIdentity(ctx); err != nil {
+			return submission{}, err
+		}
+		// A run a schedule or a trigger starts holds an identity only from
+		// a binder who may still submit, and a consent to what it asks for.
+		if startedByAnObject(origin) {
+			if binder, err = s.checkedBinder(ctx, ns, msg, origin); err != nil {
+				return submission{}, err
+			}
+		}
+	}
 	binding, err := s.binding(ns.GetName())
 	if err != nil {
 		return submission{}, err
@@ -1778,6 +1960,14 @@ func (s *Service) prepare(
 	if err != nil {
 		return submission{}, poolPlanError(err)
 	}
+	// A run that holds an identity runs only where every Orker of every pool
+	// it runs a container on serves task identity; each child it plans is
+	// asked the same in planChildren.
+	if holds {
+		if err := s.resolverFor(binding).CheckIdentitySupport(ctx, ns, planned); err != nil {
+			return submission{}, poolPlanError(err)
+		}
+	}
 	// The image policy in force NOW, over the stored definition's resolved
 	// images, before anything is minted or claimed: a definition applied
 	// before the policy tightened is refused here, and allow_empty_pool does
@@ -1796,6 +1986,7 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("resolve durable activity configuration: %w", err))
 	}
+	s.pinCommitWait(&plan, holds)
 	// The run-tree limits, once per tree: on the top-level plan only, and
 	// never per child (planChildren pins only the durability plan per child);
 	// the child's start copies them (startChild). Its own step, so
@@ -1817,7 +2008,7 @@ func (s *Service) prepare(
 	plan.RootRunIndexed = rootIndexAnswer(binding.Starter)
 	if err := s.planChildren(ctx, composeRequest{
 		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
-		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(),
+		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(), holdsIdentity: holds,
 	}, planned, &plan, 0, nil); err != nil {
 		return submission{}, err
 	}
@@ -1825,6 +2016,12 @@ func (s *Service) prepare(
 	// minted: a run tree that needs a capability is refused while a process
 	// that could decide it lacks one (fleetCheck).
 	if err := s.fleetCheck(ctx, planned, &plan); err != nil {
+		return submission{}, err
+	}
+	// A run-level concurrency limit: its key rendered, the deployment asked
+	// whether it can hold one, and its slot pinned (planConcurrency). A run
+	// with no limit asks nothing.
+	if err := s.planConcurrency(ctx, ns, planned, &plan, msg, origin, binding.Starter); err != nil {
 		return submission{}, err
 	}
 	// The snapshot-overlay policy, a run-tree limit like those
@@ -1860,6 +2057,14 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("mint await callback tokens: %w", err))
 	}
+	// The tree's admissions, all but the ids: a run whose tree holds an
+	// identity is admitted under each candidate id before its key is
+	// claimed (admission_submit.go). Its plans carry a placeholder digest
+	// while they are measured.
+	admission, err := s.prepareAdmission(ctx, ns, planned, &plan, origin, binder, holds)
+	if err != nil {
+		return submission{}, err
+	}
 	// Every child's callback awaits, minted and discarded; then the plan's
 	// size, measured with placeholder ids; then, last, the child run ids.
 	if err := s.mintChildren(planned, &plan); err != nil {
@@ -1875,6 +2080,14 @@ func (s *Service) prepare(
 			return submission{}, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		plan.IdempotencyFingerprint = fingerprint
+	}
+	// The run tree's run context, once its origin and children are final:
+	// the object numbers each child's plan and pins its SHA-256 on this one.
+	var runContextObject []byte
+	if s.runContexts != nil {
+		if runContextObject, err = planRunContext(planned, &plan); err != nil {
+			return submission{}, connect.NewError(connect.CodeInternal, err)
+		}
 	}
 	// The plan is the start's third payload. mintChildren measures it only
 	// when the run composes children; every plan is measured here, after the
@@ -1893,6 +2106,8 @@ func (s *Service) prepare(
 		origin:           origin,
 		start:            start,
 		definitionObject: definitionObject,
+		runContextObject: runContextObject,
+		admission:        admission,
 	}, nil
 }
 
@@ -2149,6 +2364,12 @@ func poolPlanError(err error) error {
 	// task's input, so the run is refused before any id is minted.
 	var noCache *engine.PoolNoCacheSupportError
 	if errors.As(err, &noCache) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A pool one of whose Orkers does not serve task identity, for a run
+	// that holds one (POOL_NO_IDENTITY_SUPPORT).
+	var noIdentity *engine.PoolNoIdentitySupportError
+	if errors.As(err, &noIdentity) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	// A pool whose Orker predates join policies: it could not decode a
@@ -2742,6 +2963,7 @@ func (s *Service) GetRun(
 	}
 	SetRunTiming(run, time.Now())
 	s.applyCensusPendingReasons(ctx, run)
+	s.applyLiveQueued(ctx, run)
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
@@ -2908,6 +3130,11 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
+	if plan.Index != nil {
+		if err := runIndexGates(plan.Index, ns, binding); err != nil {
+			return nil, err
+		}
+	}
 	if binding.Reader != nil {
 		query := plan
 		query.Namespace = ns.GetName()
@@ -2938,7 +3165,9 @@ func (s *Service) ListRuns(
 		}
 		fromMemory = true
 	}
-	if s.archive != nil {
+	// An archived run has ended, so it waits on and holds nothing: under an
+	// index filter the archive cannot add a row, and is not read.
+	if s.archive != nil && plan.Index == nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
 			Namespace:     ns.GetName(),
 			OrkflowName:   plan.OrkflowName,

@@ -19,6 +19,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/internal/testsupport/testpki"
@@ -67,9 +68,10 @@ func startTLSStack(t *testing.T, frontAddr string, engineTLS, orkerTLS []string)
 	}, orkerTLS...)
 	s := &tlsStack{t: t, ctx: ctx}
 	s.orker = startProcess(ctx, t, "orker", testbin.Path(t, "./cmd/orker"), orkerEnv...)
-	addr := freeAddress(t)
-	s.engine = startProcess(ctx, t, "ork", testbin.Path(t, "./cmd/ork"),
-		append(engineEnv(t, addr, frontAddr, temporalNamespace, queue), engineTLS...)...)
+	engine := launch(ctx, t, "ork", testbin.Path(t, "./cmd/ork"),
+		append(engineEnv(t, listenaddr.Loopback, frontAddr, temporalNamespace, queue), engineTLS...)...)
+	s.engine = engine.exited
+	addr := engine.api(ctx, t)
 	server := "http://" + addr
 	s.cli = func(args ...string) (string, string, int) {
 		full := append(append([]string(nil), args...), "--server", server)
@@ -377,7 +379,7 @@ func TestIntegration_BootRefusesABadTemporalTLSSetting(t *testing.T) {
 					"HOME="+home,
 					"ORK_TEMPORAL_ADDRESS="+front.Addr,
 					"ORK_TEMPORAL_NAMESPACE="+privateTemporalNamespace(),
-					"ORK_HTTP_ADDR="+freeAddress(t),
+					"ORK_HTTP_ADDR="+listenaddr.Loopback,
 					"ORK_ORKER_WORKDIR="+filepath.Join(home, "work"),
 					"ORK_ARTIFACT_BACKEND=local",
 					"ORK_ARTIFACT_DIR="+filepath.Join(home, "artifacts"),

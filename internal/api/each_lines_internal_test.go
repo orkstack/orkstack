@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -46,5 +47,63 @@ func TestCheckEachLimits_LinesAllowance(t *testing.T) {
 	s.limits.ValuesMaxBytes = size + eachLinesRefAllowance
 	if err := s.checkEachLimits(lines); err != nil {
 		t.Fatalf("a lines fan-out within its allowance was refused: %v", err)
+	}
+}
+
+// TestCheckEachLimits_LinesAtCeilingWithManyUpstreams: at the 10,000-item
+// ceiling every item's share of the input budget is small, and the lines
+// allowance is charged inside it: a with: that fits an array fan-out's share
+// but not with the allowance is refused, the same with: half an allowance
+// smaller is accepted. How many tasks the fan-out needs does not change
+// apply's answer — their references are known only at run time, where the
+// engine's exact check holds them to the same bound.
+func TestCheckEachLimits_LinesAtCeilingWithManyUpstreams(t *testing.T) {
+	const ceiling = dsl.MaxEachItems
+	doc := func(each string, upstreams, pad int) *orkstackv1.Orkflow {
+		t.Helper()
+		var b strings.Builder
+		b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: x\ninputs:\n  l:\n    type: array\ntasks:\n")
+		b.WriteString("  - id: list\n    uses: busybox:1\n")
+		needs := []string{"list"}
+		for i := 0; i < upstreams-1; i++ {
+			fmt.Fprintf(&b, "  - id: up%d\n    uses: busybox:1\n", i)
+			needs = append(needs, fmt.Sprintf("up%d", i))
+		}
+		fmt.Fprintf(&b, "  - id: convert\n    uses: busybox:1\n    needs: [%s]\n    each:\n%s    with:\n      pad: '%s'\n",
+			strings.Join(needs, ", "), each, strings.Repeat("x", pad))
+		wf, err := dsl.Compile([]byte(b.String()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return wf
+	}
+	lines := fmt.Sprintf("      over_artifact: list/a.jsonl\n      format: jsonl\n      max_items: %d\n", ceiling)
+	array := fmt.Sprintf("      over: '{{ .inputs.l }}'\n      max_items: %d\n", ceiling)
+	s := &Service{eachMaxItems: ceiling, limits: engine.WorkspaceLimits{ValuesMaxBytes: 1 << 20}}
+	share, _ := engine.EachItemBounds(doc(lines, 1, 0), s.limits, s.itemInputFloor())
+	if share <= eachLinesRefAllowance {
+		t.Fatalf("the per-item share at %d items is %d bytes, no room for the %d-byte allowance", ceiling, share, eachLinesRefAllowance)
+	}
+	// The input every item carries besides its pad: measured, not guessed.
+	conv := doc(lines, 1, 0).GetTasks()[1]
+	base, err := task.InputSize(&orkstackv1.ExecuteTaskInput{Image: conv.GetImage(), Command: conv.GetCommand(), With: conv.GetWith()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tight := int(share-eachLinesRefAllowance-base) - eachLinesRefAllowance/4 // fits with the allowance
+	over := tight + eachLinesRefAllowance/2                                  // fits an array's share, not a lines one's
+	for _, upstreams := range []int{1, 20} {
+		t.Run(fmt.Sprintf("%d upstreams", upstreams), func(t *testing.T) {
+			if err := s.checkEachLimits(doc(lines, upstreams, tight)); err != nil {
+				t.Fatalf("a lines fan-out within its share at the ceiling was refused: %v", err)
+			}
+			if err := s.checkEachLimits(doc(array, upstreams, over)); err != nil {
+				t.Fatalf("the array fan-out of the same with: was refused: %v", err)
+			}
+			err := s.checkEachLimits(doc(lines, upstreams, over))
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("declare %d items", ceiling)) {
+				t.Fatalf("checkEachLimits(lines over its share) = %v; want the per-item refusal at %d items", err, ceiling)
+			}
+		})
 	}
 }

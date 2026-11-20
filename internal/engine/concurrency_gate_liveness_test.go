@@ -170,7 +170,7 @@ func TestGateRestore_MergesWithEntriesAlreadyThere(t *testing.T) {
 func TestGateRestore_KeepsReleasesAndAdoptsUnreadableIncarnations(t *testing.T) {
 	g := newTestGate()
 	g.Rebuild = gateRebuild{State: gateRebuildListing}
-	g.release("released", 1, gateRunLevel, gateT0)
+	g.release("released", 1, gateRunLevel, 0, gateT0)
 	held := memoEntry(t, gateMemoEntry{Proto: 1, Held: true, Limit: 3, Strategy: gateStrategyQueue, ArrivedAt: gateT0, Seq: 2, SeqBase: 1})
 	out := g.restore([]gateRunRecord{
 		{Run: "released", MemoSeq: 1, Entries: map[int]stablejson.RawJSON{gateRunLevel: held}},

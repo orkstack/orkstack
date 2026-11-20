@@ -20,6 +20,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -34,7 +35,7 @@ type originStack struct {
 	temporal    client.Client
 	artifactCfg artifacts.Config
 	a, b        *engineReplica
-	bLog        *lockedBuffer
+	bLog        *listenaddr.Log
 	namespace   string
 	orkflow     string
 	transcript  strings.Builder
@@ -63,7 +64,7 @@ func newOriginStack(ctx context.Context, t *testing.T, label string) *originStac
 	channel := idempotencyTaskQueue()
 	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, partition, channel)
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, partition, channel)
-	replicaB, bLog := startObservedReplica(ctx, t, "ork-B", enginePath, address, partition, channel, freeAddress(t))
+	replicaB, bLog, _ := startObservedReplica(ctx, t, "ork-B", enginePath, address, partition, channel)
 	replicaA.awaitReady(ctx, t)
 	replicaB.awaitReady(ctx, t)
 

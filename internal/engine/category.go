@@ -41,6 +41,11 @@ type failureReading struct {
 	// childInner is the text below a child run's failure wrapper: "" with no
 	// wrapper, and "the child run failed" when the wrapper holds no cause.
 	childInner string
+	// superseded is a cancel whose details are RUN_SUPERSEDED and its
+	// sentence, which a superseded run closes with (fail); supersededSentence
+	// is the sentence. An operator's cancel carries no such details.
+	superseded         bool
+	supersededSentence string
 }
 
 // categoryOf reads err once. A nil err reads as nothing at all.
@@ -58,6 +63,13 @@ func categoryOf(err error) failureReading {
 		r.timeout = timeout
 	}
 	r.canceled = temporal.IsCanceledError(err)
+	var canceled *temporal.CanceledError
+	if errors.As(err, &canceled) && canceled.HasDetails() {
+		var code, sentence string
+		if canceled.Details(&code, &sentence) == nil && code == RunSupersededCode {
+			r.superseded, r.supersededSentence = true, sentence
+		}
+	}
 	var terminated *temporal.TerminatedError
 	r.terminated = errors.As(err, &terminated)
 	var unknown *temporal.UnknownExternalWorkflowExecutionError

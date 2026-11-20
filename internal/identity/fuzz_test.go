@@ -64,3 +64,39 @@ func FuzzKeysCopy(f *testing.F) {
 		}
 	})
 }
+
+// FuzzCommitResultRequest: a commit key is accepted only for the
+// namespace, run, task and item the request names, and the key it maps to
+// is always under metadata/attested/, the commit key's own segments.
+func FuzzCommitResultRequest(f *testing.F) {
+	f.Add("ns", "ork-1", "build", int32(-1), "metadata/commits/ns/ork-1/build/commit.json", "ns", "ork-1", "deploy")
+	f.Add("ns", "ork-1", "convert", int32(3), "metadata/commits/ns/ork-1/convert/00003/commit.json", "ns", "ork-2", "convert")
+	f.Add("", "ork-1", "build", int32(-1), "metadata/commits/default/ork-1/build/commit.json", "other", "ork-1", "build")
+	f.Add("ns", "../x", "build", int32(0), "metadata/commits/../x/build/commit.json", "ns", "x", "build")
+	f.Add("ns", "ork/1", "build", int32(-1), "metadata/attested/ns/ork-1/build/commit.json", "ns", "ork-1", "build")
+	f.Fuzz(func(t *testing.T, ns, run, taskID string, item int32, key, otherNS, otherRun, otherTask string) {
+		req := CommitRequest{Namespace: artifacts.ResolveNamespace(ns), RunID: run, TaskID: taskID, CommitKey: key}
+		if item >= 0 {
+			req.Item = artifacts.Item{Index: item, Set: true}
+		}
+		want, _, err := commitCoordinates(req)
+		if err != nil || key != want {
+			return
+		}
+		attested, err := artifacts.AttestedCommitKey(key)
+		if err != nil {
+			t.Fatalf("the attempt's own commit key %q maps to nothing: %v", key, err)
+		}
+		if attested != artifacts.AttestedPrefix+"/"+key[len(artifacts.CommitPrefix)+1:] {
+			t.Fatalf("%q maps to %q, not its own segments under the attested prefix", key, attested)
+		}
+		other := req
+		other.Namespace, other.RunID, other.TaskID = artifacts.ResolveNamespace(otherNS), otherRun, otherTask
+		if other.Namespace == req.Namespace && other.RunID == req.RunID && other.TaskID == req.TaskID {
+			return
+		}
+		if theirs, _, err := commitCoordinates(other); err == nil && theirs == key {
+			t.Fatalf("%q is the commit key of %s/%s/%s and of %s/%s/%s", key, req.Namespace, req.RunID, req.TaskID, other.Namespace, other.RunID, other.TaskID)
+		}
+	})
+}

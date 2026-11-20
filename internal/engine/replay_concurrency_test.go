@@ -38,6 +38,11 @@ var (
 		"concurrency-gate-drain-pending-grant-v1.json",
 		"concurrency-gate-close-completes-empty-v1.json",
 		"concurrency-gate-close-race-v1.json",
+		"concurrency-gate-ordinal-replace-v1.json",
+		"concurrency-gate-ordinal-late-release-v1.json",
+		"concurrency-gate-ordinal-retry-same-n-v1.json",
+		"concurrency-gate-ordinal-legacy-tombstone-v1.json",
+		"concurrency-gate-grant-without-n-matches-zero-v1.json",
 		"concurrency-gate-rebuild-first-v1.json",
 		"concurrency-gate-fenced-v1.json",
 	}
@@ -87,6 +92,9 @@ func TestConcurrencyFixtures_EveryOneIsReplayed(t *testing.T) {
 	listed := map[string]bool{}
 	for _, name := range append(append([]string(nil), gateFixtures...), censusFixtures...) {
 		listed[name] = true
+	}
+	for _, f := range concurrencyRunFixtures {
+		listed[filepath.Base(f.path())] = true
 	}
 	for _, path := range found {
 		if !listed[filepath.Base(path)] {

@@ -108,6 +108,8 @@ type Heartbeater struct {
 	phase       atomic.Pointer[string]
 	containerID atomic.Pointer[string]
 	bytesLogged atomic.Int64
+	indexRead   atomic.Int64
+	indexLines  atomic.Int64
 	ordinal     atomic.Int32
 
 	stop     chan struct{}
@@ -176,6 +178,12 @@ type Heartbeater struct {
 	// usage is the attempt's usage sampler once its container started; every
 	// beat after it carries the sampler's latest reading (E94).
 	usage atomic.Pointer[usageSampler]
+	// identities, when set, says each of the attempt's identities' state
+	// (identity_refresh.go liveIdentities).
+	identities atomic.Pointer[func() []task.HeartbeatIdentity]
+	// issued, when set, says what each identity was issued, for the
+	// attempt's record (identity_refresh.go attemptIdentities).
+	issued atomic.Pointer[func() []*orkstackv1.AttemptIdentity]
 	// profiles are what step 3c selected for the attempt's profiles, for its
 	// record; nil until it ran.
 	profiles atomic.Pointer[[]*orkstackv1.EffectiveProfile]
@@ -447,8 +455,17 @@ func (h *Heartbeater) setOrdinal(n int32) { h.ordinal.Store(n) }
 // Logged adds to the byte counter the progress detail carries.
 func (h *Heartbeater) Logged(n int64) { h.bytesLogged.Add(n) }
 
+// Indexed records how far a line indexer has read: every later beat carries it.
+// The two counters are stored apart, so one beat may pair a byte count with the
+// line count of the report before or after it; both only grow.
+func (h *Heartbeater) Indexed(bytesRead, lines int64) {
+	h.indexRead.Store(bytesRead)
+	h.indexLines.Store(lines)
+}
+
 func (h *Heartbeater) progress() HeartbeatProgress {
-	progress := HeartbeatProgress{BytesLogged: h.bytesLogged.Load(), OrkerID: h.orkerID, Ordinal: h.ordinal.Load()}
+	progress := HeartbeatProgress{BytesLogged: h.bytesLogged.Load(), OrkerID: h.orkerID, Ordinal: h.ordinal.Load(),
+		IndexBytesRead: h.indexRead.Load(), IndexLines: h.indexLines.Load()}
 	if phase := h.phase.Load(); phase != nil {
 		progress.Phase = *phase
 	}
@@ -462,7 +479,38 @@ func (h *Heartbeater) progress() HeartbeatProgress {
 	if s := h.usage.Load(); s != nil {
 		progress.Usage = h.encodeUsage(s)
 	}
+	if fn := h.identities.Load(); fn != nil {
+		progress.Identities = (*fn)()
+	}
 	return progress
+}
+
+// setIssued makes the attempt's record say what fn says each identity was
+// issued. A nil Heartbeater records nothing.
+func (h *Heartbeater) setIssued(fn func() []*orkstackv1.AttemptIdentity) {
+	if h != nil && fn != nil {
+		h.issued.Store(&fn)
+	}
+}
+
+// attemptIdentities is what the attempt's identities were issued, or nil.
+func (h *Heartbeater) attemptIdentities() []*orkstackv1.AttemptIdentity {
+	if h == nil {
+		return nil
+	}
+	if fn := h.issued.Load(); fn != nil {
+		return (*fn)()
+	}
+	return nil
+}
+
+// setIdentities makes every later beat say what fn says of the attempt's
+// identities. A nil Heartbeater, as a local run without one has, says
+// nothing.
+func (h *Heartbeater) setIdentities(fn func() []task.HeartbeatIdentity) {
+	if h != nil && fn != nil {
+		h.identities.Store(&fn)
+	}
 }
 
 // usageUnencodable is the usage a beat carries when its reading would not

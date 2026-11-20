@@ -129,14 +129,20 @@ type document struct {
 
 	// Outputs is the Orkflow's declared return contract: output name to a
 	// template over .inputs and .tasks.<id>.output, rendered once by the
-	// engine when the run succeeds (docs/DSL.md "Outputs"). Absent and `{}`
-	// are one value: no declared outputs.
-	Outputs map[string]string `yaml:"outputs"`
+	// engine when the run succeeds, or to {artifact: <task>/<name>}, an
+	// artifact the run returns (docs/DSL.md "Outputs"). Absent and `{}` are
+	// one value: no declared outputs. Each entry is a node, decoded strictly
+	// by compileOutputs.
+	Outputs map[string]yaml.Node `yaml:"outputs"`
 
 	// Timeout is the run's own time limit, a Go duration (docs/DSL.md "Run
 	// timeout"). A yaml.Node so the strict mapping sees what was written: an
 	// integer, a null and a tag are each refused by name.
 	Timeout yaml.Node `yaml:"timeout"`
+
+	// Concurrency is the run-level concurrency limit (docs/DSL.md
+	// "Concurrency limits"): absent, the Orkflow's runs are not limited.
+	Concurrency *concurrencyDocument `yaml:"concurrency"`
 
 	// Pins declares every pin a task may name, by name, each with a
 	// (possibly empty) options object — `pins: {build: {}}` is legal.
@@ -192,6 +198,11 @@ type taskDocument struct {
 	// With is a data position, a yaml.Node value like document.Inputs.
 	With yaml.Node `yaml:"with"`
 
+	// Artifacts binds a composed task's child's artifact inputs, by input
+	// name, to "<task>/<name>" artifacts of this run (rule 56). Only a
+	// composed task takes it.
+	Artifacts map[string]string `yaml:"artifacts"`
+
 	// Uses is the only image-selecting field in the DSL: a catalog activity
 	// name ("shell") or a registry reference ("ghcr.io/acme/migrate:v3",
 	// "repo@sha256:..."). A task names an image, never a Go type compiled
@@ -214,6 +225,10 @@ type taskDocument struct {
 	// Secrets name files the Orker resolves and mounts read-only under
 	// /orkstack/input/secrets. The VALUE never appears in this document.
 	Secrets []secretDocument `yaml:"secrets"`
+
+	// Identities are the tokens the task holds, one an audience, minted for
+	// each attempt (docs/DSL.md, "Task identity").
+	Identities []identityDocument `yaml:"identities"`
 
 	// Resources is what the task asks the Orker for. Orker policy may cap it;
 	// it may never raise it (§9.3).
@@ -382,9 +397,16 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		return nil, err
 	}
 	wf.TimeoutSeconds = timeoutSeconds
-	if len(doc.Outputs) > 0 {
-		wf.Outputs = doc.Outputs
+	concurrency, err := compileConcurrency(doc.Concurrency)
+	if err != nil {
+		return nil, err
 	}
+	wf.Concurrency = concurrency
+	values, returned, err := compileOutputs(doc.Outputs)
+	if err != nil {
+		return nil, err
+	}
+	wf.Outputs, wf.OutputArtifacts = values, returned
 	for _, entry := range doc.SharedWith {
 		wf.SharedWith = append(wf.SharedWith, &orkstackv1.OrkflowShare{Namespace: entry.Namespace, Orkflow: entry.Orkflow})
 	}
@@ -418,6 +440,9 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	for taskIndex, td := range doc.Tasks {
+		if td.Artifacts != nil && !strings.HasPrefix(td.Uses, OrkflowUsesPrefix) {
+			return nil, onlyComposedBinds(taskIndex, td.ID)
+		}
 		// A composed task is built on its own path, first: it refuses, by
 		// name, every execution key its author wrote (rule 27 at the YAML
 		// layer — `await:` among them) and keeps TimeoutSeconds 0.
@@ -464,6 +489,10 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		if err != nil {
 			return nil, err
 		}
+		identities, err := compileIdentities(taskIndex, td)
+		if err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
 			Join:           join,
 			Each:           each,
@@ -479,6 +508,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			TimeoutSeconds: DefaultTimeoutSeconds,
 			Pool:           td.Pool,
 			Pin:            td.Pin,
+			Identities:     identities,
 		}
 		if td.Devices != nil {
 			if len(*td.Devices) == 0 {
@@ -534,6 +564,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			return nil, err
 		}
 		task.With = with
+		task.InputArtifacts = deliverySet(task)
 		wf.Tasks = append(wf.Tasks, task)
 	}
 

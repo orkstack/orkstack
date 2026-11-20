@@ -136,7 +136,7 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 		t.Fatalf("the idle connection closed after %s, before ORK_HTTP_IDLE_TIMEOUT=%s", elapsed, idle)
 	}
 
-	_, refused := startEngine(ctx, t, binary, temporal, "engine-listener-refused",
+	refused := startEngine(ctx, t, binary, temporal, "engine-listener-refused",
 		"ORK_TEMPORAL_NAMESPACE="+listenerNamespace("listener-refused"), "ORK_ORKFLOW_MAX_TASKS=1",
 		"ORK_REQUEST_MAX_BYTES=1048576")
 	select {
@@ -151,7 +151,7 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 			code, refused.log.String())
 	}
 
-	_, refusedHosts := startEngine(ctx, t, binary, temporal, "engine-listener-hosts",
+	refusedHosts := startEngine(ctx, t, binary, temporal, "engine-listener-hosts",
 		"ORK_TEMPORAL_NAMESPACE="+listenerNamespace("listener-hosts"), "ORK_ALLOWED_HOSTS=https://orkstack.example.com")
 	select {
 	case <-refusedHosts.done:

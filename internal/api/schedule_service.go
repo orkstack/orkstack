@@ -79,8 +79,12 @@ func (s *Service) CreateSchedule(
 		return nil, err
 	}
 	version := msg.GetOrkflowVersion()
-	if _, err := s.orkflows.Get(ctx, ns, orkflow, version); err != nil {
+	stored, err := s.orkflows.Get(ctx, ns, orkflow, version)
+	if err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q", orkflow, version, ns)
+	}
+	if err := refuseArtifactInputs(stored, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, "a schedule"); err != nil {
+		return nil, err
 	}
 	if err := ValidateScheduleSpec(msg.GetSpec(), s.now()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -106,9 +110,24 @@ func (s *Service) CreateSchedule(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	// A create binds its caller. The entry is recorded before the cluster is
-	// asked (schedule_binding.go).
-	entry := s.boundBy(submits, authn.Recorded(ctx, req.Header()))
+	// A create binds its caller, with a consent to what the Orkflow asks for
+	// when it asks for any (consent_save.go). The entry is recorded before
+	// the cluster is asked (schedule_binding.go).
+	who := authn.Recorded(ctx, req.Header())
+	asks, unknown, err := s.asksForSave(ctx, ns, orkflow, version)
+	if err != nil {
+		return nil, err
+	}
+	given, err := decideConsent(consentSave{Kind: "schedule", Name: msg.GetName(), Orkflow: orkflow, Binds: true,
+		Given: msg.GetConsent(), Asks: asks, Unknown: unknown, By: recordedBinder(who.ID), Now: s.now().UTC()})
+	if err != nil {
+		return nil, err
+	}
+	granted, err := s.binderBindingFor(ctx, ns, orkflow)
+	if err != nil {
+		return nil, err
+	}
+	entry := s.boundBy(submits, who, granted, given)
 	if err := s.addScheduleBinding(ctx, ns, id, entry); err != nil {
 		return nil, err
 	}
@@ -165,9 +184,10 @@ func (s *Service) ListSchedules(
 		return nil, scheduleConnectError(ctx, err, ns.GetName(), "")
 	}
 	out := make([]*orkstackv1.Schedule, 0, len(views))
+	memo := asksMemo{}
 	for _, view := range views {
 		if row := scheduleProto(view); set.Match(row) {
-			s.scheduleConsent(ctx, view, row)
+			s.scheduleConsent(ctx, memo, view, row)
 			out = append(out, row)
 		}
 	}
@@ -215,6 +235,10 @@ func (s *Service) UpdateSchedule(
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"--rebind records you as the schedule's binder, and this request names nobody: send Ork-Principal, or a credential the engine verifies"))
 	}
+	// A rebind's granting binding is read inside the update, before the
+	// cluster is written, so a store that does not answer refuses the save,
+	// never half of it.
+	var rebindGranted *artifacts.BinderBinding
 	var pinErr, bindErr error
 	var entry artifacts.ScheduleBinding
 	var added bool
@@ -229,10 +253,17 @@ func (s *Service) UpdateSchedule(
 		pinErr, bindErr, added = nil, nil, false
 		// A pinned version must exist at update as at create. It is checked
 		// here, where the record names the orkflow the schedule is bound to.
-		if version != "" {
-			if _, err := s.orkflows.Get(ctx, ns, rec.GetOrkflowName(), version); err != nil {
-				pinErr = orkflowStoreError(err, "orkflow %q version %q in namespace %q",
-					rec.GetOrkflowName(), version, ns)
+		// And it is never one with an artifact input: only a composing task
+		// starts those, so neither a pin nor following current may name one.
+		target, getErr := s.orkflows.Get(ctx, ns, rec.GetOrkflowName(), version)
+		if getErr != nil && (version != "" || !errors.Is(getErr, artifacts.ErrNotFound)) {
+			pinErr = orkflowStoreError(getErr, "orkflow %q version %q in namespace %q",
+				rec.GetOrkflowName(), version, ns)
+			return pinErr
+		}
+		if getErr == nil {
+			if err := refuseArtifactInputs(target, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, "a schedule"); err != nil {
+				pinErr = err
 				return pinErr
 			}
 		}
@@ -259,11 +290,41 @@ func (s *Service) UpdateSchedule(
 		// then is the caller recorded (step 3), so a refused or lost save
 		// never names a binder who did not bind.
 		changed := !next.Submits(was)
+		// The consent rule: a save that binds needs one when the Orkflow
+		// asks for an identity; a consent given is to the digest of the
+		// version the schedule follows now (consent_save.go).
+		var given consentRecord
+		if changed || msg.GetConsent() != "" {
+			asks, unknown, err := s.asksForSave(ctx, ns, rec.GetOrkflowName(), version)
+			if err != nil {
+				bindErr = err
+				return bindErr
+			}
+			given, err = decideConsent(consentSave{Kind: "schedule", Name: msg.GetName(), Orkflow: rec.GetOrkflowName(),
+				Binds: changed, Given: msg.GetConsent(), Asks: asks, Unknown: unknown, Prior: s.priorScheduleConsent(ctx, ns, rec.GetScheduleId(), was),
+				By: recordedBinder(who.ID), Now: s.now().UTC()})
+			if err != nil {
+				bindErr = err
+				return bindErr
+			}
+		}
+		var granted *artifacts.BinderBinding
+		if changed || msg.GetRebind() {
+			if granted, err = s.binderBindingFor(ctx, ns, rec.GetOrkflowName()); err != nil {
+				bindErr = err
+				return bindErr
+			}
+		}
+		rebindGranted = granted
 		entry, err = s.addScheduleBindingFrom(ctx, ns, rec.GetScheduleId(), func(doc artifacts.ScheduleBindings) artifacts.ScheduleBinding {
 			if changed {
-				return s.boundBy(next, who)
+				return s.boundBy(next, who, granted, given)
 			}
-			return s.keptBinder(next, was, doc)
+			kept := s.keptBinder(next, was, doc)
+			if msg.GetConsent() != "" {
+				kept = withScheduleConsent(kept, given)
+			}
+			return kept
 		})
 		if err != nil {
 			bindErr = err
@@ -291,7 +352,8 @@ func (s *Service) UpdateSchedule(
 	}
 	if msg.GetRebind() && entry.Submits(wasSub) {
 		// The cluster has the save: the caller now binds what it holds.
-		if err := s.rebindScheduleRecord(ctx, ns, view, s.boundBy(entry, who)); err != nil {
+		// A rebind changes the binder and never the consent.
+		if err := s.rebindScheduleRecord(ctx, ns, view, s.boundBy(entry, who, rebindGranted, scheduleConsentOf(entry))); err != nil {
 			return nil, err
 		}
 	} else {

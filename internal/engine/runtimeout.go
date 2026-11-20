@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -171,7 +172,7 @@ func runTimeoutCauseCode(cause error) string {
 // isRunLevelCause reports a cause that belongs to the run, never to the task
 // or fan-out where it was noticed.
 func isRunLevelCause(cause error) bool {
-	return isHistoryLimit(cause) || runTimeoutCauseCode(cause) != ""
+	return isHistoryLimit(cause) || runTimeoutCauseCode(cause) != "" || concCauseCode(cause) != ""
 }
 
 // runTimeoutFailure is the run's error for a cause of this family.
@@ -548,11 +549,15 @@ func (s *runState) drainQueuedResolutions(ctx workflow.Context) (changed bool, t
 		if t := s.runTimeout; !t.deadline.IsZero() && !workflow.Now(ctx).Before(t.deadline) {
 			break
 		}
-		var sig *orkstackv1.AwaitSignal
-		if !s.resolutions.ReceiveAsync(&sig) {
+		var raw converter.RawValue
+		if !s.resolutions.ReceiveAsync(&raw) {
 			break
 		}
 		changed = true
+		sig, ok := s.openResolution(ctx, raw)
+		if !ok {
+			continue
+		}
 		if err := s.resolve(ctx, sig); err != nil {
 			return true, sig.GetTaskId(), err
 		}

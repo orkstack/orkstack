@@ -461,7 +461,8 @@ part_main() { # <part>
 		) >"$DIR/ui-e2e.log" 2>&1 || true
 		# As scripts/proof.sh ui_e2e_locked: one invocation on one worker; with
 		# more workers the parallel project first, then the solo projects (the
-		# render-budget files) on one worker, and the ledger reads both reports.
+		# render-budget files and network-change.spec.ts) on one worker, and the
+		# ledger reads both reports.
 		# The shard's files come before --project, which would otherwise take
 		# them as project names; a shard may hold no file of one project.
 		part_playwright() { # <report> <workers> <args...>
@@ -478,7 +479,7 @@ part_main() { # <part>
 		local reports=(-report "$DIR/ui-e2e-report.json")
 		if [ "$PROOF_UI_WORKERS" -gt 1 ]; then
 			part_playwright "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" "${rel[@]}" --pass-with-no-tests --project chromium || true
-			part_playwright "$DIR/ui-e2e-report-solo.json" 1 "${rel[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling || true
+			part_playwright "$DIR/ui-e2e-report-solo.json" 1 "${rel[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling --project chromium-solo-network-change || true
 			reports+=(-report "$DIR/ui-e2e-report-solo.json")
 		else
 			part_playwright "$DIR/ui-e2e-report.json" 1 "${rel[@]}" || true

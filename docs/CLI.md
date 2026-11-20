@@ -1537,9 +1537,15 @@ whose digest differs from the one reviewed. A trigger token or a generated
 webhook secret is shown once; --secrets-out writes them to a new 0600 file
 instead.
 
+An apply that creates a schedule, trigger or event source, or changes what
+one submits, makes you its binder, and needs --consent KIND/NAME=DIGEST when
+its Orkflow asks for an identity: the plan warns with the digest. An apply
+of an unchanged document changes no binder and no consent.
+
 Flags:
 
 - `--check` — a dry run that exits 4 when anything would change
+- `--consent STRINGARRAY` — KIND/NAME=DIGEST: consent to what the Orkflow of a schedule, trigger or event-source this apply saves asks for (repeatable)
 - `--dry-run` — print the plan and write nothing
 - `--expect-plan STRING` — refuse unless the plan digest equals this one (sha256:HEX)
 - `--prune` — also delete named objects of a declared section the document no longer declares
@@ -1706,7 +1712,7 @@ flags given beside a document override it.
 Flags:
 
 - `--concurrency INT32` — messages one instance handles at once
-- `--consent STRING` — the consent digest (c1:…) of what the Orkflow asks for
+- `--consent STRING` — consent to what the Orkflow asks for, by the digest you were shown (c1:…)
 - `--delivery STRING` — the image's delivery class: at-least-once or at-most-once
 - `--description STRING` — an operator's label
 - `-f, --file STRING` — read the source from this kind: EventSource document
@@ -1924,7 +1930,7 @@ makes you the source's binder; --rebind does without changing anything else.
 Flags:
 
 - `--concurrency INT32` — messages one instance handles at once
-- `--consent STRING` — the consent digest (c1:…) of what the Orkflow asks for
+- `--consent STRING` — consent to what the Orkflow asks for, by the digest you were shown (c1:…); with no value, show it and ask
 - `--delivery STRING` — the image's delivery class: at-least-once or at-most-once
 - `--description STRING` — an operator's label
 - `-f, --file STRING` — read the source from this kind: EventSource document
@@ -2173,20 +2179,30 @@ Flags:
 
 - `--allow-pool STRINGARRAY` — pool this namespace may dispatch onto (repeatable; empty = unrestricted)
 - `--allow-secret STRINGARRAY` — secret source this namespace's tasks may name, as scheme:pattern, e.g. 'env:SANDBOX_*' (repeatable; empty = unrestricted; on update, replaces the whole set)
+- `--attempts-extra INT32` — how many attempts past a task's own retries may hold its identity, up to identity.attempts.max_extra
+- `--audience STRINGARRAY` — add a token audience the namespace's tasks may ask for; a trailing * matches any rest (repeatable)
 - `--budget-cpu-seconds INT64` — bound on the namespace's RESERVED cpu-seconds (cpu x attempt time) over --budget-period; 0 unbounds the dimension
 - `--budget-enforce` — refuse new runs once the budget is reached (=false only reports it); check that 'orkctl stats usage --since <period>' answers before enforcing: an enforced budget that cannot be measured refuses every submit
 - `--budget-gib-seconds INT64` — bound on the namespace's RESERVED GiB-seconds (memory x attempt time) over --budget-period; 0 unbounds the dimension
 - `--budget-period STRING` — the rolling period a budget is held against, e.g. 720h (1h0m0s to 744h0m0s)
 - `--clear-allowed-secrets` — remove the namespace's secret-source list, leaving it unrestricted (each Orker's ORK_ORKER_SECRET_ALLOW still applies)
+- `--clear-attempts-extra` — take the deployment's identity.attempts.extra again
+- `--clear-audiences` — remove every audience
 - `--clear-budget` — remove the namespace's budget, leaving it unbounded
 - `--clear-require-signed-by` — stop requiring a signature: the deployment image policy alone applies
 - `--default-pool STRING` — pool a task of this namespace runs on when it names none (default "main")
 - `--description STRING` — human description
 - `--fair-share-weight FLOAT64` — this namespace's share of dispatch when several namespaces' tasks wait for one pool, pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect only where the cluster has fair dispatch enabled
+- `--grant STRINGARRAY` — set a grant as NAME=PROVIDER:PRINCIPAL (repeatable)
+- `--grant-current-only STRINGARRAY` — let only a run of its Orkflow's current version use the grant NAME (repeatable)
+- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, event-source, parent-run or run-again (repeatable)
+- `--grant-orkflow STRINGARRAY` — let an Orkflow use a grant, as NAME=ORKFLOW: a name, * or <owner>/<name> (repeatable)
 - `--hold STRING` — close this namespace to new runs, with the reason the next operator reads (runs already accepted finish untouched)
+- `--identities-current-only` — give an identity only to a run of its Orkflow's current version
 - `--label STRINGARRAY` — label as key=value (repeatable)
 - `--max-running INT32` — most runs of this namespace in flight at once (0 = unlimited)
 - `--release-hold` — reopen a held namespace to new runs (nothing refused while it was held is started)
+- `--remove-grant STRINGARRAY` — remove the grant NAME (repeatable)
 - `--require-signed-by STRING` — require every image executed in this namespace to carry a valid signature, as cosign:KEY naming a key of 'orkctl admin image-policy get' (tightens the deployment policy; never loosens it)
 - `--run-retention STRING` — how long a finished run stays readable, e.g. "168h" (default: the deployment maximum; "inherit" clears a value)
 - `--task-logs STRING` (default `inherit`) — override the Orker's task-log export for this namespace's runs: enabled, disabled, or inherit
@@ -3496,6 +3512,9 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
   origin.id            =               text; needs origin.kind=
   origin.root_run_id   =               text
+  queued               =               true; a row that has ended never matches
+  queued_on            =               text; a row that has ended never matches
+  holding              =               text; a row that has ended never matches
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
@@ -3800,6 +3819,33 @@ Inherited flags:
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
+## `orkctl run tokens`
+
+List the identity tokens a run's attempts were issued
+
+tokens lists one line a token each mint of the run issued, in the order they
+were issued: the task, item and attempt, the identity, its audience and
+subject, the token's id and when it expires. No token is ever shown or kept.
+
+Flags:
+
+- `--item INT32` — only this item of the --task fan-out
+- `-t, --task STRING` — only this task's
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
 ## `orkctl run unpause`
 
 Unpause a run paused with run pause
@@ -3952,9 +3998,13 @@ fire is due while the previous run still executes; the default is skip.
 --paused creates it paused, so 'orkctl schedule get' shows the next fire
 times before it ever fires.
 
+When the orkflow asks for an identity, create needs --consent=DIGEST: the
+digest of what it asks for, which a create without it hands out.
+
 Flags:
 
 - `--catchup-window STRING` — how late a fire missed while the cluster was down may still be taken (at least 10s)
+- `--consent STRING` — consent to what the Orkflow asks for, by the digest you were shown (c1:…)
 - `--cron STRINGARRAY` — cron expression (5-7 fields, @daily, "@every 15m"); repeatable, fires at the union
 - `--description STRING` — operator label for this schedule
 - `--end-at STRING` — no fire after this RFC3339 time
@@ -4150,7 +4200,10 @@ create instead.
 
 An update that changes the version pin or the input makes you the
 schedule's binder: the principal its runs are recorded against. --rebind
-makes you the binder without changing anything else.
+makes you the binder without changing anything else. A save that binds
+needs --consent when the Orkflow asks for an identity: the digest of
+what it asks for, which schedule get shows (--consent alone shows it and
+asks). A consent changes no binder.
 
 Last writer wins: two concurrent updates are not detected.
 
@@ -4158,6 +4211,7 @@ Flags:
 
 - `--catchup-window STRING` — how late a fire missed while the cluster was down may still be taken (at least 10s)
 - `--clear-input` — clear the input
+- `--consent STRING` — consent to what the Orkflow asks for, by the digest you were shown (c1:…); with no value, show it and ask
 - `--cron STRINGARRAY` — cron expression (5-7 fields, @daily, "@every 15m"); repeatable, fires at the union
 - `--description STRING` — replace the description
 - `--end-at STRING` — no fire after this RFC3339 time
@@ -4539,8 +4593,12 @@ delete then create.
 --name gives the trigger a handle, unique in the namespace, by which an
 automation document addresses it (docs/AUTOMATION.md).
 
+When the orkflow asks for an identity, create needs --consent=DIGEST: the
+digest of what it asks for, which a create without it hands out.
+
 Flags:
 
+- `--consent STRING` — consent to what the Orkflow asks for, by the digest you were shown (c1:…)
 - `--description STRING` — operator label for this trigger
 - `--name STRING` — handle an automation document addresses this trigger by (a slug, unique in the namespace)
 - `--orkflow STRING` — orkflow this trigger starts (required)
@@ -4640,10 +4698,13 @@ automation document (orkctl automation export) without re-issuing its token.
 
 A new version pin makes you the trigger's binder: the principal its
 runs are recorded against. --rebind makes you the binder without
-changing anything else.
+changing anything else. A save that binds needs --consent when the
+orkflow asks for an identity (--consent alone shows it and asks); a
+consent changes no binder.
 
 Flags:
 
+- `--consent STRING` — consent to what the Orkflow asks for, by the digest you were shown (c1:…); with no value, show it and ask
 - `--description STRING` — new operator label ("" clears it)
 - `--follow-current` — clear the pin: follow the orkflow's current pointer at each invoke
 - `--name STRING` — new handle ("" makes the trigger unnamed)
@@ -4737,7 +4798,7 @@ an HMAC-SHA256 of the request body in the X-Ork-Signature header.
 
 Flags:
 
-- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
 - `--name STRING` — handle an automation document addresses this subscription by (needs -n)
 - `--orkflow STRING` — narrow to runs of this orkflow (exact name; empty means every orkflow)
 - `--secret STRING` — signing secret to use instead of a generated one
@@ -4801,7 +4862,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   run_id       = != =a,b       text
   webhook_id   = != =a,b       text
-  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED
+  event        = != =a,b       RUN_QUEUED RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_QUEUED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED
   delivered    =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
@@ -4926,7 +4987,7 @@ Flags:
 
 - `--clear-events` — empty the event list: every run transition
 - `--deployment-wide` — clear the namespace scope
-- `--event STRINGARRAY` — replace the event list (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — replace the event list (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
 - `--name STRING` — new handle ("" makes the subscription unnamed; needs a namespace scope)
 - `--orkflow STRING` — narrow to runs of this orkflow ("" clears it)
 - `-t, --task STRING` — narrow task events to this task ("" clears it)

@@ -408,3 +408,17 @@ func (x dialect) cgroupLeaf(id, parent, seg string) bool {
 	}
 	return seg == "docker-"+id+".scope" || (parent == "docker" && seg == id)
 }
+
+// answerTmpfsOptions spells a service's answer filesystem for this CLI. The
+// docker CLI takes the inode count and the owner as mount options. The podman
+// CLI refuses both as unknown options: it gives the mount to the container's
+// own user with U (the Orker's uid, which the container runs as), and states
+// no inode count, so there the container's memory limit, to which the kernel
+// charges a tmpfs's inodes, is what bounds them (docs/DEPLOY.md, "Source
+// hosts").
+func (x dialect) answerTmpfsOptions(t ServiceTmpfs) string {
+	if x.cli == CLIPodman {
+		return fmt.Sprintf("rw,nosuid,nodev,noexec,size=%d,mode=0700,U", t.Bytes)
+	}
+	return fmt.Sprintf("rw,nosuid,nodev,noexec,size=%d,nr_inodes=%d,mode=0700,uid=%d,gid=%d", t.Bytes, t.Inodes, t.UID, t.GID)
+}

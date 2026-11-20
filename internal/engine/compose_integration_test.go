@@ -115,6 +115,14 @@ func (e *eachE2E) startComposed(runID string, parent, child *orkstackv1.Orkflow)
 	cp.RunID = runID + "-child"
 	plan := e.plan()
 	plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
+	// A tree that passes artifacts pins its claim policy, as the submit does
+	// (internal/api mintChildren).
+	for _, task := range parent.GetTasks() {
+		if len(task.GetChildArtifacts()) > 0 {
+			claims := engine.DefaultArtifactClaims
+			plan.ArtifactClaims = &claims
+		}
+	}
 	starter := engine.NewTemporalStarterWithOrkerQueue(e.temporal, e.runQueue, e.orkerQueue)
 	must.OKf(e.t, starter.StartRun(e.ctx, runID, parent, nil, plan), "StartRun")
 	return cp.RunID

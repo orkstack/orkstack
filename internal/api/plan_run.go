@@ -11,6 +11,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/identity"
 )
 
 // PlanRun answers which tasks of one definition would run for one input,
@@ -110,6 +111,25 @@ func (s *Service) PlanRun(
 	resp, err := engine.Simulate(wf, msg.GetInput(), msg.GetAssumedOutputs(), msg.GetAssumeFailed())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	// What each task would follow, for a run whose tree holds an identity
+	// (docs/TASK_IDENTITY.md, "What a task follows"): the tasks of the run
+	// whose record of success it needs before it starts. A tree that could
+	// not be read leaves them out, logged: a plan is a simulation, and the
+	// field is what it shows, never what admits anything.
+	holds, err := s.treeAsksForIdentity(ctx, ns.GetName(), wf)
+	if err != nil {
+		s.logger.Warn("a plan names no follows: whether the run's tree holds an identity could not be read",
+			"orkflow", wf.GetName(), "version", wf.GetVersion(), "err", err)
+	}
+	if err == nil && holds {
+		follows, _ := identity.Follows(wf)
+		for _, t := range resp.GetTasks() {
+			if refs := follows[t.GetTaskId()]; len(refs) > 0 {
+				t.Follows = identity.FollowedTasks(refs)
+			}
+		}
 	}
 
 	// 5. Stamp the coordinates: the RESOLVED version, never the request's

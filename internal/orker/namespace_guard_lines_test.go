@@ -56,7 +56,7 @@ func countedIndex(t *testing.T, rig *linesRig, served []string, in *orkstackv1.I
 	t.Helper()
 	ranges := &countingRanges{Store: rig.store}
 	indexes := &countingIndexes{inner: rig.indexes}
-	got, err := indexEachLines(context.Background(), serving(t, served...), ranges, indexes, in, slog.New(slog.DiscardHandler))
+	got, err := indexEachLines(context.Background(), serving(t, served...), ranges, indexes, in, slog.New(slog.DiscardHandler), nil)
 	return got, ranges, indexes, err
 }
 

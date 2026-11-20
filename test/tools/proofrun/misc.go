@@ -4,27 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"sort"
 	"strings"
 
 	"github.com/orkstack/orkstack/internal/stablejson"
 )
-
-// cmdFreePort prints a port nothing listens on at the moment of asking.
-// Another process may take it before the caller binds it; the caller's bind
-// then fails loudly, which is never a false pass.
-func cmdFreePort(args []string) int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "proofrun free-port:", err)
-		return 1
-	}
-	defer l.Close()
-	fmt.Println(l.Addr().(*net.TCPAddr).Port)
-	return 0
-}
 
 // cmdTouches writes the gate files the change since the merge base with
 // -base edits, and the rows the excusing lists add or remove, as the JSON

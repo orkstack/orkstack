@@ -42,7 +42,7 @@ func TestGateValidateAcquire(t *testing.T) {
 		retryable bool
 	}{
 		"ok":                {mutate: func(*gateState, *gateAcquire) {}},
-		"newer protocol":    {mutate: func(_ *gateState, a *gateAcquire) { a.Proto = gateProto + 1 }, protocol: true},
+		"newer protocol":    {mutate: func(_ *gateState, a *gateAcquire) { a.Proto = gateProtoOrdinal + 1 }, protocol: true},
 		"no protocol":       {mutate: func(_ *gateState, a *gateAcquire) { a.Proto = 0 }, protocol: true},
 		"cancel_oldest":     {mutate: func(_ *gateState, a *gateAcquire) { a.Strategy = gateStrategyCancelOldest }, protocol: true},
 		"replace":           {mutate: func(_ *gateState, a *gateAcquire) { a.Strategy = gateStrategyReplace }, protocol: true},
@@ -105,7 +105,7 @@ func TestGateDecideAcquire_StaleAndTombstoned(t *testing.T) {
 		t.Fatalf("stale acquire = %+v, want fenced", d)
 	}
 	g.decideAcquire(acq("r1", 1, gateStrategyQueue, gateT0), gateT0, false)
-	g.release("r1", 1, gateRunLevel, gateT0)
+	g.release("r1", 1, gateRunLevel, 0, gateT0)
 	if d := g.decideAcquire(acq("r1", 1, gateStrategyQueue, gateT0), gateT0.Add(time.Second), false); d.Answer.Answer != gateAnswerFenced {
 		t.Fatalf("acquire after its release = %+v, want fenced by the slot tombstone", d)
 	}
@@ -143,12 +143,12 @@ func TestGateAdmitHeads_InLineOrderAndStrictestLimit(t *testing.T) {
 	if len(g.Holders) != 1 || len(g.Queue) != 2 {
 		t.Fatalf("holders %d queue %d, want 1 and 2: r2's limit of 1 is full", len(g.Holders), len(g.Queue))
 	}
-	g.release("r1", 1, gateRunLevel, gateT0)
+	g.release("r1", 1, gateRunLevel, 0, gateT0)
 	granted := g.admitHeads(gateT0)
 	if len(granted) != 1 || granted[0].Run != "r2" {
 		t.Fatalf("granted %v, want r2 alone: it holds the key at limit 1, so r3 waits", granted)
 	}
-	g.release("r2", 1, gateRunLevel, gateT0)
+	g.release("r2", 1, gateRunLevel, 0, gateT0)
 	if granted := g.admitHeads(gateT0); len(granted) != 1 || granted[0].Run != "r3" {
 		t.Fatalf("granted %v, want r3", granted)
 	}
@@ -213,7 +213,7 @@ func TestGateTombstones_EvictionDegradesTheFence(t *testing.T) {
 	g := newTestGate()
 	g.Tunables.MaxTombstones = 2
 	for i, run := range []string{"a", "b", "c"} {
-		g.release(run, 1, gateRunLevel, gateT0.Add(time.Duration(i)*time.Second))
+		g.release(run, 1, gateRunLevel, 0, gateT0.Add(time.Duration(i)*time.Second))
 	}
 	if len(g.Tombstones) != 2 || !g.FenceDegradedUntil.Equal(gateT0.Add(g.Tunables.tombstoneLife())) {
 		t.Fatalf("tombstones %d, degraded until %v; want 2 and a's expiry", len(g.Tombstones), g.FenceDegradedUntil)
@@ -269,7 +269,7 @@ func TestGateTunables_Check(t *testing.T) {
 // (§5.1.9), so a change that grows the carry must change this number on
 // purpose, and the boot check still holds it to the bound.
 func TestWorstCaseGateState_FitsAtTheDefaults(t *testing.T) {
-	const pinned = 221362
+	const pinned = 237902
 	size, err := worstCaseGateBytes(DefaultGateTunables())
 	if err != nil {
 		t.Fatal(err)

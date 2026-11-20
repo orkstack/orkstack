@@ -288,6 +288,22 @@ var Schema = []Var{
 	{Path: "engine.concurrency.census_timeout", Env: "ORK_CONCURRENCY_CENSUS_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultCensusSettings().Timeout)},
 	{Path: "engine.concurrency.census_max_gates", Env: "ORK_CONCURRENCY_CENSUS_MAX_GATES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultCensusSettings().MaxGates))},
 	{Path: "engine.concurrency.census_parallel", Env: "ORK_CONCURRENCY_CENSUS_PARALLEL", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultCensusSettings().Parallel))},
+	{Path: "engine.concurrency.max_active_keys_per_namespace", Env: "ORK_CONCURRENCY_MAX_ACTIVE_KEYS_PER_NAMESPACE", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().MaxActiveKeysPerNamespace))},
+	{Path: "engine.concurrency.max_queued_runs_per_namespace", Env: "ORK_CONCURRENCY_MAX_QUEUED_RUNS_PER_NAMESPACE", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().MaxQueuedRunsPerNamespace))},
+	{Path: "engine.concurrency.max_limits_per_orkflow", Env: "ORK_CONCURRENCY_MAX_LIMITS_PER_ORKFLOW", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().MaxLimitsPerOrkflow))},
+	{Path: "engine.concurrency.max_run_slot_entries", Env: "ORK_CONCURRENCY_MAX_RUN_SLOT_ENTRIES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().MaxRunSlotEntries))},
+	{Path: "engine.concurrency.per_slot_bytes", Env: "ORK_CONCURRENCY_PER_SLOT_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultConcurrencySettings().PerSlotBytes)},
+	{Path: "engine.concurrency.default_queue_timeout", Env: "ORK_CONCURRENCY_DEFAULT_QUEUE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().DefaultQueueTimeout)},
+	{Path: "engine.concurrency.min_queue_timeout", Env: "ORK_CONCURRENCY_MIN_QUEUE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().MinQueueTimeout)},
+	{Path: "engine.concurrency.max_queue_timeout", Env: "ORK_CONCURRENCY_MAX_QUEUE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().MaxQueueTimeout)},
+	{Path: "engine.concurrency.acquire_backoff_min", Env: "ORK_CONCURRENCY_ACQUIRE_BACKOFF_MIN", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().AcquireBackoffMin)},
+	{Path: "engine.concurrency.acquire_backoff_max", Env: "ORK_CONCURRENCY_ACQUIRE_BACKOFF_MAX", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().AcquireBackoffMax)},
+	{Path: "engine.concurrency.requeue_interval", Env: "ORK_CONCURRENCY_REQUEUE_INTERVAL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().RequeueInterval)},
+	{Path: "engine.concurrency.requeue_backoff_factor", Env: "ORK_CONCURRENCY_REQUEUE_BACKOFF_FACTOR", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().RequeueBackoffFactor))},
+	{Path: "engine.concurrency.requeue_interval_max", Env: "ORK_CONCURRENCY_REQUEUE_INTERVAL_MAX", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().RequeueIntervalMax)},
+	{Path: "engine.concurrency.retry_after", Env: "ORK_CONCURRENCY_RETRY_AFTER", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().RetryAfter)},
+	{Path: "engine.concurrency.event_holders_shown", Env: "ORK_CONCURRENCY_EVENT_HOLDERS_SHOWN", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().EventHoldersShown))},
+	{Path: "engine.concurrency.api_holders_shown", Env: "ORK_CONCURRENCY_API_HOLDERS_SHOWN", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().APIHoldersShown))},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},
@@ -458,6 +474,14 @@ var Schema = []Var{
 	{Path: "orker.engine.auth.token_file", Env: orker.EngineAuthTokenFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.engine.auth.cert_file", Env: orker.EngineAuthCertFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.engine.auth.key_file", Env: orker.EngineAuthKeyFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
+	// orker.identity.* and orker.log.mask_grace are an Orker's task identity
+	// settings (docs/TASK_IDENTITY.md, "On the Orker").
+	{Path: "orker.identity.dir", Env: orker.IdentityDirVar, Binaries: usesOrker, Kind: KindString, Default: orker.DefaultIdentityDir},
+	{Path: "orker.identity.setup_budget", Env: orker.IdentitySetupBudgetVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentitySetupBudget)},
+	{Path: "orker.identity.retry_min", Env: orker.IdentityRetryMinVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentityRetryMin)},
+	{Path: "orker.identity.max_concurrent", Env: orker.IdentityMaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultIdentityMaxConcurrent)},
+	{Path: "orker.identity.max_clock_skew", Env: orker.IdentityMaxClockSkewVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentityMaxClockSkew)},
+	{Path: "orker.log.mask_grace", Env: orker.LogMaskGraceVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultLogMaskGrace)},
 
 	// auth.* is the engine's alone (docs/AUTHENTICATION.md). auth.issuers is
 	// a document: it re-serializes to ORK_AUTH_ISSUERS exactly like a
@@ -491,6 +515,16 @@ var Schema = []Var{
 	{Path: "identity.keys_copy_max_age", Env: "ORK_IDENTITY_KEYS_COPY_MAX_AGE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultKeysCopyMaxAge)},
 	{Path: "identity.subject_format", Env: "ORK_IDENTITY_SUBJECT_FORMAT", Binaries: usesOrk, Kind: KindString, Default: string(identity.DefaultSubjectFormat)},
 	{Path: "identity.spiffe.trust_domain", Env: "ORK_IDENTITY_SPIFFE_TRUST_DOMAIN", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no SPIFFE ID on any token"},
+	{Path: "identity.attempts.extra", Env: "ORK_IDENTITY_ATTEMPTS_EXTRA", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsExtra)},
+	{Path: "identity.attempts.max_extra", Env: "ORK_IDENTITY_ATTEMPTS_MAX_EXTRA", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsMaxExtra)},
+	{Path: "identity.attempts.max", Env: "ORK_IDENTITY_ATTEMPTS_MAX", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsMax)},
+	{Path: "identity.admission_cache_bytes", Env: "ORK_IDENTITY_ADMISSION_CACHE_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAdmissionCacheBytes)},
+	{Path: "identity.token.ttl", Env: "ORK_IDENTITY_TOKEN_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenTTL)},
+	{Path: "identity.token.min_ttl", Env: "ORK_IDENTITY_TOKEN_MIN_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenMinTTL)},
+	{Path: "identity.token.max_ttl", Env: "ORK_IDENTITY_TOKEN_MAX_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenMaxTTL)},
+	{Path: "identity.results.commit_wait", Env: "ORK_IDENTITY_RESULTS_COMMIT_WAIT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultCommitWait)},
+	{Path: "identity.issuance.records", Env: "ORK_IDENTITY_ISSUANCE_RECORDS", Binaries: usesOrk, Kind: KindString, Default: identity.IssuanceRequired},
+	{Path: "identity.unscoped_orkers", Env: "ORK_IDENTITY_UNSCOPED_ORKERS", Binaries: usesOrk, Kind: KindString, Default: identity.UnscopedRefuse},
 }
 
 // byEnv indexes Schema by environment variable name, built once at init so

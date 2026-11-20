@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -261,22 +261,15 @@ type engineProcess struct {
 	done chan struct{}
 }
 
-// syncBuffer is a log an exec.Cmd writes to while a test reads it.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
+// syncBuffer is a log an exec.Cmd writes to while a test reads it, and that
+// names where the process's listeners are.
+type syncBuffer = listenaddr.Log
 
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
+// apiAddr is the address the engine's API listener bound, read from its own
+// log: it was started on a port of 0, so the address reaches this engine and
+// no other process. It fails when the engine exits first.
+func (p *engineProcess) apiAddr(ctx context.Context, name string) (string, error) {
+	return p.log.Addr(ctx, name, listenaddr.API, p.done, bootwait.Deadline)
 }
 
 // bootEngine runs the real ork binary until its API answers, and returns the
@@ -295,9 +288,14 @@ func bootEngine(
 	t.Helper()
 	const attempts = 3
 	for attempt := 1; attempt <= attempts; attempt++ {
-		address, process := startEngine(ctx, t, binary, temporalAddress, name, extraEnv...)
-		client := orkflowClient(t, address)
-		if err := waitForEngine(ctx, t, name, client, process); err == nil {
+		process := startEngine(ctx, t, binary, temporalAddress, name, extraEnv...)
+		address, err := process.apiAddr(ctx, name)
+		var client orkstackv1connect.OrkflowServiceClient
+		if err == nil {
+			client = orkflowClient(t, address)
+			err = waitForEngine(ctx, t, name, client, process)
+		}
+		if err == nil {
 			return address, client, process.log
 		} else if attempt == attempts {
 			stopEngine(t, name)
@@ -311,19 +309,18 @@ func bootEngine(
 	return "", nil, nil // unreachable: the last attempt fatals
 }
 
-// startEngine runs the real ork binary on a free loopback port, with
-// extraEnv (KEY=value) after everything else, so it wins.
+// startEngine runs the real ork binary on a loopback port of its own (its
+// apiAddr), with extraEnv (KEY=value) after everything else, so it wins.
 func startEngine(
 	ctx context.Context,
 	t *testing.T,
 	binary, temporalAddress, name string,
 	extraEnv ...string,
-) (string, *engineProcess) {
+) *engineProcess {
 	t.Helper()
-	address := freeAddress(t)
 	cmd := exec.CommandContext(ctx, binary)
 	cmd.Env = append(testbin.StackEnv(os.Environ()),
-		"ORK_HTTP_ADDR="+address,
+		"ORK_HTTP_ADDR="+listenaddr.Loopback,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddress,
 		// Apply-time image resolution runs here (§4.3), and the built-in
 		// catalog names references that are not published yet.
@@ -338,7 +335,7 @@ func startEngine(
 	engines[name] = process
 	go func() { _ = cmd.Wait(); close(process.done) }()
 	t.Cleanup(func() { stopEngine(t, name) })
-	return address, process
+	return process
 }
 
 // stopEngine signals the process and waits for it to exit, so the next engine
@@ -358,14 +355,6 @@ func stopEngine(t *testing.T, name string) {
 		<-process.done
 	}
 	t.Logf("%s log:\n%s", name, process.log.String())
-}
-
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	must.OKf(t, err, "reserve port")
-	defer listener.Close()
-	return listener.Addr().String()
 }
 
 func orkflowClient(t *testing.T, address string) orkstackv1connect.OrkflowServiceClient {

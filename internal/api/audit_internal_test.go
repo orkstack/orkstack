@@ -27,6 +27,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.EventSourceServiceEvaluateEventSourceMessageProcedure: true,
 	orkstackv1connect.EventSourceServiceInspectSourceImageProcedure:         true,
 	orkstackv1connect.IdentityServiceGetIssuerProcedure:                     true,
+	orkstackv1connect.IdentityServiceListIssuedTokensProcedure:              true,
 	orkstackv1connect.IdentityServiceListSigningKeysProcedure:               true,
 	orkstackv1connect.OrkflowServiceValidateOrkflowProcedure:                true,
 	orkstackv1connect.OrkflowServiceGetOrkflowProcedure:                     true,

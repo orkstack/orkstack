@@ -931,3 +931,30 @@ func TestLoadConfig_CacheMaxTTLBounds(t *testing.T) {
 		t.Fatalf("0s = %v", err)
 	}
 }
+
+// TestBindAndServe_LogsTheAddressItBound: with a port of 0 the kernel picks
+// the port, and the boot log's "api listener ready" line names the one the
+// listener holds, before bindAndServe returns, so whoever started the
+// process reads where it listens from that process's own output and never
+// hands it a port another process may take first.
+func TestBindAndServe_LogsTheAddressItBound(t *testing.T) {
+	server := &http.Server{Addr: "127.0.0.1:0", Handler: http.NewServeMux()}
+	serverErr := make(chan error, 1)
+	var log strings.Builder
+	logger := slog.New(slog.NewTextHandler(&log, nil))
+
+	ln, err := bindAndServe(server, logger, serverErr)
+	must.OKf(t, err, "bindAndServe")
+	bound := ln.Addr().String()
+	// The log is read once the server has stopped writing to it.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	must.OKf(t, server.Shutdown(shutdownCtx), "Shutdown")
+	<-serverErr
+	if strings.HasSuffix(bound, ":0") {
+		t.Fatalf("listener address %s, want the port the kernel chose", bound)
+	}
+	if want := `msg="api listener ready" addr=` + bound; !strings.Contains(log.String(), want) {
+		t.Fatalf("boot log lacks %q:\n%s", want, log.String())
+	}
+}

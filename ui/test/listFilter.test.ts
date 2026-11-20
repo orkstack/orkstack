@@ -7,7 +7,7 @@ import { file_orkstack_v1_schedule } from '../src/lib/gen/orkstack/v1/schedule_p
 import { ListOrkersRequestSchema, file_orkstack_v1_activity_service } from '../src/lib/gen/orkstack/v1/activity_service_pb';
 import { ListNamespacesRequestSchema, file_orkstack_v1_namespace_service } from '../src/lib/gen/orkstack/v1/namespace_service_pb';
 import { file_orkstack_v1_orkflow_service } from '../src/lib/gen/orkstack/v1/orkflow_service_pb';
-import { file_orkstack_v1_run_service } from '../src/lib/gen/orkstack/v1/run_service_pb';
+import { ListRunsRequestSchema, file_orkstack_v1_run_service } from '../src/lib/gen/orkstack/v1/run_service_pb';
 import { ListReleasesRequestSchema, file_orkstack_v1_system_service } from '../src/lib/gen/orkstack/v1/system_service_pb';
 import { file_orkstack_v1_trigger_service } from '../src/lib/gen/orkstack/v1/trigger_service_pb';
 import { file_orkstack_v1_webhook_service } from '../src/lib/gen/orkstack/v1/webhook_service_pb';
@@ -162,4 +162,12 @@ test('equalityOf is the one non-empty equals on a path', () => {
 		equalityOf([filterOf('orkflow_name', FilterOperator.EQUALS, ['a']), filterOf('orkflow_name', FilterOperator.EQUALS, ['b'])], 'orkflow_name')
 	).toBeNull();
 	expect(equalityOf([], 'orkflow_name')).toBeNull();
+});
+
+test('an indexed field names no field of the resource and still resolves', () => {
+	const runs = specFor(ListRunsRequestSchema);
+	const indexed = runs.fields.filter((f) => f.indexed).map((f) => `${f.path}:${f.kind}`);
+	expect(indexed).toEqual(['queued:bool', 'queued_on:text', 'holding:text']);
+	for (const f of runs.fields.filter((f) => f.indexed)) expect(f.operators).toEqual([FilterOperator.EQUALS]);
+	expect(runs.fields.find((f) => f.path === 'status')?.indexed).toBe(false);
 });

@@ -53,7 +53,9 @@ func gateTimeOf(ms int64) time.Time {
 }
 
 // MarshalJSON encodes e as [run, task_ix, seq_base, limit, strategy, proto,
-// label_ix, arrived_at, seq, wait_until, granted_at, missing_since, flags].
+// label_ix, arrived_at, seq, wait_until, granted_at, missing_since, flags],
+// and its slot ordinal after them only when it has one: an entry of ordinal
+// 0 is written as a gate before ordinals wrote it (§22.15).
 func (e gateEntry) MarshalJSON() ([]byte, error) {
 	flags := 0
 	for bit, on := range map[int]bool{gateFlagVerifyPending: e.VerifyPending, gateFlagAdopted: e.Adopted,
@@ -62,22 +64,27 @@ func (e gateEntry) MarshalJSON() ([]byte, error) {
 			flags |= bit
 		}
 	}
-	return stablejson.Marshal([]any{e.Run, e.TaskIx, e.SeqBase, e.Limit, e.Strategy, e.Proto, e.LabelIx,
-		gateMillis(e.ArrivedAt), e.Seq, gateMillis(e.WaitUntil), gateMillis(e.GrantedAt), gateMillis(e.MissingSince), flags})
+	fields := []any{e.Run, e.TaskIx, e.SeqBase, e.Limit, e.Strategy, e.Proto, e.LabelIx,
+		gateMillis(e.ArrivedAt), e.Seq, gateMillis(e.WaitUntil), gateMillis(e.GrantedAt), gateMillis(e.MissingSince), flags}
+	if e.N > 0 {
+		fields = append(fields, e.N)
+	}
+	return stablejson.Marshal(fields)
 }
 
 // gateFlagsAll is every flag bit an entry may carry.
 const gateFlagsAll = gateFlagVerifyPending | gateFlagAdopted | gateFlagGrantPending | gateFlagStalled
 
-// gateParts splits an encoded array into exactly n fields, none of them
-// null: a null would decode as a zero, silently.
+// gateParts splits an encoded array into exactly n fields, or n+1 with a
+// trailing slot ordinal, none of them null: a null would decode as a zero,
+// silently.
 func gateParts(b []byte, what string, n int) ([]jsontext.Value, error) {
 	var parts []jsontext.Value
 	if err := json.Unmarshal(b, &parts); err != nil {
 		return nil, fmt.Errorf("a gate %s is not an array: %w", what, err)
 	}
-	if len(parts) != n {
-		return nil, fmt.Errorf("a gate %s has %d fields, want %d", what, len(parts), n)
+	if len(parts) != n && len(parts) != n+1 {
+		return nil, fmt.Errorf("a gate %s has %d fields, want %d or %d", what, len(parts), n, n+1)
 	}
 	for i, p := range parts {
 		if string(p) == "null" {
@@ -103,6 +110,16 @@ func (e *gateEntry) UnmarshalJSON(b []byte) error {
 			return fmt.Errorf("a gate entry's field %d: %w", i, err)
 		}
 	}
+	if len(parts) == 14 {
+		if err := json.Unmarshal(parts[13], &out.N); err != nil {
+			return fmt.Errorf("a gate entry's ordinal: %w", err)
+		}
+		if out.N < 1 || out.N >= gateOrdinalWire {
+			// An ordinal of 0 is never written; one is the reason to write
+			// the field.
+			return fmt.Errorf("a gate entry %s has ordinal %d; a written ordinal is 1 to %d", b, out.N, gateOrdinalWire-1)
+		}
+	}
 	if out.Run == "" || out.Strategy == "" || flags&^gateFlagsAll != 0 || arrived < 0 || wait < 0 || granted < 0 || missing < 0 ||
 		out.TaskIx < gateRunLevel || out.Limit < 1 || out.LabelIx < 0 || out.SeqBase < 1 || out.Seq < 0 {
 		return fmt.Errorf("a gate entry %s is malformed (run %q, strategy %q, flags %d)", b, out.Run, out.Strategy, flags)
@@ -114,13 +131,18 @@ func (e *gateEntry) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// MarshalJSON encodes t as [key, run_level, below, until, removed_by].
+// MarshalJSON encodes t as [key, run_level, below, until, removed_by], and
+// the highest ordinal it fences after them only when that is above 0.
 func (t gateTomb) MarshalJSON() ([]byte, error) {
 	level := 0
 	if t.RunLevel {
 		level = 1
 	}
-	return stablejson.Marshal([]any{t.Key, level, t.Below, gateMillisUp(t.Until), t.RemovedBy})
+	fields := []any{t.Key, level, t.Below, gateMillisUp(t.Until), t.RemovedBy}
+	if t.N > 0 {
+		fields = append(fields, t.N)
+	}
+	return stablejson.Marshal(fields)
 }
 
 // UnmarshalJSON is MarshalJSON's strict inverse: an empty key, a level
@@ -136,6 +158,14 @@ func (t *gateTomb) UnmarshalJSON(b []byte) error {
 	for i, dst := range []any{&out.Key, &level, &out.Below, &until, &out.RemovedBy} {
 		if err := json.Unmarshal(parts[i], dst); err != nil {
 			return fmt.Errorf("a gate tombstone's field %d: %w", i, err)
+		}
+	}
+	if len(parts) == 6 {
+		if err := json.Unmarshal(parts[5], &out.N); err != nil {
+			return fmt.Errorf("a gate tombstone's ordinal: %w", err)
+		}
+		if out.N < 1 || out.N >= gateOrdinalWire {
+			return fmt.Errorf("a gate tombstone %s has ordinal %d; a written ordinal is 1 to %d", b, out.N, gateOrdinalWire-1)
 		}
 	}
 	if out.Key == "" || (level != 0 && level != 1) || until < 0 {

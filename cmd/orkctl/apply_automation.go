@@ -32,6 +32,8 @@ type applyOptions struct {
 	prune      bool
 	expectPlan string
 	secretsOut string
+	// consents are automation apply's --consent KIND/NAME=DIGEST entries.
+	consents []string
 }
 
 // documentKind is what a file given to orkflow create or automation apply
@@ -512,6 +514,7 @@ func (r *applyRun) checkRefusals() {
 			}
 		}
 	}
+	r.refusals = append(r.refusals, r.attachConsents()...)
 	if r.opts.secretsOut != "" {
 		if _, err := os.Lstat(r.opts.secretsOut); err == nil {
 			r.refusals = append(r.refusals, fmt.Sprintf("--secrets-out %s already exists; it is never overwritten", r.opts.secretsOut))
@@ -1043,4 +1046,71 @@ func outcomeLabel(outcome orkstackv1.AutomationStepOutcome) string {
 		return "not run"
 	}
 	return "-"
+}
+
+// attachConsents gives each --consent KIND/NAME=DIGEST to the step that
+// saves that object, and returns a refusal for an entry that is malformed,
+// given twice, or names no object this apply saves: a consent to an object
+// the plan leaves as it is is given with that object's own update command.
+// The plan's digest does not cover it, as the document has no key for it.
+func (r *applyRun) attachConsents() []string {
+	var refusals []string
+	seen := map[string]bool{}
+	for _, entry := range r.opts.consents {
+		object, digest, ok := strings.Cut(entry, "=")
+		kind, name, okName := strings.Cut(object, "/")
+		if !ok || !okName || name == "" || digest == "" || (kind != "schedule" && kind != "trigger" && kind != "event-source") {
+			refusals = append(refusals, fmt.Sprintf("--consent %q: want KIND/NAME=DIGEST, KIND one of schedule, trigger, event-source", entry))
+			continue
+		}
+		if seen[object] {
+			refusals = append(refusals, fmt.Sprintf("--consent %s is given more than once", object))
+			continue
+		}
+		seen[object] = true
+		if !r.consentTo(kind, name, digest) {
+			refusals = append(refusals, fmt.Sprintf("--consent %s: this apply saves no %s %q; consent to it with orkctl %s update %s --consent=%s",
+				object, kind, name, kind, name, digest))
+		}
+	}
+	return refusals
+}
+
+// consentTo sets digest on the step that creates or updates kind/name.
+func (r *applyRun) consentTo(kind, name, digest string) bool {
+	found := false
+	for _, doc := range r.report.GetAutomation() {
+		for _, step := range doc.GetPlan().GetSteps() {
+			if step.GetName() != name || !automation.Actionable(step.GetAction()) {
+				continue
+			}
+			switch req := step.GetRequest().(type) {
+			case *orkstackv1.AutomationStep_CreateSchedule:
+				if kind == "schedule" {
+					req.CreateSchedule.Consent, found = digest, true
+				}
+			case *orkstackv1.AutomationStep_UpdateSchedule:
+				if kind == "schedule" {
+					req.UpdateSchedule.Consent, found = digest, true
+				}
+			case *orkstackv1.AutomationStep_CreateTrigger:
+				if kind == "trigger" {
+					req.CreateTrigger.Consent, found = digest, true
+				}
+			case *orkstackv1.AutomationStep_UpdateTrigger:
+				if kind == "trigger" {
+					req.UpdateTrigger.Consent, found = digest, true
+				}
+			case *orkstackv1.AutomationStep_CreateEventSource:
+				if kind == "event-source" {
+					req.CreateEventSource.Consent, found = digest, true
+				}
+			case *orkstackv1.AutomationStep_UpdateEventSource:
+				if kind == "event-source" {
+					req.UpdateEventSource.Consent, found = digest, true
+				}
+			}
+		}
+	}
+	return found
 }

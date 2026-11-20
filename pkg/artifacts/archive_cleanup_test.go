@@ -38,12 +38,16 @@ func TestLocalRunArchive_CleanupSidecarAndRunScopedDeletion(t *testing.T) {
 	}
 	commitPrefix, _ := RunCommitPrefix(rec.Namespace, rec.RunID)
 	snapshotPrefix, _ := RunSnapshotPrefix(rec.Namespace, rec.RunID)
+	// What the engine recorded for the run's tasks is reclaimed with its
+	// commits (docs/TASK_IDENTITY.md, "Results the engine records").
+	attestedPrefix, _ := AttestedRunPrefix(rec.Namespace, rec.RunID)
 	for name, body := range map[string][]byte{
-		filepath.Join(root, filepath.FromSlash(logPrefix), "task", "attempt", "chunk"):  []byte("logs"),
-		filepath.Join(root, filepath.FromSlash(attemptKey)):                             []byte("attempt!"),
-		filepath.Join(root, filepath.FromSlash(commitPrefix), "task", CommitObjectName): []byte("commit"),
-		filepath.Join(root, filepath.FromSlash(snapshotPrefix), "7.pb"):                 []byte("snapshot"),
-		filepath.Join(root, "objects", "shared"):                                        []byte("shared"),
+		filepath.Join(root, filepath.FromSlash(attestedPrefix), "task", CommitObjectName): []byte("recorded"),
+		filepath.Join(root, filepath.FromSlash(logPrefix), "task", "attempt", "chunk"):    []byte("logs"),
+		filepath.Join(root, filepath.FromSlash(attemptKey)):                               []byte("attempt!"),
+		filepath.Join(root, filepath.FromSlash(commitPrefix), "task", CommitObjectName):   []byte("commit"),
+		filepath.Join(root, filepath.FromSlash(snapshotPrefix), "7.pb"):                   []byte("snapshot"),
+		filepath.Join(root, "objects", "shared"):                                          []byte("shared"),
 	} {
 		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
 			t.Fatal(err)
@@ -57,12 +61,15 @@ func TestLocalRunArchive_CleanupSidecarAndRunScopedDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.ObjectsDeleted != 4 ||
-		result.BytesReclaimed != int64(len("logs")+len("attempt!")+len("commit")+len("snapshot")) {
+	if result.ObjectsDeleted != 5 ||
+		result.BytesReclaimed != int64(len("logs")+len("attempt!")+len("commit")+len("snapshot")+len("recorded")) {
 		t.Fatalf("result = %+v", result)
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(snapshotPrefix), "7.pb")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("run snapshot survived cleanup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(attestedPrefix), "task", CommitObjectName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an engine-recorded result survived cleanup: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(attemptKey))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("task attempt record survived cleanup: %v", err)
@@ -360,4 +367,46 @@ func mustRefKey(t *testing.T, objectID, runID string) string {
 		t.Fatalf("RunObjectRefKey: %v", err)
 	}
 	return key
+}
+
+// A resumed run's objects lie under the prefixes cleanup already reclaims:
+// its plan records under the snapshot prefix, its reruns' commits under the
+// commit prefix (docs/STORAGE.md).
+func TestLocalRunArchive_CleanupReclaimsAResumedRunsObjects(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewLocalRunArchive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	plan, err := ResumePlanKey("default", "ork-run", 42, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerun, err := ScopedItemCommitKey("default", "ork-run", "convert", 3, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{plan, rerun} {
+		name := filepath.Join(root, filepath.FromSlash(key))
+		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := store.DeleteRunArtifacts(ctx, "default", "ork-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ObjectsDeleted != 2 {
+		t.Fatalf("result = %+v, want the plan record and the rerun's commit", result)
+	}
+	for _, key := range []string{plan, rerun} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(key))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s survived cleanup: %v", key, err)
+		}
+	}
 }

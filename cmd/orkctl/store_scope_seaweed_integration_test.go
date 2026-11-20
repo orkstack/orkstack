@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/testsupport/dockerport"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
@@ -103,10 +103,6 @@ func startOwnSeaweed(t *testing.T, ctx context.Context, bucket string) string {
 	config := filepath.Join(dir, "s3.json")
 	must.OK(t, os.WriteFile(config, seaweedIdentities(bucket), 0o644))
 	must.OK(t, os.Chmod(dir, 0o755))
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	must.OK(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
 	host, err := os.Hostname()
 	must.OK(t, err)
 	proofID := os.Getenv(proof.EnvID)
@@ -117,7 +113,7 @@ func startOwnSeaweed(t *testing.T, ctx context.Context, bucket string) string {
 	out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--name", name,
 		"--label", "orkstack.proof="+proofID,
 		"--label", fmt.Sprintf("orkstack.proof.owner=%s:%d:%s", host, os.Getpid(), processStartTime(t)),
-		"-p", fmt.Sprintf("127.0.0.1:%d:8333", port),
+		"-p", dockerport.Publish("8333"),
 		"-v", config+":/etc/s3.json:ro",
 		seaweedImage(t), "mini", "-dir=/data", "-s3.config=/etc/s3.json", "-s3.autoCreateBucket=false",
 	).CombinedOutput()
@@ -129,7 +125,10 @@ func startOwnSeaweed(t *testing.T, ctx context.Context, bucket string) string {
 			t.Logf("stop %s: %v: %s", name, err, out)
 		}
 	})
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
+	// Docker picked the port and holds it for this container alone.
+	addr, err := dockerport.Addr(ctx, name, "8333")
+	must.OK(t, err)
+	endpoint := "http://" + addr
 	// The bucket, made by the administrator once the store answers.
 	deadline := time.Now().Add(90 * time.Second)
 	for {

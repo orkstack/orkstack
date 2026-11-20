@@ -289,6 +289,19 @@ written under it; a file that must outlive the pin is copied to
 `output/artifacts/`. For an unpinned task the mount and `paths.shared` are
 absent.
 
+**`/orkstack/identity` exists only for a task that declares an identity**
+(`docs/TASK_IDENTITY.md`, "On the Orker"). It is bound read-only, a mount of
+its own beside the sealed input tree, because a token changes while the
+container runs: each identity is a directory `<name>/` whose `token` (the
+compact JWT, no trailing newline) and `expiration` (an RFC 3339 instant) are
+links through `current`, which a refresh moves to a whole new set with one
+`rename(2)`. A reader that needs both files reads them through one opening
+of `current`. Nothing signals the workload: it reads the file again when it
+needs a token. The directory is made under `orker.identity.dir`, on
+memory-backed storage where the Orker has any, and is removed with the
+attempt. For a task with no identity the mount, `paths.identity` and
+`identities` are absent.
+
 **Permissions.** The host per-attempt directory is `0700`, owned by the
 Orker's user, so no other host user can traverse into a `1777` child. Inside,
 the workload runs as whatever UID its image chooses, so every directory it
@@ -528,6 +541,10 @@ rule below and an image that has never heard of the feature loses nothing:
   64 MiB.
 - **A task with a fan-out among its direct upstreams** carries
   `inputs.eachUpstream`, so it can tell "zero items" from "no such upstream".
+  A failure handler of an `on_item_failure: continue` fan-out that failed
+  (`docs/DSL.md`, "When an item fails") also reads
+  `inputs.eachUpstream[].failed`: the items that did not succeed, which are
+  not staged.
 - **A failure handler** (`join:` `any_failed` or `all_done`, `docs/DSL.md`,
   "Joins and failure handlers") carries `join`: the policy and how each need
   ended, in `needs:` order:
@@ -553,6 +570,13 @@ rule below and an image that has never heard of the feature loses nothing:
   succeeded upstream's — under `input/artifacts/<need>/`, listed in
   `inputs.artifacts` — with no `inputs.upstream` entry, because a failed need
   has no values.
+- **A task of a child run that names an artifact input**
+  (`{{ artifact "_inputs/<name>" }}`, docs/DSL.md "Passing artifacts to a
+  child run") has it staged under the reserved producer `_inputs`: at
+  `input/artifacts/_inputs/<name>`, listed in `inputs.artifacts` with
+  `producer` `_inputs`, and with no `inputs.upstream` entry, since nothing
+  produced values for it. Only the inputs the task names are staged. No task
+  id can be `_inputs`.
 - **A deployment that exports traces** adds `trace` (`traceparent`, and
   `tracestate` when the propagator set one, W3C header form). It is purely
   informational: a workload that wants to join the trace propagates the two
@@ -573,7 +597,7 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | Path | JSON type | Req. | Empty form | Meaning |
 |---|---|---|---|---|
 | `schemaVersion` | integer | required | — | Major version of this file. `1` today. |
-| `idempotencyKey` | string | required | — | `"{namespace}/{runId}/{taskId}"`, stable across retries; for an item of a fan-out `"{namespace}/{runId}/{taskId}/{index}"`, stable across that item's retries |
+| `idempotencyKey` | string | required | — | `"{namespace}/{runId}/{taskId}"`, stable across retries; for an item of a fan-out `"{namespace}/{runId}/{taskId}/{index}"`, stable across that item's retries. A task a resume runs again is a new logical activity with a key of its own, `"{namespace}/{runId}/{taskId}@r{scope}"` (an item's `"…@r{scope}/{index}"`), stable across that rerun's retries (`docs/STORAGE.md`) |
 | `run.id` | string | required | — | Opaque run id. Never parsed by anything. |
 | `run.namespace` | string | required | `"default"` | Resolved, never empty |
 | `run.orkflow.name` | string | required | — | slug |
@@ -621,6 +645,8 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `network` | string | required | `"default"` | `"default"` or `"none"` only |
 | `paths.*` | string | required | — | all eight fixed keys always present (§3.1) |
 | `paths.shared` | string | optional | absent | `/orkstack/shared`, present only for a pinned task |
+| `paths.identity` | string | optional | absent | `/orkstack/identity`, present only for a task that declares an identity |
+| `identities` | array | optional | absent | present only for a task that declares an identity: each one's `name`, `audience` and `path` (`/orkstack/identity/<name>/token`), never a token |
 | `inputs.artifacts` | array | required | `[]` | never null |
 | `inputs.artifacts[].producer` | string | required | — | upstream task id |
 | `inputs.artifacts[].name` | string | optional | absent | the exact logical name |
@@ -636,7 +662,8 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `inputs.upstream[].item` | integer | optional | absent | present only for one item of a fan-out producer |
 | `inputs.eachUpstream` | array | optional | absent | present only when a direct upstream is a fan-out |
 | `inputs.eachUpstream[].taskId` | string | required | — | the fan-out's task id |
-| `inputs.eachUpstream[].count` | integer | required | `0` | how many items were staged |
+| `inputs.eachUpstream[].count` | integer | required | `0` | how many items the fan-out has; all are staged but those `failed` names |
+| `inputs.eachUpstream[].failed` | array | optional | absent | present only for a failure handler of a failed `on_item_failure: continue` fan-out: the ascending indices of its items that did not succeed (failed, cancelled or never dispatched), none of which is staged |
 | `join` | object | optional | absent | present only for a failure handler — and always present for one |
 | `join.policy` | string | required in `join` | — | `"any_failed"` or `"all_done"` |
 | `join.needs` | array | required in `join` | — | one entry per need, in `needs:` order; at most 32 |
@@ -1148,7 +1175,11 @@ contract limits (`WorkspaceLimits`), the transfer budget (§6.3), and the image
 policy (§4.7). The workflow composes
 `commit_uri = plan.CommitRoot + "/" + CommitKey(namespace, run, task)`, a pure
 function of its arguments. `artifacts.CommitKey` / `ItemCommitKey` are the
-single renderers.
+single renderers. A task a resume runs again commits under the resume's scope
+(`ScopedCommitKey` / `ScopedItemCommitKey`, `docs/STORAGE.md`), and the engine
+sends that URI; an Orker never derives one, except an item of a fan-out
+upstream it stages, whose scope its `EachUpstream.epochs` names (an item no
+range covers is at scope 0).
 
 **Resource policy stays where it is enforced.** The engine owns contract
 limits; the Orker owns resource policy (`ORK_ORKER_MAX_CPU`,
@@ -1782,8 +1813,8 @@ required signature with this Orker's registry credentials) and its render (step
 the key hashes the rendered `config.json`, so those refuse it here even where
 the memo would hit. A task with neither a commit nor a hit is still refused at
 step 3a or 5b′, with its own reason (`RESOURCE_REQUEST_REFUSED`,
-`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `RUN_AS_ORKER_UNAVAILABLE`),
-before any secret is resolved, any image pulled or any `config.json` written.
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `IDENTITY_NOT_CONFIGURED`,
+`IDENTITY_NOT_SERVED`, `RUN_AS_ORKER_UNAVAILABLE`), before any secret is resolved, any image pulled or any `config.json` written.
 The checks that read nothing of the Orker, the network mode among them, stay at
 step 2. For a cached task the image policy, the workspace, the upstream values
 the key needs, the render and the memo lookup come first, so a failure among
@@ -1919,6 +1950,8 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start one of the probe's two containers within it, or ended it with a deadline error of its own, or the second one's workload did not say it was ready within it; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
 | `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.24 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `RUN_AS_ORKER_UNAVAILABLE` | InfrastructureError | **no** | the task runs as the Orker's own user (`runAsOrkerUser`, or `ORK_ORKER_FORCE_USER`), and the boot probe found that user does not land as the Orker on this host: a `0600` file its container wrote as that user is one the Orker cannot read. Refused before a container is created; under `ORK_ORKER_FORCE_USER` the Orker refuses to start instead |
+| `IDENTITY_NOT_CONFIGURED` | InfrastructureError | **no** | the task holds an identity, and this Orker reaches no engine (`orker.engine` is unset), so nothing can issue its token. Refused before a container is created ([TASK_IDENTITY.md](./TASK_IDENTITY.md#which-orkers-serve-it)) |
+| `IDENTITY_NOT_SERVED` | InfrastructureError | yes, under the task's own policy | the task holds an identity, and this Orker's self-check does not now find that it serves task identity (its engine did not answer, does not grant it the mint at its pool, its storage credential is not confirmed scoped, or the check has not answered since boot). Refused before a container is created. It is no interruption: a task without `retry:` fails |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created, or the Orker had no file descriptor left to hold an output artifact open |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
 | `IMAGE_DIGEST_MISMATCH` | ContractViolation | no | pulled or embedded content does not match `image.pinned` |
@@ -2173,6 +2206,7 @@ socket.
 --mount type=bind,source=<attempt>/output,destination=/orkstack/output
 --mount type=bind,source=<attempt>/tmp,destination=/orkstack/tmp
 --mount type=bind,source=<pin>/shared,destination=/orkstack/shared   pinned tasks only
+--mount type=bind,source=<identity dir>/identity,destination=/orkstack/identity,readonly   tasks that declare an identity only
 --tmpfs /tmp:rw,nosuid,nodev,noexec,size=<policy>   default 64 MiB; noexec spelled, not left to the runtime
 --tmpfs /run:ro,size=1m --tmpfs /var/tmp:ro,size=1m   Podman engine only, below
 --user <orker-uid>:<orker-gid>                only with runAsOrkerUser / ORK_ORKER_FORCE_USER, as the runtime renders "as the Orker"

@@ -1,8 +1,8 @@
-// Package consent holds the digest a schedule's or a trigger's binder
-// consents to: what its Orkflow asks for, under a numbered projection. This
-// release has no identity for an Orkflow to ask for, so every consent is the
-// empty table's, and projection 1 is frozen by it: a later release that
-// covers more adds c2: and never changes what c1: means.
+// Package consent holds the digest a schedule's, a trigger's or an event
+// source's binder consents to: what its Orkflow asks for, under a numbered
+// projection (projection.go). The empty table's value was frozen first; the
+// members of a table that is not empty are frozen with task identity. A later
+// release that covers more adds c2: and never changes what c1: means.
 package consent
 
 import (
@@ -16,15 +16,8 @@ import (
 // Prefix1 opens a digest under projection 1.
 const Prefix1 = "c1:"
 
-// table is projection 1's canonical shape; with no identities, its tasks are
-// none.
-type table struct {
-	Tasks []struct{} `json:"tasks"`
-	V     int        `json:"v"`
-}
-
 func emptyBytes() []byte {
-	b, err := stablejson.Marshal(table{Tasks: []struct{}{}, V: 1})
+	b, err := stablejson.Marshal(table{Tasks: []roleTask{}, V: 1})
 	if err != nil {
 		// A constant value of a fixed type cannot fail to encode.
 		panic("consent: the empty table does not encode: " + err.Error())

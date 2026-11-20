@@ -211,8 +211,11 @@ fan-out's functional tests are `each-fan-out.spec.ts`, which runs with the
 others. The run page at the task ceiling runs on the host's Chromium
 (`ui/playwright.config.ts`); its two spec files share their steps in
 `ui/e2e/runPageCeiling.ts`. `network-change.spec.ts` launches a host-namespace
-Chromium of its own as its positive control; every other spec drives the
-container. A CI `ui-e2e` part installs the host's Chromium only when its
+Chromium of its own as its positive control, so it runs alone too, in the same
+solo pass (`--project chromium-solo-network-change`): beside it, another
+spec's activity containers add and remove veths on the host, which that
+control sees as network changes of its own (proof 44677556224). Every other
+spec drives the container. A CI `ui-e2e` part installs the host's Chromium only when its
 shard holds one of those three files, decided from the UI plan by the same
 rule `scripts/proof-part.sh` applies as a prerequisite of the part:
 `playwright install chromium`, the browser from Playwright's own store and
@@ -991,9 +994,34 @@ read the signing key. One action is one commit and one release in every file.
 No test holds these rules: review is what keeps them. Go, Bun, Node and
 cosign are pinned to exact versions. Dependabot moves them, the SHA and its
 comment together, one pull request and one proof at a time; its
-github-actions entry reads `.github/workflows` and both composite actions
+github-actions entry reads `.github/workflows` and the composite actions
 (`.github/actions/proof-host/action.yml`,
-`.github/actions/proof-fetch/action.yml`).
+`.github/actions/proof-fetch/action.yml`,
+`.github/actions/registry-mirror/action.yml`).
+
+The composite action `.github/actions/registry-mirror` makes a hosted
+runner's Docker daemon pull Docker Hub images through `mirror.gcr.io`,
+Google's public cache of Docker Hub, because Docker Hub limits anonymous
+pulls per IP and a hosted runner's address is shared. On a miss the daemon
+pulls from Docker Hub itself, and a pull by digest is verified against that
+digest either way. It merges the mirror into `/etc/docker/daemon.json`,
+restarts the daemon, and fails its step unless `docker info` lists the
+mirror. Every job that starts a container, a builder or a pull runs it right
+after its checkout, before anything else of Docker's
+(`TestWorkflows_DockerHubPullsGoThroughTheMirror`, which also reads the
+Makefile targets a step runs): `proof.yml`'s build, fast, integration,
+ui-e2e, activity-fixture and observability parts, `ci.yml`'s proto,
+`nightly.yml`'s vuln-images, quickstart and examples, `podman.yml`,
+`kind-orker.yml`, and `release.yml`'s artifacts. Two pulls of `kind-orker.yml`
+do not reach the runner's daemon and so not the mirror: the rootless Docker
+engine's image, which the kind node's own containerd pulls, and the alpine
+that engine runs. `proof-host` merges its DNS
+setting into the same file rather than writing over it, each buildx builder
+reads the mirror in its `buildkitd-config-inline`, and `podman.yml` names it
+in Podman's `registries.conf` (`TestWorkflows_TheMirrorIsKeptAndVerified`).
+`release.yml`'s publish job runs only images from ghcr.io and quay.io and
+does not use it. A self-hosted runner's daemon is its owner's, and the action
+leaves it alone (CONTRIBUTING.md, "Linux hosts").
 
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the
@@ -1976,7 +2004,6 @@ listing with no bucket at all.
 | `costs` | `-from DIR`, `-costs-out FILE`, `-ui-costs-out FILE` |
 | `push-layout` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
 | `layout-digests` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
-| `free-port` | none |
 | `touches` | `-base REF`, `-gate-files` |
 | `clean` | `-remove`, `-proof-containers` |
 | `job-log` | none: the job log on standard input, the bounded log on standard output (§7) |

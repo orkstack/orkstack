@@ -1065,10 +1065,12 @@ ui_e2e_locked() {
 	mapfile -t run_specs <"$DIR/ui-run-files.txt"
 	if [ ${#run_specs[@]} -eq 0 ]; then run_specs=("${SPEC_ARGS[@]}"); fi
 	# With one worker everything runs in one invocation. With more, the
-	# parallel project runs first and the two solo projects — the spec files
-	# that assert a render budget, which only a quiet host can measure
-	# (ui/playwright.config.ts, `projects`) — run after it on one worker; the
-	# ledger reads both reports as one run. Spec files come BEFORE --project:
+	# parallel project runs first and the solo projects — the spec files
+	# that assert a render budget, which only a quiet host can measure, and
+	# network-change.spec.ts, whose host-namespace control sees every host
+	# network change (ui/playwright.config.ts, `projects`) — run after it on
+	# one worker; the ledger reads both reports as one run. Spec files come
+	# BEFORE --project:
 	# Playwright's --project takes every following word as a project name, so
 	# a file after it is refused as an unknown project. --pass-with-no-tests,
 	# because a nightly plan may hold no file of one project; the ledger still
@@ -1092,7 +1094,7 @@ ui_e2e_locked() {
 		playwright_run "$DIR/ui-e2e-report.json" "$PROOF_UI_WORKERS" "${run_specs[@]}" --pass-with-no-tests --project chromium || code=1
 		reports+=(-report "$DIR/ui-e2e-report.json")
 		if [ "$code" -eq 0 ] || [ "$PROOF_FAIL_FAST" = 0 ]; then
-			playwright_run "$DIR/ui-e2e-report-solo.json" 1 "${run_specs[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling || code=1
+			playwright_run "$DIR/ui-e2e-report-solo.json" 1 "${run_specs[@]}" --pass-with-no-tests --project chromium-solo-each-fan-out --project chromium-solo-run-page-ceiling --project chromium-solo-network-change || code=1
 			reports+=(-report "$DIR/ui-e2e-report-solo.json")
 		fi
 		if [ -n "$BROWSER_CONTAINER" ]; then docker stop -t 5 "$BROWSER_CONTAINER" >/dev/null 2>&1; fi

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -174,6 +175,12 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 	// with identity.issuer unset it answers that task identity is off.
 	identityPath, identityHandler := orkstackv1connect.NewIdentityServiceHandler(svc, handlerOptions...)
 	mux.Handle(identityPath, identityHandler)
+	// AttemptService is what an Orker asks for an attempt it holds
+	// (attempt_commit.go); it answers only in enforce mode. Its read cap is
+	// its own, a commit's bound and 64 KiB, whatever the task ceiling.
+	attemptPath, attemptHandler := orkstackv1connect.NewAttemptServiceHandler(svc,
+		append(slices.Clone(handlerOptions), connect.WithReadMaxBytes(CommitRequestMaxBytes))...)
+	mux.handleWithin(attemptPath, attemptHandler, ConnectBodyFactor*int64(CommitRequestMaxBytes))
 
 	// The stats surface is its own handler because it owns a cache. The TTL is
 	// resolved HERE — the zero value means "the documented default" and only
@@ -330,11 +337,17 @@ type reservedMux struct {
 }
 
 func (m reservedMux) Handle(pattern string, handler http.Handler) {
+	m.handleWithin(pattern, handler, m.connectBodyMax)
+}
+
+// handleWithin is Handle with a Connect route's own body bound, for a
+// service whose read cap is not the listener's.
+func (m reservedMux) handleWithin(pattern string, handler http.Handler, connectBodyMax int64) {
 	if !webui.Reserved(pattern) {
 		panic(fmt.Sprintf("api: route %q is not reserved from the web UI (internal/webui Reserved)", pattern))
 	}
-	if m.connectBodyMax > 0 && strings.HasPrefix(pattern, "/orkstack.") {
-		handler = http.MaxBytesHandler(handler, m.connectBodyMax)
+	if connectBodyMax > 0 && strings.HasPrefix(pattern, "/orkstack.") {
+		handler = http.MaxBytesHandler(handler, connectBodyMax)
 	}
 	m.serveMux.Handle(pattern, handler)
 	if m.patterns != nil {

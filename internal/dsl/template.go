@@ -68,6 +68,13 @@ type templateChecker struct {
 	// reads nil and guards empty the checker behaves exactly as without them.
 	reads  *[]TaskRead
 	guards []string
+	// artifactInputs is the set of the Orkflow's artifact inputs (rule 55):
+	// .inputs.<name> of one is refused, artifact "_inputs/<name>" must name
+	// one, and, when the set is not empty, every artifact argument is a
+	// literal. inputNames, when set (collect mode), receives the name of
+	// every literal artifact "_inputs/<name>" read: the delivery set.
+	artifactInputs map[string]struct{}
+	inputNames     map[string]struct{}
 }
 
 // recordRead appends one task read when collecting reads.
@@ -449,6 +456,11 @@ func (c *templateChecker) checkInput(path, name string) error {
 		return c.refuse(fmt.Errorf("task %q: %s: template references undeclared input %q",
 			c.taskID, path, name))
 	}
+	// Rule 55: an artifact input is a file, never a value.
+	if _, ok := c.artifactInputs[name]; ok {
+		return c.refuseAt(path, fmt.Errorf("task %q: %s: input %q is an artifact; read it as a file with "+
+			"{{ artifact \"%s/%s\" }}", c.taskID, path, name, InputsProducer, name))
+	}
 	return nil
 }
 
@@ -504,12 +516,29 @@ func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode, rebo
 		}
 		str, ok := cmd.Args[1].(*parse.StringNode)
 		if !ok {
+			// Rule 55: an Orkflow with artifact inputs stages each only for
+			// the tasks that name it, so the set must be known at create.
+			if len(c.artifactInputs) > 0 {
+				return false, c.refuseAt(path, fmt.Errorf("task %q: %s: an Orkflow with artifact inputs names "+
+					"every artifact literally, artifact \"<task>/<name>\": which tasks receive %s/<name> is "+
+					"decided when the Orkflow is created", c.taskID, path, InputsProducer))
+			}
 			return false, nil // dynamic reference: the Orker resolves it at render time
 		}
 		producer, name, found := strings.Cut(str.Text, "/")
 		if !found || producer == "" || name == "" {
 			return false, c.refuse(fmt.Errorf("task %q: %s: artifact reference %q must be \"<task>/<name>\"",
 				c.taskID, path, str.Text))
+		}
+		if producer == InputsProducer {
+			if c.inputNames != nil {
+				c.inputNames[name] = struct{}{}
+			}
+			if _, declared := c.artifactInputs[name]; !declared && c.refs == nil {
+				return false, c.refuseAt(path, fmt.Errorf("task %q: %s: %q names no artifact input of this "+
+					"Orkflow (declared: %s)", c.taskID, path, str.Text, declaredList(c.artifactInputs)))
+			}
+			return false, nil
 		}
 		if err := c.checkUpstream(path, producer); err != nil {
 			return false, err

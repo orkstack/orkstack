@@ -63,6 +63,21 @@ type OCIDispatcher struct {
 	// gpu is this Orker's gpu profile and its held lock (dispatch_units.go);
 	// nil offers none.
 	gpu atomic.Pointer[gpuOffer]
+	// identity is the task identity self-check (identity_support.go), nil
+	// for an Orker that reaches no engine: it then serves no identity, and
+	// refuses a task that holds one.
+	identity atomic.Pointer[IdentitySupport]
+	// identityStorage is where this Orker makes identity files, chosen at
+	// boot; nil for an Orker that serves no identity.
+	identityStorage atomic.Pointer[identityStorageChoice]
+	// identityMint asks the engine for an attempt's identity tokens, and
+	// identityConfig is the Orker's identity settings; both nil for an Orker
+	// that reaches no engine.
+	identityMint   identityMintFunc
+	identityConfig *IdentityConfig
+	// identityDirMu serialises the making of this Orker's own identity
+	// directory by its attempts, should the host have cleared it.
+	identityDirMu sync.Mutex
 	// LogUnmasked is orker.log.mask_secrets turned off: a task's secrets are
 	// not masked in its logs. The zero value masks.
 	LogUnmasked bool
@@ -887,7 +902,32 @@ func (d *OCIDispatcher) checkOrkerPolicy(in *orkstackv1.ExecuteTaskInput) *Failu
 			return failure
 		}
 	}
+	if failure := d.identityFailure(in); failure != nil {
+		return failure
+	}
 	return d.runAsOrkerFailure(in)
+}
+
+// identityFailure refuses a task that holds an identity on an Orker that
+// does not serve task identity now: one that reaches no engine, or whose
+// self-check does not find it serves it. Submit asks the same of every
+// Orker of the pool that answers; this is the guard for one that did not
+// answer, or that lost support since.
+func (d *OCIDispatcher) identityFailure(in *orkstackv1.ExecuteTaskInput) *Failure {
+	if in.GetIdentity() == nil {
+		return nil
+	}
+	check := d.identity.Load()
+	if check == nil {
+		return Fail(ReasonIdentityNotConfigured,
+			"task %q holds an identity, and this Orker reaches no engine (orker.engine is unset), so nothing can issue its token",
+			in.GetTaskId())
+	}
+	if supported, reason := check.Report(); !supported {
+		return Fail(ReasonIdentityNotServed,
+			"task %q holds an identity, and this Orker does not serve task identity now: %s", in.GetTaskId(), reason)
+	}
+	return nil
 }
 
 // runsAsOrkerUser is whether in's container runs as the Orker's own user: the
@@ -1255,6 +1295,22 @@ func (d *OCIDispatcher) execute(
 		return nil, failure
 	}
 
+	// STEP 6a. The task's identity tokens, for a task that declares one:
+	// after the commit check and the memo step, so neither a committed result
+	// nor a memo hit mints, and before the render (identity_attempt.go). The
+	// files are removed with the attempt on every exit path.
+	var ids *identityAttempt
+	if len(in.GetIdentity().GetIdentities()) > 0 {
+		beat.Phase("identity")
+		var failure *Failure
+		if ids, failure = d.setupIdentities(ctx, in, attempt, ws.Root, sink.mask); failure != nil {
+			return nil, failure
+		}
+		defer func() { cleanup.record(d.logger(), in, attempt, "identity", ids.dir, ids.remove()) }()
+		beat.setIdentities(ids.refresher.liveIdentities)
+		beat.setIssued(ids.refresher.attemptIdentities)
+	}
+
 	// STEP 7. Render, then compose and SEAL the input tree.
 	beat.Phase("render")
 	effectiveCPU, effectiveMem, resFailure := d.Policy.ResolveResources(in.GetResources())
@@ -1305,6 +1361,7 @@ func (d *OCIDispatcher) execute(
 		traceCarrier = d.TraceContext(ctx)
 	}
 	if err := ws.WriteTaskJSON(in, TaskContext{
+		Identities:     identitiesOf(ids, in),
 		Attempt:        attempt,
 		Pool:           resolvedPool(in.GetPool()),
 		Namespace:      artifacts.ResolveNamespace(in.GetNamespace()),
@@ -1344,6 +1401,11 @@ func (d *OCIDispatcher) execute(
 	}
 	spec.Devices = devices
 	spec.CDIDevices = units.cdi
+	// The identity directory is a mount of its own, read-only, so a refresh
+	// is seen inside the container and the sealed input tree never changes.
+	if ids != nil {
+		spec.Mounts = append(spec.Mounts, Mount{Source: ids.dir, Destination: identityMountPath, ReadOnly: true})
+	}
 	for key, value := range units.labels {
 		spec.Labels[key] = value
 	}
@@ -1397,7 +1459,31 @@ func (d *OCIDispatcher) execute(
 	// STEP 9-10. Run, stream, and wait for exit, cancellation or the task
 	// timeout.
 	beat.Phase("run")
-	capture, failure := d.runContainer(ctx, in, ws, id, beat, stdoutLine, stderrLine, sink.mask)
+	// The refresher runs beside the container; a token that cannot be kept
+	// stops it through the attempt's own cancellation, SIGTERM then SIGKILL
+	// after the grace, and the attempt fails with the identity's reason.
+	runCtx := ctx
+	if ids != nil {
+		var stopRun context.CancelCauseFunc
+		runCtx, stopRun = context.WithCancelCause(ctx)
+		defer stopRun(nil)
+		ids.start(ctx, func(f *Failure) { stopRun(errIdentityStopped{f}) })
+	}
+	capture, failure := d.runContainer(runCtx, in, ws, id, beat, stdoutLine, stderrLine, sink.mask)
+	if ids != nil {
+		// Only a stop that came while the container ran is the attempt's
+		// failure; a container that ended by itself first keeps its own
+		// outcome, whatever the watchdog found after.
+		var byIdentity errIdentityStopped
+		stoppedWhileRunning := capture != nil && capture.cancelled && ctx.Err() == nil && errors.As(context.Cause(runCtx), &byIdentity)
+		switch stopped := ids.stop(); {
+		case stopped != nil && stoppedWhileRunning:
+			return nil, d.attachFailureDetail(context.WithoutCancel(ctx), in, ws, capture, image, sink.Ordinal(), stopped)
+		case stopped != nil:
+			d.logger().Warn("an identity token could not be kept after the container had ended; the container's own outcome stands",
+				"run", in.GetRunId(), "task", in.GetTaskId(), "attempt", attempt, "reason", stopped.Reason)
+		}
+	}
 	// A container that ended without this Orker taking it back (by itself, or
 	// at the task's own timeout) is committing: its attempt reports how it
 	// ended. One the stop's sweep took first is handed back, and nothing it
@@ -2360,6 +2446,9 @@ type runCapture struct {
 	stdoutPath string
 	stderrPath string
 	finishedAt *timestamppb.Timestamp
+	// cancelled is set when the attempt's cancellation, not the container,
+	// ended the run: the container was signalled and killed.
+	cancelled bool
 }
 
 func (d *OCIDispatcher) runContainer(
@@ -2537,6 +2626,7 @@ func (d *OCIDispatcher) runContainer(
 		TerminateContainer(ctx, d.Runtime, id, grace, exited)
 		<-exited
 		capture.finishedAt = timestamppb.New(time.Now().UTC())
+		capture.cancelled = true
 		// A canceled activity produces neither an ExecuteTaskResult nor an
 		// ActivityCommit — Temporal permits only CanceledError details on
 		// that path. What survives is the live log stream, which the sink has
@@ -2757,6 +2847,15 @@ func (d *OCIDispatcher) commit(
 	if len(values) <= InlineValuesLimit {
 		result.ValuesJson = values
 		result.ValuesInlined = true
+	}
+	// The line indexes the engine asked for, from the files just committed,
+	// written before the commit that the result referencing them follows.
+	if len(in.GetIndexLines()) > 0 {
+		produced := make([]producedArtifact, len(items))
+		for i := range items {
+			produced[i] = producedArtifact{ref: uploaded[i], open: items[i].artifact.Open}
+		}
+		result.LineIndexes = d.buildLineIndexes(ctx, in, produced)
 	}
 
 	if d.Commits == nil || in.GetCommitUri() == "" {
@@ -3184,6 +3283,8 @@ func (d *OCIDispatcher) attemptRecord(
 	// an attempt that never reached it.
 	if beat != nil {
 		record.Profiles = beat.effectiveProfiles()
+		// What each identity was issued, as this Orker saw it: never a token.
+		record.Identities = beat.attemptIdentities()
 	}
 
 	// The branch order is Execute's own, and it is load-bearing there for the

@@ -13,16 +13,18 @@ export const RUN_EVENTS: EventType[] = [
 
 /**
  * Run events a subscription must name to receive: opt-in, like the task
- * events, and offered beside them. A pause's two are transitions inside an
- * open run, so a subscription with no events does not receive them.
+ * events, and offered beside them. A wait for a concurrency slot and a
+ * pause's two are transitions inside an open run, so a subscription with no
+ * events does not receive them.
  */
-export const OPT_IN_RUN_EVENTS: EventType[] = [EventType.RUN_PAUSED, EventType.RUN_UNPAUSED];
+export const OPT_IN_RUN_EVENTS: EventType[] = [EventType.RUN_QUEUED, EventType.RUN_PAUSED, EventType.RUN_UNPAUSED];
 
 /**
  * Task events: opt-in by name, always, in lifecycle order — an awaited task's
  * two sit where it reaches them, before its outcome. TASK_LOG is never offered.
  */
 export const TASK_EVENTS: EventType[] = [
+	EventType.TASK_QUEUED,
 	EventType.TASK_SCHEDULED,
 	EventType.TASK_STARTED,
 	EventType.TASK_AWAITING,
