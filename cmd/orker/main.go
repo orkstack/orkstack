@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
@@ -33,6 +34,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -189,6 +191,10 @@ type config struct {
 	// that cannot be read is sourceHostErr, refused at boot.
 	sourceHost    orker.SourceHostSettings
 	sourceHostErr error
+	// identity is the Orker's task identity settings; identityErr a value
+	// refused at boot.
+	identity    orker.IdentityConfig
+	identityErr error
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -224,6 +230,7 @@ func loadConfig() config {
 	maxConcurrent, maxConcurrentErr := envMaxConcurrent()
 	storeWatch, storeWatchErr := envStoreWatch()
 	storeScope, storeScopeErr := envStoreScope()
+	identity, identityErr := orker.IdentityConfigFromEnv(os.Getenv)
 	stopGrace, stopGraceErr := orker.ParseStopGrace(env(orker.StopGraceVar, ""))
 	usageSampleInterval, usageSampleErr := orker.ParseUsageSampleInterval(env(orker.UsageSampleIntervalVar, ""))
 	usageLogInterval, usageLogErr := orker.ParseUsageLogInterval(env(orker.UsageLogIntervalVar, ""))
@@ -278,6 +285,8 @@ func loadConfig() config {
 		capacityMemory:           env(orker.CapacityMemoryVar, ""),
 		deployment:               task.DeploymentFromEnv(),
 		engine:                   orker.EngineSettingsFromEnv(os.Getenv),
+		identity:                 identity,
+		identityErr:              identityErr,
 	}
 	c.sourceHost, c.sourceHostErr = orker.SourceHostSettingsFromEnv(os.Getenv, c.engine.URL)
 	return c
@@ -679,6 +688,16 @@ func temporalSecurity(ctx context.Context, address string, sinks *telemetry.Sink
 	return sec, nil
 }
 
+// orkerDataConverter is the SDK default under payload encryption's
+// converter, which holds no key in this release: every payload that is not
+// sealed passes through untouched, so the Orker stays as strict as the SDK
+// default on what it is sent. orkerFailureConverter writes a failure's
+// details with it, as the SDK default does.
+var (
+	orkerDataConverter    = payloadcrypt.NewConverter(converter.GetDefaultDataConverter(), nil)
+	orkerFailureConverter = payloadcrypt.NewFailureConverter(orkerDataConverter, false)
+)
+
 // connectTemporal dials the cluster with the options this process runs on:
 // the telemetry package's (telemetry.ClientOptions is the one way a client's
 // options are built, TestClientOptions_IsHowOrkAndOrkerDialTemporal). Its
@@ -708,6 +727,8 @@ func connectTemporal(ctx context.Context, cfg config, orkerID string, sinks *tel
 		return nil, err
 	}
 	temporalOptions.Identity = orkerID
+	temporalOptions.DataConverter = orkerDataConverter
+	temporalOptions.FailureConverter = orkerFailureConverter
 	if reports != nil {
 		temporalOptions.ConnectionOptions.DialOptions = append(temporalOptions.ConnectionOptions.DialOptions,
 			grpc.WithChainUnaryInterceptor(reports))
@@ -833,6 +854,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// And for the store check, and the storage scope check.
 	if cfg.storeWatchErr != nil {
 		return cfg.storeWatchErr
+	}
+	if cfg.identityErr != nil {
+		return cfg.identityErr
 	}
 	if cfg.storeScopeErr != nil {
 		return cfg.storeScopeErr
@@ -984,6 +1008,22 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return artifacts.CheckStoreScopeOf(ctx, commitStore, orkerID)
 	}
 	go activities.WatchStoreScope(scopeCheck, cfg.storeScope).Run(ctx)
+	// The task identity self-check: with an engine configured, this Orker
+	// serves task identity only while the engine says it may, at its pool,
+	// and its storage credential is scoped (docs/TASK_IDENTITY.md, "Which
+	// Orkers serve it"). With none it serves none.
+	if cfg.engine.Configured() {
+		engine, err := orker.NewEngineClient(cfg.engine)
+		if err != nil {
+			return err
+		}
+		defer engine.Close()
+		support := orker.NewIdentitySupport(engine, orkerID, cfg.pool, activities.StoreScopeNow, logger, nil)
+		support.SetMaxClockSkew(cfg.identity.MaxClockSkew)
+		go activities.WatchIdentitySupport(support).Run(ctx)
+		// The mint every attempt asks, at most max_concurrent at once.
+		activities.Dispatcher().SetIdentityMint(orker.NewIdentityMinter(engine, cfg.identity.MaxConcurrent))
+	}
 	// The periodic profile audit: every audit_interval, each device of an
 	// audited profile again; a difference is drift (docs/DEPLOY.md,
 	// "Running a device Orker"). With no profile it returns at once.
@@ -1473,6 +1513,7 @@ func orkerOptions(
 		// Whether Boot asks the host's instance metadata endpoints
 		// (docs/DEPLOY.md, "Keeping tasks away from the host's identity").
 		MetadataProbe: cfg.metadataProbe,
+		Identity:      identityOptions(cfg),
 		// What this Orker offers tasks by name; Boot refuses a kind this
 		// build does not implement.
 		Profiles: cfg.profiles,
@@ -1652,4 +1693,15 @@ func servedNamespaces(logger *slog.Logger) (artifacts.Namespaces, string, error)
 	}
 	logger.Info("orker serves only the listed namespaces", "namespaces", served.Names(), "commit_root", root)
 	return served, root, nil
+}
+
+// identityOptions is the identity settings for an Orker that reaches an
+// engine, and nil for one that does not: it serves no identity, so it
+// chooses no identity storage.
+func identityOptions(cfg config) *orker.IdentityConfig {
+	if !cfg.engine.Configured() {
+		return nil
+	}
+	id := cfg.identity
+	return &id
 }

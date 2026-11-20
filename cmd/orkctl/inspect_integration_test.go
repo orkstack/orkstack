@@ -20,6 +20,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
@@ -74,6 +75,24 @@ func startOrkerWith(ctx context.Context, t *testing.T,
 		t.Logf("orker log:\n%s", log.String())
 	})
 	return cmd
+}
+
+// startOrkerAdmin is startOrkerWith for an Orker the test does not signal,
+// with an admin listener on a port of its own, whose address it returns, read
+// from the Orker's own log.
+func startOrkerAdmin(ctx context.Context, t *testing.T,
+	orkerPath, temporalAddr, temporalNamespace, queue string,
+	extra ...string) string {
+	t.Helper()
+	p := launch(ctx, t, "orker", orkerPath, append([]string{
+		"ORK_TEMPORAL_ADDRESS=" + temporalAddr,
+		"ORK_TEMPORAL_NAMESPACE=" + temporalNamespace,
+		"ORK_ORKER_QUEUE=" + queue,
+		"ORK_ORKER_WORKDIR=" + bindableOrkerWorkRoot(t),
+		"ORK_ARTIFACT_BACKEND=s3",
+		"ORK_ADMIN_ADDR=" + listenaddr.Loopback,
+	}, extra...)...)
+	return p.admin(ctx, t)
 }
 
 // liveAttemptDoc is one LiveAttempt as `run inspect --json` prints it.
@@ -389,11 +408,10 @@ func TestIntegration_InspectRunShowsAnAttemptWaitingForCapacity(t *testing.T) {
 	defer s.writeTranscript("run-inspect-waiting-capacity.txt")
 
 	orkerID := uniqueName("orker-inspect-cap")
-	admin := freeAddress(t)
-	startOrkerWith(ctx, t, s.orkerPath, s.address, s.namespace, s.queue,
+	admin := startOrkerAdmin(ctx, t, s.orkerPath, s.address, s.namespace, s.queue,
 		"ORK_ORKER_ID="+orkerID, "ORK_ORKER_HEARTBEAT_INTERVAL=1s",
 		"ORK_ORKER_CAPACITY_CPU=1", "ORK_ORKER_MAX_CPU=1",
-		"OTEL_METRICS_EXPORTER=prometheus", "ORK_ADMIN_ADDR="+admin)
+		"OTEL_METRICS_EXPORTER=prometheus")
 
 	hold, wait := uniqueName("inspect-cap-hold"), uniqueName("inspect-cap-wait")
 	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1

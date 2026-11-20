@@ -56,6 +56,10 @@ Each item's members use the per-task layout above under
 carries `"item": i`; `scope` carries `item` when the export was narrowed to
 one. These keys are additive, so `schema_version` stays `1` and `verify`
 reads bundles with and without items.
+A fan-out over an artifact's lines (`each.over_artifact`) exports the same way:
+one entry per item, and a batch is one item. Its line index is a record of the
+run, not a member; its source is the producing task's own `artifact` member,
+and a batch's slice file is an input the Orker staged, never exported.
 
 A `SKIPPED` task has no members and one `tasks[]` entry. A `FAILED` or
 `CANCELED` task has no `commit.json` and no `values.json`, and has artifact

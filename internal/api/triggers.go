@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -144,7 +147,18 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	if err != nil {
 		status, code := triggerSubmitStatus(err)
 		outcome = triggerOutcome(status)
-		writeTriggerError(w, status, code, err.Error())
+		if status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", strconv.FormatInt(retryAfterSeconds(svc.concurrency.RetryAfter), 10))
+		}
+		message := err.Error()
+		if reason, ok := starterRefusal(err); ok {
+			// The bearer of a trigger's token is told the reason, never
+			// who bound the trigger, by which binding, or what the
+			// Orkflow asks for: that is the engine's log line.
+			svc.logger.Warn("a trigger's run was refused an identity", "trigger", record.ID, "error", err.Error())
+			message = reason + ": this trigger may not start a run that holds an identity; its owner can see why with orkctl trigger list"
+		}
+		writeTriggerError(w, status, code, message)
 		return
 	}
 	// The run is started, whatever the answer's encoding does next.
@@ -219,6 +233,17 @@ func bearerToken(header string) (string, bool) {
 // run id is minted, so a refused invoke leaves nothing behind — no id burnt,
 // no claim taken, no run recorded.
 func triggerSubmitStatus(err error) (int, string) {
+	if isBusy(err) {
+		// A concurrency limit's line or keys full, or a max_running filled by
+		// queued runs: worth sending again after Retry-After.
+		return http.StatusTooManyRequests, connect.CodeResourceExhausted.String()
+	}
+	// A run that would hold an identity, refused for its trigger's binder
+	// or consent, is the invoke's 403 with the reason (workload-identity
+	// §3.2): the caller's token was good, the trigger may not start it.
+	if _, ok := starterRefusal(err); ok {
+		return http.StatusForbidden, "permission_denied"
+	}
 	switch code := connect.CodeOf(err); code {
 	case connect.CodeInvalidArgument:
 		return http.StatusBadRequest, code.String()
@@ -249,9 +274,9 @@ func triggerOutcome(status int) string {
 		return telemetry.TriggerInvalidArgument
 	case http.StatusNotFound:
 		return telemetry.TriggerNotFound
-	case http.StatusPreconditionFailed:
+	case http.StatusPreconditionFailed, http.StatusForbidden:
 		return telemetry.TriggerRefused
-	case http.StatusServiceUnavailable:
+	case http.StatusServiceUnavailable, http.StatusTooManyRequests:
 		return telemetry.TriggerUnavailable
 	case http.StatusConflict:
 		return telemetry.TriggerConflict
@@ -265,4 +290,24 @@ func triggerOutcome(status int) string {
 // failure on this port the same way.
 func writeTriggerError(w http.ResponseWriter, status int, code, message string) {
 	writeWebhookError(w, status, code, message)
+}
+
+// retryAfterSeconds is Retry-After's whole seconds, at least 1.
+func retryAfterSeconds(d time.Duration) int64 {
+	return max(1, int64((d+time.Second-1)/time.Second))
+}
+
+// starterRefusal reports a submission refused by checkStarter, and its
+// reason, read from the refusal's own leading reason.
+func starterRefusal(err error) (string, bool) {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return "", false
+	}
+	reason, _, _ := strings.Cut(ce.Message(), ":")
+	switch reason {
+	case reasonStarterNotRecorded, reasonStarterNotPermitted, reasonStarterNotConsented:
+		return reason, true
+	}
+	return "", false
 }

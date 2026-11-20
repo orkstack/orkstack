@@ -139,6 +139,7 @@ func (s *Stop) Finish() StopOutcome {
 	logger.Info("stop grace over: handing back what still runs",
 		"why", ended.String(), "running_tasks", running, "handed_back", handedBack,
 		"stopping_for", time.Since(s.since).Round(time.Second))
+	s.awaitOwedBeforeStop()
 	if s.seq.StopWorker != nil {
 		s.seq.StopWorker()
 	}
@@ -162,6 +163,33 @@ func (s *Stop) Finish() StopOutcome {
 		logger.Info("every handed-back task has reported", "took", time.Since(started).Round(time.Millisecond))
 	}
 	return StopOutcome{Ended: ended, HandedBack: handedBack}
+}
+
+// awaitOwedBeforeStop waits, at most ReportDrainBound, until the cluster has
+// taken the result of every attempt that returned before t1. The SDK sends an
+// attempt's result after the attempt returns, on a context its worker's Stop
+// cancels, and turns a send cut short into the failure "context canceled" (its
+// "Activity task postprocess error"): a task that succeeded just before an idle
+// grace's end would fail, and with no retry its run with it. The wait runs
+// beside the handed-back attempts' cancellation, which bounds the stop's tail
+// on its own, so StopTimeoutTail is unchanged.
+func (s *Stop) awaitOwedBeforeStop() {
+	a := s.a
+	owed := a.OwedReports()
+	if len(owed) == 0 {
+		return
+	}
+	logger := a.dispatcher.logger()
+	logger.Info("waiting for the cluster to take finished tasks' results before the worker stops", "owed", len(owed))
+	lapsedBefore, _ := a.LapsedReports()
+	ctx, cancel := context.WithTimeout(context.Background(), ReportDrainBound)
+	defer cancel()
+	err := a.AwaitReports(ctx)
+	if lapsed, recent := a.LapsedReports(); err != nil || lapsed > lapsedBefore {
+		logger.Warn("stopping the worker before the cluster took these finished tasks' results: a succeeded one is "+
+			"not reported failed, but times out and runs again (an unpinned task within its interruption budget adopts "+
+			"its commit)", "unsent", lapsed-lapsedBefore, "most_recent", recent, "still_owed", a.OwedReports())
+	}
 }
 
 // awaitGrace returns once nothing is in flight, the grace has ended, or a

@@ -159,7 +159,7 @@ func TestGateWorkflow_GrantsQueuesAndClosesEmpty(t *testing.T) {
 func TestGateWorkflow_RefusesANewerProtocol(t *testing.T) {
 	h := newGateHarness(t)
 	req := runAcquire("r1", 1, gateStrategyQueue)
-	req.Proto = gateProto + 1
+	req.Proto = gateProtoOrdinal + 1
 	out := h.acquireAt(time.Second, req)
 	h.run(GatePreviousClean, DefaultGateTunables())
 	h.closedEmpty()
@@ -379,8 +379,35 @@ func TestGateWorkflow_AReleaseInTheContinuationTaskIsCarried(t *testing.T) {
 			t.Fatalf("carried holders %+v still hold a, released in the continuation's task", next.Carry.Holders)
 		}
 	}
-	if _, fenced := next.Carry.tombFor("a", 1, gateRunLevel, h.env.Now()); !fenced {
+	if _, fenced := next.Carry.tombFor("a", 1, gateRunLevel, 0, h.env.Now()); !fenced {
 		t.Fatal("a's release left no tombstone in the carry")
+	}
+}
+
+// A run that gave its slot back asks again with n=1 before its release(0)
+// arrives: the gate replaces its held entry, grants the run waiting behind
+// it by signal in the same decision, queues the re-acquire at the tail, and
+// the late release(0) frees nothing.
+func TestGateWorkflow_AnOrdinalReplacementGrantsTheWaiter(t *testing.T) {
+	h := newGateHarness(t)
+	first := h.acquireAt(time.Second, runAcquire("r1", 1, gateStrategyQueue))
+	waiter := h.acquireAt(2*time.Second, runAcquire("r2", 1, gateStrategyQueue))
+	again := runAcquire("r1", 1, gateStrategyQueue)
+	again.N, again.Proto, again.Requeue = 1, gateProtoOrdinal, true
+	reacquired := h.acquireAt(3*time.Second, again)
+	h.signalAt(4*time.Second, GateSignalRelease, GateRelease{Run: "r1", SeqBase: 1, TaskIx: gateRunLevel})
+	h.signalAt(5*time.Second, GateSignalRelease, GateRelease{Run: "r2", SeqBase: 1, TaskIx: gateRunLevel})
+	h.signalAt(6*time.Second, GateSignalRelease, GateRelease{Run: "r1", SeqBase: 1, TaskIx: gateRunLevel, N: 1})
+	h.run(GatePreviousClean, DefaultGateTunables())
+	h.closedEmpty()
+	if first.answer.Answer != gateAnswerGranted || waiter.answer.Answer != gateAnswerQueued {
+		t.Fatalf("answers %+v, %+v; want granted then queued", first.answer, waiter.answer)
+	}
+	if reacquired.answer.Answer != gateAnswerQueued || reacquired.answer.Position != 1 || reacquired.answer.HoldersAhead != 1 {
+		t.Fatalf("the re-acquire = %+v, want first in line behind r2", reacquired.answer)
+	}
+	if len(h.granted) != 2 || h.granted[0].Run != "r2" || h.granted[0].N != 0 || h.granted[1].Run != "r1" || h.granted[1].N != 1 {
+		t.Fatalf("grant signals %+v; want r2's, then r1's at ordinal 1 once r2 released", h.granted)
 	}
 }
 

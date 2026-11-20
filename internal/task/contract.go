@@ -237,7 +237,40 @@ type HeartbeatProgress struct {
 	// of the beat and leniently: a usage it cannot read leaves the beat's
 	// other fields readable. An older Orker never sends it.
 	Usage jsontext.Value `json:"usage,omitempty"`
+	// IndexBytesRead and IndexLines are how far a fan-out's line indexer has
+	// read its source, in bytes and non-empty lines: set on the beats of an
+	// IndexEachLines attempt only.
+	IndexBytesRead int64 `json:"index_bytes_read,omitzero"`
+	IndexLines     int64 `json:"index_lines,omitzero"`
+	// Identities is, for a task that declares them, each identity's state:
+	// at most HeartbeatIdentitiesMax entries, never a value, a jti or a
+	// path. An older Orker never sends it.
+	Identities []HeartbeatIdentity `json:"identities,omitempty"`
 }
+
+// HeartbeatIdentitiesMax bounds what one beat says of an attempt's
+// identities and credentials.
+const HeartbeatIdentitiesMax = 16
+
+// HeartbeatIdentity is one identity's state as a beat carries it.
+type HeartbeatIdentity struct {
+	Name string `json:"name"`
+	// Kind is "identity" for a task's identity token.
+	Kind string `json:"kind"`
+	// LastRefresh and ExpiresAt are RFC 3339 instants: when what is on
+	// disk was issued, and when it expires.
+	LastRefresh string `json:"last_refresh"`
+	ExpiresAt   string `json:"expires_at"`
+	// State is HeartbeatIdentityFresh, Retrying or Expired.
+	State string `json:"state"`
+}
+
+// The states a beat gives an identity.
+const (
+	HeartbeatIdentityFresh    = "fresh"
+	HeartbeatIdentityRetrying = "retrying"
+	HeartbeatIdentityExpired  = "expired"
+)
 
 // HeartbeatUsage is the live usage a beat carries: the sampler's last
 // reading and its age, the sampler's interval and the beat's tick, so the
@@ -409,6 +442,27 @@ func IdempotencyKeyFor(namespace, runID, taskID string) string {
 // shapes never collide.
 func ItemIdempotencyKeyFor(namespace, runID, taskID string, index int32) string {
 	return IdempotencyKeyFor(namespace, runID, taskID) + "/" + strconv.FormatInt(int64(index), 10)
+}
+
+// ScopedIdempotencyKeyFor is the key of a task a resume runs again (E85
+// §4.1): "{namespace-or-default}/{run_id}/{task_id}@r{scope}". A rerun is a
+// new logical activity, so it has a key of its own, unchanged across its own
+// retries. Scope 0, the run before any resume, is IdempotencyKeyFor's key.
+// A task id holds no "@" (the DSL's slug rule), so no key of one shape is a
+// key of the other.
+func ScopedIdempotencyKeyFor(namespace, runID, taskID string, scope uint64) string {
+	key := IdempotencyKeyFor(namespace, runID, taskID)
+	if scope == 0 {
+		return key
+	}
+	return key + "@r" + strconv.FormatUint(scope, 10)
+}
+
+// ScopedItemIdempotencyKeyFor is one item's key under a resume scope:
+// "{namespace-or-default}/{run_id}/{task_id}@r{scope}/{index}". Scope 0 is
+// ItemIdempotencyKeyFor's key.
+func ScopedItemIdempotencyKeyFor(namespace, runID, taskID string, index int32, scope uint64) string {
+	return ScopedIdempotencyKeyFor(namespace, runID, taskID, scope) + "/" + strconv.FormatInt(int64(index), 10)
 }
 
 // InputSize is the deterministic bound on the bytes Temporal records for in:

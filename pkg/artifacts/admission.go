@@ -491,26 +491,48 @@ func checkFollows(refs []FollowRef) string {
 
 func text(s string) bool { return s != "" && len(s) <= maxAdmittedText }
 
-// writeAdmission writes a's record create-only and answers its digest. The
-// same bytes already there are success; the key is the bytes' hash, so
-// there are no other bytes. The production writer is the submit path's
-// (P13a's interpreter half); until it lands, only tests write.
-func (s *RecordStore) writeAdmission(ctx context.Context, a Admission) (string, error) {
+// WriteAdmission writes a's record create-only and answers its digest, and
+// whether this call created it. The same bytes already there are success,
+// not created: the key is the bytes' hash, so there are no other bytes, and
+// an object found there is not the caller's to delete. Its writer is the
+// submit path (docs/TASK_IDENTITY.md, "The admission record").
+func (s *RecordStore) WriteAdmission(ctx context.Context, a Admission) (string, bool, error) {
 	raw, sha, err := EncodeAdmission(a)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	key, err := AdmissionKey(a.Namespace, a.RunID, sha)
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	err = s.createIn(ctx, key, raw)
+	if err == nil {
+		return sha, true, nil
+	}
+	if !errors.Is(err, errBlobExists) {
+		return "", false, err
 	}
 	if err := s.createOrSame(ctx, key, raw, MaxAdmissionBytes); err != nil {
 		if errors.Is(err, errBlobExists) {
-			return "", &RecordStoreUnanswered{Class: UnansweredUnavailable, Err: fmt.Errorf("artifacts: admission %s holds other bytes than its name", key)}
+			return "", false, &RecordStoreUnanswered{Class: UnansweredUnavailable, Err: fmt.Errorf("artifacts: admission %s holds other bytes than its name", key)}
 		}
-		return "", err
+		return "", false, err
 	}
-	return sha, nil
+	return sha, false, nil
+}
+
+// DeleteAdmission removes the admission of run named sha256Hex: only ever
+// one the caller's own WriteAdmission created, for a run no start was
+// attempted for. A missing object is not an error.
+func (s *RecordStore) DeleteAdmission(ctx context.Context, namespace, runID, sha256Hex string) error {
+	key, err := AdmissionKey(namespace, runID, sha256Hex)
+	if err != nil {
+		return err
+	}
+	if err := s.b.remove(ctx, key); err != nil {
+		return unansweredIn(ctx, err)
+	}
+	return nil
 }
 
 // ReadAdmission reads the admission of run named sha256Hex. RecordNone

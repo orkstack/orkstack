@@ -413,6 +413,18 @@ func planHandlersThatRun(plan *orkstackv1.PlanRunResponse) []string {
 	return out
 }
 
+// planFollowsLines is one line per task that follows others, for a run whose
+// tree holds a task identity, in declaration order; none for any other run.
+func planFollowsLines(plan *orkstackv1.PlanRunResponse) []string {
+	var out []string
+	for _, task := range plan.GetTasks() {
+		if len(task.GetFollows()) > 0 {
+			out = append(out, fmt.Sprintf("  %s follows %s", task.GetTaskId(), strings.Join(task.GetFollows(), ", ")))
+		}
+	}
+	return out
+}
+
 // planUnusedAssumeFailedSentence names assumed failures whose task does not run.
 func planUnusedAssumeFailedSentence(plan *orkstackv1.PlanRunResponse) string {
 	if len(plan.GetUnusedAssumeFailed()) == 0 {
@@ -504,6 +516,12 @@ func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string, as
 	}
 	if planIgnoredAssumptions(plan, assumeFailed) {
 		fmt.Fprintln(&buf, planIgnoredAssumptionsSentence)
+	}
+	for i, line := range planFollowsLines(plan) {
+		if i == 0 {
+			fmt.Fprintln(&buf, "Each task starts only once the tasks it follows are on record:")
+		}
+		fmt.Fprintln(&buf, line)
 	}
 
 	// The table's last column is left-aligned free text; an empty DETAIL

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -136,6 +137,9 @@ func (s *Service) SetCurrentOrkflowVersion(
 				versions.Current == "", findings)
 		}
 	}
+	if err := s.refuseArtifactInputsWithFollowers(ctx, ns.GetName(), target); err != nil {
+		return nil, err
+	}
 	previous, err := s.orkflows.SetCurrentVersion(
 		ctx, ns.GetName(), name, version, artifacts.ExpectCurrent(versions.Current))
 	if err != nil {
@@ -168,14 +172,25 @@ func (s *Service) SetCurrentOrkflowVersion(
 		return nil, orkflowStoreError(err, "promote orkflow %q to version %q in namespace %q",
 			req.Msg.GetName(), req.Msg.GetVersion(), ns.GetName())
 	}
+	// What the promotion breaks: the objects that follow the pointer and are
+	// now refused an identity until someone consents (consent_promote.go).
+	// The pointer has moved either way; what could not be checked is logged
+	// and returned.
+	stale, unchecked := s.promotionStaleConsent(ctx, ns.GetName(), req.Msg.GetName())
+	if unchecked != "" {
+		s.logger.Warn("a promotion could not check every consent it may make stale",
+			slog.String("namespace", ns.GetName()), slog.String("orkflow", req.Msg.GetName()), slog.String("reason", unchecked))
+	}
 	return connect.NewResponse(&orkstackv1.SetCurrentOrkflowVersionResponse{
-		Name:             req.Msg.GetName(),
-		Namespace:        ns.GetName(),
-		CurrentVersion:   req.Msg.GetVersion(),
-		PreviousVersion:  previous,
-		UpdatedAt:        timestamppb.New(s.now().UTC()),
-		InterfaceVerdict: verdict,
-		ComparedVersion:  compared,
+		Name:                  req.Msg.GetName(),
+		Namespace:             ns.GetName(),
+		CurrentVersion:        req.Msg.GetVersion(),
+		PreviousVersion:       previous,
+		UpdatedAt:             timestamppb.New(s.now().UTC()),
+		InterfaceVerdict:      verdict,
+		ComparedVersion:       compared,
+		StaleConsent:          stale,
+		StaleConsentUnchecked: unchecked,
 	}), nil
 }
 

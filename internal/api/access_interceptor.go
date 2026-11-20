@@ -178,7 +178,7 @@ func (a *AccessControl) decide(ctx context.Context, s *Service, procedure string
 	if row.public {
 		return adm, nil
 	}
-	if row.noPermission {
+	if row.noPermission || row.decidedByHandler {
 		if subject == nil {
 			return adm, connect.NewError(connect.CodeUnauthenticated, errors.New("an authenticated caller is required"))
 		}
@@ -390,7 +390,7 @@ func (a *AccessControl) refusal(err error, row accessRow, msg proto.Message) err
 // recheck decides an open stream again against the same resources, with
 // nothing read but the policy.
 func (a *AccessControl) recheck(ctx context.Context, adm *admission) error {
-	if adm.row.noPermission || adm.row.public {
+	if adm.row.noPermission || adm.row.public || adm.row.decidedByHandler {
 		return nil
 	}
 	subject := subjectOf(authn.FromContext(ctx))

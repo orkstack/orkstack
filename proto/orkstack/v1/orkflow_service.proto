@@ -321,8 +321,14 @@ message SetCurrentOrkflowVersionResponse {
   InterfaceVerdict interface_verdict = 6;
   string compared_version = 7;
 
-  // stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  // stale_consent lists the schedules, triggers and event sources that
+  // follow the current pointer and whose consent does not cover what the
+  // version now current asks for: their runs are refused an identity until
+  // someone consents. Empty when that version asks for nothing.
   repeated StaleConsent stale_consent = 8;
+  // stale_consent_unchecked says why stale_consent may be incomplete: what
+  // could not be read or listed. Empty when every object was checked.
+  string stale_consent_unchecked = 9;
 }
 
 message DiffOrkflowVersionsRequest {
@@ -497,7 +503,11 @@ message PlanTask {
   // outcome, so a reader sees how long it would sleep.
   SleepSpec sleep = 17;
 
-  // follows is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  // follows is, for a run whose tree holds a task identity, the tasks of
+  // the run whose record of success this task needs before it starts, in
+  // the order its needs name them (docs/TASK_IDENTITY.md, "What a task
+  // follows"); empty for any other run, and for a task that follows only
+  // what the run's start follows.
   repeated string follows = 18;
 }
 
@@ -715,6 +725,18 @@ message DeleteOrkflowResponse {
   google.protobuf.Timestamp deleted_at = 3;
 }
 
-// StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
-message StaleConsent {}
+// StaleConsent is a schedule, trigger or event source bound to the Orkflow
+// whose consent no longer covers what the version now current asks for. Its
+// runs are refused an identity until it is consented to again.
+message StaleConsent {
+  // kind is `schedule`, `trigger` or `event-source`.
+  string kind = 1;
+  // name is the object's name.
+  string name = 2;
+  // digest is the consent digest to consent to: "c1:" and 64 hexadecimal
+  // digits.
+  string digest = 3;
+  // older_projection is true when the object's consent was given under an
+  // earlier consent projection, so it is stale whatever changed.
+  bool older_projection = 4;
+}

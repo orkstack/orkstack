@@ -6,12 +6,14 @@ import (
 	"strconv"
 	"time"
 
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -460,7 +462,7 @@ func (s *runState) hasUnfinishedTasks() bool {
 // or child run, and no pin opening, open or closing — while work remains and
 // the run is not being canceled. Open awaits may cross: their deadlines are absolute instants.
 func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workflow.Future) bool {
-	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil {
+	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil || s.concWaiting() {
 		return false
 	}
 	// No switch once the run's deadline is due: the pass top takes it.
@@ -486,11 +488,17 @@ func (s *runState) applyQueuedResolutions(ctx workflow.Context) (applied bool, t
 		return false, "", nil
 	}
 	for {
-		var sig *orkstackv1.AwaitSignal
-		if !s.resolutions.ReceiveAsync(&sig) {
+		var raw converter.RawValue
+		if !s.resolutions.ReceiveAsync(&raw) {
 			return applied, "", nil
 		}
+		// One that does not read counts as applied: its event is the run's,
+		// so the switch is given up or turned back as for one that does.
 		applied = true
+		sig, ok := s.openResolution(ctx, raw)
+		if !ok {
+			continue
+		}
 		if err := s.resolve(ctx, sig); err != nil {
 			return true, sig.GetTaskId(), err
 		}
@@ -591,7 +599,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
 	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes-definition, obs, s.lossEvents).Get(writeCtx, &checkpoint); err != nil {
+		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.chainAdmission()).Get(writeCtx, &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -639,6 +647,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		Snapshot:         switchSnapshot,
 	}
 	s.fillPauseCarry(ctx, carry)
+	carry.Concurrency = s.conc.carry()
 	if size, err := task.PayloadSize(carry); err != nil || size > task.MaxActivityInputBytes {
 		s.setNoSwitch(ctx, inFlight, "its carried bookkeeping is larger than 256 KiB")
 		return nil, "", nil
@@ -662,7 +671,12 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	s.logInfo(ctx, inFlight, "run carried on into a fresh history",
 		"hold_seconds", obs.HoldSeconds, "state_bytes", checkpoint.GetSizeBytes(), "generation", s.generation+1)
 	s.observeDecisionState("switch")
-	return workflow.NewContinueAsNewError(ctx, RunWorkflowType, "", s.wfArg, s.inputArg, s.plan, carry), "", nil
+	// Each argument sealed for this run under its key, so the next
+	// generation opens its own start (payload-encryption.md §4.1 rule 6); for
+	// a run that is not sealed, each is itself.
+	return workflow.NewContinueAsNewError(ctx, RunWorkflowType,
+		payloadcrypt.Seal(s.scope, ""), payloadcrypt.Seal(s.scope, s.wfArg), payloadcrypt.Seal(s.scope, s.inputArg),
+		payloadcrypt.Seal(s.scope, s.plan), payloadcrypt.Seal(s.scope, carry)), "", nil
 }
 
 // savedStateSize names a saved state's size, or its cap, in units that tell
@@ -861,12 +875,20 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.tasks": fieldDerived, "runState.pinMemberClosures": fieldDerived, "runState.endTasks": fieldDerived,
 	"runState.pins": fieldDerived, "runState.pinOrder": fieldDerived, "runState.awaits": fieldDerived,
 	"runState.sleeps": fieldDerived, "sleepState.spec": fieldDerived,
-	"runState.resolutions": fieldDerived, "runState.eaches": fieldDerived, "runState.eachShare": fieldDerived,
+	"runState.resolutions": fieldDerived, "runState.eaches": fieldDerived,
+	// Read again from each generation's own memo (payload-encryption.md §4.1
+	// rule 1): the key crosses in the memo, never in the carry.
+	"runState.scope": fieldDerived, "runState.eachShare": fieldDerived,
 	"runState.itemInputLimit": fieldDerived, "runState.itemArtifactMax": fieldDerived,
 	"runState.children": fieldDerived, "runState.hasHandlers": fieldDerived, "runState.declaredRows": fieldDerived,
 	"runState.handlerCount": fieldDerived, "runState.handlerStartBytes": fieldDerived,
 	"eachState.spec": fieldDerived, "awaitState.spec": fieldDerived,
 	"pinState.name": fieldDerived, "pinState.pin": fieldDerived, "pinState.tasks": fieldDerived,
+
+	// The concurrency state (concurrency_run.go): rebuilt from the plan,
+	// with its attempted gates and held slot carried (RunContinuation.
+	// concurrency); a queued run never switches.
+	"runState.conc": fieldRestored,
 
 	// Restored: from the carry or the checkpoint.
 	"runState.taskRuns": fieldRestored, "runState.results": fieldRestored, "runState.outputs": fieldRestored,
@@ -895,7 +917,7 @@ var runStateFieldClass = map[string]fieldClass{
 	// switch; the rest are set only while a run ends or an event is built.
 	"runState.listed": fieldEphemeral, "runState.ending": fieldEphemeral, "runState.failingRun": fieldEphemeral,
 	"runState.failingPhase": fieldEphemeral, "runState.eventInterruption": fieldEphemeral,
-	"runState.runError": fieldEphemeral, "runState.finished": fieldEphemeral, "runState.output": fieldEphemeral,
+	"runState.runError": fieldEphemeral, "runState.finished": fieldEphemeral, "runState.output": fieldEphemeral, "runState.outputArtifacts": fieldEphemeral,
 	"runState.pendingItemPublishes": fieldEphemeral, "runState.publishCtx": fieldEphemeral,
 	"runState.dispatchTaskLength": fieldEphemeral, "runState.dispatchTaskBytes": fieldEphemeral,
 	"runState.runCtx": fieldEphemeral, "runState.handlerCtx": fieldEphemeral, "runState.cancelHandlers": fieldEphemeral,
@@ -921,7 +943,7 @@ var runStateFieldClass = map[string]fieldClass{
 	// causes, the last pause and the cascade counter cross in the carry
 	// (RunContinuation 12–15).
 	"runState.pauses": fieldDerived, "runState.pause": fieldRestored, "runState.pausedByParent": fieldRestored,
-	"runState.lastPause": fieldRestored, "runState.pauseStop": fieldEphemeral, "runState.lastCascadeSeq": fieldRestored,
+	"runState.lastPause": fieldRestored, "runState.pauseStop": fieldEphemeral, "runState.slotStop": fieldEphemeral, "runState.lastCascadeSeq": fieldRestored,
 	// What this generation wrote to its paused index: rewritten at its first
 	// pass when it starts paused (syncPauseIndex).
 	"runState.pauseIndex": fieldEphemeral,
@@ -943,4 +965,22 @@ var runStateFieldClass = map[string]fieldClass{
 	"pinState.readyConsumed": fieldEphemeral, "pinState.ctx": fieldEphemeral, "pinState.openErr": fieldEphemeral,
 	"pinState.done": fieldEphemeral, "pinState.doneSent": fieldEphemeral, "pinState.closed": fieldEphemeral,
 	"pinState.closedSettable": fieldEphemeral, "pinState.lost": fieldEphemeral,
+}
+
+// chainAdmission is the admission a switch completes the run's chain record
+// for: an admitted run an engine started itself. A child run, or a run a
+// fire started, has a parent and no chain record.
+func (s *runState) chainAdmission() string {
+	if s.plan.Identity == nil {
+		return ""
+	}
+	kind := ""
+	if s.plan.Origin != nil {
+		kind = s.plan.Origin.Kind
+	}
+	switch kind {
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN.String(), orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE.String():
+		return ""
+	}
+	return s.plan.Identity.AdmissionSHA256
 }

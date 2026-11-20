@@ -131,6 +131,9 @@ func (s *Service) submitUnkeyed(
 		return nil, err
 	}
 	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
+	if _, err := s.admitCandidate(work, &sub, run.GetId()); err != nil {
+		return nil, err
+	}
 	s.runs.Save(run)
 	return s.startRun(work, run, sub, false, true)
 }
@@ -183,12 +186,20 @@ func (s *Service) submitKeyed(
 		return nil, err
 	}
 	candidate := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
+	// The candidate's records are written before the key is claimed; only
+	// an answer that the candidate does not hold the key deletes them.
+	admitted, err := s.admitCandidate(work, &sub, candidate.GetId())
+	if err != nil {
+		return nil, err
+	}
 	claim, err := newClaim(candidate, sub.plan.IdempotencyFingerprint)
 	if err != nil {
+		s.deleteAdmissions(work, admitted)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	winner, err := s.claimWithRetry(work, sub.claimKey(), claim)
 	if err != nil && permanentClaimError(err) {
+		s.deleteAdmissions(work, admitted)
 		return nil, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("claim idempotency key %q: %w", sub.key, err))
 	}
@@ -204,6 +215,8 @@ func (s *Service) submitKeyed(
 		s.runs.Save(candidate)
 		return s.startRun(work, candidate, sub, false, true)
 	}
+	// Told another id holds the key: what this candidate created is no one's.
+	s.deleteAdmissions(work, admitted)
 	return s.answerBinding(work, sub, winner)
 }
 
@@ -392,6 +405,11 @@ func (s *Service) startClaimedID(
 	if err := s.profileCensusFresh(sub); err != nil {
 		return nil, err
 	}
+	// Its own records under the key's id, beside an earlier preparation's,
+	// never over them; once its start is attempted none is deleted.
+	if _, err := s.admitCandidate(ctx, &sub, binding.RunID); err != nil {
+		return nil, err
+	}
 	run := s.newPendingRun(binding.RunID, sub.wf, sub.input, sub.origin)
 	// The run was asked for when the key was claimed; who started it is
 	// this caller, so the origin is its own.
@@ -559,13 +577,32 @@ func (s *Service) startRun(
 	// never started. Nothing is recorded: the store is what failed, so a
 	// record would not be durable either. A key keeps naming the id, which
 	// the next submission under it starts.
-	if err := s.writeDefinitionObject(ctx, runID, sub); err != nil {
-		forgetFresh()
-		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again", err))
+	// An admitted tree's definition and run context were written with its admission, before the key
+	// was claimed (admitCandidate): writing it again here could only fail
+	// after the records were made, with nothing left to delete them.
+	if sub.admission == nil {
+		if err := s.writeRunObjects(ctx, runID, sub); err != nil {
+			forgetFresh()
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again", err))
+		}
 	}
-	err := sub.binding.Starter.StartRun(ctx, runID, sub.startDefinition(), sub.input, sub.plan)
+	// A run whose plan still names the placeholder its size was measured
+	// with was never admitted: it could hold no identity, so it is not
+	// started.
+	if unadmittedPlan(sub.plan) {
+		forgetFresh()
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("start run %s: its admission record was never written", runID))
+	}
+	var executionID string
+	var err error
+	if starter, ok := sub.binding.Starter.(engine.ExecutionStarter); ok && sub.plan.Identity != nil {
+		executionID, err = starter.StartRunExecution(ctx, runID, sub.startDefinition(), sub.input, sub.plan)
+	} else {
+		err = sub.binding.Starter.StartRun(ctx, runID, sub.startDefinition(), sub.input, sub.plan)
+	}
 	switch classifyStart(err) {
 	case startAccepted:
+		s.completeChain(ctx, sub, runID, executionID)
 		if firstStartOf(sub.binding) == nil {
 			s.starts.record(runID, fingerprint)
 		}
@@ -587,6 +624,9 @@ func (s *Service) startRun(
 					fmt.Errorf("start run: two run ids in a row were already taken: %w", err))
 			}
 			next := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
+			if _, err := s.admitCandidate(ctx, &sub, next.GetId()); err != nil {
+				return nil, err
+			}
 			s.runs.Save(next)
 			return s.startRun(ctx, next, sub, true, true)
 		}
@@ -665,17 +705,28 @@ func (s *Service) replaceForeignID(
 		return nil, err
 	}
 	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
-	if err := s.writeDefinitionObject(ctx, next.GetId(), sub); err != nil {
-		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again under the same key", err))
+	// The fresh id's records are built again, each child's naming the new
+	// parent, and written before the key moves.
+	admitted, err := s.admitCandidate(ctx, &sub, next.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if sub.admission == nil {
+		if err := s.writeRunObjects(ctx, next.GetId(), sub); err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again under the same key", err))
+		}
 	}
 	claim, err := newClaim(next, sub.plan.IdempotencyFingerprint)
 	if err != nil {
+		s.deleteAdmissions(ctx, admitted)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	if err := s.idempotency.Rebind(ctx, sub.claimKey(), claim, refused); err != nil {
 		// Another submission may have moved the key first: go on with the id
 		// it moved it to, read as any key's id is read. Its definition object
-		// written above is left for the sweep, as any unread one is.
+		// written above is left for the sweep, as any unread one is; its
+		// admission records are its own, and no start was attempted.
+		s.deleteAdmissions(ctx, admitted)
 		return s.followMovedKey(ctx, sub, refused, err)
 	}
 	s.runs.Save(next)

@@ -192,7 +192,7 @@ func slots() map[string]slot {
 		"apiVersion": "orkstack/v1", "kind": "Orkflow", "name": "x", "namespace": "ns", "version": `"1"`,
 		"description": "d", "labels": "{l: v}", "inputs": "{i: {type: string}}", "outputs": "{r: x}",
 		"pins": "{p: {}}", "tasks": "[{id: a, uses: 'busybox:1'}]", "shared_with": "[{namespace: b}]",
-		"timeout": "6h",
+		"timeout": "6h", "concurrency": "{limit: 1}",
 	} {
 		s := rootDoc(key, "")
 		s.baseline = baseline
@@ -218,7 +218,7 @@ func slots() map[string]slot {
 	plainTask := map[string]string{
 		"needs": "[b]", "condition": "'{{ true }}'", "timeout_seconds": "10", "retry": "{maximum_attempts: 2}",
 		"pool": "p", "command": "[x]", "env": "{A: b}", "secrets": "[{name: s, source: 'env:S'}]",
-		"resources": "{cpu: '1'}", "network": "none", "cancellation_grace_period_seconds": "5", "run_as_orker_user": "true",
+		"resources": "{cpu: '1'}", "network": "none", "cancellation_grace_period_seconds": "5", "run_as_orker_user": "true", "identities": "[{name: i, audience: a}]",
 		"cache": "{enabled: true}", "with": "{}", "description_unused": "",
 	}
 	delete(plainTask, "description_unused")
@@ -237,6 +237,11 @@ func slots() map[string]slot {
 	out["tasks[].sleep"] = slot{doc: sleepDoc("@V@"), field: "tasks[0].sleep", baseline: "{seconds: 60}"}
 	out["tasks[].sleep.seconds"] = slot{doc: sleepDoc("{seconds: @V@}"), field: "tasks[0].sleep.seconds", baseline: "60",
 		absent: sleepDoc("{}")}
+	composed := func(value string) string {
+		return slotHeader + "name: x\ntasks:\n  - id: b\n    uses: busybox:1\n  - id: a\n    uses: orkflow:c@1.0.0\n    needs: [b]\n" + value
+	}
+	out["tasks[].artifacts"] = slot{doc: composed("    artifacts: @V@\n"), field: "tasks[1].artifacts", baseline: "{d: b/f}", absent: composed("")}
+	out["tasks[].artifacts.*"] = slot{doc: composed("    artifacts: {d: @V@}\n"), field: "tasks[1].artifacts.d", baseline: "b/f"}
 	out["tasks[].needs[]"] = slot{doc: taskDoc("    needs: [@V@]\n"), field: "tasks[0].needs[0]", baseline: "b"}
 	out["tasks[].devices"] = slot{doc: taskDoc("    devices: @V@\n"), field: "tasks[0].devices", baseline: "[sensor]", absent: taskDoc("")}
 	out["tasks[].devices[]"] = slot{doc: taskDoc("    devices: [@V@]\n"), field: "tasks[0].devices[0]", baseline: "sensor"}
@@ -247,6 +252,16 @@ func slots() map[string]slot {
 		other := map[string]string{"name": "source: 'env:S'", "source": "name: s"}[key]
 		out["tasks[].secrets[]."+key] = slot{doc: taskDoc("    secrets: [{" + other + ", " + key + ": @V@}]\n"), field: "tasks[0].secrets[0]." + key,
 			baseline: baseline, absent: taskDoc("    secrets: [{" + other + "}]\n")}
+	}
+	out["tasks[].identities[]"] = slot{doc: taskDoc("    identities: [@V@]\n"), field: "tasks[0].identities[0]", baseline: "{name: i, audience: a}"}
+	for key, baseline := range map[string]string{"name": "i", "audience": "a"} {
+		other := map[string]string{"name": "audience: a", "audience": "name: i"}[key]
+		out["tasks[].identities[]."+key] = slot{doc: taskDoc("    identities: [{" + other + ", " + key + ": @V@}]\n"), field: "tasks[0].identities[0]." + key,
+			baseline: baseline, absent: taskDoc("    identities: [{" + other + "}]\n")}
+	}
+	for key, baseline := range map[string]string{"ttl_seconds": "600", "refresh": "best_effort"} {
+		out["tasks[].identities[]."+key] = slot{doc: taskDoc("    identities: [{name: i, audience: a, " + key + ": @V@}]\n"), field: "tasks[0].identities[0]." + key,
+			baseline: baseline, absent: taskDoc("    identities: [{name: i, audience: a}]\n")}
 	}
 	out["tasks[].secrets[].mask"] = slot{doc: taskDoc("    secrets: [{name: s, source: 'env:S', mask: @V@}]\n"), field: "tasks[0].secrets[0].mask",
 		baseline: "false", absent: taskDoc("    secrets: [{name: s, source: 'env:S'}]\n")}
@@ -297,10 +312,25 @@ func slots() map[string]slot {
 		out["tasks[].each."+key] = slot{doc: linesDoc(linesBase[key] + ", " + key + ": @V@"),
 			field: "tasks[1].each." + key, baseline: baseline, absent: absent}
 	}
+	failureBase := map[string]string{
+		"on_item_failure":  "over: '{{ .inputs.l }}', max_items: 4",
+		"max_failed_items": "over: '{{ .inputs.l }}', max_items: 4, on_item_failure: continue",
+	}
+	for key, baseline := range map[string]string{"on_item_failure": "continue", "max_failed_items": "2"} {
+		out["tasks[].each."+key] = slot{doc: taskDocWith("inputs: {l: {type: array}}\n", "    each: {"+failureBase[key]+", "+key+": @V@}\n"),
+			field: "tasks[0].each." + key, baseline: baseline,
+			absent: taskDocWith("inputs: {l: {type: array}}\n", "    each: {"+failureBase[key]+"}\n")}
+	}
 	cacheBase := map[string]string{"enabled": "", "ttl_seconds": "enabled: true, ", "scope": "enabled: true, "}
 	for key, baseline := range map[string]string{"enabled": "true", "ttl_seconds": "60", "scope": "namespace"} {
 		out["tasks[].cache."+key] = slot{doc: taskDoc("    cache: {" + cacheBase[key] + key + ": @V@}\n"), field: "tasks[0].cache." + key,
 			baseline: baseline, absent: taskDoc("    cache: {" + strings.TrimSuffix(cacheBase[key], ", ") + "}\n")}
+	}
+	concurrencyBase := map[string]string{"limit": "", "key": "limit: 1, ", "on_limit": "limit: 1, ", "queue_timeout": "limit: 1, ", "max_queued": "limit: 1, "}
+	for key, baseline := range map[string]string{"limit": "1", "key": "k", "on_limit": "queue", "queue_timeout": "2h", "max_queued": "5"} {
+		out["concurrency."+key] = slot{doc: slotHeader + "name: x\nconcurrency: {" + concurrencyBase[key] + key + ": @V@}\ntasks: [{id: a, uses: 'busybox:1'}]\n",
+			field: "concurrency." + key, baseline: baseline,
+			absent: slotHeader + "name: x\nconcurrency: {" + strings.TrimSuffix(concurrencyBase[key], ", ") + "}\ntasks: [{id: a, uses: 'busybox:1'}]\n"}
 	}
 	return out
 }
@@ -390,6 +420,7 @@ func refusedOn(err error, field string, line int) bool {
 // and D — and each class excuses at least one pair the compiler accepted, so
 // a class goes stale when the compiler tightens.
 func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
+	taskIdentityFor(t)
 	b, _ := buildOrkflowSchema()
 	tree := orkflowSchemaTree(t)
 	contexts := slots()
@@ -450,6 +481,7 @@ func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
 // absence fails Compile; a key not required compiles absent. uses is
 // required by the task kind (the else branch), not by an annotation.
 func TestOrkflowSchema_RequiredKeysAreRequiredByTheCompiler(t *testing.T) {
+	taskIdentityFor(t)
 	annotations := orkflowAnnotations()
 	tree := orkflowSchemaTree(t)
 	for path, ctx := range slots() {
@@ -514,14 +546,20 @@ func TestOrkflowSchema_WordsAreTheCompilersWords(t *testing.T) {
 		"tasks[].network":             networkWords,
 		"tasks[].cache.scope":         cacheScopeWords,
 		"tasks[].await.schema.*.type": typeWords,
-		"inputs.*.type":               typeWords,
+		"inputs.*.type":               append(append([]string(nil), typeWords...), InputTypeArtifact),
 	} {
 		if got := enumAt(t, tree, path); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: enum %v, want %v", path, got, want)
 		}
 		ctx := contexts[path]
 		for _, word := range want {
-			if _, err := Compile([]byte(strings.ReplaceAll(ctx.doc, "@V@", word))); err != nil {
+			doc := strings.ReplaceAll(ctx.doc, "@V@", word)
+			if word == InputTypeArtifact {
+				// Rule 55: an artifact input is required, so the word
+				// compiles only beside required: true.
+				doc = strings.ReplaceAll(ctx.doc, "@V@", word+", required: true")
+			}
+			if _, err := Compile([]byte(doc)); err != nil {
 				t.Errorf("%s = %s does not compile: %v", path, word, err)
 			}
 		}
@@ -591,4 +629,14 @@ func TestOrkflowSchema_DescriptionsAreDSLText(t *testing.T) {
 			t.Errorf("task key %s has no description", path)
 		}
 	}
+}
+
+// taskIdentityFor makes task identity available for t, so the schema's
+// identity keys are held to what the compiler would accept once it is; t
+// must not be parallel.
+func taskIdentityFor(t *testing.T) {
+	t.Helper()
+	was := taskIdentityAvailable
+	taskIdentityAvailable = true
+	t.Cleanup(func() { taskIdentityAvailable = was })
 }

@@ -9,6 +9,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/eachlines"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/task"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -39,6 +40,10 @@ var allReasonCodes = []string{
 	ReasonProfileContractNotServed, ReasonProfileDeclarationMismatch,
 	eachlines.ReasonLineInvalid, eachlines.ReasonTooManyItems, eachlines.ReasonSourceTooLarge,
 	eachlines.ReasonBatchTooLarge, eachlines.ReasonExpansionFailed,
+	ReasonIdentityNotConfigured, ReasonIdentityNotServed,
+	identity.ReasonUnavailable, identity.ReasonEngineRefused, identity.ReasonAttemptNotHeld,
+	identity.ReasonNotAdmitted, identity.ReasonTaskNotAsAdmitted, identity.ReasonAttemptsExhausted,
+	identity.ReasonAttemptExpired, identity.ReasonRevoked, ReasonIdentitySpecSkew, ReasonIdentityClockSkew, ReasonIdentityRefreshFailed,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake
@@ -119,6 +124,10 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"the same secrets have the same forms next attempt"},
 		{ReasonRunAsOrkerUnavailable, CategoryInfrastructureError, false,
 			"the boot probe found the host maps the Orker's uid elsewhere; the next attempt on this Orker meets the same host"},
+		{ReasonIdentityNotConfigured, CategoryInfrastructureError, false,
+			"orker.engine is unset on this Orker; the next attempt on it meets the same configuration"},
+		{ReasonIdentityNotServed, CategoryInfrastructureError, true,
+			"the self-check's verdict is the moment's; a retry the task's policy allows may run where the Orker serves task identity"},
 		{ReasonHeartbeatLost, CategoryInfrastructureError, true,
 			"the cluster did not answer in time; nothing about the workload, and the next attempt may find it answering"},
 		{ReasonOrkerStopped, CategoryInfrastructureError, true,

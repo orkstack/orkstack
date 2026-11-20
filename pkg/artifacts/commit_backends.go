@@ -94,7 +94,7 @@ func (s *LocalCommitStore) Create(ctx context.Context, uri string, c *orkstackv1
 	if len(document) > CommitMaxBytes {
 		return CommitRecord{}, fmt.Errorf("artifacts: local commit create %q: %d bytes exceeds %d: %w", uri, len(document), CommitMaxBytes, ErrInvalidCommitKey)
 	}
-	dst, err := s.commitPath(uri)
+	dst, err := s.commitPath(uri, false)
 	if err != nil {
 		return CommitRecord{}, err
 	}
@@ -140,7 +140,7 @@ func (s *LocalCommitStore) Get(ctx context.Context, uri string) (CommitRecord, e
 	if err := ctx.Err(); err != nil {
 		return CommitRecord{}, err
 	}
-	filename, err := s.commitPath(uri)
+	filename, err := s.commitPath(uri, true)
 	if err != nil {
 		return CommitRecord{}, err
 	}
@@ -158,7 +158,10 @@ func (s *LocalCommitStore) Get(ctx context.Context, uri string) (CommitRecord, e
 	return recordFor(document, c)
 }
 
-func (s *LocalCommitStore) commitPath(raw string) (string, error) {
+// commitPath resolves a commit uri. A read may also name an engine-recorded
+// result under AttestedPrefix; a write never may, since only an engine
+// writes there (docs/TASK_IDENTITY.md, "Results the engine records").
+func (s *LocalCommitStore) commitPath(raw string, read bool) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "file" || (u.Host != "" && u.Host != "localhost") || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("artifacts: local commit uri %q: %w", raw, ErrInvalidURI)
@@ -169,7 +172,7 @@ func (s *LocalCommitStore) commitPath(raw string) (string, error) {
 		return "", fmt.Errorf("artifacts: local commit uri %q is outside %s: %w", raw, s.dir, ErrInvalidURI)
 	}
 	relSlash := filepath.ToSlash(rel)
-	if (relSlash != CommitProbeKey && !strings.HasPrefix(relSlash, CommitPrefix+"/")) || filepath.Base(filename) != CommitObjectName {
+	if !commitKeyShape(relSlash, read) || filepath.Base(filename) != CommitObjectName {
 		return "", fmt.Errorf("artifacts: local commit uri %q is not a commit or probe key: %w", raw, ErrInvalidURI)
 	}
 	return filename, nil
@@ -189,7 +192,7 @@ func (s *LocalCommitStore) commitProbeURI() string {
 }
 
 func (s *S3CommitStore) Create(ctx context.Context, uri string, c *orkstackv1.ActivityCommit) (CommitRecord, error) {
-	key, err := s.commitKey(uri)
+	key, err := s.commitKey(uri, false)
 	if err != nil {
 		return CommitRecord{}, err
 	}
@@ -222,7 +225,7 @@ func (s *S3CommitStore) Create(ctx context.Context, uri string, c *orkstackv1.Ac
 }
 
 func (s *S3CommitStore) Get(ctx context.Context, uri string) (CommitRecord, error) {
-	key, err := s.commitKey(uri)
+	key, err := s.commitKey(uri, true)
 	if err != nil {
 		return CommitRecord{}, err
 	}
@@ -250,13 +253,14 @@ func (s *S3CommitStore) Get(ctx context.Context, uri string) (CommitRecord, erro
 	return rec, nil
 }
 
-func (s *S3CommitStore) commitKey(raw string) (string, error) {
+// commitKey resolves a commit uri to its key, as commitPath does.
+func (s *S3CommitStore) commitKey(raw string, read bool) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "s3" || u.Host != s.bucket || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("artifacts: s3 commit uri %q: %w", raw, ErrInvalidURI)
 	}
 	key := strings.TrimPrefix(u.Path, "/")
-	if (key != CommitProbeKey && !strings.HasPrefix(key, CommitPrefix+"/")) || !strings.HasSuffix(key, "/"+CommitObjectName) {
+	if !commitKeyShape(key, read) || !strings.HasSuffix(key, "/"+CommitObjectName) {
 		return "", fmt.Errorf("artifacts: s3 commit uri %q is not a commit or probe key: %w", raw, ErrInvalidURI)
 	}
 	return key, nil

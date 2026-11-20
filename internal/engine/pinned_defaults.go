@@ -267,3 +267,11 @@ var DefaultInterruptionBudgets = InterruptionBudgets{
 	// held to the Orker's defaults by TestDefaultInterruptionBudgets_FaultFloorIsTheStoreCordonsDetection.
 	NeverStartedFaultFloorMillis: 45000,
 }
+
+// DefaultArtifactClaims is how a tree passes artifacts: each attempt of a
+// claim of the passed objects may take a minute, five attempts are made
+// before the start it guards fails CHILD_INPUT_UNAVAILABLE, and each binding
+// reserves 1 KiB of the plan for the reference it passes. A run pins it in
+// its plan (RunPlan.ArtifactClaims), so a release that changes it moves only
+// new runs.
+var DefaultArtifactClaims = ArtifactClaimPolicy{TimeoutSeconds: 60, MaxAttempts: 5, ReserveBytesPerBind: 1024}

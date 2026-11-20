@@ -450,8 +450,11 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 	children := map[string]*composeNode{}
 	for _, node := range nodes {
 		children[node.TaskID] = node
+	}
+	for _, node := range nodes {
 		i := taskIndex[node.TaskID]
 		rule32 = append(rule32, childInputIssues(i, wf.GetTasks()[i], node)...)
+		rule32 = append(rule32, childArtifactIssues(i, wf.GetTasks()[i], node, children)...)
 	}
 	refs, err := dsl.OutputReferences(wf)
 	if err == nil {
@@ -463,6 +466,12 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 			outputs := node.Orkflow.GetOutputs()
 			label := dsl.ComposedLabel(node.Ref)
 			reading := fmt.Sprintf(".tasks.%s.output.%s", ref.TaskID, ref.Key)
+			if _, isArtifact := node.Orkflow.GetOutputArtifacts()[ref.Key]; isArtifact {
+				rule32 = append(rule32, composeIssue(ref.Field, fmt.Sprintf(
+					"%s: %s returns %q as an artifact, not a value; read it as {{ artifact \"%s/%s\" }}",
+					reading, label, ref.Key, ref.TaskID, ref.Key), errorSeverity))
+				continue
+			}
 			if len(outputs) == 0 {
 				rule32 = append(rule32, composeIssue(ref.Field, fmt.Sprintf(
 					"%s: %s declares no outputs, so task %q has no values to read", reading, label, ref.TaskID), errorSeverity))
@@ -510,8 +519,9 @@ func childInputIssues(taskIndex int, t *orkstackv1.Task, node *composeNode) []*o
 	for _, name := range names {
 		// dsl.ReadInput is the one reading of "required": required: true and
 		// no default — the reading the interface comparison applies too.
-		if !dsl.ReadInput(declared[name]).Required {
-			continue
+		decl := dsl.ReadInput(declared[name])
+		if !decl.Required || decl.Type == dsl.InputTypeArtifact {
+			continue // an artifact input is bound under artifacts: (childArtifactIssues)
 		}
 		if value, ok := with[name]; !ok || value == nil {
 			issues = append(issues, composeIssue(field(name), fmt.Sprintf(
@@ -529,6 +539,12 @@ func childInputIssues(taskIndex int, t *orkstackv1.Task, node *composeNode) []*o
 		inputs = strings.Join(names, ", ")
 	}
 	for _, k := range keys {
+		if decl, ok := declared[k]; ok && dsl.ReadInput(decl).Type == dsl.InputTypeArtifact {
+			issues = append(issues, composeIssue(field(k), fmt.Sprintf(
+				"with.%s is an artifact input of %s; bind it under artifacts:, never with:", k, label),
+				orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR))
+			continue
+		}
 		if _, ok := declared[k]; !ok {
 			issues = append(issues, composeIssue(field(k), fmt.Sprintf(
 				"with.%s is not an input of %s (inputs: %s); the child run will carry it, and no "+
@@ -543,7 +559,7 @@ func childInputIssues(taskIndex int, t *orkstackv1.Task, node *composeNode) []*o
 		}
 		want := decl.GetStructValue().GetFields()["type"].GetStringValue()
 		value := with[k]
-		if want == "" || value == nil {
+		if want == "" || want == dsl.InputTypeArtifact || value == nil {
 			continue
 		}
 		if s, isString := value.(string); isString && strings.Contains(s, "{{") {
@@ -553,6 +569,75 @@ func childInputIssues(taskIndex int, t *orkstackv1.Task, node *composeNode) []*o
 			issues = append(issues, composeIssue(field(k), fmt.Sprintf(
 				"with.%s is %s, but %s declares input %s as %s", k, withArticleOf(got), label, k, want),
 				orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING))
+		}
+	}
+	return issues
+}
+
+// childArtifactIssues is rule 32's artifacts: half for one composed task:
+// every artifact input of the child is bound, every binding names one, and a
+// binding to a composed task of this document names an artifact its child
+// returns (all ERRORs: an unbound or wrong binding fails the child's start).
+func childArtifactIssues(taskIndex int, t *orkstackv1.Task, node *composeNode,
+	children map[string]*composeNode) []*orkstackv1.ValidationIssue {
+	label := dsl.ComposedLabel(node.Ref)
+	declared := node.Orkflow.GetInputs().GetFields()
+	field := func(k string) string { return fmt.Sprintf("tasks[%d].artifacts.%s", taskIndex, k) }
+	issue := func(k, msg string) *orkstackv1.ValidationIssue {
+		return composeIssue(field(k), msg, orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR)
+	}
+	bound := map[string]*orkstackv1.ChildArtifact{}
+	for _, b := range t.GetChildArtifacts() {
+		bound[b.GetInput()] = b
+	}
+	artifactInputs := dsl.ArtifactInputs(node.Orkflow)
+	var issues []*orkstackv1.ValidationIssue
+	for _, name := range artifactInputs {
+		if _, ok := bound[name]; !ok {
+			issues = append(issues, issue(name, fmt.Sprintf(
+				"artifacts.%s is required by %s and is not bound; bind it to an artifact: %s: <task>/<name>",
+				name, label, name)))
+		}
+	}
+	inputs := "none"
+	if len(artifactInputs) > 0 {
+		inputs = strings.Join(artifactInputs, ", ")
+	}
+	for _, b := range t.GetChildArtifacts() {
+		name := b.GetInput()
+		decl, ok := declared[name]
+		if !ok {
+			issues = append(issues, issue(name, fmt.Sprintf(
+				"artifacts.%s is not an input of %s (artifact inputs: %s)", name, label, inputs)))
+			continue
+		}
+		if typ := dsl.ReadInput(decl).Type; typ != dsl.InputTypeArtifact {
+			if typ == "" {
+				typ = "untyped"
+			}
+			issues = append(issues, issue(name, fmt.Sprintf(
+				"artifacts.%s binds an artifact, but %s declares input %s as %s; pass it in with:",
+				name, label, name, typ)))
+			continue
+		}
+		producer, ok := children[b.GetTaskId()]
+		if !ok {
+			continue
+		}
+		returned := producer.Orkflow.GetOutputArtifacts()
+		if _, ok := returned[b.GetName()]; !ok {
+			names := make([]string, 0, len(returned))
+			for k := range returned {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			list := "none"
+			if len(names) > 0 {
+				list = strings.Join(names, ", ")
+			}
+			issues = append(issues, issue(name, fmt.Sprintf(
+				"artifacts.%s: %s returns no artifact %q (artifact outputs: %s)",
+				name, dsl.ComposedLabel(producer.Ref), b.GetName(), list)))
 		}
 	}
 	return issues
@@ -599,6 +684,9 @@ type composeRequest struct {
 	originIndexed    bool
 	// noCache is SubmitRunRequest.no_cache: one for the whole tree.
 	noCache bool
+	// holdsIdentity is a run whose tree holds an identity: every child's
+	// pools are asked whether they serve task identity.
+	holdsIdentity bool
 }
 
 // rootIndexAnswer is the boot answer a plan pins for its child starts (false
@@ -687,12 +775,20 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		if err := foreignSecretsRefusal(r.ns, owner, child); err != nil {
 			return childRefusal(err, ref, t.GetId())
 		}
+		if err := s.checkIdentityAtSubmit(ctx, r.ns, child, owner); err != nil {
+			return childRefusal(err, ref, t.GetId())
+		}
 		// 3. The ordinary pool plan over the child: secret policy, the
 		// allow-list, the liveness probe, pin hosts, fan-out support and the
 		// child's own telemetry selection.
 		childPlanned, childPlan, err := r.resolver.Plan(ctx, r.ns, child, r.allowEmpty)
 		if err != nil {
 			return childRefusal(poolPlanError(err), ref, t.GetId())
+		}
+		if r.holdsIdentity {
+			if err := r.resolver.CheckIdentitySupport(ctx, r.ns, childPlanned); err != nil {
+				return childRefusal(poolPlanError(err), ref, t.GetId())
+			}
 		}
 		if owner != composer {
 			childPlan.Shared = &decision
@@ -716,6 +812,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 				fmt.Errorf("child orkflow %s@%s (task %q): resolve durable activity configuration: %w",
 					name, version, t.GetId(), err))
 		}
+		s.pinCommitWait(&childPlan, r.holdsIdentity)
 		// 6b. The child's caching plan, under the parent's no_cache.
 		childPlan.Cache = s.cachePlanFor(childPlanned, r.noCache)
 		childPlan.RunTimeout = s.runTimeoutPlanFor(childPlanned)
@@ -752,7 +849,13 @@ func (s *Service) mintChildren(planned *orkstackv1.Orkflow, plan *engine.RunPlan
 	}
 	placeholder := strings.Repeat("0", engine.MaxRunIDLength)
 	var all []*engine.ChildRunPlan
+	// Every artifacts: binding of the tree reserves room for the reference a
+	// composed task adds to its child's start (ArtifactClaimPolicy).
+	bindings := countChildArtifacts(planned)
+	returns := false
 	err := engine.ForEachChild(planned, plan, func(_ string, child *engine.ChildRunPlan, def *orkstackv1.Orkflow) error {
+		bindings += countChildArtifacts(def)
+		returns = returns || len(def.GetOutputArtifacts()) > 0
 		// A child's callback tokens: the digests ride its plan, the
 		// plaintexts are discarded here — disclosed to no one.
 		if _, err := mintAwaitCallbacks(def, &child.Plan); err != nil {
@@ -765,15 +868,31 @@ func (s *Service) mintChildren(planned *orkstackv1.Orkflow, plan *engine.RunPlan
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("prepare the child runs: %w", err))
 	}
+	// A tree that passes or returns artifacts pins how its claims are tried,
+	// once, on the top-level plan; every child's start copies it
+	// (childStartPlan).
+	if bindings > 0 || returns {
+		claims := engine.DefaultArtifactClaims
+		plan.ArtifactClaims = &claims
+	}
 	encoded, err := stablejson.Marshal(plan)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run's plan: %w", err))
 	}
-	if len(encoded) > engine.MaxPlanBytes {
+	reserved := 0
+	if plan.ArtifactClaims != nil {
+		reserved = bindings * int(plan.ArtifactClaims.ReserveBytesPerBind)
+	}
+	if len(encoded)+reserved > engine.MaxPlanBytes {
+		what := ","
+		if reserved > 0 {
+			what = fmt.Sprintf(", and its %d artifact bindings reserve %d KiB for the references they pass,",
+				bindings, kib(reserved))
+		}
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"the run's plan — this definition and the %d child runs it composes — encodes to %d KiB, "+
+			"the run's plan — this definition and the %d child runs it composes — encodes to %d KiB%s "+
 				"over the %d KiB a run may carry; compose fewer or smaller Orkflows",
-			len(all), kib(len(encoded)), engine.MaxPlanBytes/1024))
+			len(all), kib(len(encoded)), what, engine.MaxPlanBytes/1024))
 	}
 	for _, child := range all {
 		child.RunID = s.newRunID()
@@ -798,4 +917,14 @@ func composedTaskLogRefusal(runID string, taskRun *orkstackv1.TaskRun) error {
 	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 		"task %q of run %q runs orkflow %s as child run %s and writes no logs of its own; read the child's: orkctl run logs %s",
 		taskRun.GetTaskId(), runID, label, child.GetRunId(), child.GetRunId()))
+}
+
+// countChildArtifacts is the number of artifacts: bindings of wf's composed
+// tasks.
+func countChildArtifacts(wf *orkstackv1.Orkflow) int {
+	n := 0
+	for _, t := range wf.GetTasks() {
+		n += len(t.GetChildArtifacts())
+	}
+	return n
 }

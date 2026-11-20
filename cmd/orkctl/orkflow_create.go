@@ -239,9 +239,13 @@ func renderComposeTables(out io.Writer, wf *orkstackv1.Orkflow) error {
 			return fmt.Errorf("write output: %w", err)
 		}
 	}
-	if outputs := wf.GetOutputs(); len(outputs) > 0 {
-		keys := make([]string, 0, len(outputs))
+	if dsl.OutputsDeclared(wf) {
+		outputs, returned := wf.GetOutputs(), wf.GetOutputArtifacts()
+		keys := make([]string, 0, len(outputs)+len(returned))
 		for k := range outputs {
+			keys = append(keys, k)
+		}
+		for k := range returned {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
@@ -249,6 +253,10 @@ func renderComposeTables(out io.Writer, wf *orkstackv1.Orkflow) error {
 		table := newTable(out)
 		fmt.Fprintln(table, "OUTPUT\tTEMPLATE")
 		for _, k := range keys {
+			if a, ok := returned[k]; ok {
+				fmt.Fprintf(table, "%s\tartifact %s/%s\n", k, a.GetTaskId(), a.GetName())
+				continue
+			}
 			fmt.Fprintf(table, "%s\t%s\n", k, outputs[k])
 		}
 		if err := table.Flush(); err != nil {

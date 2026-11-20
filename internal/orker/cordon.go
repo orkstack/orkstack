@@ -489,13 +489,18 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		// running_tasks falls, so a stop that sees this Orker idle already
 		// sees the result the SDK has yet to send (owed_reports.go). It runs
 		// for a refused admission and a panic too, which the SDK reports.
-		defer func() { i.a.oweReport(ctx, info, err) }()
+		// succeeded is set only by a return without error: a panic unwinds
+		// with err still nil, and is a failure.
+		succeeded := false
+		defer func() { i.a.oweReport(ctx, info, err, succeeded) }()
 		admission, err := i.a.admit(info.TaskQueue, executeTaskRequest(i.a.dispatcher.Policy, in))
 		if err != nil {
 			return nil, err
 		}
 		defer admission.Done()
-		return i.Next.ExecuteActivity(withStage(withAdmission(ctx, admission), stage), in)
+		result, err = i.Next.ExecuteActivity(withStage(withAdmission(ctx, admission), stage), in)
+		succeeded = err == nil
+		return result, err
 	case task.ActivityIndexEachLines:
 		// The line indexer of a fan-out over an artifact's lines runs no
 		// container but holds an activity slot like a task (AGENTS.md §5):
@@ -527,8 +532,9 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 
 	// A pin's creation activity returns when its pin closes, and the SDK then
 	// reports it like any attempt's result: owed until the cluster answers,
-	// so a pin host that stops idle does not exit with it unsent.
-	defer func() { i.a.oweReport(ctx, info, err) }()
+	// so a pin host that stops idle does not exit with it unsent. It writes
+	// no commit, so it is never remembered as a success (owed_reports.go).
+	defer func() { i.a.oweReport(ctx, info, err, false) }()
 	if stopping, ok := i.a.cordon.Stopping(); ok {
 		return nil, i.a.refuseStoppingPinCreation(stopping, info)
 	}

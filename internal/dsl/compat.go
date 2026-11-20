@@ -186,6 +186,14 @@ func CompareInterfaces(from, to *orkstackv1.Orkflow) ([]*orkstackv1.InterfaceFin
 				fromText, toText, fmt.Sprintf(
 					"input %s is now typed %s (it was untyped): a value of any other type no "+
 						"longer matches the declaration", q, T.Type))
+		case F.Type == InputTypeArtifact && T.Type == "": // I6a
+			// Untyped reads as a value, so an artifact input becoming untyped
+			// is a retype: a composing task's artifacts: binding of it is
+			// refused.
+			add(field, orkstackv1.InterfaceChange_INTERFACE_CHANGE_RETYPED, breakingVerdict(),
+				fromText, toText, fmt.Sprintf(
+					"input %s is no longer an artifact (it is untyped, so a value): a composing task's "+
+						"artifacts: binding of it no longer matches the declaration", q))
 		case F.Type != "" && T.Type == "": // I6
 			add(field, orkstackv1.InterfaceChange_INTERFACE_CHANGE_UNTYPED, compatVerdict(),
 				fromText, toText, fmt.Sprintf("input %s is no longer typed (it was %s)", q, F.Type))
@@ -223,8 +231,8 @@ func CompareInterfaces(from, to *orkstackv1.Orkflow) ([]*orkstackv1.InterfaceFin
 		}
 	}
 
-	fromOutputs := from.GetOutputs()
-	toOutputs := to.GetOutputs()
+	fromOutputs := outputKinds(from)
+	toOutputs := outputKinds(to)
 	fromDeclares, toDeclares := len(fromOutputs) > 0, len(toOutputs) > 0
 	switch {
 	case !fromDeclares && !toDeclares: // O1
@@ -260,6 +268,12 @@ func CompareInterfaces(from, to *orkstackv1.Orkflow) ([]*orkstackv1.InterfaceFin
 			case !inFrom && inTo: // O4
 				add(field, orkstackv1.InterfaceChange_INTERFACE_CHANGE_ADDED, compatVerdict(),
 					"", "declared", fmt.Sprintf("output %s is added", q))
+			case fromOutputs[name] != toOutputs[name]: // O6
+				add(field, orkstackv1.InterfaceChange_INTERFACE_CHANGE_RETYPED, breakingVerdict(),
+					fromOutputs[name], toOutputs[name], fmt.Sprintf(
+						"output %s changes from %s to %s: an Orkflow composing this one that reads it as "+
+							"the other kind is refused at its next apply against this version",
+						q, outputKindPhrase(fromOutputs[name]), outputKindPhrase(toOutputs[name])))
 			default: // O5
 				add(field, orkstackv1.InterfaceChange_INTERFACE_CHANGE_UNCHANGED, compatVerdict(),
 					"declared", "declared", fmt.Sprintf("output %s is unchanged", q))
@@ -314,4 +328,24 @@ func unionKeys[V any](a, b map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// outputKinds names each declared output of wf by kind: "value" for a
+// template output, "artifact" for an artifact output.
+func outputKinds(wf *orkstackv1.Orkflow) map[string]string {
+	out := make(map[string]string, len(wf.GetOutputs())+len(wf.GetOutputArtifacts()))
+	for name := range wf.GetOutputs() {
+		out[name] = "value"
+	}
+	for name := range wf.GetOutputArtifacts() {
+		out[name] = InputTypeArtifact
+	}
+	return out
+}
+
+func outputKindPhrase(kind string) string {
+	if kind == InputTypeArtifact {
+		return "an artifact"
+	}
+	return "a value"
 }

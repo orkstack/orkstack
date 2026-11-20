@@ -218,9 +218,15 @@ func (s *runState) chargeFanOutExpand() {
 	}
 }
 
-// valuesBound is the plan's values bound, at most the §2.2 payload maximum:
-// the byte charge of one task's scheduled input.
+// valuesBound is the byte charge of one task's scheduled input: the plan's
+// values bound, at most the §2.2 payload maximum, and the run context's.
 func (s *runState) valuesBound() int64 {
+	return s.planInputLimit() + s.runContextBound()
+}
+
+// planInputLimit is the plan's values bound, at most the §2.2 payload
+// maximum: the bytes of a task's input its definition and run control.
+func (s *runState) planInputLimit() int64 {
 	bound := s.plan.Limits.Proto().GetValuesMaxBytes()
 	if bound <= 0 || bound > task.MaxActivityInputBytes {
 		bound = task.MaxActivityInputBytes
@@ -231,7 +237,7 @@ func (s *runState) valuesBound() int64 {
 // handlerStartBytesOf is what starting the failure handler t can put into
 // history: its activity input (the §2.2 bound), a child start, or an await's
 // handler start.
-func handlerStartBytesOf(t *orkstackv1.Task, r HistoryReserve) int64 {
+func (s *runState) handlerStartBytesOf(t *orkstackv1.Task, r HistoryReserve) int64 {
 	switch {
 	// A sleeping handler's start is an await's: one timer and one event.
 	case t.GetAwait() != nil, t.GetSleep() != nil:
@@ -239,7 +245,7 @@ func handlerStartBytesOf(t *orkstackv1.Task, r HistoryReserve) int64 {
 	case t.GetOrkflow() != nil:
 		return r.ChildStartBytes
 	default:
-		return task.MaxActivityInputBytes
+		return task.MaxActivityInputBytes + s.runContextBound()
 	}
 }
 
@@ -256,7 +262,7 @@ func (s *runState) countHandlers() {
 			continue
 		}
 		s.handlerCount++
-		s.handlerStartBytes += handlerStartBytesOf(t, limit.Reserve)
+		s.handlerStartBytes += s.handlerStartBytesOf(t, limit.Reserve)
 	}
 }
 
@@ -294,7 +300,7 @@ func (s *runState) failReserve(inFlight map[string]workflow.Future, r HistoryRes
 		if t := s.tasks[id]; isFailureHandler(t) && !isTerminal(status) {
 			events += r.PerHandler
 			if pending {
-				bytes += handlerStartBytesOf(t, r)
+				bytes += s.handlerStartBytesOf(t, r)
 			}
 		}
 	}
@@ -506,7 +512,7 @@ func (s *runState) handlerWouldExhaustHistory(ctx workflow.Context, inFlight map
 	events, bytes := s.historyNow(ctx)
 	reserve := s.fixedReserve(r) + r.PerInFlight*int64(len(inFlight)) + r.PerPending*s.pendingHandlers
 	reserveBytes := reserve*r.BytesPerEvent + r.PerInFlightBytes*int64(len(inFlight)) +
-		handlerStartBytesOf(s.tasks[id], r)
+		s.handlerStartBytesOf(s.tasks[id], r)
 	if events+reserve < limit.MaxEvents && bytes+reserveBytes < limit.MaxBytes {
 		return false
 	}

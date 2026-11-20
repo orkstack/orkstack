@@ -70,9 +70,26 @@ type owedReports struct {
 	lapsed []string
 	// lapsedTotal counts every entry that lapsed unanswered.
 	lapsedTotal int
+	// succeeded is each attempt that returned success, by token, kept for
+	// successMemory: the SDK turns a send of its result that the worker's Stop
+	// cut short into a failure report, which the interceptor must recognise
+	// even after the entry lapsed.
+	succeeded map[string]succeededAttempt
 	// now is the clock; nil is time.Now.
 	now func() time.Time
 }
+
+// succeededAttempt is one attempt that returned success.
+type succeededAttempt struct {
+	label string
+	at    time.Time
+}
+
+// successMemory is how long a succeeded attempt's token is remembered: past
+// ReportDrainBound the SDK no longer sends its result, and a stop that waited
+// the bound out stops its worker at once, so a failure report made of it comes
+// within twice the bound; twice that again is the margin.
+const successMemory = 4 * ReportDrainBound
 
 // maxLapsedLabels bounds owedReports.lapsed.
 const maxLapsedLabels = 32
@@ -84,8 +101,9 @@ func (r *owedReports) clock() time.Time {
 	return time.Now()
 }
 
-// owe marks one attempt's result owed.
-func (r *owedReports) owe(token []byte, label string) {
+// owe marks one attempt's result owed; succeeded says the attempt returned
+// success.
+func (r *owedReports) owe(token []byte, label string, succeeded bool) {
 	if len(token) == 0 {
 		return
 	}
@@ -100,6 +118,22 @@ func (r *owedReports) owe(token []byte, label string) {
 		r.zero = make(chan struct{})
 	}
 	r.owed[string(token)] = owedReport{label: label, lapses: now.Add(ReportDrainBound)}
+	if succeeded {
+		if r.succeeded == nil {
+			r.succeeded = map[string]succeededAttempt{}
+		}
+		r.succeeded[string(token)] = succeededAttempt{label: label, at: now}
+	}
+}
+
+// wasSuccess reports whether the attempt of token returned success, as far as
+// successMemory remembers, and names it.
+func (r *owedReports) wasSuccess(token []byte) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pruneLocked(r.clock())
+	attempt, ok := r.succeeded[string(token)]
+	return attempt.label, ok
 }
 
 // settle marks one attempt's result as answered by the cluster.
@@ -109,6 +143,7 @@ func (r *owedReports) settle(token []byte) {
 	if _, ok := r.owed[string(token)]; ok {
 		r.removeLocked(string(token))
 	}
+	delete(r.succeeded, string(token))
 }
 
 func (r *owedReports) removeLocked(token string) {
@@ -119,8 +154,14 @@ func (r *owedReports) removeLocked(token string) {
 	}
 }
 
-// pruneLocked drops every entry that has lapsed by now.
+// pruneLocked drops every entry that has lapsed by now, and every success
+// past successMemory.
 func (r *owedReports) pruneLocked(now time.Time) {
+	for token, attempt := range r.succeeded {
+		if !now.Before(attempt.at.Add(successMemory)) {
+			delete(r.succeeded, token)
+		}
+	}
 	for token, entry := range r.owed {
 		if !now.Before(entry.lapses) {
 			r.removeLocked(token)
@@ -176,11 +217,16 @@ func (r *owedReports) await(ctx context.Context) error {
 // returns err, unless the SDK sends no report for it: an attempt that
 // reported itself (ErrResultPending, a hand-back's CompleteActivity), and one
 // whose deadline passed, which the cluster has already timed out.
-func (a *Activities) oweReport(ctx context.Context, info activity.Info, err error) {
+//
+// succeeded is true only for an ExecuteTask attempt that returned without
+// error, which has written its commit.json (AGENTS.md §4.1): a panic, a pin
+// creation and every failure pass false.
+func (a *Activities) oweReport(ctx context.Context, info activity.Info, err error, succeeded bool) {
 	if errors.Is(err, activity.ErrResultPending) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return
 	}
-	a.reports.owe(info.TaskToken, fmt.Sprintf("%s/%s#%d", info.WorkflowExecution.ID, info.ActivityID, info.Attempt))
+	a.reports.owe(info.TaskToken, fmt.Sprintf("%s/%s#%d", info.WorkflowExecution.ID, info.ActivityID, info.Attempt),
+		succeeded && err == nil)
 }
 
 // AwaitReports returns once the cluster has answered, or the SDK has stopped
@@ -211,16 +257,48 @@ func (a *Activities) LapsedReports() (int, []string) {
 // cluster. It settles an owed result when the cluster answers its report:
 // taken, or refused because it has nothing to take or the request is wrong.
 // Any other refusal settles nothing, since the SDK may send it again; the
-// entry then lapses. Every call passes through unchanged.
+// entry then lapses.
+//
+// One call is not passed on: the failure "context canceled" for an
+// ExecuteTask attempt that returned success. The SDK sends a result on a
+// context its worker's Stop cancels, and turns a send cut short into that
+// failure (its "Activity task postprocess error"); the stop waits
+// ReportDrainBound for results owed before it stops the worker, but a result
+// still unsent then meets exactly that. Sent, it would fail a task that
+// succeeded. Kept back, the cluster times the attempt out: for an unpinned
+// task within its run's loss budget that is a loss the run re-dispatches
+// (AGENTS.md §4), and the re-dispatch adopts the commit.json the attempt wrote
+// before it returned (§4.1). A pinned member still fails PIN_HOST_LOST, and a
+// task past its loss budget or with retry.max_interruptions: 0 spends its own
+// attempts, as for any lost Orker; neither is reported failed for a result it
+// had. Every other call passes through unchanged.
 func (a *Activities) ReportInterceptor() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn,
 		invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		failed, ok := req.(*workflowservice.RespondActivityTaskFailedRequest)
+		if ok && method == workflowservice.WorkflowService_RespondActivityTaskFailed_FullMethodName && cutShort(failed) {
+			if label, ok := a.reports.wasSuccess(failed.GetTaskToken()); ok {
+				a.dispatcher.logger().Warn("not reporting a succeeded attempt as failed: the worker stopped while its result "+
+					"was being sent; the cluster times the attempt out, and an unpinned task with interruption budget "+
+					"left runs again and adopts the attempt's commit",
+					"attempt", label, "sdk_failure", failed.GetFailure().GetMessage())
+				return status.Error(codes.Canceled, "orker: a succeeded attempt is never reported failed")
+			}
+		}
 		err := invoker(ctx, method, req, reply, cc, opts...)
 		if token, ok := reportToken(method, req); ok && answered(err) {
 			a.reports.settle(token)
 		}
 		return err
 	}
+}
+
+// cutShort reports whether a failure report is the SDK's conversion of a
+// result send its worker's Stop cancelled: the failure "context canceled".
+// Any other failure the SDK makes of a success (a result over the payload
+// limit, one it cannot encode) is sent as ever, with its own reason.
+func cutShort(req *workflowservice.RespondActivityTaskFailedRequest) bool {
+	return req.GetFailure().GetMessage() == context.Canceled.Error()
 }
 
 // reportToken is the task token of an activity result's report, and whether

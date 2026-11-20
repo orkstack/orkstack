@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/dockerport"
 )
 
 // The files of the repository this package reads.
@@ -120,8 +122,10 @@ type Options struct {
 	// absent, kept when present, so a browser or orkctl that trusts the CA
 	// keeps trusting it.
 	Dir string
-	// Addr is the loopback address it is published on; a port of 0 picks a
-	// free one.
+	// Addr is the loopback address it is published on. A port of 0 picks a
+	// free one, and another when Docker refuses it because another process
+	// took it first (dockerport.RunPinned): Dex names its own address in its
+	// issuer, so the port cannot be left to Docker.
 	Addr string
 	// WebRedirect is the engine's web callback, the one redirect the
 	// orkstack-web client may use.
@@ -129,6 +133,11 @@ type Options struct {
 	// ConfigFile is the Dex configuration to serve, a path; empty is
 	// deploy/dex/config.yaml under Root.
 	ConfigFile string
+	// Config, when set, writes the configuration to serve for the issuer
+	// this start uses and returns its path, in place of ConfigFile: for a
+	// configuration that names its own issuer. It runs once for each port
+	// tried.
+	Config func(issuer string) (string, error)
 	// SecretEnv is the variable the configuration's web client reads its
 	// secret from (Dex's secretEnv); empty is DefaultSecretEnv.
 	SecretEnv string
@@ -195,8 +204,7 @@ func Start(ctx context.Context, o Options) (*Dex, error) {
 	if o.SecretEnv == "" {
 		o.SecretEnv = DefaultSecretEnv
 	}
-	addr, err := freeAddr(o.Addr)
-	if err != nil {
+	if err := loopback(o.Addr); err != nil {
 		return nil, err
 	}
 	tlsDir := filepath.Join(o.Dir, "tls")
@@ -209,15 +217,34 @@ func Start(ctx context.Context, o Options) (*Dex, error) {
 	if err != nil {
 		return nil, err
 	}
-	issuer := "https://" + addr + "/dex"
-	args := RunArgs(image, o, addr, issuer, tlsDir, o.ConfigFile)
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	// The secret goes to Dex through docker's environment, never its argv.
-	cmd.Env = append(os.Environ(), o.SecretEnv+"="+secret)
-	out, err := cmd.CombinedOutput()
+	run := func(addr string) ([]byte, error) {
+		issuer := "https://" + addr + "/dex"
+		config := o.ConfigFile
+		if o.Config != nil {
+			path, err := o.Config(issuer)
+			if err != nil {
+				return nil, fmt.Errorf("dextest: write the configuration for %s: %w", issuer, err)
+			}
+			if config, err = filepath.Abs(path); err != nil {
+				return nil, fmt.Errorf("dextest: %w", err)
+			}
+		}
+		cmd := exec.CommandContext(ctx, "docker", RunArgs(image, o, addr, issuer, tlsDir, config)...)
+		// The secret goes to Dex through docker's environment, never its argv.
+		cmd.Env = append(os.Environ(), o.SecretEnv+"="+secret)
+		return cmd.CombinedOutput()
+	}
+	addr := o.Addr
+	var out []byte
+	if _, port, _ := net.SplitHostPort(o.Addr); port == "0" {
+		addr, out, err = dockerport.RunPinned(ctx, 5, run)
+	} else {
+		out, err = run(addr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("dextest: docker run %s: %v: %s", image, err, strings.TrimSpace(string(out)))
 	}
+	issuer := "https://" + addr + "/dex"
 	d := &Dex{ID: strings.TrimSpace(string(out)), Issuer: issuer, CAFile: caFile, WebSecret: secret, SecretFile: secretFile}
 	if err := d.wait(ctx); err != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -331,25 +358,17 @@ func running(ctx context.Context, id string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
-// freeAddr is addr, or addr's host at a free port when its port is 0. The
-// host must be a loopback IP: Dex is published on loopback only.
-func freeAddr(addr string) (string, error) {
-	host, port, err := net.SplitHostPort(addr)
+// loopback refuses an address whose host is not a loopback IP: Dex is
+// published on loopback only.
+func loopback(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return "", fmt.Errorf("dextest: address %q: %w", addr, err)
+		return fmt.Errorf("dextest: address %q: %w", addr, err)
 	}
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return "", fmt.Errorf("dextest: address %q is not a loopback IP", addr)
+		return fmt.Errorf("dextest: address %q is not a loopback IP", addr)
 	}
-	if port != "0" {
-		return addr, nil
-	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
-	if err != nil {
-		return "", fmt.Errorf("dextest: pick a port: %w", err)
-	}
-	defer ln.Close()
-	return ln.Addr().String(), nil
+	return nil
 }
 
 // EnsureTLS makes, under dir, a CA (ca.pem) and a server certificate it

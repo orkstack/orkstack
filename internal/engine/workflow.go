@@ -17,6 +17,8 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -182,6 +184,33 @@ func RunWorkflow(
 	plan RunPlan,
 	carry *orkstackv1.RunContinuation,
 ) (*orkstackv1.Run, error) {
+	// The central release (E88 §5.2.5): once the run's body has returned,
+	// a run that asked a gate releases at it on a context its own cancel
+	// does not reach — on every exit but a continue-as-new, which carries
+	// the slot. A panic never returns, and an evicted workflow is unwound
+	// without returning either, so neither ever issues a release from a
+	// coroutine that is going away: such a run keeps its slot, and its
+	// gate's check pass frees it.
+	var conc *concRunState
+	run, err := runWorkflow(ctx, runID, wf, input, plan, carry, &conc)
+	if conc != nil && !workflow.IsContinueAsNewError(err) {
+		releaseSlots(ctx, conc)
+	}
+	return run, err
+}
+
+// runWorkflow is RunWorkflow's body. It hands the run's concurrency state
+// out through conc as soon as it exists, so the release covers every exit
+// after it.
+func runWorkflow(
+	ctx workflow.Context,
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	plan RunPlan,
+	carry *orkstackv1.RunContinuation,
+	conc **concRunState,
+) (*orkstackv1.Run, error) {
 	if carry != nil {
 		// The run id IS the workflow id (AGENTS.md §7). A carried
 		// generation's argument is empty, so a release older than
@@ -209,6 +238,13 @@ func RunWorkflow(
 	}
 
 	state := newRunState(ctx, runID, wf, input, plan)
+	if state.conc != nil {
+		state.conc.runID = state.runID
+		// A carried generation's gates, before anything can end it: a
+		// restore that fails still releases what its predecessor held.
+		state.conc.seedAttempted(carry.GetConcurrency())
+		*conc = state.conc
+	}
 	// The arguments as passed, handed on unchanged at a switch: for a
 	// definition passed by reference, the stub.
 	state.wfArg, state.inputArg = started, input
@@ -251,10 +287,23 @@ func RunWorkflow(
 			return state.fail(ctx, cancelRun, inFlight, "", runLevelError(RunDefinitionUnsupportedCode,
 				"this run's definition declares a run timeout its plan does not carry; submit it again"))
 		}
+		// A run-level concurrency limit: the run asks for its slot, and
+		// waits in line for it, before it starts (E88 §5.2.1).
+		if state.conc != nil {
+			if err := state.acquireRunSlot(ctx); err != nil {
+				return state.failInLine(ctx, cancelRun, inFlight, err)
+			}
+		}
 		state.start(ctx)
 		if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, "",
 			orkstackv1.Status_STATUS_RUNNING, "run started"); err != nil {
 			return nil, err
+		}
+		// A child that received artifacts claims them for itself before its
+		// first dispatch (composed_artifacts.go); a claim that cannot be
+		// written ends the run before any task starts.
+		if err := state.claimReceived(ctx); err != nil {
+			return state.fail(ctx, cancelRun, inFlight, "", err)
 		}
 	} else {
 		// A carried generation rebuilds the run's state from the saved
@@ -330,6 +379,25 @@ func RunWorkflow(
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			} else if due {
 				return state.fail(ctx, cancelRun, inFlight, "", state.pauseExpiredCause(ctx, inFlight))
+			}
+			// A paused run's run-level slot (concurrency_pause.go), after its
+			// pause's expiry: a pause that reaches its wait for the slot again
+			// leaves the line; a quiet paused run gives the slot back; an
+			// unpaused one that gave it back asks for it again.
+			if state.paused() && state.concWaiting() {
+				if err := state.abandonRequeue(ctx); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, "", err)
+				}
+			}
+			if state.concGivesBack(inFlight) {
+				if err := state.giveBackRunSlot(ctx); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, "", err)
+				}
+			}
+			if state.concReacquires() {
+				if err := state.reacquireRunSlot(ctx); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, "", err)
+				}
 			}
 		}
 		// A run with a timeout applies the resolutions queued when the pass
@@ -491,7 +559,9 @@ func RunWorkflow(
 		// wait for its readiness rather than conclude there is nothing left.
 		// With no budget and no hold every new branch below is skipped, and
 		// this is the loop's original idle check.
-		if len(inFlight) == 0 && state.openingPins() == 0 {
+		// A run waiting for its slot again holds every dispatch: it waits in
+		// the selector for the wait's grant, deadline or re-assert.
+		if len(inFlight) == 0 && state.openingPins() == 0 && !state.concWaiting() {
 			if (state.quiescing || state.heldFanOuts) && ctx.Err() != nil {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
@@ -602,12 +672,13 @@ func RunWorkflow(
 		// property of this code and not of iteration order. A resolution
 		// recorded in the same workflow task as a deadline is taken first.
 		var resolution *orkstackv1.AwaitSignal
-		resolved := false
+		var resolutionRaw converter.RawValue
+		resolved, received := false, false
 		expired := ""
 		if state.resolutions != nil {
 			selector.AddReceive(state.resolutions, func(c workflow.ReceiveChannel, _ bool) {
-				c.Receive(ctx, &resolution)
-				resolved = true
+				c.Receive(ctx, &resolutionRaw)
+				received = true
 			})
 			for _, id := range state.order {
 				if a := state.awaits[id]; a != nil && a.open {
@@ -657,6 +728,13 @@ func RunWorkflow(
 				selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
 			}
 		}
+		// A run waiting for its slot again: its grant, deadline and
+		// re-assert, after the pause's cases.
+		concWoke := concWaitNone
+		state.addConcWaitCases(ctx, selector, &concWoke)
+		if state.concWaiting() {
+			selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+		}
 		// The run timeout's timer, last of all, while not yet ready: it only
 		// wakes a blocked run, and the next pass's ending check decides.
 		timerReady := false
@@ -683,6 +761,14 @@ func RunWorkflow(
 		if selectedClosed {
 			continue // a pin closed: the switch may now be possible
 		}
+		if received {
+			// Opened here, out of the selector's callback: one that does not
+			// read is an event of the run, and no awaited task changes.
+			resolution, resolved = state.openResolution(ctx, resolutionRaw)
+			if !resolved {
+				continue
+			}
+		}
 		if resolved {
 			if err := state.resolve(ctx, resolution); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, resolution.GetTaskId(), err)
@@ -703,10 +789,16 @@ func RunWorkflow(
 			continue
 		}
 		if pauseWoke {
-			if ctx.Err() != nil && state.paused() {
+			if ctx.Err() != nil && (state.paused() || state.concWaiting()) {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
 			continue // the pass top applies the request or takes the expiry
+		}
+		if concWoke != concWaitNone {
+			if err := state.takeConcWait(ctx, concWoke); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, "", err)
+			}
+			continue
 		}
 		if waitOver != nil {
 			if err := state.interruptionWaitOver(ctx, runCtx, waitOver, inFlight); err != nil {
@@ -765,6 +857,10 @@ type runState struct {
 	// from results because a condition needs a map and an upstream ref needs
 	// a reference, and conflating them is how bytes end up on the wire.
 	outputs map[string]map[string]any
+	// outputArtifacts are the artifacts the run returns (outputs: entries
+	// {artifact: <task>/<name>}), resolved once when it succeeds; nil before
+	// and for an Orkflow that returns none.
+	outputArtifacts []*orkstackv1.NamedArtifact
 	// pinMemberClosures is the one retained needs-closure memo: an opened
 	// pin's unfinished members' closures (pinMemberClosure), reused by
 	// pinClosureAllows' per-pass set and closureHasReadyWork until the pin
@@ -789,6 +885,10 @@ type runState struct {
 	// with no await — such a run creates no channel and registers none.
 	awaits      map[string]*awaitState
 	resolutions workflow.ReceiveChannel
+	// scope is the run's payload key: Unsealed() for a run that is not
+	// sealed (payload-encryption.md §4.1). Every value of the run that is
+	// sealed is sealed under it; every resolution is opened with it.
+	scope *payloadcrypt.Scope
 
 	// sleeps is one entry per sleeping task, keyed by task id, built once in
 	// newRunState; iteration is over order, never the map. Nil for a run with
@@ -941,6 +1041,14 @@ type runState struct {
 	// definition declares no `timeout:`.
 	runTimeout *runTimeout
 
+	// conc is the run's concurrency state (concurrency_run.go); nil when its
+	// plan declares no run-level limit.
+	conc *concRunState
+	// slotStop is why a failing run's failure handlers do not run: the
+	// concurrency slot it gave back while paused was not regained
+	// (failingRegain). "" otherwise.
+	slotStop string
+
 	// The pause (pause.go): pauses is the request channel, nil for a run
 	// whose plan lacks Pause; pause and pausedByParent are the two causes;
 	// lastPause how the last own pause ended; lastCascadeSeq the last
@@ -1081,6 +1189,7 @@ func newRunState(
 	// reproduces it exactly. StartedAt stays unset until the run actually
 	// starts, one event later.
 	state.createdAt = timestamppb.New(workflow.GetInfo(ctx).WorkflowStartTime)
+	state.scope = runScope(ctx)
 	if len(state.awaits) > 0 {
 		state.resolutions = workflow.GetSignalChannel(ctx, ResolveAwaitSignal)
 	}
@@ -1121,6 +1230,10 @@ func buildRunState(
 	}
 	state.declaredRows = DeclaredRows(wf)
 	state.runTimeout = newRunTimeout(wf, plan)
+	state.conc = newConcRunState(plan.Concurrency)
+	if state.conc != nil {
+		state.conc.pausable = plan.Pause != nil
+	}
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
 		state.tasks[t.GetId()] = t
@@ -2035,10 +2148,21 @@ func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 		// DIRECT dependent: its items are files nothing else may read (rule
 		// 24), and the Orker stages each from its own commit.
 		if e := s.eaches[need]; e != nil {
-			if s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED && s.directlyNeeds(id, need) {
+			switch {
+			case !s.directlyNeeds(id, need):
+			case s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED:
 				refs = append(refs, &orkstackv1.UpstreamRef{
 					TaskId: need,
-					Each:   &orkstackv1.EachUpstream{Count: e.count, CommitRoot: s.plan.CommitRoot},
+					Each: &orkstackv1.EachUpstream{Count: e.count, CommitRoot: s.plan.CommitRoot,
+						Epochs: itemEpochRuns(s.taskRuns[need].GetItems())},
+				})
+			case isFailureHandler(s.tasks[id]) && dsl.EachContinues(e.spec) && e.expanded &&
+				s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_FAILED:
+				// A failure handler of a continue fan-out stages the items
+				// that succeeded; failed names those with no commit.
+				refs = append(refs, &orkstackv1.UpstreamRef{
+					TaskId: need,
+					Each:   &orkstackv1.EachUpstream{Count: e.count, CommitRoot: s.plan.CommitRoot, Failed: s.itemsNotSucceeded(need)},
 				})
 			}
 			continue
@@ -2062,6 +2186,11 @@ func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 			Values:    result.GetValuesRef(),
 			Artifacts: result.GetArtifacts(),
 		})
+	}
+	// The artifacts this run received, only those the task names: the
+	// reserved upstream _inputs, artifacts only, staged like any producer's.
+	if ref := inputsUpstream(s.tasks[id], s.plan.InputArtifacts); ref != nil {
+		refs = append(refs, ref)
 	}
 	return refs
 }
@@ -2194,7 +2323,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		return nil, err
 	}
 
-	activityCtx := s.taskActivityContext(activityBase, t, queue, taskRun, id)
+	activityCtx := s.taskActivityContext(activityBase, t, queue, taskRun, id, artifacts.Item{})
 
 	if !detached {
 		input, inputErr = s.taskDispatch(t, id, pool, pinContext)
@@ -2242,7 +2371,14 @@ func (s *runState) taskDispatch(t *orkstackv1.Task, id, pool string, pinContext 
 	if limit <= 0 || limit > task.MaxActivityInputBytes {
 		limit = task.MaxActivityInputBytes
 	}
-	if err := task.CheckSize(id, size, limit); err != nil {
+	// The bound holds every byte the task's definition and run control; the
+	// run context alone may take the input past it, by at most its own
+	// pinned bound (AGENTS.md §2.2).
+	userSize, err := s.userInputSize(input, size, limit)
+	if err != nil {
+		return dispatchInput{}, err
+	}
+	if err := task.CheckSize(id, userSize, limit); err != nil {
 		return dispatchInput{}, temporal.NewNonRetryableApplicationError(err.Error(), task.CategoryContractViolation, err)
 	}
 	return dispatchInput{payload: payload, size: size}, nil
@@ -2254,7 +2390,7 @@ func (s *runState) taskDispatch(t *orkstackv1.Task, id, pool string, pinContext 
 func (s *runState) taskDispatchInput(
 	t *orkstackv1.Task, id, pool string, pinContext *orkstackv1.PinContext,
 ) (*orkstackv1.ExecuteTaskInput, error) {
-	commitURI, err := s.commitURIFor(id)
+	commitURI, key, err := s.commitFor(t, -1, s.taskRuns[id].GetResultEpoch())
 	if err != nil {
 		return nil, err
 	}
@@ -2262,13 +2398,16 @@ func (s *runState) taskDispatchInput(
 	if input.Devices, err = s.deviceRefs(pool, t); err != nil {
 		return nil, err
 	}
-	input.IdempotencyKey = task.IdempotencyKeyFor(s.wf.GetNamespace(), s.runID, id)
+	input.IdempotencyKey = key
 	input.CommitUri = commitURI
 	// A failure handler is told how its needs ended. Set before the size
 	// check, so the bounded errors count toward the wire bound; unset for
 	// every other task, whose payload stays byte-identical.
 	if isFailureHandler(t) {
 		input.Join = joinContextFor(t, func(need string) *orkstackv1.TaskRun { return s.taskRuns[need] })
+	}
+	if input.RunContext, err = s.runContextFor(t, s.taskRuns[id]); err != nil {
+		return nil, err
 	}
 	return input, nil
 }
@@ -2277,7 +2416,7 @@ func (s *runState) taskDispatchInput(
 // with — every item of a fan-out uses its node's, so an item has the task's own
 // timeout, grace, heartbeat and retry budget.
 func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstackv1.Task, queue string,
-	row *orkstackv1.TaskRun, key string) workflow.Context {
+	row *orkstackv1.TaskRun, key string, item artifacts.Item) workflow.Context {
 	// The three timeouts must not be confused, and this is where the
 	// confusion would happen (§6.3):
 	//
@@ -2308,7 +2447,12 @@ func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstac
 		// swaps it for the session's own at ExecuteActivity, so setting it
 		// here is harmless and ignored — and it stays because the pool is what
 		// the author wrote and what every client is told (§6.3).
-		TaskQueue:           queue,
+		TaskQueue: queue,
+		// A run that is admitted names each attempt of a task by the task,
+		// and of an item by the item: the mint finds the attempt it is asked
+		// for under that id in the cluster's describe. Every other run's
+		// activities keep the ids the SDK gives them.
+		ActivityID:          s.attemptActivityID(t.GetId(), item),
 		StartToCloseTimeout: startToClose,
 		// Temporal delivers cancellation to an activity ONLY through a
 		// heartbeat response, so an Orker that never heartbeats can never be
@@ -2368,6 +2512,9 @@ func (s *runState) executeTaskInput(
 
 		RunInput: s.input,
 		Upstream: s.upstreamFor(id),
+		// The lines its fan-outs read, which its Orker indexes as it commits
+		// them; nil for a task no fan-out reads the lines of.
+		IndexLines: s.lineIndexRequests(id),
 
 		RunAsOrkerUser: t.GetRunAsOrkerUser(),
 
@@ -2394,6 +2541,29 @@ func (s *runState) executeTaskInput(
 		// — every item of a cached fan-out included — so every other task's
 		// payload is byte-identical to what it was before this field existed.
 		Cache: s.cacheContextFor(t),
+
+		// Set ONLY for a task that declares identities or credentials, of a
+		// run its plan admitted: what its attempt needs to ask for its tokens.
+		Identity: s.identityContextFor(t),
+	}
+}
+
+// identityContextFor is t's IdentityContext, or nil for a task that holds no
+// identity or a run with no admission. Everything in it comes from the plan
+// the submitting engine pinned and from the definition, copied verbatim, so
+// an Orker that hashes its input computes the digest the admission recorded.
+// The scopes are 0: this release resumes no run under a new scope.
+func (s *runState) identityContextFor(t *orkstackv1.Task) *orkstackv1.IdentityContext {
+	id := s.plan.Identity
+	if id == nil || (len(t.GetIdentities()) == 0 && len(t.GetCredentials()) == 0) {
+		return nil
+	}
+	return &orkstackv1.IdentityContext{
+		Issuer:          id.Issuer,
+		Identities:      t.GetIdentities(),
+		Credentials:     t.GetCredentials(),
+		AdmissionSha256: id.AdmissionSHA256,
+		DigestVersion:   id.SpecVersion,
 	}
 }
 
@@ -2442,27 +2612,39 @@ func cachedSuffix(c *orkstackv1.CacheResult) string {
 	return fmt.Sprintf(" (cached from run %s)", source.GetRunId())
 }
 
-// commitURIFor composes one activity's commit URI.
+// commitFor composes one activity's commit URI and idempotency key: the
+// task's own when item is negative, else that item's, under the resume scope
+// its row carries (result_epoch, 0 before any resume).
 //
-// It is plan.CommitRoot + "/" + artifacts.CommitKey(...), which is a pure
-// function of workflow arguments and replays identically. artifacts.CommitKey
-// is the single shared renderer — the Orker MUST use the value it was sent
-// rather than re-deriving one, so there is exactly one convention with exactly
-// one owner (§5.2).
+// The URI is plan.CommitRoot + "/" + the key ExpectedCommitIdentity renders,
+// a pure function of workflow arguments that replays identically. It is the
+// single convention: the Orker MUST use the value it was sent rather than
+// re-deriving one (§5.2), and a resume's read-back and preflight take the
+// same identity.
 //
 // An empty CommitRoot yields an empty URI rather than an error: a plan built
-// before the commit protocol existed, or by a test harness, still runs, and
-// the Orker simply has no commit to check or write.
-func (s *runState) commitURIFor(taskID string) (string, error) {
+// by a test harness still runs, and the Orker simply has no commit to check
+// or write.
+func (s *runState) commitFor(t *orkstackv1.Task, item int32, scope int64) (string, string, error) {
+	if scope < 0 || scope > maxResumeScope {
+		// A scope is a recorded sequence; one outside its range is a corrupt
+		// row, and dispatching it under another key would adopt or overwrite
+		// a result that is not its own.
+		return "", "", temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("task %q: result scope %d is not a sequence", t.GetId(), scope), "INVALID_COMMIT_KEY", nil)
+	}
 	if s.plan.CommitRoot == "" {
-		return "", nil
+		if item < 0 {
+			return "", task.ScopedIdempotencyKeyFor(s.wf.GetNamespace(), s.runID, t.GetId(), uint64(scope)), nil
+		}
+		return "", task.ScopedItemIdempotencyKeyFor(s.wf.GetNamespace(), s.runID, t.GetId(), item, uint64(scope)), nil
 	}
-	key, err := artifacts.CommitKey(s.wf.GetNamespace(), s.runID, taskID)
+	id, err := ExpectedCommitIdentity(s.wf, s.runID, t, item, uint64(scope))
 	if err != nil {
-		return "", temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("task %q: compose the commit uri: %v", taskID, err), "INVALID_COMMIT_KEY", err)
+		return "", "", temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("task %q: compose the commit uri: %v", t.GetId(), err), "INVALID_COMMIT_KEY", err)
 	}
-	return strings.TrimSuffix(s.plan.CommitRoot, "/") + "/" + key, nil
+	return strings.TrimSuffix(s.plan.CommitRoot, "/") + "/" + id.Key, id.IdempotencyKey, nil
 }
 
 // collect awaits one task future and records its outcome.
@@ -2477,7 +2659,11 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 	if s.isIndexing(id) {
 		s.eaches[id].indexing = false
 		_ = future.Get(ctx, nil) // the run is ending; what the index answered decides nothing
-		if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_RUNNING {
+		// A node the run's end already recorded keeps its reason. One left
+		// RUNNING, or marked CANCELED with no reason — the run's cancel can
+		// land before the node's own "indexing" event is written — is
+		// recorded here, so it never ends without one.
+		if node := s.taskRuns[id]; node.GetStatus() != orkstackv1.Status_STATUS_RUNNING && node.GetError() != nil {
 			return nil
 		}
 		return s.cancelExpansion(ctx, id, "the run ended while the fan-out's lines were being indexed")
@@ -2488,7 +2674,7 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 	taskRun := s.taskRuns[id]
 
 	result := &orkstackv1.ExecuteTaskResult{}
-	if err := future.Get(ctx, result); err != nil {
+	if err := s.openFailure(future.Get(ctx, result)); err != nil {
 		// An interruption its execution listed runs the task again, or —
 		// its budgets spent — fails it below with its account added.
 		account := ""
@@ -2915,6 +3101,15 @@ func (s *runState) fail(
 	// run's handler loop would, but a canceled, timed-out or handler-less one
 	// has none.
 	s.dropDeferredPause(ctx, "the run is ending")
+	// A run that gave its slot back while paused, or waits for it again,
+	// holds none: a failure handler would run outside the limit, so it
+	// starts none, as a run that ends in line does (failInLine).
+	// A run waiting for its slot again leaves the line: its failure
+	// handlers, if any, ask for it again in the failing phase (join.go,
+	// failingRegain).
+	if s.concSlotGivenBack() {
+		s.leaveRequeue(ctx)
+	}
 	// The history guard's failure belongs to the run, never to the task or
 	// fan-out where it tripped: every caller reaches here with the id it was
 	// working on.
@@ -2924,7 +3119,7 @@ func (s *runState) fail(
 	// An operator's cancel comes first in the ending order: a run-level
 	// timeout that meets a canceled run ends it canceled, with the cancel's
 	// own text rather than a timeout's.
-	if ctx.Err() != nil && runTimeoutCauseCode(cause) != "" {
+	if ctx.Err() != nil && (runTimeoutCauseCode(cause) != "" || concCauseCode(cause) != "") {
 		cause = temporal.NewCanceledError()
 	}
 	// A definition with a failure handler takes its own failure path
@@ -2963,6 +3158,17 @@ func (s *runState) fail(
 			taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING && !waitingToRunAgain(taskRun) {
 			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 		}
+	} else if concCauseCode(cause) == RunSupersededCode {
+		// A newer run replaced this one on its key (design §6.1): it ends
+		// CANCELED under its own code, never under RUN_CANCELED, and its
+		// execution closes canceled so a list read from the cluster agrees;
+		// the close's details carry the code, for a reader of the close
+		// alone and for a parent (supersededClose, categoryOf). Raised
+		// only with a plan that carries a limit. Nothing below reads cause
+		// for its kind again.
+		eventType = orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED
+		s.status = orkstackv1.Status_STATUS_CANCELED
+		cause = temporal.NewCanceledError(RunSupersededCode, s.runError.GetMessage())
 	}
 
 	// Gated because it changes the COMMAND stream: a run that is genuinely
@@ -3022,12 +3228,29 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 	if runTimeoutCauseCode(cause) != "" {
 		return s.runTimeoutFailure(cause)
 	}
+	if concCauseCode(cause) != "" {
+		return concFailure(cause)
+	}
 	failure := &orkstackv1.Error{
 		Code:    "RUN_FAILED",
 		Message: cause.Error(),
 	}
 	if taskID != "" {
 		failure.Details = fmt.Sprintf("task %q", taskID)
+	}
+	// A child whose received artifacts could not be claimed ends before its
+	// first task, with that reason.
+	if taskID == "" {
+		switch node := categoryOf(cause); node.appType() {
+		case ChildInputUnavailableCode:
+			failure.Code = ChildInputUnavailableCode
+			failure.Message = node.appMessage()
+			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+		case ChildInputArtifactMissingCode, InvalidCompositionCode:
+			failure.Code = node.appType()
+			failure.Message = node.appMessage()
+			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
+		}
 	}
 	// A fan-out's own failure carries the node's sentence as the
 	// ApplicationError's message, whichever way the array was counted or the
@@ -3070,12 +3293,24 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// whose outputs cannot be produced FAILS (docs/DSL.md "Composition").
 	// An Orkflow with no `outputs:` takes the path it always took.
 	var output *orkstackv1.Payload
-	if len(s.wf.GetOutputs()) > 0 {
-		rendered, failure := s.renderOutputs(ctx)
+	if outputsDeclared(s.wf) {
+		returned, failure := s.resolveOutputArtifacts()
 		if failure != nil {
 			return s.failOutputs(ctx, failure)
 		}
-		output = rendered
+		empty, err := payloadOf(map[string]any{})
+		if err != nil {
+			return nil, err
+		}
+		output = empty
+		if len(s.wf.GetOutputs()) > 0 {
+			rendered, failure := s.renderOutputs(ctx)
+			if failure != nil {
+				return s.failOutputs(ctx, failure)
+			}
+			output = rendered
+		}
+		s.outputArtifacts = returned
 	} else {
 		aggregated := map[string]any{}
 		for _, id := range s.order {
@@ -3143,6 +3378,12 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		Origin: s.plan.Origin.Proto(),
 		// The run's own time limit; nil when its definition declares none.
 		Timeout: s.runTimeoutProto(),
+		// What a child received from the task that composed it; nil for
+		// every other run (the plan is replay-pinned).
+		InputArtifacts: namedArtifactsProto(s.plan.InputArtifacts),
+		// What the run returns, once it succeeded.
+		OutputArtifacts: s.outputArtifacts,
+		RunContext:      s.runContextState(),
 		// The pause: present only while the run is live (pause.go).
 		Pausable:       s.pauses != nil,
 		Pause:          s.livePauseProto(),
@@ -3150,6 +3391,7 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		PausedByParent: s.liveInheritedPauseProto(),
 		PauseWarnings:  s.pauseWarningsProto(),
 		DispatchHold:   s.dispatchHoldProto(),
+		Queued:         s.concQueuedProto(),
 	}
 	for _, id := range s.order {
 		row := s.taskRuns[id]

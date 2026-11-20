@@ -100,6 +100,8 @@ export const EVENT_TYPE_LABEL: Record<EventType, string> = {
 	[EventType.TASK_RESOLVED]: 'TASK_RESOLVED',
 	[EventType.STREAM_GAP]: 'STREAM_GAP',
 	[EventType.TASK_SLEEPING]: 'TASK_SLEEPING',
+	[EventType.RUN_QUEUED]: 'RUN_QUEUED',
+	[EventType.TASK_QUEUED]: 'TASK_QUEUED',
 	[EventType.RUN_PAUSED]: 'RUN_PAUSED',
 	[EventType.RUN_UNPAUSED]: 'RUN_UNPAUSED'
 };

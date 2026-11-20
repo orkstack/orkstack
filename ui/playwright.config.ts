@@ -72,8 +72,12 @@ const isolatedBrowser = browserWS
  */
 export const NETWORK_CHANGE_RETRY_CEILING = 0;
 
-/** The spec files that assert a render budget and therefore run alone (see `projects`). */
-export const SOLO_SPECS = [/each-fan-out-ceiling\.spec\.ts$/, /run-page(-reduced)?-ceiling\.spec\.ts$/];
+/**
+ * The spec files that run alone (see `projects`): the two that assert a
+ * render budget, and network-change.spec.ts, whose host-namespace control
+ * must see no host network change but its own.
+ */
+export const SOLO_SPECS = [/each-fan-out-ceiling\.spec\.ts$/, /run-page(-reduced)?-ceiling\.spec\.ts$/, /network-change\.spec\.ts$/];
 
 export default defineConfig({
 	testDir: './e2e',
@@ -122,6 +126,14 @@ export default defineConfig({
 	// spec runs alone, after every other file, and its tasks are
 	// `network: none`, so no interface of its own changes under it; a repeat
 	// the guard makes there still counts against the ceiling, as it should.
+	//
+	// network-change.spec.ts runs alone too, for the same reason in another
+	// form: its positive control is a Chromium in the HOST's network namespace,
+	// and the count it asserts holds only while no other host network change
+	// reaches it. A spec beside it that starts or stops an activity container
+	// adds or removes a veth on the host, which that control sees and re-loads
+	// for (proof 44677556224: N4 counted 3 documents, not 2, beside
+	// run-continuation.spec.ts). Alone, on one worker, nothing else runs.
 	projects: [
 		{
 			name: 'chromium',
@@ -143,6 +155,12 @@ export default defineConfig({
 			// The reduced ceiling in the merge gate, and the 4,000-task default
 			// where the nightly tier and the pre-release gate run it.
 			testMatch: /run-page(-reduced)?-ceiling\.spec\.ts$/
+		},
+		{
+			name: 'chromium-solo-network-change',
+			outputDir: soloOutputDir,
+			use: { browserName: 'chromium', ...isolatedBrowser },
+			testMatch: /network-change\.spec\.ts$/
 		}
 	]
 });

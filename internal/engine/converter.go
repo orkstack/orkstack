@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 )
 
 // orkerAnswers are the messages an Orker returns to the engine: an attempt's
@@ -85,7 +86,17 @@ func zeroName(m proto.Message) (name protoreflect.FullName, ok bool) {
 // the worker and workflow code, since go.temporal.io/sdk v1.51.0, which made
 // that wrapper internal); the engine decodes no transfer-typed value of its
 // own.
-var dataConverter = converter.NewCompositeDataConverter(
+var dataConverter = NewDataConverter(nil)
+
+// NewDataConverter is the engine's converter over keys, the process's
+// engines' payload keys (nil where payload encryption is off).
+func NewDataConverter(keys *payloadcrypt.EngineKeys) *payloadcrypt.Converter {
+	return payloadcrypt.NewConverter(engineComposite, keys)
+}
+
+// engineComposite is the SDK default's converters in the SDK's own order,
+// with its ProtoJSON converter replaced by answerProtoJSON.
+var engineComposite = converter.NewCompositeDataConverter(
 	converter.NewNilPayloadConverter(),
 	converter.NewByteSlicePayloadConverter(),
 	answerProtoJSON{
@@ -97,6 +108,10 @@ var dataConverter = converter.NewCompositeDataConverter(
 	converter.NewProtoPayloadConverter(),
 	converter.NewJSONPayloadConverter(),
 )
+
+// failureConverter writes a failure's details with dataConverter. With no
+// payload key configured it writes every failure as the SDK default does.
+var failureConverter = payloadcrypt.NewFailureConverter(dataConverter, false)
 
 // DataConverter is the converter cmd/ork dials with, and the run reader and
 // the scheduler decode with. An Orker that leads its engines in a rollout
@@ -115,4 +130,16 @@ var dataConverter = converter.NewCompositeDataConverter(
 // field of ExecuteTaskInput it cannot read may be a security setting
 // (devices, identity, an unmasked secret), and submit's capability
 // checks keep such a field away from an Orker that predates it.
+//
+// It is payload encryption's converter (payloadcrypt.Converter) around that
+// composite, holding no key: it passes every payload that is not sealed
+// through untouched, and is the guard of payload-encryption.md §4.1 rule 3 —
+// workflow code of a run whose memo carries a payload key panics, failing
+// the workflow task, rather than deciding anything from it
+// (TestDataConverter_IsByteIdenticalWithEncryptionOff).
 func DataConverter() converter.DataConverter { return dataConverter }
+
+// FailureConverter is the failure converter cmd/ork dials with: payload
+// encryption's (payloadcrypt.FailureConverter) over DataConverter, sealing
+// nothing while no key is configured.
+func FailureConverter() converter.FailureConverter { return failureConverter }

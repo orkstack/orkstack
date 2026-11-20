@@ -40,6 +40,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunPauseCommand(g),
 		newRunUnpauseCommand(g),
 		newRunResolveCommand(g),
+		newRunTokensCommand(g),
 	)
 	return cmd
 }
@@ -453,6 +454,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	fmt.Fprintf(header, "Finished:\t%s\n", formatTime(run.GetFinishedAt()))
 	if line := runTimeoutLine(run, nowFunc()); line != "" {
 		fmt.Fprintf(header, "Timeout:\t%s\n", line)
+	}
+	if q := run.GetQueued(); q != nil {
+		fmt.Fprintf(header, "Queued:\t%s\n", queuedLine(q))
 	}
 	writeOriginLines(header, run.GetOrigin())
 	fmt.Fprintf(header, "Input:\t%s\n", payloadSummary(run.GetInput(), run.GetId(), run.GetNamespace()))

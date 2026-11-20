@@ -63,6 +63,10 @@ type SnapshotActivities struct {
 	// wires one (WithBaseCache), a private one until then.
 	bases *SnapshotBaseCache
 
+	// chains completes a root's chain record at a switch
+	// (WithChainCompleter); nil completes none.
+	chains ChainCompleter
+
 	beforeContinuationWrite func(ctx context.Context, kind string) error
 	beforeContinuationRead  func(ctx context.Context, offset int64) error
 }
@@ -107,4 +111,15 @@ func (a *SnapshotActivities) WriteSnapshot(
 		return "", fmt.Errorf("engine: persist snapshot for run %s: %w", runID, err)
 	}
 	return uri, nil
+}
+
+// ChainCompleter writes a root run's chain record where it is absent
+// (identity.CompleteRootChain): an error says why it was not written.
+type ChainCompleter func(ctx context.Context, namespace, runID, admissionSHA256 string) error
+
+// WithChainCompleter has a switch's checkpoint write complete the run's
+// chain record too, for a root run that is admitted.
+func (a *SnapshotActivities) WithChainCompleter(c ChainCompleter) *SnapshotActivities {
+	a.chains = c
+	return a
 }

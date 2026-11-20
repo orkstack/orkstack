@@ -23,6 +23,120 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// EachItemFailure is a fan-out's on_item_failure.
+type EachItemFailure int32
+
+const (
+	EachItemFailure_EACH_ITEM_FAILURE_UNSPECIFIED EachItemFailure = 0
+	EachItemFailure_EACH_ITEM_FAILURE_FAIL_FAST   EachItemFailure = 1
+	EachItemFailure_EACH_ITEM_FAILURE_CONTINUE    EachItemFailure = 2
+)
+
+// Enum value maps for EachItemFailure.
+var (
+	EachItemFailure_name = map[int32]string{
+		0: "EACH_ITEM_FAILURE_UNSPECIFIED",
+		1: "EACH_ITEM_FAILURE_FAIL_FAST",
+		2: "EACH_ITEM_FAILURE_CONTINUE",
+	}
+	EachItemFailure_value = map[string]int32{
+		"EACH_ITEM_FAILURE_UNSPECIFIED": 0,
+		"EACH_ITEM_FAILURE_FAIL_FAST":   1,
+		"EACH_ITEM_FAILURE_CONTINUE":    2,
+	}
+)
+
+func (x EachItemFailure) Enum() *EachItemFailure {
+	p := new(EachItemFailure)
+	*p = x
+	return p
+}
+
+func (x EachItemFailure) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (EachItemFailure) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_orkflow_proto_enumTypes[0].Descriptor()
+}
+
+func (EachItemFailure) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_orkflow_proto_enumTypes[0]
+}
+
+func (x EachItemFailure) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use EachItemFailure.Descriptor instead.
+func (EachItemFailure) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{0}
+}
+
+// ConcurrencyStrategy is what a run does when every slot of its key is held.
+type ConcurrencyStrategy int32
+
+const (
+	ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED ConcurrencyStrategy = 0
+	// QUEUE: wait in line, in order of arrival. The default.
+	ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE ConcurrencyStrategy = 1
+	// REFUSE: the run fails at once.
+	ConcurrencyStrategy_CONCURRENCY_STRATEGY_REFUSE ConcurrencyStrategy = 2
+	// SKIP: the run is not started.
+	ConcurrencyStrategy_CONCURRENCY_STRATEGY_SKIP ConcurrencyStrategy = 3
+	// CANCEL_OLDEST: the oldest holder is canceled to make room.
+	ConcurrencyStrategy_CONCURRENCY_STRATEGY_CANCEL_OLDEST ConcurrencyStrategy = 4
+	// REPLACE: the runs waiting in line are replaced by this one.
+	ConcurrencyStrategy_CONCURRENCY_STRATEGY_REPLACE ConcurrencyStrategy = 5
+)
+
+// Enum value maps for ConcurrencyStrategy.
+var (
+	ConcurrencyStrategy_name = map[int32]string{
+		0: "CONCURRENCY_STRATEGY_UNSPECIFIED",
+		1: "CONCURRENCY_STRATEGY_QUEUE",
+		2: "CONCURRENCY_STRATEGY_REFUSE",
+		3: "CONCURRENCY_STRATEGY_SKIP",
+		4: "CONCURRENCY_STRATEGY_CANCEL_OLDEST",
+		5: "CONCURRENCY_STRATEGY_REPLACE",
+	}
+	ConcurrencyStrategy_value = map[string]int32{
+		"CONCURRENCY_STRATEGY_UNSPECIFIED":   0,
+		"CONCURRENCY_STRATEGY_QUEUE":         1,
+		"CONCURRENCY_STRATEGY_REFUSE":        2,
+		"CONCURRENCY_STRATEGY_SKIP":          3,
+		"CONCURRENCY_STRATEGY_CANCEL_OLDEST": 4,
+		"CONCURRENCY_STRATEGY_REPLACE":       5,
+	}
+)
+
+func (x ConcurrencyStrategy) Enum() *ConcurrencyStrategy {
+	p := new(ConcurrencyStrategy)
+	*p = x
+	return p
+}
+
+func (x ConcurrencyStrategy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ConcurrencyStrategy) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_orkflow_proto_enumTypes[1].Descriptor()
+}
+
+func (ConcurrencyStrategy) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_orkflow_proto_enumTypes[1]
+}
+
+func (x ConcurrencyStrategy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ConcurrencyStrategy.Descriptor instead.
+func (ConcurrencyStrategy) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{1}
+}
+
 // RetryPolicy mirrors Temporal retry semantics for a task.
 type RetryPolicy struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
@@ -382,15 +496,23 @@ type Task struct {
 	// devices names the operator-defined profiles the task's container gets
 	// (devices:), never a device path.
 	Devices []string `protobuf:"bytes,26,rep,name=devices,proto3" json:"devices,omitempty"`
-	// child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+	// child_artifacts are a composed task's artifacts: bindings, one per
+	// artifact input of the child Orkflow, sorted by input. The engine resolves
+	// each from a recorded result at child start and hands the child a
+	// reference, never the bytes. Part of canonicalOrkflow(Task) ONLY when set.
 	ChildArtifacts []*ChildArtifact `protobuf:"bytes,30,rep,name=child_artifacts,json=childArtifacts,proto3" json:"child_artifacts,omitempty"`
-	// input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+	// input_artifacts names, sorted, the artifact inputs of this task's Orkflow
+	// that its fields name literally ({{ artifact "_inputs/<name>" }}); only
+	// those are staged for it, under the reserved producer _inputs. Part of
+	// canonicalOrkflow(Task) ONLY when set.
 	InputArtifacts []string `protobuf:"bytes,31,rep,name=input_artifacts,json=inputArtifacts,proto3" json:"input_artifacts,omitempty"`
 	// identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
 	Identities []*IdentityRef `protobuf:"bytes,28,rep,name=identities,proto3" json:"identities,omitempty"`
-	// credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+	// credentials are the credentials the task holds, issued for each attempt
+	// by the namespace's grants (docs/PROVIDERS.md). In the canonical
+	// definition only when set.
 	Credentials []*CredentialRef `protobuf:"bytes,29,rep,name=credentials,proto3" json:"credentials,omitempty"`
-	// concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+	// concurrency is set from E88's task-level limits; unset until they land.
 	Concurrency *ConcurrencySpec `protobuf:"bytes,32,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
 	// device_contracts maps a profile the task names in devices to the
 	// contract label the task needs of it: the image's declaration, or the
@@ -741,9 +863,18 @@ type EachSpec struct {
 	// over_artifact, 2..10000; the last item may hold fewer. Unset (or 1, which
 	// the compiler normalises to unset) is one line per item. Refused with over.
 	// max_items counts items, so the line ceiling is max_items x batch.
-	Batch         int32 `protobuf:"varint,8,opt,name=batch,proto3" json:"batch,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Batch int32 `protobuf:"varint,8,opt,name=batch,proto3" json:"batch,omitempty"`
+	// on_item_failure is what an item that fails for good does to the rest of
+	// the fan-out: FAIL_FAST (the default, which the compiler normalises to
+	// unset) stops it at the first such item; CONTINUE runs every other item,
+	// and the fan-out then fails with its lowest-index failed item's reason.
+	OnItemFailure EachItemFailure `protobuf:"varint,9,opt,name=on_item_failure,json=onItemFailure,proto3,enum=orkstack.v1.EachItemFailure" json:"on_item_failure,omitempty"`
+	// max_failed_items, with CONTINUE only, bounds how many items may fail: at
+	// the next failure past it the fan-out fails fast. 1 .. max_items-1; 0 is
+	// unbounded.
+	MaxFailedItems int32 `protobuf:"varint,10,opt,name=max_failed_items,json=maxFailedItems,proto3" json:"max_failed_items,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *EachSpec) Reset() {
@@ -828,6 +959,20 @@ func (x *EachSpec) GetFormat() EachLineFormat {
 func (x *EachSpec) GetBatch() int32 {
 	if x != nil {
 		return x.Batch
+	}
+	return 0
+}
+
+func (x *EachSpec) GetOnItemFailure() EachItemFailure {
+	if x != nil {
+		return x.OnItemFailure
+	}
+	return EachItemFailure_EACH_ITEM_FAILURE_UNSPECIFIED
+}
+
+func (x *EachSpec) GetMaxFailedItems() int32 {
+	if x != nil {
+		return x.MaxFailedItems
 	}
 	return 0
 }
@@ -1021,9 +1166,15 @@ type Orkflow struct {
 	// executes in and whose rules it follows. Never stored, never applied and
 	// not part of canonicalOrkflow: definition_digest is the owner's.
 	DefinitionNamespace string `protobuf:"bytes,14,opt,name=definition_namespace,json=definitionNamespace,proto3" json:"definition_namespace,omitempty"`
-	// output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+	// output_artifacts are the artifacts this Orkflow returns to a composing
+	// run, by output name (outputs: <name>: {artifact: <task>/<name>}). Part of
+	// canonicalOrkflow ONLY when set.
 	OutputArtifacts map[string]*OutputArtifact `protobuf:"bytes,15,rep,name=output_artifacts,json=outputArtifacts,proto3" json:"output_artifacts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+	// concurrency is the Orkflow's run-level concurrency limit (docs/DSL.md
+	// "Concurrency limits"): its runs share at most limit slots of one key,
+	// and a run past them waits in order. Unset, its runs are not limited. Part
+	// of canonicalOrkflow only when set, so an Orkflow that declares none keeps
+	// its digest.
 	Concurrency *ConcurrencySpec `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
 	// timeout_seconds is the run's own time limit from its start, from the
 	// DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of
@@ -1183,10 +1334,15 @@ func (x *Orkflow) GetTimeoutSeconds() int64 {
 	return 0
 }
 
-// ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-// batch).
+// ChildArtifact binds one artifact input of a composed task's child
+// Orkflow to an artifact of this run: the artifact name of the task task_id
+// (a producer in the composed task's needs closure), or of _inputs for an
+// artifact input of this Orkflow.
 type ChildArtifact struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Input         string                 `protobuf:"bytes,1,opt,name=input,proto3" json:"input,omitempty"`
+	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1221,10 +1377,47 @@ func (*ChildArtifact) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{10}
 }
 
-// ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
-// batch).
+func (x *ChildArtifact) GetInput() string {
+	if x != nil {
+		return x.Input
+	}
+	return ""
+}
+
+func (x *ChildArtifact) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *ChildArtifact) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// ConcurrencySpec is one declared concurrency limit (docs/DSL.md
+// "Concurrency limits"). Its identity is its namespace and its rendered key:
+// every declaration in a namespace that renders the same key shares its
+// slots and its line.
 type ConcurrencySpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// limit is how many runs may hold a slot of the key at once, from 1.
+	Limit int32 `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"`
+	// key is the template a run renders its key from, once, at submit. Empty
+	// is the Orkflow's own key, shared by every version of it in the
+	// namespace that runs it.
+	Key string `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	// on_limit is what a run does when every slot of its key is held.
+	OnLimit ConcurrencyStrategy `protobuf:"varint,3,opt,name=on_limit,json=onLimit,proto3,enum=orkstack.v1.ConcurrencyStrategy" json:"on_limit,omitempty"`
+	// queue_timeout_seconds is how long a run waits in line for a slot before
+	// it ends; 0 is the deployment's default.
+	QueueTimeoutSeconds int64 `protobuf:"varint,4,opt,name=queue_timeout_seconds,json=queueTimeoutSeconds,proto3" json:"queue_timeout_seconds,omitempty"`
+	// max_queued is how many runs may wait in line for the key, checked at
+	// submit, best-effort; 0 sets no bound of its own.
+	MaxQueued     int32 `protobuf:"varint,5,opt,name=max_queued,json=maxQueued,proto3" json:"max_queued,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1259,93 +1452,54 @@ func (*ConcurrencySpec) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{11}
 }
 
-// CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
-// batch).
-type CredentialRef struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CredentialRef) Reset() {
-	*x = CredentialRef{}
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CredentialRef) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CredentialRef) ProtoMessage() {}
-
-func (x *CredentialRef) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[12]
+func (x *ConcurrencySpec) GetLimit() int32 {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.Limit
 	}
-	return mi.MessageOf(x)
+	return 0
 }
 
-// Deprecated: Use CredentialRef.ProtoReflect.Descriptor instead.
-func (*CredentialRef) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{12}
-}
-
-// IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-type IdentityRef struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *IdentityRef) Reset() {
-	*x = IdentityRef{}
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[13]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *IdentityRef) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*IdentityRef) ProtoMessage() {}
-
-func (x *IdentityRef) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[13]
+func (x *ConcurrencySpec) GetKey() string {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.Key
 	}
-	return mi.MessageOf(x)
+	return ""
 }
 
-// Deprecated: Use IdentityRef.ProtoReflect.Descriptor instead.
-func (*IdentityRef) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{13}
+func (x *ConcurrencySpec) GetOnLimit() ConcurrencyStrategy {
+	if x != nil {
+		return x.OnLimit
+	}
+	return ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED
 }
 
-// OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-// batch).
+func (x *ConcurrencySpec) GetQueueTimeoutSeconds() int64 {
+	if x != nil {
+		return x.QueueTimeoutSeconds
+	}
+	return 0
+}
+
+func (x *ConcurrencySpec) GetMaxQueued() int32 {
+	if x != nil {
+		return x.MaxQueued
+	}
+	return 0
+}
+
+// OutputArtifact names the artifact an Orkflow returns under an output's
+// name: the artifact name of the task task_id.
 type OutputArtifact struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OutputArtifact) Reset() {
 	*x = OutputArtifact{}
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[14]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1357,7 +1511,7 @@ func (x *OutputArtifact) String() string {
 func (*OutputArtifact) ProtoMessage() {}
 
 func (x *OutputArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[14]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1370,7 +1524,21 @@ func (x *OutputArtifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutputArtifact.ProtoReflect.Descriptor instead.
 func (*OutputArtifact) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{14}
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *OutputArtifact) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *OutputArtifact) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 var File_orkstack_v1_orkflow_proto protoreflect.FileDescriptor
@@ -1440,7 +1608,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\tCacheSpec\x12\x1f\n" +
 	"\vttl_seconds\x18\x01 \x01(\x05R\n" +
 	"ttlSeconds\x12-\n" +
-	"\x05scope\x18\x02 \x01(\x0e2\x17.orkstack.v1.CacheScopeR\x05scope\"\x8f\x02\n" +
+	"\x05scope\x18\x02 \x01(\x0e2\x17.orkstack.v1.CacheScopeR\x05scope\"\xff\x02\n" +
 	"\bEachSpec\x12\x12\n" +
 	"\x04over\x18\x01 \x01(\tR\x04over\x12\x0e\n" +
 	"\x02as\x18\x02 \x01(\tR\x02as\x12\x1b\n" +
@@ -1449,7 +1617,10 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x06source\x18\x05 \x01(\v2\x17.orkstack.v1.EachSourceR\x06source\x12#\n" +
 	"\rover_artifact\x18\x06 \x01(\tR\foverArtifact\x123\n" +
 	"\x06format\x18\a \x01(\x0e2\x1b.orkstack.v1.EachLineFormatR\x06format\x12\x14\n" +
-	"\x05batch\x18\b \x01(\x05R\x05batch\"\x81\x01\n" +
+	"\x05batch\x18\b \x01(\x05R\x05batch\x12D\n" +
+	"\x0fon_item_failure\x18\t \x01(\x0e2\x1c.orkstack.v1.EachItemFailureR\ronItemFailure\x12(\n" +
+	"\x10max_failed_items\x18\n" +
+	" \x01(\x05R\x0emaxFailedItems\"\x81\x01\n" +
 	"\tAwaitSpec\x12'\n" +
 	"\x0ftimeout_seconds\x18\x01 \x01(\x05R\x0etimeoutSeconds\x12\x1a\n" +
 	"\bcallback\x18\x02 \x01(\bR\bcallback\x12/\n" +
@@ -1486,12 +1657,32 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a_\n" +
 	"\x14OutputArtifactsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
-	"\x05value\x18\x02 \x01(\v2\x1b.orkstack.v1.OutputArtifactR\x05value:\x028\x01\"\x0f\n" +
-	"\rChildArtifact\"\x11\n" +
-	"\x0fConcurrencySpec\"\x0f\n" +
-	"\rCredentialRef\"\r\n" +
-	"\vIdentityRef\"\x10\n" +
-	"\x0eOutputArtifactB\xa8\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x1b.orkstack.v1.OutputArtifactR\x05value:\x028\x01\"R\n" +
+	"\rChildArtifact\x12\x14\n" +
+	"\x05input\x18\x01 \x01(\tR\x05input\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"\xc9\x01\n" +
+	"\x0fConcurrencySpec\x12\x14\n" +
+	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12;\n" +
+	"\bon_limit\x18\x03 \x01(\x0e2 .orkstack.v1.ConcurrencyStrategyR\aonLimit\x122\n" +
+	"\x15queue_timeout_seconds\x18\x04 \x01(\x03R\x13queueTimeoutSeconds\x12\x1d\n" +
+	"\n" +
+	"max_queued\x18\x05 \x01(\x05R\tmaxQueued\"=\n" +
+	"\x0eOutputArtifact\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name*u\n" +
+	"\x0fEachItemFailure\x12!\n" +
+	"\x1dEACH_ITEM_FAILURE_UNSPECIFIED\x10\x00\x12\x1f\n" +
+	"\x1bEACH_ITEM_FAILURE_FAIL_FAST\x10\x01\x12\x1e\n" +
+	"\x1aEACH_ITEM_FAILURE_CONTINUE\x10\x02*\xe5\x01\n" +
+	"\x13ConcurrencyStrategy\x12$\n" +
+	" CONCURRENCY_STRATEGY_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aCONCURRENCY_STRATEGY_QUEUE\x10\x01\x12\x1f\n" +
+	"\x1bCONCURRENCY_STRATEGY_REFUSE\x10\x02\x12\x1d\n" +
+	"\x19CONCURRENCY_STRATEGY_SKIP\x10\x03\x12&\n" +
+	"\"CONCURRENCY_STRATEGY_CANCEL_OLDEST\x10\x04\x12 \n" +
+	"\x1cCONCURRENCY_STRATEGY_REPLACE\x10\x05B\xa8\x01\n" +
 	"\x0fcom.orkstack.v1B\fOrkflowProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -1506,22 +1697,23 @@ func file_orkstack_v1_orkflow_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_orkflow_proto_rawDescData
 }
 
-var file_orkstack_v1_orkflow_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_orkstack_v1_orkflow_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_orkstack_v1_orkflow_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_orkstack_v1_orkflow_proto_goTypes = []any{
-	(*RetryPolicy)(nil),           // 0: orkstack.v1.RetryPolicy
-	(*Pin)(nil),                   // 1: orkstack.v1.Pin
-	(*OrkflowRef)(nil),            // 2: orkstack.v1.OrkflowRef
-	(*OrkflowShare)(nil),          // 3: orkstack.v1.OrkflowShare
-	(*Task)(nil),                  // 4: orkstack.v1.Task
-	(*CacheSpec)(nil),             // 5: orkstack.v1.CacheSpec
-	(*EachSpec)(nil),              // 6: orkstack.v1.EachSpec
-	(*AwaitSpec)(nil),             // 7: orkstack.v1.AwaitSpec
-	(*SleepSpec)(nil),             // 8: orkstack.v1.SleepSpec
-	(*Orkflow)(nil),               // 9: orkstack.v1.Orkflow
-	(*ChildArtifact)(nil),         // 10: orkstack.v1.ChildArtifact
-	(*ConcurrencySpec)(nil),       // 11: orkstack.v1.ConcurrencySpec
-	(*CredentialRef)(nil),         // 12: orkstack.v1.CredentialRef
-	(*IdentityRef)(nil),           // 13: orkstack.v1.IdentityRef
+	(EachItemFailure)(0),          // 0: orkstack.v1.EachItemFailure
+	(ConcurrencyStrategy)(0),      // 1: orkstack.v1.ConcurrencyStrategy
+	(*RetryPolicy)(nil),           // 2: orkstack.v1.RetryPolicy
+	(*Pin)(nil),                   // 3: orkstack.v1.Pin
+	(*OrkflowRef)(nil),            // 4: orkstack.v1.OrkflowRef
+	(*OrkflowShare)(nil),          // 5: orkstack.v1.OrkflowShare
+	(*Task)(nil),                  // 6: orkstack.v1.Task
+	(*CacheSpec)(nil),             // 7: orkstack.v1.CacheSpec
+	(*EachSpec)(nil),              // 8: orkstack.v1.EachSpec
+	(*AwaitSpec)(nil),             // 9: orkstack.v1.AwaitSpec
+	(*SleepSpec)(nil),             // 10: orkstack.v1.SleepSpec
+	(*Orkflow)(nil),               // 11: orkstack.v1.Orkflow
+	(*ChildArtifact)(nil),         // 12: orkstack.v1.ChildArtifact
+	(*ConcurrencySpec)(nil),       // 13: orkstack.v1.ConcurrencySpec
 	(*OutputArtifact)(nil),        // 14: orkstack.v1.OutputArtifact
 	nil,                           // 15: orkstack.v1.Task.EnvEntry
 	nil,                           // 16: orkstack.v1.Task.DeviceContractsEntry
@@ -1534,49 +1726,53 @@ var file_orkstack_v1_orkflow_proto_goTypes = []any{
 	(*ResourceRequest)(nil),       // 23: orkstack.v1.ResourceRequest
 	(NetworkMode)(0),              // 24: orkstack.v1.NetworkMode
 	(JoinPolicy)(0),               // 25: orkstack.v1.JoinPolicy
-	(CacheScope)(0),               // 26: orkstack.v1.CacheScope
-	(*EachSource)(nil),            // 27: orkstack.v1.EachSource
-	(EachLineFormat)(0),           // 28: orkstack.v1.EachLineFormat
-	(*timestamppb.Timestamp)(nil), // 29: google.protobuf.Timestamp
+	(*IdentityRef)(nil),           // 26: orkstack.v1.IdentityRef
+	(*CredentialRef)(nil),         // 27: orkstack.v1.CredentialRef
+	(CacheScope)(0),               // 28: orkstack.v1.CacheScope
+	(*EachSource)(nil),            // 29: orkstack.v1.EachSource
+	(EachLineFormat)(0),           // 30: orkstack.v1.EachLineFormat
+	(*timestamppb.Timestamp)(nil), // 31: google.protobuf.Timestamp
 }
 var file_orkstack_v1_orkflow_proto_depIdxs = []int32{
 	20, // 0: orkstack.v1.Task.with:type_name -> google.protobuf.Struct
-	0,  // 1: orkstack.v1.Task.retry:type_name -> orkstack.v1.RetryPolicy
+	2,  // 1: orkstack.v1.Task.retry:type_name -> orkstack.v1.RetryPolicy
 	21, // 2: orkstack.v1.Task.image:type_name -> orkstack.v1.ImageRef
 	15, // 3: orkstack.v1.Task.env:type_name -> orkstack.v1.Task.EnvEntry
 	22, // 4: orkstack.v1.Task.secrets:type_name -> orkstack.v1.SecretRef
 	23, // 5: orkstack.v1.Task.resources:type_name -> orkstack.v1.ResourceRequest
 	24, // 6: orkstack.v1.Task.network:type_name -> orkstack.v1.NetworkMode
-	7,  // 7: orkstack.v1.Task.await:type_name -> orkstack.v1.AwaitSpec
-	6,  // 8: orkstack.v1.Task.each:type_name -> orkstack.v1.EachSpec
-	2,  // 9: orkstack.v1.Task.orkflow:type_name -> orkstack.v1.OrkflowRef
-	5,  // 10: orkstack.v1.Task.cache:type_name -> orkstack.v1.CacheSpec
+	9,  // 7: orkstack.v1.Task.await:type_name -> orkstack.v1.AwaitSpec
+	8,  // 8: orkstack.v1.Task.each:type_name -> orkstack.v1.EachSpec
+	4,  // 9: orkstack.v1.Task.orkflow:type_name -> orkstack.v1.OrkflowRef
+	7,  // 10: orkstack.v1.Task.cache:type_name -> orkstack.v1.CacheSpec
 	25, // 11: orkstack.v1.Task.join:type_name -> orkstack.v1.JoinPolicy
-	8,  // 12: orkstack.v1.Task.sleep:type_name -> orkstack.v1.SleepSpec
-	10, // 13: orkstack.v1.Task.child_artifacts:type_name -> orkstack.v1.ChildArtifact
-	13, // 14: orkstack.v1.Task.identities:type_name -> orkstack.v1.IdentityRef
-	12, // 15: orkstack.v1.Task.credentials:type_name -> orkstack.v1.CredentialRef
-	11, // 16: orkstack.v1.Task.concurrency:type_name -> orkstack.v1.ConcurrencySpec
+	10, // 12: orkstack.v1.Task.sleep:type_name -> orkstack.v1.SleepSpec
+	12, // 13: orkstack.v1.Task.child_artifacts:type_name -> orkstack.v1.ChildArtifact
+	26, // 14: orkstack.v1.Task.identities:type_name -> orkstack.v1.IdentityRef
+	27, // 15: orkstack.v1.Task.credentials:type_name -> orkstack.v1.CredentialRef
+	13, // 16: orkstack.v1.Task.concurrency:type_name -> orkstack.v1.ConcurrencySpec
 	16, // 17: orkstack.v1.Task.device_contracts:type_name -> orkstack.v1.Task.DeviceContractsEntry
-	26, // 18: orkstack.v1.CacheSpec.scope:type_name -> orkstack.v1.CacheScope
-	27, // 19: orkstack.v1.EachSpec.source:type_name -> orkstack.v1.EachSource
-	28, // 20: orkstack.v1.EachSpec.format:type_name -> orkstack.v1.EachLineFormat
-	20, // 21: orkstack.v1.AwaitSpec.schema:type_name -> google.protobuf.Struct
-	17, // 22: orkstack.v1.Orkflow.labels:type_name -> orkstack.v1.Orkflow.LabelsEntry
-	20, // 23: orkstack.v1.Orkflow.inputs:type_name -> google.protobuf.Struct
-	4,  // 24: orkstack.v1.Orkflow.tasks:type_name -> orkstack.v1.Task
-	29, // 25: orkstack.v1.Orkflow.created_at:type_name -> google.protobuf.Timestamp
-	1,  // 26: orkstack.v1.Orkflow.pins:type_name -> orkstack.v1.Pin
-	18, // 27: orkstack.v1.Orkflow.outputs:type_name -> orkstack.v1.Orkflow.OutputsEntry
-	3,  // 28: orkstack.v1.Orkflow.shared_with:type_name -> orkstack.v1.OrkflowShare
-	19, // 29: orkstack.v1.Orkflow.output_artifacts:type_name -> orkstack.v1.Orkflow.OutputArtifactsEntry
-	11, // 30: orkstack.v1.Orkflow.concurrency:type_name -> orkstack.v1.ConcurrencySpec
-	14, // 31: orkstack.v1.Orkflow.OutputArtifactsEntry.value:type_name -> orkstack.v1.OutputArtifact
-	32, // [32:32] is the sub-list for method output_type
-	32, // [32:32] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	28, // 18: orkstack.v1.CacheSpec.scope:type_name -> orkstack.v1.CacheScope
+	29, // 19: orkstack.v1.EachSpec.source:type_name -> orkstack.v1.EachSource
+	30, // 20: orkstack.v1.EachSpec.format:type_name -> orkstack.v1.EachLineFormat
+	0,  // 21: orkstack.v1.EachSpec.on_item_failure:type_name -> orkstack.v1.EachItemFailure
+	20, // 22: orkstack.v1.AwaitSpec.schema:type_name -> google.protobuf.Struct
+	17, // 23: orkstack.v1.Orkflow.labels:type_name -> orkstack.v1.Orkflow.LabelsEntry
+	20, // 24: orkstack.v1.Orkflow.inputs:type_name -> google.protobuf.Struct
+	6,  // 25: orkstack.v1.Orkflow.tasks:type_name -> orkstack.v1.Task
+	31, // 26: orkstack.v1.Orkflow.created_at:type_name -> google.protobuf.Timestamp
+	3,  // 27: orkstack.v1.Orkflow.pins:type_name -> orkstack.v1.Pin
+	18, // 28: orkstack.v1.Orkflow.outputs:type_name -> orkstack.v1.Orkflow.OutputsEntry
+	5,  // 29: orkstack.v1.Orkflow.shared_with:type_name -> orkstack.v1.OrkflowShare
+	19, // 30: orkstack.v1.Orkflow.output_artifacts:type_name -> orkstack.v1.Orkflow.OutputArtifactsEntry
+	13, // 31: orkstack.v1.Orkflow.concurrency:type_name -> orkstack.v1.ConcurrencySpec
+	1,  // 32: orkstack.v1.ConcurrencySpec.on_limit:type_name -> orkstack.v1.ConcurrencyStrategy
+	14, // 33: orkstack.v1.Orkflow.OutputArtifactsEntry.value:type_name -> orkstack.v1.OutputArtifact
+	34, // [34:34] is the sub-list for method output_type
+	34, // [34:34] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_orkflow_proto_init() }
@@ -1591,13 +1787,14 @@ func file_orkstack_v1_orkflow_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_orkflow_proto_rawDesc), len(file_orkstack_v1_orkflow_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   20,
+			NumEnums:      2,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_orkstack_v1_orkflow_proto_goTypes,
 		DependencyIndexes: file_orkstack_v1_orkflow_proto_depIdxs,
+		EnumInfos:         file_orkstack_v1_orkflow_proto_enumTypes,
 		MessageInfos:      file_orkstack_v1_orkflow_proto_msgTypes,
 	}.Build()
 	File_orkstack_v1_orkflow_proto = out.File

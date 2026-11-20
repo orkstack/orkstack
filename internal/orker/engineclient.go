@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -119,6 +120,7 @@ func (s EngineSettings) Validate() error {
 // own credential on every request.
 type EngineClient struct {
 	auth      orkstackv1connect.AuthServiceClient
+	identity  orkstackv1connect.IdentityServiceClient
 	transport *http.Transport
 }
 
@@ -179,7 +181,12 @@ func NewEngineClient(s EngineSettings) (*EngineClient, error) {
 		// public URL (auth.public_url): the engine checks both.
 		rt = &authn.AssertionTransport{Base: transport, Signer: signer, Account: s.ServiceAccount, Audience: base}
 	}
-	return &EngineClient{auth: orkstackv1connect.NewAuthServiceClient(&http.Client{Transport: rt}, base, opts...), transport: transport}, nil
+	client := &http.Client{Transport: rt}
+	return &EngineClient{
+		auth:      orkstackv1connect.NewAuthServiceClient(client, base, opts...),
+		identity:  orkstackv1connect.NewIdentityServiceClient(client, base, opts...),
+		transport: transport,
+	}, nil
 }
 
 // Whoami asks the engine which principal this Orker's credential is, and
@@ -191,6 +198,28 @@ func (c *EngineClient) Whoami(ctx context.Context) (*orkstackv1.GetSigninRespons
 		return nil, err
 	}
 	return resp.Msg, nil
+}
+
+// Mint asks the engine for an attempt's identity tokens
+// (IdentityService.MintAttemptTokens). The request names no Orker: the
+// engine takes it from the credential this client presents. A refusal is
+// returned as the engine's connect error, unchanged, for the caller to map.
+func (c *EngineClient) Mint(ctx context.Context, req *orkstackv1.MintAttemptTokensRequest) (*orkstackv1.MintAttemptTokensResponse, error) {
+	resp, err := c.identity.MintAttemptTokens(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
+
+// WhoamiDated is Whoami, with the time the engine answered at from its
+// answer's Date header: zero when the header was missing or unreadable.
+func (c *EngineClient) WhoamiDated(ctx context.Context) (*orkstackv1.GetSigninResponse, time.Time, error) {
+	resp, err := c.auth.GetSignin(ctx, connect.NewRequest(&orkstackv1.GetSigninRequest{}))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return resp.Msg, parseEngineDate(resp.Header().Get("Date")), nil
 }
 
 // CredentialFiles are the files that make this Orker's credential: its own

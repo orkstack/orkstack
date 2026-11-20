@@ -27,6 +27,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -378,14 +379,16 @@ func startReplica(
 	extraEnv ...string,
 ) *engineReplica {
 	t.Helper()
-	addr := freeAddress(t)
-	exited := startProcess(ctx, t, name, enginePath, append([]string{
-		"ORK_HTTP_ADDR=" + addr,
+	p := launch(ctx, t, name, enginePath, append([]string{
+		"ORK_HTTP_ADDR=" + listenaddr.Loopback,
 		"ORK_TEMPORAL_ADDRESS=" + temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE=" + namespace,
 		"ORK_ORKER_QUEUE=" + queue,
 		"ORK_ARTIFACT_BACKEND=s3",
 	}, extraEnv...)...)
+	// The address the replica bound, from its own log: it reaches this replica
+	// and no other process, so awaitReady's probe can only be answered by it.
+	addr, exited := p.api(ctx, t), p.exited
 	httpClient := h2cClient(t)
 	baseURL := "http://" + addr
 	return &engineReplica{

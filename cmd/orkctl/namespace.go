@@ -218,6 +218,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		budget              budgetFlagValues
 		clearBudget         bool
 	)
+	var idFlags identityFlags
 	cmd := &cobra.Command{
 		Use:   "update <name>",
 		Short: "Change a namespace",
@@ -233,6 +234,9 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			"and --clear-budget removes it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkIdentityFlagsAlone(cmd); err != nil {
+				return err
+			}
 			if releaseHold && cmd.Flags().Changed("hold") {
 				return fmt.Errorf("--hold and --release-hold contradict each other: give one")
 			}
@@ -282,6 +286,20 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 				return rpcError("update namespace", err)
 			}
 			edited := current.Msg.GetNamespace()
+			if len(identityFlagsGiven(cmd)) > 0 {
+				if err := applyIdentityFlags(cmd, edited, &idFlags); err != nil {
+					return err
+				}
+				resp, err := client.UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: edited}))
+				if err != nil {
+					return rpcError("update namespace", err)
+				}
+				if g.json {
+					return writeJSON(cmd.OutOrStdout(), resp.Msg)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Updated the identity policy of namespace %s\n", resp.Msg.GetNamespace().GetName())
+				return renderNamespace(cmd.OutOrStdout(), resp.Msg.GetNamespace())
+			}
 			telemetry, err := applyTelemetryFlags(cmd, edited.GetTelemetry(), telemetrySink, taskLogs, telemetryAttributes)
 			if err != nil {
 				return err
@@ -350,6 +368,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			"(each Orker's ORK_ORKER_SECRET_ALLOW still applies)")
 	cmd.Flags().BoolVar(&clearSigner, "clear-require-signed-by", false,
 		"stop requiring a signature: the deployment image policy alone applies")
+	addIdentityFlags(cmd, &idFlags)
 	return cmd
 }
 
@@ -754,6 +773,7 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	if id := ns.GetIdentity().GetNamespaceId(); id != "" {
 		fmt.Fprintf(table, "Id:\t%s\n", id)
 	}
+	renderIdentityPolicy(table, ns.GetIdentity())
 	fmt.Fprintf(table, "Description:\t%s\n", orDash(ns.GetDescription()))
 	fmt.Fprintf(table, "Default pool:\t%s\n", defaultPoolLabel(ns))
 	fmt.Fprintf(table, "Allowed pools:\t%s\n", allowedPoolsLabel(ns))
