@@ -12,6 +12,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/typeid"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -58,6 +59,7 @@ func (s *Service) PauseRun(
 	}
 	expires := s.now().Add(length)
 	warnings := pauseWarnings(run, length, expires, s.cancelsAtNextFire(ctx, run))
+	warnings = append(warnings, s.childTimeoutWarnings(ctx, run, expires)...)
 	if msg.GetDryRun() {
 		// Every check passed and the warnings are what a pause would say;
 		// nothing is sent and nothing is recorded.
@@ -147,6 +149,81 @@ func (s *Service) pauseTarget(
 		return nil, 0, engine.Binding{}, err
 	}
 	return run, after, binding, nil
+}
+
+// maxPauseChildReads bounds how many child runs one pause request reads to
+// check their timeouts; past it the warnings say how many went unchecked.
+const maxPauseChildReads = 256
+
+// childTimeoutWarnings are the running child runs below run, at any depth,
+// whose own timeout ends before a pause until expires does. The pause holds
+// them with their parent, and every clock keeps running while paused, so such
+// a child fails then and its composed task with it. A child that cannot be
+// read is named rather than passed over.
+func (s *Service) childTimeoutWarnings(ctx context.Context, run *orkstackv1.Run, expires time.Time) []string {
+	type pending struct {
+		task, runID, parent string // parent is "" for a child of the run asked
+	}
+	namespace := artifacts.ResolveNamespace(run.GetNamespace())
+	live := func(r *orkstackv1.Run, parent string) []pending {
+		var out []pending
+		for _, task := range r.GetTaskRuns() {
+			if id := task.GetChild().GetRunId(); id != "" && runstatus.IsLive(task.GetStatus()) {
+				out = append(out, pending{task: task.GetTaskId(), runID: id, parent: parent})
+			}
+		}
+		return out
+	}
+	var warnings []string
+	queue := live(run, "")
+	seen := map[string]bool{run.GetId(): true}
+	reads := 0
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		if seen[next.runID] {
+			continue
+		}
+		seen[next.runID] = true
+		name := fmt.Sprintf("child run %s (composed task %s)", next.runID, next.task)
+		if next.parent != "" {
+			name = fmt.Sprintf("child run %s (composed task %s of child run %s)", next.runID, next.task, next.parent)
+		}
+		if reads == maxPauseChildReads {
+			warnings = append(warnings, fmt.Sprintf(
+				"%d more child runs were not checked for a timeout that ends before this pause does", len(queue)+1))
+			break
+		}
+		reads++
+		if ctx.Err() != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"%d more child runs were not checked for a timeout that ends before this pause does: the request ended first", len(queue)+1))
+			break
+		}
+		child, err := s.lookupRunInResolved(ctx, next.runID, namespace)
+		if err != nil {
+			// The warning names the child, never the store's error: a
+			// not-found reads alike for any namespace, and anything else is
+			// the engine's to log.
+			if connect.CodeOf(err) != connect.CodeNotFound {
+				s.logger.Warn("pause: a child run could not be read to check its timeout",
+					"run_id", run.GetId(), "child_run_id", next.runID, "error", err)
+			}
+			warnings = append(warnings, fmt.Sprintf("%s could not be read, so its timeout was not checked", name))
+			continue
+		}
+		if !runstatus.IsLive(child.GetStatus()) {
+			continue
+		}
+		if timeout := child.GetTimeout(); timeout.GetDeadline() != nil && !timeout.GetTimedOut() &&
+			timeout.GetDeadline().AsTime().Before(expires) {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s's timeout ends at %s, before this pause does; it will then fail, and composed task %s with it",
+				name, instant(timeout.GetDeadline()), next.task))
+		}
+		queue = append(queue, live(child, next.runID)...)
+	}
+	return warnings
 }
 
 // runAndSequence is lookupRunInResolved plus the run's last event sequence,
