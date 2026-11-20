@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -110,15 +111,31 @@ func TestIntegration_ServiceNetwork_ReachesOutNotSideways(t *testing.T) {
 	theirAddr, err := rt.ContainerAddress(ctx, theirListener, theirs)
 	must.OKf(t, err, "their listener's address")
 	defaultAddr, err := rt.ContainerAddress(ctx, defaultListener, "")
-	must.OKf(t, err, "the default listener's address")
+	if !errors.Is(err, orker.ErrNoContainerAddress) {
+		must.OKf(t, err, "the default listener's address")
+	}
+	// A host listener: with the broker's published port, the two ways out a
+	// network with a route out reaches at least one of, and an internal one
+	// neither (a host firewall may close the first, Podman's strict isolation
+	// the second).
+	hostListener, err := net.Listen("tcp", "0.0.0.0:0")
+	must.OKf(t, err, "listen on the host")
+	t.Cleanup(func() { _ = hostListener.Close() })
+	go func() {
+		for {
+			c, err := hostListener.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	hostPort := fmt.Sprint(hostListener.Addr().(*net.TCPAddr).Port)
 
 	probe := func(host, port string) string {
 		return fmt.Sprintf(`if nc -z -w 3 %s %s; then echo "%s:%s open"; else echo "%s:%s closed"; fi; `,
 			host, port, host, port, host, port)
 	}
-	// A listener's loop may still be starting: the control asks until the
-	// default network's listener answers, before it reports.
-	ready := fmt.Sprintf(`for i in $(seq 1 50); do nc -z -w 1 %s 8080 && break; sleep 0.2; done; `, defaultAddr)
 	ask := func(name, netMode, netID, script string) string {
 		id, out := run(name, netMode, netID, script)
 		status, err := rt.Wait(ctx, id)
@@ -128,14 +145,39 @@ func TestIntegration_ServiceNetwork_ReachesOutNotSideways(t *testing.T) {
 		}
 		return out.String()
 	}
-	control := ask("control", orker.NetworkDefault, "", ready+probe(defaultAddr, "8080"))
-	if !strings.Contains(control, defaultAddr+":8080 open") {
-		t.Fatalf("positive control: the default network does not reach its own listener:\n%s", control)
+	// The positive control: a listener answers from its own side, so a
+	// closed answer below is the network's and not a broken nc. Where the
+	// default network gives no address, the other service network's listener
+	// is asked from its own network instead.
+	controlAddr, controlMode, controlNet := defaultAddr, orker.NetworkDefault, ""
+	if defaultAddr == "" {
+		controlAddr, controlMode, controlNet = theirAddr, orker.NetworkService, theirs
 	}
-	seen := ask("service", orker.NetworkService, mine,
-		probe(hostIP, brokerPort)+probe(brokerContainer, "8080")+probe(theirAddr, "8080")+probe(defaultAddr, "8080"))
-	for _, want := range []string{hostIP + ":" + brokerPort + " open", brokerContainer + ":8080 closed",
-		theirAddr + ":8080 closed", defaultAddr + ":8080 closed"} {
+	ready := fmt.Sprintf(`for i in $(seq 1 50); do nc -z -w 1 %s 8080 && break; sleep 0.2; done; `, controlAddr)
+	control := ask("control", controlMode, controlNet, ready+probe(controlAddr, "8080"))
+	if !strings.Contains(control, controlAddr+":8080 open") {
+		t.Fatalf("positive control: %s does not answer from its own network:\n%s", controlAddr, control)
+	}
+	script := probe(hostIP, brokerPort) + probe(hostIP, hostPort) + probe(brokerContainer, "8080") + probe(theirAddr, "8080")
+	ways := []string{hostIP + ":" + brokerPort + " open", hostIP + ":" + hostPort + " open"}
+	// The runtime's own name for the host: where it gives a container the
+	// host's address (rootless), that name is the one way to the host.
+	alias, err := rt.HostAlias(ctx)
+	must.OKf(t, err, "the runtime's name for the host")
+	if alias != "" {
+		script += probe(alias, hostPort)
+		ways = append(ways, alias+":"+hostPort+" open")
+	}
+	closed := []string{brokerContainer + ":8080 closed", theirAddr + ":8080 closed"}
+	if defaultAddr != "" {
+		script += probe(defaultAddr, "8080")
+		closed = append(closed, defaultAddr+":8080 closed")
+	}
+	seen := ask("service", orker.NetworkService, mine, script)
+	if !slices.ContainsFunc(ways, func(w string) bool { return strings.Contains(seen, w) }) {
+		t.Errorf("from a service network: no way out answered (%q):\n%s", ways, seen)
+	}
+	for _, want := range closed {
 		if !strings.Contains(seen, want) {
 			t.Errorf("from a service network: want %q, saw:\n%s", want, seen)
 		}

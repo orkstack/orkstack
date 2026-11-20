@@ -5,9 +5,11 @@ package orker_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,9 +49,31 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 	t.Cleanup(func() { _ = exec.Command(containerCLI(t), "rm", "-f", open).Run() })
 	_, port, _ := strings.Cut(strings.Fields(run("port", open, "8080/tcp"))[0], ":")
 	planted := hostAddress(t) + ":" + port
+	// A listener on the host's own address too: a network with a route out
+	// reaches at least one of the two (a host firewall may close this one,
+	// a runtime's strict isolation the published port).
+	hostListener, err := net.Listen("tcp", "0.0.0.0:0")
+	must.OKf(t, err, "listen on the host")
+	t.Cleanup(func() { _ = hostListener.Close() })
+	go func() {
+		for {
+			c, err := hostListener.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	plantedHost := net.JoinHostPort(hostAddress(t), fmt.Sprint(hostListener.Addr().(*net.TCPAddr).Port))
 
 	d := &orker.OCIDispatcher{Runtime: orker.NewDockerRuntime(), OrkerID: owner}
-	got := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, OperatorAddresses: []string{planted}, Cluster: "127.0.0.1:1"})
+	// The host listener is also the probe's admin port, which question 2 asks
+	// at every way a container reaches its host, the runtime's own name for
+	// it included: a rootless runtime that gives the container the host's
+	// address reaches the host only by that name.
+	hostPort := hostListener.Addr().(*net.TCPAddr).Port
+	got := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, OperatorAddresses: []string{planted, plantedHost},
+		AdminPort: hostPort, Cluster: "127.0.0.1:1"})
 	r := got.Result
 	if !r.Ran {
 		t.Fatalf("the probe did not run: %+v", r)
@@ -58,8 +82,12 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 		t.Error("a service's answer filesystem could not be made and opened")
 	}
 	joined := strings.Join(r.Fitness.Failures, "\n")
-	if !strings.Contains(joined, "question 1: tcp reached "+planted) {
-		t.Fatalf("positive control: the probe did not report the planted address %s reached:\n%s", planted, joined)
+	reachedHost := slices.ContainsFunc(r.Fitness.Failures, func(f string) bool {
+		return strings.HasPrefix(f, "question 2: tcp reached ") && strings.Contains(f, fmt.Sprintf(":%d ", hostPort))
+	})
+	if !strings.Contains(joined, "question 1: tcp reached "+planted) && !strings.Contains(joined, "question 1: tcp reached "+plantedHost) && !reachedHost {
+		t.Fatalf("positive control: the probe reported no planted listener reached (%s, %s, or port %d at the host):\n%s",
+			planted, plantedHost, hostPort, joined)
 	}
 	for _, f := range r.Fitness.Failures {
 		if strings.HasPrefix(f, "question 4:") || strings.Contains(f, "not asked") {

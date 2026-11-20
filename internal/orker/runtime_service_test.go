@@ -271,3 +271,53 @@ func TestServiceNetworkIDArgs(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// TestSpec_AnswerFSOnPodman: the podman CLI takes no inode count and no
+// uid or gid on a tmpfs (it refuses them as unknown options); the mount is
+// given to the container's user with U, and its size, mode and the noexec,
+// nosuid and nodev flags are spelled as on Docker.
+func TestSpec_AnswerFSOnPodman(t *testing.T) {
+	spec := validSpec()
+	spec.Network, spec.ServiceNetworkID = NetworkService, strings.Repeat("a", 64)
+	spec.ServiceTmpfs = &ServiceTmpfs{Path: "/orkstack/service/answer", Bytes: 8 << 20, Inodes: 128, UID: 1000, GID: 1000}
+	flags, err := dockerContainerFlags(spec, "ork-svc", dialect{cli: CLIPodman, engine: CLIPodman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Join(flags, " ")
+	if !strings.Contains(line, "--tmpfs /orkstack/service/answer:rw,nosuid,nodev,noexec,size=8388608,mode=0700,U") {
+		t.Errorf("podman's answer filesystem: %s", line)
+	}
+	for _, refused := range []string{"nr_inodes", "uid=", "gid="} {
+		if strings.Contains(line, refused) {
+			t.Errorf("podman's flags hold %q, which its CLI refuses: %s", refused, line)
+		}
+	}
+}
+
+func TestContainerAddress_NoAddressOnTheDefaultNetwork(t *testing.T) {
+	for _, raw := range []string{"null", "{}", `{"pasta":{"NetworkID":"pasta","IPAddress":""}}`} {
+		if _, err := parseContainerAddress(raw, ""); !errors.Is(err, ErrNoContainerAddress) {
+			t.Errorf("%s: %v", raw, err)
+		}
+	}
+}
+
+// TestHostAlias: the name a runtime gives its containers for the host. A
+// rootless runtime that copies the host's address into the container's
+// namespace leaves that address no way to the host, so the host is reached,
+// and asked about, by this name.
+func TestHostAlias(t *testing.T) {
+	for _, tt := range []struct {
+		x    dialect
+		want string
+	}{
+		{dockerDialect, ""},
+		{dialect{cli: CLIPodman, engine: CLIPodman}, "host.containers.internal"},
+		{dialect{cli: CLIPodman, engine: CLIPodman, rootless: true}, "host.containers.internal"},
+	} {
+		if got := tt.x.hostAlias(); got != tt.want {
+			t.Errorf("%+v: %q; want %q", tt.x, got, tt.want)
+		}
+	}
+}
