@@ -29,6 +29,10 @@ func FuzzParseAndPlan(f *testing.F) {
 	must.OK(f, err)
 	f.Add(example, false)
 	f.Add(example, true)
+	// settings.identity, well formed and not.
+	f.Add([]byte("apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\nsettings:\n  description: d\n  identity:\n"+
+		"    attempts_extra: 1\n    audiences: [a]\n    grants:\n      g: {provider: aws, principal: p, orkflows: ['*'], origins: [submit], current_only: true}\n"), false)
+	f.Add([]byte("apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\nsettings:\n  identity: {attempts_extra: -1, grants: {g: [x]}, extra: 1}\n"), false)
 	for _, seed := range []string{
 		"", "apiVersion: orkstack/v1\nkind: Automation\nnamespace: default\n",
 		"apiVersion: ! orkstack/v1\nkind: ! Automation\nnamespace: ! default\nsettings:\n  max_running: -0\n  fair_share_weight: -0\n  description: ! 12\n",
@@ -82,6 +86,11 @@ func FuzzParseAndPlan(f *testing.F) {
 				step.GetName() == "default":
 				// `default` always resolves, so settings declared for it
 				// update it even on an empty deployment.
+			case step.GetAction() == orkstackv1.AutomationAction_AUTOMATION_ACTION_UPDATE &&
+				step.GetKind() == orkstackv1.AutomationObjectKind_AUTOMATION_OBJECT_KIND_NAMESPACE &&
+				len(step.GetChanges()) == 1 && step.GetChanges()[0].GetField() == "identity":
+				// A namespace is created with no identity policy, which an
+				// update of its own then writes.
 			default:
 				t.Fatalf("Plan(%q) against an empty deployment planned %v for %s %s", source, step.GetAction(), step.GetKind(), step.GetName())
 			}

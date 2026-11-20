@@ -54,10 +54,12 @@ changed the version it starts, or rebound it with
 The binder is kept in the trigger's own record with how it was known
 (verified, or asserted by your gateway in `asserted` mode, never recorded
 as verified) and a consent: the
-digest of what the trigger's Orkflow asks for when it is bound (`c1:` and 64
-hexadecimal digits). No Orkflow can ask for an identity in this release, so
-every consent is the empty table's. `Trigger.consented` and `Trigger.asks_for`
-carry it, and `orkctl trigger update` prints it (`CONSENT`). A trigger made
+digest of what the trigger's Orkflow asks for, given to the digest you were
+shown (`c1:` and 64 hexadecimal digits). A create, and an update that changes
+the version it starts, need `--consent=DIGEST` when the Orkflow asks for an
+identity ([TASK_IDENTITY.md](./TASK_IDENTITY.md#consent)).
+`Trigger.consented`, `Trigger.asks_for` and `Trigger.consent_stale` carry it,
+and `orkctl trigger update` prints it (`CONSENT`). A trigger made
 before this release has none until it is rebound. Nothing reads the binder or
 the consent to decide an invoke in this release.
 

@@ -93,14 +93,17 @@ save, so a refused one leaves the binder as it was; one that names nobody (no
 `Ork-Principal` in `asserted` mode) is refused `failed_precondition`.
 
 With the binder the API records a **consent**: the digest of what the
-schedule's Orkflow asks for when it is bound (`c1:` and 64 hexadecimal
-digits). No Orkflow can ask for an identity in this release, so every consent
-is the empty table's, recorded by every save with nothing for you to confirm.
-`orkctl schedule get` shows it (`Consent:`), and `Schedule.consented` and
-`Schedule.asks_for` carry it on the API. A schedule made before this release
-has none: `--rebind` records one. Nothing reads the binder or the consent to
-decide a fire in this release; a later release that runs with task identity
-admits a fired run only while its binder may still submit the Orkflow.
+schedule's Orkflow asks for, given to the digest you were shown (`c1:` and 64
+hexadecimal digits). A create, and an update that changes what the schedule
+submits, need `--consent=DIGEST` when the Orkflow asks for an identity; a
+save without it is refused `IDENTITY_CONSENT_MISMATCH`, handing out the
+digest. `orkctl schedule get` shows it (`Consent:`), and `Schedule.consented`,
+`Schedule.asks_for` and `Schedule.consent_stale` carry it on the API.
+[TASK_IDENTITY.md](./TASK_IDENTITY.md#consent) says what a digest covers.
+A schedule made before this release has none: `--rebind` records one. Nothing
+reads the binder or the consent to decide a fire in this release; a later
+release that runs with task identity admits a fired run only while its
+binder may still submit the Orkflow.
 
 The record is one object per schedule,
 `metadata/schedules/{namespace}/{schedule-id}.json`, holding each submission

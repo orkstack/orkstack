@@ -124,6 +124,14 @@ type Binding struct {
 	BoundAt   time.Time
 	Consent   string
 	ConsentAt time.Time
+	// ConsentBy is who gave the consent; ConsentAudiences and
+	// ConsentGrants are the short list a person reads beside it.
+	ConsentBy        string
+	ConsentAudiences []string
+	ConsentGrants    []string
+	// BinderBinding is the binding that granted the binder run.submit when
+	// it bound: name, selector, role and scope. Empty for none.
+	BinderBindingName, BinderBindingSelector, BinderBindingRole, BinderBindingScope string
 }
 
 // Public returns a copy safe to hand to a caller: the record without the

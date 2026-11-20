@@ -531,7 +531,9 @@ enum AttemptOutcome {
 // "timeout" and "cancel"; "image-policy" is entered only when the task
 // carries an image policy (ExecuteTaskInput.image_policy), between
 // "commit-check" and "workspace"; "memo" and "stage-artifacts" are entered
-// only by an attempt of a cached task, after "stage-inputs" — and are not an enum, for the reason
+// only by an attempt of a cached task, after "stage-inputs"; "identity" is
+// entered only by an attempt of a task that declares an identity, between
+// "image" and "render" — and are not an enum, for the reason
 // TaskAttempt.phase is a string: a reader of an older build must be able to
 // read a phase it has never heard of.
 message PhaseSpan {
@@ -1032,9 +1034,26 @@ message Event {
 // batch).
 message AttemptCredential {}
 
-// AttemptIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message AttemptIdentity {}
+// AttemptIdentity is what one identity of an attempt was issued, as its
+// Orker reported at the attempt's end: never a token. It is best-effort, as
+// the record is: an Orker that is killed writes none, and the engine's own
+// records of what it issued are the trail that does not depend on the Orker.
+message AttemptIdentity {
+  // name is the identity's name in its task.
+  string name = 1;
+  // audience is its tokens' audience.
+  string audience = 2;
+  // tokens_issued is how many tokens the attempt was given, the first and
+  // each refresh.
+  int32 tokens_issued = 3;
+  // first_jti and last_jti are the jti of the first and the last of them.
+  string first_jti = 4;
+  string last_jti = 5;
+  // last_kid is the key that signed the last.
+  string last_kid = 6;
+  // last_expires_at is when the last expires.
+  google.protobuf.Timestamp last_expires_at = 7;
+}
 
 // ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
 // batch).

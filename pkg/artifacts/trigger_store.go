@@ -86,26 +86,38 @@ type triggerRecord struct {
 	BoundAt        time.Time `json:"boundAt,omitzero"`
 	Consent        string    `json:"consent,omitempty"`
 	ConsentAt      time.Time `json:"consentAt,omitzero"`
-	SecretHash     string    `json:"secretHash"`
+	ConsentBy      string    `json:"consentBy,omitempty"`
+	// The consent's short list, in the order the API recorded it.
+	ConsentAudiences []string `json:"consentAudiences,omitempty"`
+	ConsentGrants    []string `json:"consentGrants,omitempty"`
+	// The binding that granted the binder run.submit when it bound.
+	BinderBinding *BinderBinding `json:"binderBinding,omitempty"`
+	SecretHash    string         `json:"secretHash"`
 }
 
 func marshalTriggerRecord(trigger triggers.Trigger) ([]byte, error) {
 	record := triggerRecord{
-		ID:             trigger.ID,
-		Namespace:      trigger.Namespace,
-		OrkflowName:    trigger.OrkflowName,
-		OrkflowVersion: trigger.OrkflowVersion,
-		Description:    trigger.Description,
-		Name:           trigger.Name,
-		CreatedAt:      trigger.CreatedAt.UTC(),
-		SecretSalt:     hex.EncodeToString(trigger.SecretSalt),
-		SecretHash:     hex.EncodeToString(trigger.SecretHash),
-		Binder:         trigger.Binding.Binder,
-		BinderVerified: trigger.Binding.Verified,
-		BinderMethod:   trigger.Binding.Method,
-		BoundAt:        trigger.Binding.BoundAt.UTC(),
-		Consent:        trigger.Binding.Consent,
-		ConsentAt:      trigger.Binding.ConsentAt.UTC(),
+		ID:               trigger.ID,
+		Namespace:        trigger.Namespace,
+		OrkflowName:      trigger.OrkflowName,
+		OrkflowVersion:   trigger.OrkflowVersion,
+		Description:      trigger.Description,
+		Name:             trigger.Name,
+		CreatedAt:        trigger.CreatedAt.UTC(),
+		SecretSalt:       hex.EncodeToString(trigger.SecretSalt),
+		SecretHash:       hex.EncodeToString(trigger.SecretHash),
+		Binder:           trigger.Binding.Binder,
+		BinderVerified:   trigger.Binding.Verified,
+		BinderMethod:     trigger.Binding.Method,
+		BoundAt:          trigger.Binding.BoundAt.UTC(),
+		Consent:          trigger.Binding.Consent,
+		ConsentAt:        trigger.Binding.ConsentAt.UTC(),
+		ConsentBy:        trigger.Binding.ConsentBy,
+		ConsentAudiences: trigger.Binding.ConsentAudiences,
+		ConsentGrants:    trigger.Binding.ConsentGrants,
+	}
+	if b := trigger.Binding; b.BinderBindingName != "" {
+		record.BinderBinding = &BinderBinding{Name: b.BinderBindingName, Selector: b.BinderBindingSelector, Role: b.BinderBindingRole, Scope: b.BinderBindingScope}
 	}
 	raw, err := stablejson.MarshalIndent(record, "  ")
 	if err != nil {
@@ -156,7 +168,10 @@ func unmarshalTriggerRecord(raw []byte) (triggers.Trigger, error) {
 		SecretSalt:     salt,
 		SecretHash:     digest,
 		Binding: triggers.Binding{Binder: record.Binder, Verified: record.BinderVerified, Method: record.BinderMethod,
-			BoundAt: record.BoundAt, Consent: record.Consent, ConsentAt: record.ConsentAt},
+			BoundAt: record.BoundAt, Consent: record.Consent, ConsentAt: record.ConsentAt, ConsentBy: record.ConsentBy,
+			ConsentAudiences: record.ConsentAudiences, ConsentGrants: record.ConsentGrants,
+			BinderBindingName: bindingField(record.BinderBinding, 0), BinderBindingSelector: bindingField(record.BinderBinding, 1),
+			BinderBindingRole: bindingField(record.BinderBinding, 2), BinderBindingScope: bindingField(record.BinderBinding, 3)},
 	}, nil
 }
 
@@ -387,4 +402,12 @@ func (s *BlobTriggerStore) updateOnce(ctx context.Context, key, id, namespace st
 		return triggers.Trigger{}, true, fmt.Errorf("artifacts: update trigger %q: %w", id, err)
 	}
 	return next.Public(), true, nil
+}
+
+// bindingField is one field of a recorded binding, "" for none.
+func bindingField(b *BinderBinding, i int) string {
+	if b == nil {
+		return ""
+	}
+	return [...]string{b.Name, b.Selector, b.Role, b.Scope}[i]
 }

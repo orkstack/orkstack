@@ -156,6 +156,20 @@ func (s *TemporalStarter) StartRun(
 	input *orkstackv1.Payload,
 	plan RunPlan,
 ) error {
+	_, err := s.StartRunExecution(ctx, runID, wf, input, plan)
+	return err
+}
+
+// StartRunExecution is StartRun, answering the id of the execution the start
+// opened: the first execution of the run's chain, which a root's chain
+// record names (docs/TASK_IDENTITY.md, "The start").
+func (s *TemporalStarter) StartRunExecution(
+	ctx context.Context,
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	plan RunPlan,
+) (string, error) {
 	options := client.StartWorkflowOptions{
 		ID:                                       runID,
 		TaskQueue:                                s.queue,
@@ -169,7 +183,7 @@ func (s *TemporalStarter) StartRun(
 	if attrs := RunStartSearchAttributes(wf, plan, s.namespaceIndexed, s.originIndexed); len(attrs) > 0 {
 		options.TypedSearchAttributes = temporal.NewSearchAttributes(attrs...)
 	}
-	_, err := s.client.ExecuteWorkflow(ctx, options,
+	run, err := s.client.ExecuteWorkflow(ctx, options,
 		RunWorkflowType, runID, wf, input, plan)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
@@ -177,11 +191,16 @@ func (s *TemporalStarter) StartRun(
 			// Joined rather than wrapped: the caller matches ErrRunIDTaken to
 			// decide whether to reissue, and the server's error stays readable
 			// because it names the execution that holds the id.
-			return fmt.Errorf("start run %s: %w", runID, errors.Join(ErrRunIDTaken, err))
+			return "", fmt.Errorf("start run %s: %w", runID, errors.Join(ErrRunIDTaken, err))
 		}
-		return fmt.Errorf("start run %s: %w", runID, err)
+		return "", fmt.Errorf("start run %s: %w", runID, err)
 	}
-	return nil
+	if run == nil {
+		// A client that answers no handle names no execution: the chain
+		// record is then left to the first engine that needs it.
+		return "", nil
+	}
+	return run.GetRunID(), nil
 }
 
 // RunStartMemo is the memo every run is started with — top-level by StartRun,

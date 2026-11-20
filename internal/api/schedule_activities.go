@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/proto"
 
@@ -127,6 +128,35 @@ func (a *ScheduleActivities) prepareScheduledRun(
 	if proto.Size(prep) > task.MaxActivityInputBytes {
 		return nil, fireRefusedInternal, refusedFire("prepared run exceeds 256 KiB")
 	}
+	// After every refusal, a run whose tree holds an identity is admitted
+	// under its id, with the fire that prepared it as its starter: the run
+	// is started as the fire's child, so its start is checked against this
+	// execution. Its plan was measured above with a digest of the same
+	// length. A failed write is returned as it is, and the local activity's
+	// policy tries again under a new id (rule 10); what this try created is
+	// deleted on every way out that hands the fire no run.
+	if sub.admission != nil {
+		fire, err := fireExecution(ctx)
+		if err != nil {
+			return nil, fireRefusedInternal, err
+		}
+		admitted, err := a.svc.admitRun(ctx, &sub, run.GetId(), fire)
+		if err != nil {
+			if connect.CodeOf(err) == connect.CodeInternal {
+				return nil, fireRefusedInternal, refusedFire(err.Error())
+			}
+			return nil, "", err
+		}
+		if prep.Plan, err = stablejson.Marshal(sub.plan); err != nil {
+			a.svc.deleteAdmissions(ctx, admitted)
+			return nil, fireRefusedInternal, refusedFire(fmt.Sprintf("encode the run plan: %v", err))
+		}
+		if err := a.svc.writeDefinitionObject(ctx, run.GetId(), sub); err != nil {
+			a.svc.deleteAdmissions(ctx, admitted)
+			return nil, "", err
+		}
+		return prep, "", nil
+	}
 	// Last, after the run id is minted and after every refusal: a definition
 	// passed by reference is written under that id, so the fire's start
 	// finds it. A failed write is retried by the local activity's policy; a
@@ -162,4 +192,18 @@ func fireError(err error) (string, error) {
 		}
 	}
 	return "", err
+}
+
+// fireExecution is the starter of a run a fire prepares: the fire's own
+// workflow and execution, read from the local activity the preparation runs
+// in.
+func fireExecution(ctx context.Context) (artifacts.Starter, error) {
+	if !activity.IsActivity(ctx) {
+		return artifacts.Starter{}, refusedFire("a fired run that holds an identity is prepared only inside its fire")
+	}
+	e := activity.GetInfo(ctx).WorkflowExecution
+	if e.ID == "" || e.RunID == "" {
+		return artifacts.Starter{}, refusedFire("the fire's own execution is not known to its preparation")
+	}
+	return artifacts.Starter{Kind: artifacts.StarterFire, WorkflowID: e.ID, ExecutionID: e.RunID}, nil
 }

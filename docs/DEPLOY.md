@@ -798,6 +798,12 @@ then the variable it becomes.
 | `orker.engine.auth.service_account` | `ORK_ORKER_ENGINE_AUTH_SERVICE_ACCOUNT` | *(empty)* | `orker` | the service account the Orker signs each request as, with `orker.engine.auth.key_file` its PEM private key (`service_account`); `orker.engine.url` is then the deployment's public URL |
 | `orker.engine.auth.token_file` | `ORK_ORKER_ENGINE_AUTH_TOKEN_FILE` | *(empty)* | `orker` | a file holding the Orker's token, read at every request (`token_file`) |
 | `orker.engine.auth.cert_file`, `orker.engine.auth.key_file` | `ORK_ORKER_ENGINE_AUTH_CERT_FILE`, `ORK_ORKER_ENGINE_AUTH_KEY_FILE` | *(empty)* | `orker` | the Orker's PEM client certificate and key (`mtls`); `key_file` alone is the service account's private key (`service_account`) |
+| `orker.identity.dir` | `ORK_ORKER_IDENTITY_DIR` | `auto` | `orker` | where identity token and credential files are made. `auto` takes the first of `$XDG_RUNTIME_DIR/orkstack` and `/dev/shm/orkstack-<uid>` that is memory-backed, the Orker's own at `0700` and readable from a container, else the work root, logged at warning; `workroot` is always the work root; an absolute path must exist, and one that is not memory-backed is used and warned of at every boot. `DescribeOrker` reports `memory` or `disk` — see [TASK_IDENTITY.md](./TASK_IDENTITY.md) |
+| `orker.identity.setup_budget` | `ORK_ORKER_IDENTITY_SETUP_BUDGET` | `2m` | `orker` | how long an attempt asks for its first identity tokens before it fails with the last answer's reason; from `orker.identity.retry_min` to `1h` |
+| `orker.identity.retry_min` | `ORK_ORKER_IDENTITY_RETRY_MIN` | `5s` | `orker` | the first retry's least delay when a mint could not be asked: the n-th delay is drawn between half of `retry_min` doubled n times and that, capped at a minute (5–10 s, 10–20, 20–40, 30–60); `100ms` to `1m` |
+| `orker.identity.max_concurrent` | `ORK_ORKER_IDENTITY_MAX_CONCURRENT` | `8` | `orker` | how many mints this Orker has in flight at once; `1` to `256` |
+| `orker.identity.max_clock_skew` | `ORK_ORKER_IDENTITY_MAX_CLOCK_SKEW` | `2m` | `orker` | how far the engine's `issued_at` may be from this Orker's clock; above it the attempt fails `IDENTITY_CLOCK_SKEW` and writes no token, and above 30 s it is logged; three such mints in a row clear the Orker's identity support until the engine's answers' `Date` header agrees with its clock again — a proxy in front of the engine that sets its own `Date` must keep its clock in sync, or the engine be reached directly; `1s` to `1h` |
+| `orker.log.mask_grace` | `ORK_ORKER_LOG_MASK_GRACE` | `5m` | `orker` | how long a refreshed identity token stays masked in the task's logs after it has expired, since a process may hold and print it until then; `0` to `24h` |
 | `auth.mode` | `ORK_AUTH_MODE` | `asserted` | `ork` | `asserted`, `observe` or `enforce`: who a request is from, and whether a permission is required — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
 | `auth.public_url` | `ORK_AUTH_PUBLIC_URL` | *(empty)* | `ork` | the URL callers reach the API at, a scheme and host alone: service-account and break-glass assertions name it as their audience, and sign-in redirects to it; `https` when an issuer offers sign-in, except on a loopback host |
 | `auth.issuers:` | `ORK_AUTH_ISSUERS` | *(empty)* | `ork` | YAML table of the trusted issuers whose JWTs the engine accepts: in the file, one entry by name under `auth.issuers`; in the environment, the same table under a top-level `issuers:` — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
@@ -821,6 +827,16 @@ then the variable it becomes.
 | `identity.keys_copy_max_age` | `ORK_IDENTITY_KEYS_COPY_MAX_AGE` | `1h` | `ork` | from `5m` to `24h`: how old an engine's copy of the published keys, in memory or on disk, may be and still sign and verify; also how long after its retirement a rotated key's signatures are still taken. Set it equal on every engine, and raise it before planned work on the object store |
 | `identity.subject_format` | `ORK_IDENTITY_SUBJECT_FORMAT` | `ork` | `ork` | `ork` (`ork:namespace:…:task:…`) or `spiffe` (a SPIFFE ID in the trust domain, so a token is a JWT-SVID); `spiffe` needs a trust domain |
 | `identity.spiffe.trust_domain` | `ORK_IDENTITY_SPIFFE_TRUST_DOMAIN` | *(empty)* | `ork` | the deployment's own SPIFFE trust domain (lowercase letters, digits, `.`, `-`, `_`); set, every token carries both subject forms and the issuer serves a SPIFFE bundle |
+| `identity.attempts.extra` | `ORK_IDENTITY_ATTEMPTS_EXTRA` | `0` | `ork` | from `0` to `identity.attempts.max_extra`: how many attempts past a task's own retries may hold its identity, for a namespace whose identity policy sets none. Pinned in each run when it is submitted |
+| `identity.attempts.max_extra` | `ORK_IDENTITY_ATTEMPTS_MAX_EXTRA` | `4` | `ork` | from `0` to `16`: the most a namespace's identity policy may set as its `attempts_extra` |
+| `identity.attempts.max` | `ORK_IDENTITY_ATTEMPTS_MAX` | `32` | `ork` | from `1` to `256`: the most attempts of one task, or of one item of a fan-out, that may ever hold an identity; a task whose retries plus `extra` exceed it is refused (`IDENTITY_ATTEMPTS_OVER_LIMIT`) |
+| `identity.token.ttl` | `ORK_IDENTITY_TOKEN_TTL` | `1h` | `ork` | the life of a task's token when its identity names none; from `identity.token.min_ttl` to `identity.token.max_ttl` |
+| `identity.token.min_ttl` | `ORK_IDENTITY_TOKEN_MIN_TTL` | `10m` | `ork` | the shortest life a token is minted with: an identity that asks for less gets this |
+| `identity.token.max_ttl` | `ORK_IDENTITY_TOKEN_MAX_TTL` | `12h` | `ork` | at most `24h`: the longest life a token is minted with: an identity that asks for more gets this |
+| `identity.results.commit_wait` | `ORK_IDENTITY_RESULTS_COMMIT_WAIT` | `15m` | `ork` | 30 s to 1 h: how long an Orker waits for an engine at a commit, for a run whose results the engine records (`docs/TASK_IDENTITY.md`, "Results the engine records"), and nothing else. Submit adds it to such a run's transfer budget, `engine.limits.transfer_budget_seconds` when that is set, so it is pinned per run. It is longer than a rolling restart of the engines: a task with one attempt, the DSL's default, fails when no engine answers for the whole wait though its container succeeded, so give a task that must not be lost that way a `retry:` |
+| `identity.issuance.records` | `ORK_IDENTITY_ISSUANCE_RECORDS` | `required` | `ork` | `required`: a mint records what it issued before it answers, and a record it cannot write fails the mint (`IDENTITY_UNAVAILABLE`); `off`: nothing is recorded |
+| `identity.admission_cache_bytes` | `ORK_IDENTITY_ADMISSION_CACHE_BYTES` | `134217728` | `ork` | the bytes of admission records a replica's mints keep in memory, the least recently used dropped first: 1 MiB to 4 GiB. A record never changes, so a kept one is never stale |
+| `identity.unscoped_orkers` | `ORK_IDENTITY_UNSCOPED_ORKERS` | `refuse` | `ork` | `refuse`: no new run that uses task identity is accepted while a live Orker of a pool it would run on reports an unscoped or unchecked storage credential (`IDENTITY_STORE_UNSCOPED`); `report`: such Orkers are only reported |
 
 The table above is the reference for what each key *means*; for the full,
 always-current set of every key at its exact built-in default, see the
@@ -6086,6 +6102,20 @@ older than `identity.keys_copy_max_age`: it then signs nothing and verifies
 nothing, so a force cancel is refused until the store answers
 ([TASK_IDENTITY.md](./TASK_IDENTITY.md#the-copy-on-disk)). Alert on any
 increase.
+
+`ork.identity.mints` (engine) counts each identity token mint by `reason`:
+`granted`, or why it issued nothing, one of `IDENTITY_UNAVAILABLE`,
+`IDENTITY_ENGINE_REFUSED`, `IDENTITY_NOT_ADMITTED`, `ATTEMPT_NOT_HELD`,
+`TASK_NOT_AS_ADMITTED`, `IDENTITY_ATTEMPTS_EXHAUSTED`,
+`IDENTITY_ATTEMPT_EXPIRED`, `IDENTITY_REVOKED`, `permission_denied`,
+`invalid`, `resource_exhausted` or `other`: a closed set
+([TASK_IDENTITY.md](./TASK_IDENTITY.md#the-mint)). `ork.identity.engine_refused`
+(engine) counts the mints and commits refused `IDENTITY_ENGINE_REFUSED`,
+which are the engine's fault and never the task's. Alert on any increase.
+`ork.identity.commits` (engine) counts each task result an Orker asked the
+engine to record (`CommitResult`) by `reason`: the same closed set as
+`ork.identity.mints`, and `COMMIT_IDENTITY_MISMATCH`
+([TASK_IDENTITY.md](./TASK_IDENTITY.md#results-the-engine-records)).
 
 #### Go runtime metrics
 

@@ -50,6 +50,7 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 		version     string
 		description string
 		name        string
+		consent     string
 	)
 	cmd := &cobra.Command{
 		Use:   "create --orkflow <name>",
@@ -62,7 +63,9 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 			"because only a salted digest of it is stored. Rotating a token is\n" +
 			"delete then create.\n\n" +
 			"--name gives the trigger a handle, unique in the namespace, by which an\n" +
-			"automation document addresses it (docs/AUTOMATION.md).",
+			"automation document addresses it (docs/AUTOMATION.md).\n\n" +
+			"When the orkflow asks for an identity, create needs --consent=DIGEST: the\n" +
+			"digest of what it asks for, which a create without it hands out.",
 		Example: "  orkctl trigger create --orkflow hello --description 'nightly kickoff'\n" +
 			"  orkctl trigger create --orkflow deploy --name github-deploy",
 		Args: cobra.NoArgs,
@@ -85,6 +88,7 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 				OrkflowVersion: version,
 				Description:    description,
 				Name:           name,
+				Consent:        consent,
 			}))
 			if err != nil {
 				return rpcError("create trigger", err)
@@ -101,6 +105,7 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 		"orkflow version to pin (default: the current one at invoke time)")
 	cmd.Flags().StringVar(&description, "description", "", "operator label for this trigger")
 	cmd.Flags().StringVar(&name, "name", "", "handle an automation document addresses this trigger by (a slug, unique in the namespace)")
+	addConsentFlag(cmd, &consent, false)
 	return cmd
 }
 
@@ -111,6 +116,7 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 		followCurrent bool
 		description   string
 		rebind        bool
+		consent       string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -125,7 +131,9 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 			"automation document (orkctl automation export) without re-issuing its token.\n\n" +
 			"A new version pin makes you the trigger's binder: the principal its\n" +
 			"runs are recorded against. --rebind makes you the binder without\n" +
-			"changing anything else.",
+			"changing anything else. A save that binds needs --consent when the\n" +
+			"orkflow asks for an identity (--consent alone shows it and asks); a\n" +
+			"consent changes no binder.",
 		Example: "  orkctl trigger update trg-4a1c0e2b7d3f8156 -n payments --name github-deploy\n" +
 			"  orkctl trigger update trg-4a1c0e2b7d3f8156 --version 1.4.0",
 		Args: cobra.ExactArgs(1),
@@ -178,6 +186,10 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 				req.Description = description
 			}
 			req.Rebind = rebind
+			if req.Consent, err = g.resolveConsent(cmd, consent, "trigger update "+id, current.GetAsksFor(), current.GetConsented(),
+				req.GetOrkflowVersion() != current.GetOrkflowVersion()); err != nil {
+				return err
+			}
 			response, err := g.triggerClient().UpdateTrigger(ctx, connect.NewRequest(req))
 			if err != nil {
 				return rpcError("update trigger", err)
@@ -193,6 +205,7 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&followCurrent, "follow-current", false, "clear the pin: follow the orkflow's current pointer at each invoke")
 	cmd.Flags().StringVar(&description, "description", "", "new operator label (\"\" clears it)")
 	cmd.Flags().BoolVar(&rebind, "rebind", false, "make yourself the trigger's binder, changing nothing else")
+	addConsentFlag(cmd, &consent, true)
 	return cmd
 }
 

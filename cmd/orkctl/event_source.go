@@ -214,7 +214,7 @@ func newEventSourceCreateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	flags.register(cmd, true)
-	cmd.Flags().StringVar(&consent, "consent", "", "the consent digest (c1:…) of what the Orkflow asks for")
+	addConsentFlag(cmd, &consent, false)
 	return cmd
 }
 
@@ -250,6 +250,8 @@ func newEventSourceUpdateCommand(g *globalFlags) *cobra.Command {
 				return rpcError("read event source", err)
 			}
 			src := got.Msg.GetEventSource()
+			// What it follows now, kept before the flags change src.
+			stored := proto.Clone(src).(*orkstackv1.EventSource)
 			if fromFile != nil {
 				fromFile.Name, fromFile.Etag = args[0], src.GetEtag()
 				if fromFile.GetOrkflowName() == "" {
@@ -258,6 +260,11 @@ func newEventSourceUpdateCommand(g *globalFlags) *cobra.Command {
 				src = fromFile
 			}
 			if err := flags.apply(cmd, src); err != nil {
+				return err
+			}
+			consent, err := g.resolveConsent(cmd, consent, "event-source update "+args[0], stored.GetAsksFor(), stored.GetConsented(),
+				src.GetOrkflowVersion() != stored.GetOrkflowVersion())
+			if err != nil {
 				return err
 			}
 			resp, err := g.eventSourceClient().UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: src, Consent: consent, Rebind: rebind}))
@@ -272,7 +279,7 @@ func newEventSourceUpdateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	flags.register(cmd, false)
-	cmd.Flags().StringVar(&consent, "consent", "", "the consent digest (c1:…) of what the Orkflow asks for")
+	addConsentFlag(cmd, &consent, true)
 	cmd.Flags().BoolVar(&rebind, "rebind", false, "make yourself the source's binder")
 	return cmd
 }

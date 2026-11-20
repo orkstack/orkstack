@@ -227,30 +227,315 @@ first, and have an AWS trust policy list both subjects for the time of the
 change. Then switch the format. A run keeps the format it was submitted
 with.
 
+## A namespace's identity policy
+
+Each namespace has an identity policy: the token audiences its tasks may
+ask for (a trailing `*` matches any rest), its grants (a provider, the
+principal there, the Orkflows that may use it, whether only a current
+version may, and the kinds of start it serves), `identities_current_only`,
+and `attempts_extra`, how many attempts past a task's own retries may hold
+its identity, at most the deployment's `identity.attempts.max_extra`. The
+API shows it as `Namespace.identity`, beside the namespace's id. It is kept
+beside the id, never in the namespace document, and belongs to that
+incarnation of the namespace: deleting the namespace removes it first, and
+a namespace made again under the name starts with none.
+
+An `UpdateNamespace` that changes the policy changes nothing else: it names
+the policy's own `identity.etag` and needs `namespace.policy.update`. An
+update whose policy is as stored leaves it alone. Each change writes an
+immutable revision (`docs/STORAGE.md`). An audience is allowed by a
+pattern equal to it or one whose trailing `*` matches any rest; a policy that
+lists none allows none. An Orkflow whose task asks for an audience its
+namespace does not allow is refused `IDENTITY_NOT_PERMITTED` when it is
+created, naming the field, and again at submit, for every Orkflow the run
+composes too, and at the mint. With `identities_current_only`, only the
+version an Orkflow's current pointer names may hold identities. A run
+whose tree holds an identity is refused `IDENTITY_STORE_UNSCOPED` at submit
+while any live Orker's storage credential is not confirmed scoped, unless
+`identity.unscoped_orkers` is `report`. Creating
+or validating one also warns, never refuses, of a cached task that holds an
+identity (a memo hit mints nothing, so it is not checked against the policy
+as it is then), of a pin whose members run different images where any holds
+one (a pin is one trust domain), and of an identity task whose pool more
+than one namespace may use (naming the pool and how many, never which). No task can
+use the policy yet; it decides what tasks may hold once task identity is
+available.
+
+## Consent
+
+A schedule, a trigger and an event source start runs nobody submitted, on
+the authority of their **binder**: who created one, changed what it submits,
+or rebound it. Beside the binder each records a **consent**: the digest of
+what its Orkflow asked for, given to a digest the person was shown. The
+digest is `c1:` and 64 hexadecimal digits, the SHA-256 of consent
+projection 1: for every task that would hold an identity (an identity, a
+credential or a secret through a grant), in the Orkflow and in every Orkflow
+it composes at the versions they pin, the task's id, its kind, its pool, its
+join, what it asks for, and every task upstream of it, each with its id,
+kind, join and needs, a composed task's Orkflow and an approval's deadline and
+callback. A version that changes any of that is another consent; one that
+changes only an image, a command or the input is not. An Orkflow that asks
+for nothing has the empty table's digest,
+`c1:8273758e29b4114ebe3e0962bfd318248772032b0727a367a63c0c3c44195545`.
+
+| A save that | Binder | Consent |
+|---|---|---|
+| creates the object, or changes what it submits | the saver | needed, when the Orkflow asks for an identity: `--consent=DIGEST` |
+| changes nothing it submits | unchanged | unchanged |
+| says `--rebind` | the saver | unchanged |
+| gives `--consent=DIGEST` | unchanged | that digest, with who gave it |
+
+A consent is recorded only for the digest of the version the object follows
+at that moment. Anything else is refused `IDENTITY_CONSENT_MISMATCH`, with
+what changed and the digest to consent to, and nothing is recorded. A save
+that needs one and gives none is refused the same way, handing out the
+digest. An Orkflow one of whose composed Orkflows is not there cannot say
+what it asks for: it is saved with no consent, and a consent given to it is
+refused.
+
+A run a schedule or a trigger starts holds an identity only while three
+things hold, each checked at the run's start: the object records a verified
+binder with the binding that let it bind (recorded at the save that made
+it the binder; `IDENTITY_STARTER_NOT_RECORDED` otherwise); that binding
+still grants the binder `run.submit` on the Orkflow, judged from the access
+document alone, so a group or a claim is never read again
+(`IDENTITY_STARTER_NOT_PERMITTED`); and the consent is to what the version
+the run resolves asks for (`IDENTITY_STARTER_NOT_CONSENTED`). A fire so
+refused fails; an invoke answers 403. A fact that could not be read is
+never a refusal: the fire tries again and an invoke answers 503.
+
+`orkctl schedule get`, `orkctl trigger list` and `orkctl event-source get`
+show the consent, what the Orkflow asks for now (`asks_for`: the digest and
+the distinct audiences and grants) and whether the consent is stale.
+`orkctl schedule|trigger|event-source update NAME --consent` with no value,
+at a terminal, shows what would be consented to and asks. Promoting a
+version that asks for other identities lists every object that follows the
+pointer and is left stale, each with the command that consents
+(`SetCurrentOrkflowVersionResponse.stale_consent`). In an automation document
+there is no key for either: `orkctl automation apply --consent
+schedule/NAME=DIGEST` gives one, and the plan warns with the digest, never as
+a step, so the plan's digest does not change.
+
+## The mint
+
+An Orker that runs an attempt of a task holding an identity asks the
+engine for its tokens (`IdentityService.MintAttemptTokens`), which an
+engine answers only with `auth.mode: enforce`, an issuer and an eligible
+key. The engine reads the run's admission record by the digest the task's
+input names, checks that the caller's Orker holds the attempt now, that
+the run started as its admission says, that the task is the one admitted,
+that the attempt cap allows it and that the namespace still allows each
+audience, then signs one token per identity, with the claims the admission
+pins and a life between `identity.token.min_ttl` and `max_ttl`. With
+`identity.issuance.records: required` the record of what was issued is
+written before any token is returned. [REASONS.md](./REASONS.md#the-identity-mint)
+lists every refusal.
+
+## Results the engine records
+
+A run that holds a task identity, or belongs to a run tree in which one
+does, has its results recorded by the engine: every container task of it is
+in the run's admission, with its pool and spec digest, whether or not it
+holds an identity. The Orker that holds an attempt hands the engine the
+attempt's manifest (`AttemptService.CommitResult`), which an engine answers
+only with `auth.mode: enforce`; the engine writes it, create-only, under
+`metadata/attested/` (`docs/STORAGE.md`), where no Orker's storage
+credential may write. It records only for an attempt the cluster reports as
+held by the caller, at the pool the run was admitted with for that task,
+dispatched as it was admitted, in this order:
+
+1. the replica enforces authentication (`IDENTITY_ENGINE_REFUSED`);
+2. the run's admission, by the digest the request names, has the task in
+   its table (`IDENTITY_NOT_ADMITTED`);
+3. the caller holds `task.result.commit` at the pool the admission gives
+   the task, and its credential names one Orker;
+4. the attempt is pending, started, at that number and on that Orker in a
+   describe made after the request arrived (`ATTEMPT_NOT_HELD`);
+5. the execution is the run the admission was written for;
+6. the task's spec digest is the admitted one (`TASK_NOT_AS_ADMITTED`), and
+   each task the admission says it follows has its record;
+7. the manifest is the attempt's: schema 1, and its namespace, run, task,
+   definition digest, idempotency key, attempt and Orker id are the
+   request's, the admission's and the caller's; its image digest is the one
+   the definition pins, where it pins one; it carries no recording; and the
+   commit key is this task's or this item's (`COMMIT_IDENTITY_MISMATCH`);
+8. the engine writes it with `recorded`: the pool, the Orker id its
+   credential names, the admission's digest, the engine's build and the
+   time. A record already there, this attempt's repeat or another attempt's
+   that came first, is answered as it is and nothing is written.
+
+Steps 2 and 4 to 6 are the mint's own. A request with `preflight` set asks
+steps 1 to 6 and writes nothing, so an attempt the engine would refuse runs
+no container. A step that could not ask (the store, the cluster) is
+unavailable and is asked again. A refusal that says something about the
+caller or the run writes one `task.result.refused` audit record, coalesced
+per principal as denials are; a grant is counted and logged. A request is at
+most the commit's own bound (4 MiB) and 64 KiB, and a result whose stored
+form leaves no room under 4 MiB for the engine's recording is refused at
+once; each attempt is granted at most 4 calls a minute, and each principal
+draws on a bucket of 512 that refills at 128 a second, which only a call
+that could not be asked gives back. The admitted definition's image pins
+are read once a definition and kept, at most 256 definitions a replica. The run's submit adds
+`identity.results.commit_wait` (`docs/DEPLOY.md` §1) to the run's transfer
+budget, so an attempt's deadline has room to wait for an engine. Cleanup
+removes a run's records with its commits.
+
+The Orker's half, which reads, adopts and stages only from these records and
+hands its manifest to the engine, is not built in this release yet: no
+Orker calls `CommitResult`, and an Orker's commit store may read under
+`metadata/attested/` and never writes there.
+
+## Which Orkers serve it
+
+An Orker serves task identity only while it has checked that it may: at
+boot and every five minutes it asks the engine who its credential is
+(`AuthService.GetSignin`, `orker.engine.*`), and it advertises support
+(`DescribeOrkerResult.identity_supported`) only while the answer names its
+own Orker id, grants it `identity.token.mint` and `task.result.commit` at its
+pool (or the deployment), and its storage credential is confirmed scoped. An
+engine that does not answer within 30 s, an answer older than ten minutes,
+a binding that is gone or a verdict that lapses ends support, logged at
+error. A credential that names no Orker (`orker_ids: any`) never serves it.
+The clock check is not yet part of the verdict. An Orker with no engine
+configured serves none. A submission of a run that holds an identity asks
+every uncordoned Orker of every pool the run, or any child it plans, runs a
+container on, and is refused `POOL_NO_IDENTITY_SUPPORT`, naming the Orker
+and its build, while one does not serve it. Where another Orker of the pool
+answers, an Orker that polls the pool's channel and does not answer on its
+own is refused the same way, as one that did not answer, which may pass:
+submit again once it answers, or cordon it. A pool none of
+whose Orkers answers, and a silent Orker whose pool cannot be told, are
+logged, not refused. Dispatch is the guard for those: an Orker that does
+not serve task identity refuses a task that holds one before its container
+is created, `IDENTITY_NOT_CONFIGURED` (no engine, not retried) or
+`IDENTITY_NOT_SERVED` (its self-check does not find support now, or has not
+answered since boot; retried only under the task's own `retry:`).
+These checks fail early; neither is the boundary. An Orker is trusted
+with nothing it reports about itself: the mint decides every token from
+the cluster's record of who holds the attempt and the caller's verified
+permissions ([The mint](#the-mint)).
+
+## On the Orker
+
+An attempt of a task that declares an identity asks the engine for its
+tokens after the commit check and the memo step, so neither a committed
+result nor a memo hit mints, and before the container exists. Each token is
+masked in the task's logs before any file holds it, and the files are bound
+read-only at `/orkstack/identity/<name>/` (`docs/OCI_ACTIVITY_CONTRACT.md`).
+The request carries the task's spec digest as the Orker computes it from
+its input (`task.IdentitySpecDigest`), which the engine compares with the
+digest it admitted.
+
+- **The first tokens** are asked again while the answer says asking again
+  may help, by the one retry rule below, within `orker.identity.setup_budget`
+  (2 minutes); past it the attempt fails with the last answer's reason. An
+  answer that ends the attempt (`IDENTITY_ATTEMPTS_EXHAUSTED`,
+  `IDENTITY_ATTEMPT_EXPIRED`, `TASK_NOT_AS_ADMITTED`, `IDENTITY_SPEC_SKEW`,
+  `IDENTITY_REVOKED`) is never asked again.
+- **A refresh** lands at a random point between a third of the token's life
+  and a quarter of its life later than that, so the items of a fan-out do
+  not refresh together, and never earlier than a third. A refresh that
+  could not ask, a failed local write included, is retried by the one rule;
+  what is on disk stays until it expires. `IDENTITY_REVOKED` stops a
+  `required` identity's container at once and ends the refreshing of a
+  `best_effort` one.
+- **The one retry rule:** the n-th delay after a failure is drawn between
+  half of `b` and `b`, where `b` is `orker.identity.retry_min` (5 s) doubled
+  n times and capped at a minute: 5–10 s, 10–20, 20–40, then 30–60.
+- **The watchdog** reads, every 5 s, both the boot clock since the request
+  was sent (which runs on while a host is suspended) and the wall clock
+  against the engine's `issued_at`, and fires at the earlier. A `required`
+  identity whose token expired unrefreshed stops the container, SIGTERM
+  then SIGKILL after the grace, and the attempt fails
+  `IDENTITY_REFRESH_FAILED`; a `best_effort` one writes one `[ork]` line and
+  the task runs on. A replaced token stays masked until it has expired plus
+  `orker.log.mask_grace` (5 minutes).
+- **The clock check runs at every mint.** An `issued_at` more than 30 s from
+  the Orker's clock is logged; more than `orker.identity.max_clock_skew`
+  (2 minutes) fails that attempt `IDENTITY_CLOCK_SKEW`, writes no token and
+  is not asked again in the attempt; it is retried only under the task's
+  own `retry:`. Three such mints in a row clear the Orker's identity support
+  (`DescribeOrker` says why), so no identity task is sent to it; while
+  unfit it asks the engine every 2 minutes instead of 5 and reads the
+  `Date` header of the answer, and one within `max_clock_skew` (plus a
+  second, the header's resolution) restores support. A missing or
+  unreadable `Date` is no evidence. Behind a proxy that sets its own
+  `Date`, the header is the proxy's clock: reach the engine directly, or
+  keep the proxy's clock in sync.
+- **While the attempt runs**, its heartbeat says of each identity when what
+  is on disk was issued, when it expires, and whether it is `fresh`,
+  `retrying` (a refresh failed since) or `expired`; never a token, a `jti`
+  or a path, at most 16 entries. The run page and `orkctl run inspect` show
+  it; for an attempt whose Orker says nothing they show what the records of
+  what was issued imply.
+- **The attempt's record** (`TaskAttempt.identities`) says, for each
+  identity, its audience, how many tokens the attempt was given, the first
+  and last `jti`, the last `kid` and when the last expires; never a token.
+  It is best-effort, as the record is: an Orker that is killed writes none,
+  and [What was issued](#what-was-issued) is the engine's own trail.
+- **Where the files live** is chosen at boot (`orker.identity.dir`): under
+  `auto`, the first of `$XDG_RUNTIME_DIR/orkstack` and
+  `/dev/shm/orkstack-<uid>` that is memory-backed, the Orker's own at
+  `0700` and readable from a probe container, else the work root, logged at
+  warning. `DescribeOrker` reports `identity_storage` as `memory` or `disk`.
+  A boot removes what an earlier process under the same Orker id left
+  there. Memory-backed storage can still be written to swap: encrypt or
+  disable swap on Orker hosts.
+
+## What was issued
+
+Each granted mint writes one record of what it issued, beside the run's
+saved state, before any token is returned (`identity.issuance.records:
+required`, the default): the task, item and attempt, the calling Orker and
+principal, and for each token its name, audience, subject, `jti`, `kid`
+and lifetime. No token is ever recorded. `orkctl run tokens RUN [-t TASK]
+[--item N]` lists them in the order they were issued (`ListIssuedTokens`,
+which needs `run.read`). While an attempt runs, `orkctl run inspect` shows
+each identity it holds: when it was last minted and when that expires,
+`FRESH` until then and `EXPIRED` after.
+
 ## Which run a token is for
 
-No token is issued yet. When tokens are, each will be for one attempt of
-one task of one admitted run. Submit will write the run's admission record,
-`metadata/snapshots/{ns}/{run-id}/identity/admission-{sha256}.json`, before
-the run starts. It will hold what the run's tasks may hold and who may start the
-run. It is to be named by the SHA-256 of its own bytes, and a 128-bit random nonce
-in it keeps that name secret until the run starts. Before it signs, the
-engine will check:
+A token is for one attempt of one task of one admitted run. A run is
+admitted when it, or any run of its tree, holds an identity: before its
+idempotency key is claimed and before it is started, the engine writes the
+run's admission record,
+`metadata/snapshots/{ns}/{run-id}/identity/admission-{sha256}.json`, under
+the run id it is about to start, and one for each child run the tree
+composes, each naming its parent's run and record. A record holds what each
+task that runs a container may hold (its pool, its spec digest, and for a
+task that holds an identity its identities, the attempts that may hold them
+and each attempt's deadline) and who may start the run: an engine itself, a
+schedule's fire, or the parent run. It is named by the SHA-256 of its own
+bytes, and a 128-bit random nonce in it keeps that name secret until the run
+starts: the run's plan carries the name, and nothing else does. A write that
+fails refuses the submission, unavailable, with no key claimed; a submission
+that loses its key to another deletes what it wrote. A task whose attempts,
+`max(1, retry.maximum_attempts)` plus `attempts_extra`, exceed
+`identity.attempts.max` is refused `IDENTITY_ATTEMPTS_OVER_LIMIT` before
+anything is written. Before it signs, the engine checks:
 
 - that the attempt is the cluster's current one for that task, held by the
   calling Orker;
 - that the run is the one its record was written for;
-- that the task is as it was admitted.
+- that the task is as it was admitted: its spec digest, one projection of
+  the fields the engine copies unchanged from the definition into the
+  task's input (`internal/task`, `IdentitySpecDigest`), is the one the
+  record holds. It binds the pinned image, the command, `env`, `with`, the
+  secrets, the network mode, `run_as_orker_user`, the identities, the
+  credentials, the grants and the device profiles the task names. It does
+  not bind the run's input, what a task reads from its needs, its pool or
+  its resources.
 
-A run an engine started itself will be tied to its record by
+A run an engine started itself is tied to its record by
 `metadata/snapshots/{ns}/{run-id}/identity/chain.json`, which names the
 first execution of the run's chain and the record's digest. The engine that
-starts the run will write it from the start's answer. If that write is lost, any
-engine that later needs it will write it. That will happen when a run carries on
-into a new generation, when a sealed run writes its first snapshot, and at
-a mint. It will be written only for an execution with no parent whose first
-start's input names the record's digest. It will be create-only: once it is
-there, no other execution of that run id fits it.
+starts the run writes it from the start's answer. If that write is lost, it
+is written when the run carries on into a new generation, after that
+switch's own objects are safe and without ever failing it, or by the first
+mint that needs it: only for an execution with no parent whose first
+start's input names the record's digest. It is create-only: once
+it is there, no other execution of that run id fits it.
 
 **What is left** (accepted in the task identity design). After the run
 starts, its record's digest is in the cluster's history, readable by
@@ -258,13 +543,33 @@ anyone who can read the cluster. Whoever holds the cluster's write access
 could start a second execution under the run id, with the same input, once
 the real one has ended. That execution would be taken for the run if no
 engine had yet written `chain.json` for it: not the starting engine, not a
-generation change and not a mint. The window is from the run's start until
-the first of those writes. It is open only to a holder of the cluster's
-write access, who can already drive the real run. Keep `chain.json`'s
-writes healthy: an engine will count each run whose record a second generation
-change also left unwritten (`ork.identity.start_record_incomplete`). An
-approval a task follows will be guarded separately: no approval will be
-applied, and no task's identity granted, without the engine's own record of it.
+generation change and not a mint. The window is from the run's start until the first of those writes.
+It is open only to a holder of the cluster's write access, who can already
+drive the real run. For a run a schedule fires, the digest is also in the
+fire's own history from the moment the fire prepared the run; a start under
+that id must still be a child of exactly that fire's execution, so the same
+holder is the only one who could use it (accepted, 2026-11-20). An approval a task follows will be guarded separately:
+no approval will be applied, and no task's identity granted, without the
+engine's own record of it.
+
+## What a task follows
+
+In a run whose tree holds an identity, each task that runs a container, is
+awaited or is composed **follows** the tasks of its run whose record of
+success it needs before it starts: under the default join, each task it
+names in `needs:` that leaves a record (a container task that is not a
+fan-out, an awaited task, a composed task); under `none_failed`, only such
+needs that always run (no `condition:`, the default join, and needs that
+always run); under `any_failed` or `all_done`, nothing. Through a sleeping
+task or a fan-out, which leave no record of their own, a task follows what
+they follow. A record stands for the chain behind it, so an approval three
+tasks upstream is followed without being named.
+
+`orkctl run plan` shows what each task follows. Creating and validating an
+Orkflow warn of a task that holds an identity and does not follow an
+approval or a composed task upstream of it (under its join, or through a
+need that may be skipped), and of one directly behind a sleeping task: a
+sleep has no record, so it does not hold the identity back.
 
 ## Administering the issuer
 

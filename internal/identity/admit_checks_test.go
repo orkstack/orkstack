@@ -400,3 +400,51 @@ func TestCheckBinding(t *testing.T) {
 		t.Fatal("a task not in the table is bound")
 	}
 }
+
+// TestCompleteRootChain: a switch completes a root's chain record by the
+// mint's rule, from the run's current describe: written only for an
+// execution with no parent whose first start names the admission; anything
+// unread is unavailable, and a run that is not executing is not admitted.
+func TestCompleteRootChain(t *testing.T) {
+	ctx := context.Background()
+	_, sha := admitted(t, "ork-1", artifacts.Starter{Kind: artifacts.StarterEngine}, nil)
+	current := ExecutionRef{WorkflowID: "ork-1"}
+	root := ExecutionFacts{WorkflowID: "ork-1", Open: true, ExecutionID: "e2", FirstExecutionID: "e1"}
+	for _, c := range []struct {
+		name     string
+		world    func(*startWorld)
+		want     StartVerdict
+		complete bool
+	}{
+		{"absent, and the first start names it", func(w *startWorld) { w.firstStart["ork-1/e1"] = sha }, StartAdmitted, true},
+		{"already there and the same", func(w *startWorld) {
+			w.chains["ork-1"] = found(artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: sha})
+		}, StartAdmitted, false},
+		{"the first start names another", func(w *startWorld) { w.firstStart["ork-1/e1"] = otherSHA }, StartNotAdmitted, false},
+		{"a parent", func(w *startWorld) {
+			f := root
+			f.Parent = &ExecutionRef{WorkflowID: "p", ExecutionID: "q"}
+			w.executions[current] = f
+			w.firstStart["ork-1/e1"] = sha
+		}, StartNotAdmitted, false},
+		{"not executing", func(w *startWorld) { delete(w.executions, current) }, StartNotAdmitted, false},
+		{"the describe fails", func(w *startWorld) { w.describeErr = errors.New("frontend down") }, StartUnavailable, false},
+		{"no first execution named", func(w *startWorld) {
+			f := root
+			f.FirstExecutionID = ""
+			w.executions[current] = f
+		}, StartUnavailable, false},
+		{"the first start cannot be read", func(w *startWorld) { w.firstErr = errors.New("history gone") }, StartUnavailable, false},
+	} {
+		w := &startWorld{executions: map[ExecutionRef]ExecutionFacts{current: root},
+			chains: map[string]artifacts.RecordRead[artifacts.Chain]{}, firstStart: map[string]string{}}
+		c.world(w)
+		got := CompleteRootChain(ctx, w, "default", "ork-1", sha)
+		if got.Verdict != c.want {
+			t.Errorf("%s: %+v; want %v", c.name, got, c.want)
+		}
+		if wrote := len(w.completed) == 1 && w.completed[0] == (artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: sha}); wrote != c.complete {
+			t.Errorf("%s: completed %v; want written %v", c.name, w.completed, c.complete)
+		}
+	}
+}

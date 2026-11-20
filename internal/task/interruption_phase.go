@@ -18,6 +18,7 @@ var interruptionPhases = map[string]orkstackv1.InterruptionPhase{
 	"memo":            orkstackv1.InterruptionPhase_INTERRUPTION_PHASE_BEFORE_START,
 	"stage-artifacts": orkstackv1.InterruptionPhase_INTERRUPTION_PHASE_BEFORE_START,
 	"image":           orkstackv1.InterruptionPhase_INTERRUPTION_PHASE_BEFORE_START,
+	"identity":        orkstackv1.InterruptionPhase_INTERRUPTION_PHASE_BEFORE_START,
 	"render":          orkstackv1.InterruptionPhase_INTERRUPTION_PHASE_BEFORE_START,
 	"create":          orkstackv1.InterruptionPhase_INTERRUPTION_PHASE_BEFORE_START,
 	// The container running, or being stopped at its timeout or a cancel.

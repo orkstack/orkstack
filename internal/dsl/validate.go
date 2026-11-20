@@ -197,6 +197,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		if err := validateDevices(taskIndex, task); err != nil {
 			return err
 		}
+		// Rules 53 and 55: a container task's identities.
+		if err := validateIdentities(taskIndex, task); err != nil {
+			return err
+		}
 		// Rule 6c: a secret names a file and a source, and the name is
 		// validated rather than sanitized so it can never escape the secrets
 		// directory.

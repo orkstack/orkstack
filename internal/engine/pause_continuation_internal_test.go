@@ -258,12 +258,12 @@ func TestPause_UnpauseDuringTheSwitchIsKept(t *testing.T) {
 	h.env.RegisterActivityWithOptions(activities.WriteSwitchSnapshot, activity.RegisterOptions{Name: ActivityWriteSwitchSnapshot})
 	unpaused := false
 	h.env.RegisterActivityWithOptions(func(ctx context.Context, run *orkstackv1.Run, generation, capBytes int64,
-		obs ContinuationObservationInput, loss *orkstackv1.RunLossEvents) (*orkstackv1.ContinuationObject, error) {
+		obs ContinuationObservationInput, loss *orkstackv1.RunLossEvents, chain string) (*orkstackv1.ContinuationObject, error) {
 		if !unpaused {
 			unpaused = true
 			h.env.SignalWorkflow(PauseSignal, pauseSignal(false, "0"))
 		}
-		return activities.WriteCheckpoint(ctx, run, generation, capBytes, obs, loss)
+		return activities.WriteCheckpoint(ctx, run, generation, capBytes, obs, loss, chain)
 	}, activity.RegisterOptions{Name: ActivityWriteCheckpoint})
 	h.taskTakes(10*time.Second, 0)
 	h.env.RegisterDelayedCallback(func() { h.env.SignalWorkflow(PauseSignal, pauseSignal(true, "0")) }, 5*time.Second)

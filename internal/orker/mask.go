@@ -262,6 +262,48 @@ func (m *attemptMask) text(s string) string {
 	return masker.Mask(s)
 }
 
+// Add masks a value that reaches the attempt after its secrets did, an
+// identity token, under holder, before any file holds it. With log masking
+// off it masks nothing, as for a secret.
+func (m *attemptMask) Add(holder string, value []byte) (bool, error) {
+	if m == nil {
+		return false, nil
+	}
+	if m.values {
+		// A token is refused in values.json as a secret is.
+		m.mu.Lock()
+		m.checked = append(m.checked, logstream.NamedValue{Name: holder, Value: value})
+		m.mu.Unlock()
+	}
+	if !m.logs {
+		// Said once for a value, at its first generation, not at every refresh.
+		if m.note != nil && strings.HasSuffix(holder, ":1") {
+			m.note(fmt.Sprintf("[ork] %s is not masked in logs: orker.log.mask_secrets is off on this pool", holder))
+		}
+		return false, nil
+	}
+	m.mu.Lock()
+	if m.masker == nil {
+		m.masker = logstream.NewMasker()
+	}
+	masker := m.masker
+	m.mu.Unlock()
+	return masker.Add(holder, value)
+}
+
+// Drop stops masking what holder alone held.
+func (m *attemptMask) Drop(holder string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	masker := m.masker
+	m.mu.Unlock()
+	if masker != nil {
+		masker.Drop(holder)
+	}
+}
+
 // active reports whether any value is masked.
 func (m *attemptMask) active() bool {
 	if m == nil {

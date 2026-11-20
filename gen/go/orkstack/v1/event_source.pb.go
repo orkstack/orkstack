@@ -1600,7 +1600,7 @@ var File_orkstack_v1_event_source_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_event_source_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorkstack/v1/event_source.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\"orkstack/v1/activity_service.proto\x1a\x18orkstack/v1/common.proto\x1a\x19orkstack/v1/orkflow.proto\"\xfd\x0e\n" +
+	"\x1eorkstack/v1/event_source.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\"orkstack/v1/activity_service.proto\x1a\x18orkstack/v1/common.proto\"\xfd\x0e\n" +
 	"\vEventSource\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x12\n" +
@@ -1864,7 +1864,6 @@ func file_orkstack_v1_event_source_proto_init() {
 	file_orkstack_v1_activity_proto_init()
 	file_orkstack_v1_activity_service_proto_init()
 	file_orkstack_v1_common_proto_init()
-	file_orkstack_v1_orkflow_proto_init()
 	file_orkstack_v1_event_source_proto_msgTypes[0].OneofWrappers = []any{}
 	file_orkstack_v1_event_source_proto_msgTypes[1].OneofWrappers = []any{}
 	file_orkstack_v1_event_source_proto_msgTypes[9].OneofWrappers = []any{}

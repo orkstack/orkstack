@@ -322,6 +322,26 @@ func checkEngineStart(ctx context.Context, r StartReader, adm artifacts.Admissio
 	}
 }
 
+// CompleteRootChain writes a root's chain record where it is absent, for
+// an engine that needs it outside a mint: the write a run makes when it
+// carries on into a new generation (docs/TASK_IDENTITY.md, "Which run a
+// token is for"). It is the mint's rule exactly: an execution with no
+// parent whose chain's first start names the admission sha256Hex. A record
+// already there that names this start is admitted.
+func CompleteRootChain(ctx context.Context, r StartReader, namespace, runID, sha256Hex string) StartAnswer {
+	facts, err := r.Describe(ctx, runID, "")
+	if errors.Is(err, ErrNoSuchExecution) {
+		return notAdmitted("run %s is not executing", runID)
+	}
+	if err != nil {
+		return unavailable("describe run %s: %v", runID, err)
+	}
+	if facts.FirstExecutionID == "" {
+		return unavailable("the cluster named no first execution of run %s", runID)
+	}
+	return checkEngineStart(ctx, r, artifacts.Admission{Namespace: artifacts.ResolveNamespace(namespace), RunID: runID}, sha256Hex, facts)
+}
+
 // CheckBinding says whether a task's attempt was dispatched with the spec
 // digest its admission holds for it. When not, it answers the admitting
 // engine's build, by which the Orker tells IDENTITY_SPEC_SKEW from
