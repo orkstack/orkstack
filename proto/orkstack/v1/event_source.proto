@@ -7,7 +7,6 @@ import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/activity_service.proto";
 import "orkstack/v1/common.proto";
-import "orkstack/v1/orkflow.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 

@@ -458,6 +458,14 @@ var Schema = []Var{
 	{Path: "orker.engine.auth.token_file", Env: orker.EngineAuthTokenFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.engine.auth.cert_file", Env: orker.EngineAuthCertFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.engine.auth.key_file", Env: orker.EngineAuthKeyFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
+	// orker.identity.* and orker.log.mask_grace are an Orker's task identity
+	// settings (docs/TASK_IDENTITY.md, "On the Orker").
+	{Path: "orker.identity.dir", Env: orker.IdentityDirVar, Binaries: usesOrker, Kind: KindString, Default: orker.DefaultIdentityDir},
+	{Path: "orker.identity.setup_budget", Env: orker.IdentitySetupBudgetVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentitySetupBudget)},
+	{Path: "orker.identity.retry_min", Env: orker.IdentityRetryMinVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentityRetryMin)},
+	{Path: "orker.identity.max_concurrent", Env: orker.IdentityMaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultIdentityMaxConcurrent)},
+	{Path: "orker.identity.max_clock_skew", Env: orker.IdentityMaxClockSkewVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentityMaxClockSkew)},
+	{Path: "orker.log.mask_grace", Env: orker.LogMaskGraceVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultLogMaskGrace)},
 
 	// auth.* is the engine's alone (docs/AUTHENTICATION.md). auth.issuers is
 	// a document: it re-serializes to ORK_AUTH_ISSUERS exactly like a
@@ -491,6 +499,16 @@ var Schema = []Var{
 	{Path: "identity.keys_copy_max_age", Env: "ORK_IDENTITY_KEYS_COPY_MAX_AGE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultKeysCopyMaxAge)},
 	{Path: "identity.subject_format", Env: "ORK_IDENTITY_SUBJECT_FORMAT", Binaries: usesOrk, Kind: KindString, Default: string(identity.DefaultSubjectFormat)},
 	{Path: "identity.spiffe.trust_domain", Env: "ORK_IDENTITY_SPIFFE_TRUST_DOMAIN", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no SPIFFE ID on any token"},
+	{Path: "identity.attempts.extra", Env: "ORK_IDENTITY_ATTEMPTS_EXTRA", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsExtra)},
+	{Path: "identity.attempts.max_extra", Env: "ORK_IDENTITY_ATTEMPTS_MAX_EXTRA", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsMaxExtra)},
+	{Path: "identity.attempts.max", Env: "ORK_IDENTITY_ATTEMPTS_MAX", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsMax)},
+	{Path: "identity.admission_cache_bytes", Env: "ORK_IDENTITY_ADMISSION_CACHE_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAdmissionCacheBytes)},
+	{Path: "identity.token.ttl", Env: "ORK_IDENTITY_TOKEN_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenTTL)},
+	{Path: "identity.token.min_ttl", Env: "ORK_IDENTITY_TOKEN_MIN_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenMinTTL)},
+	{Path: "identity.token.max_ttl", Env: "ORK_IDENTITY_TOKEN_MAX_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenMaxTTL)},
+	{Path: "identity.results.commit_wait", Env: "ORK_IDENTITY_RESULTS_COMMIT_WAIT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultCommitWait)},
+	{Path: "identity.issuance.records", Env: "ORK_IDENTITY_ISSUANCE_RECORDS", Binaries: usesOrk, Kind: KindString, Default: identity.IssuanceRequired},
+	{Path: "identity.unscoped_orkers", Env: "ORK_IDENTITY_UNSCOPED_ORKERS", Binaries: usesOrk, Kind: KindString, Default: identity.UnscopedRefuse},
 }
 
 // byEnv indexes Schema by environment variable name, built once at init so

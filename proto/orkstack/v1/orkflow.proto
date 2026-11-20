@@ -179,7 +179,9 @@ message Task {
   // identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
   repeated IdentityRef identities = 28;
 
-  // credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+  // credentials are the credentials the task holds, issued for each attempt
+  // by the namespace's grants (docs/PROVIDERS.md). In the canonical
+  // definition only when set.
   repeated CredentialRef credentials = 29;
 
   // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
@@ -373,14 +375,6 @@ message ChildArtifact {}
 // ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
 // batch).
 message ConcurrencySpec {}
-
-// CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
-// batch).
-message CredentialRef {}
-
-// IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message IdentityRef {}
 
 // OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
 // batch).

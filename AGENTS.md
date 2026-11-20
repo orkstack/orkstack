@@ -87,6 +87,13 @@ use Temporal Signals, including approval, external completion, resume, and abort
 The two exceptions are a cancel request and a force cancel's termination (§7,
 Force cancel); neither carries data into the workflow.
 
+One record is the stated exception: for a task that holds an identity,
+OrkStack records which attempts have held one, and refuses an identity to an
+attempt beyond the number of attempts the run's admission records for the
+task, or past the deadline that admission gives it. It is a record, never a
+lock. It decides only whether an attempt may hold an identity: never whether
+a task runs, is retried or has ended, which stay Temporal's.
+
 A concurrency limit is held per namespace and key by a Temporal workflow of its
 own (the concurrency gate), which exists only while the key has runs holding or
 queued for its slots, as an idempotency key is held by its claim workflow: those
@@ -130,6 +137,23 @@ attempt. None holds a private key, a task's token or a secret value; a sign-in
 record holds its identity provider's refresh token, encrypted. Object-store data is
 not mutable workflow execution state (Temporal workflow state) and must never
 become a second state machine. Temporal remains authoritative for execution state.
+The record of which attempts of a task have held an identity (§2.1) is one
+create-only object a slot, never changed; it moves nothing.
+
+Where task identity is on, every Orker's object-storage credential must
+reach only what an Orker writes (artifacts, logs, commits, attempt records,
+memos, probes): no definition, namespace, setting, schedule or event-source
+object (`metadata/schedules/`, `metadata/event-sources/`), nor anything of a
+run's saved state or under `metadata/identity/`. The store enforces that.
+Each Orker tests its own credential at boot and hourly and reports the
+result, and the check never pauses an Orker; by default
+(`identity.unscoped_orkers: refuse`) the engine refuses a submission that
+would hold an identity while any live Orker's credential is not confirmed
+scoped. The engine's credential is not scoped, and whoever holds it
+administers the deployment. Task identity therefore needs a store that
+scopes a credential by prefix, which the local backend is not. An Orker's
+credential still reaches the results of every namespace: one bucket is one
+trust domain for results.
 
 An Orkflow keeps its existing user-facing `name` and `version` identity, but
 its canonical definition also has a SHA-256 digest. The immutable definition is
@@ -170,6 +194,10 @@ The Orker bridges Temporal activities and OCI execution. It also runs services (
 must not receive Temporal credentials or APIs, object-storage credentials, or
 OrkStack control-plane credentials unless a user explicitly supplies them as
 workload secrets. The Orker is the security boundary.
+
+A task identity token is a credential OrkStack issues to one attempt,
+because its task declared one. It names the attempt, expires within hours,
+and is accepted by no OrkStack API: it is not a control-plane credential.
 
 ## 3. OCI Activity Contract
 
@@ -663,6 +691,17 @@ such a value only under a source of the task's own. A bearer credential
 OrkStack mints for a caller (a trigger token, an await callback token) is
 disclosed once and stored only as a salted hash.
 
+A credential of the cluster's namespace is trusted with everything Temporal
+carries: what a run does next, a Signal and so an approval, every event,
+every Orker's channel. By default each Orker holds one. A deployment may
+narrow an Orker's on a cluster that can; OrkStack neither requires that nor
+depends on it for anything it claims.
+
+Task identity exists only where callers are authenticated (`auth.mode:
+enforce`); a deployment that uses it is expected to reach the cluster with a
+credential. Elsewhere the engine issues no token: a token's subject is only
+as trustworthy as the permissions that produce it.
+
 With `auth.mode: enforce` every request is authenticated and every RPC
 requires a permission (`docs/ACCESS.md`). Roles and bindings are one document
 in object storage, changed by compare-and-swap; each replica decides from a
@@ -1028,7 +1067,8 @@ An Orkflow name is unique within a namespace. Names are validated, never
 sanitized, by the same rule at each boundary:
 `^[a-z][a-z0-9-]*$`, at most 200 bytes, for namespaces, Orkflow names, task IDs,
 and pools. The built-in `default` namespace always resolves, is never stored,
-and cannot be deleted. Archive indexes are namespace-first.
+and cannot be deleted. Its namespace document is never stored, while a side
+record such as its identity policy may be. Archive indexes are namespace-first.
 
 Creating `default` writes nothing: an identical namespace specification is a
 no-op, a different specification is a conflict, and deleting `default` is
@@ -1056,7 +1096,18 @@ control channels, and then decides the
 image-policy selection, telemetry selection, cache plan, every composed
 child's plan, the origin, any await callback tokens, and each task's
 fairness key (its namespace) and weight. All of it rides the
-replay-pinned `RunPlan` and is never re-read. Every refusal happens before a
+replay-pinned `RunPlan` and is never re-read. A run that a schedule or a trigger starts
+holds an identity only if the engine wrote that object,
+the principal who bound it may submit the Orkflow when the run is admitted,
+and someone consented to the identities the Orkflow asks for. Binding and
+consent are acts a person names; saving an object unchanged is neither. That
+decides a new run at its own admission; it is not retroactive. One thing is
+asked again, by the API and never by workflow code: when an attempt asks for
+an identity token, the engine checks that the namespace still allows that
+audience, so removing one stops new tokens at the next refresh. It un-admits
+nothing: the run goes on, and the attempt is refused its token with that
+reason. A cached task's memo hit asks
+nothing and is not covered. Every refusal happens before a
 run ID is minted or an idempotency key claimed, so a refused submission leaves
 nothing behind. Admission is never retroactive. A guard that reads the
 cluster's index or usage (`max_running`, an enforced budget) is a lock-free
@@ -1088,7 +1139,12 @@ original replica is gone. Aggregates (stats, failures, flakes, usage, cache
 hit rates) are derived on read from Temporal and the records already in object
 storage; there is no stored counter or index database. Audit, delivery and
 attempt records are immutable objects written once; they are records, never a
-read path for a decision. The object-index markers and the cleanup and GC
+read path for a decision. Four things in object storage are the stated exception, read
+for one decision only, whether an attempt may be issued an identity token: a run's
+admission, the record of a start an engine made, the set the API keeps of
+each schedule's accepted records, which is maintained and not written once,
+and the record of which attempts of a task have held an identity. None says
+whether a run is open or who holds its attempt; Temporal does. The object-index markers and the cleanup and GC
 records are the one exception: the artifact GC reads them, with the run's
 archive body and the cluster's index of runs, to decide a delete, and nothing
 else decides from them. The run-objects list is not write-once: `PutRun`

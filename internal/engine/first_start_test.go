@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	commonpb "go.temporal.io/api/common/v1"
@@ -132,5 +133,42 @@ func TestFirstStart_ReadsTheKeyedFixture(t *testing.T) {
 	got, err := newRunReader(fc, converter.GetDefaultDataConverter()).FirstStart(context.Background(), "ork-k")
 	if err != nil || !got.Held || got.Fingerprint == "" {
 		t.Fatalf("FirstStart of the keyed fixture = %+v, %v; want held with its fingerprint", got, err)
+	}
+}
+
+// FirstStartAdmission reads the admission digest the named execution's
+// start carried, by that execution's id: never a later generation's, whose
+// input whoever answers the run's workflow tasks chooses. A start with no
+// admission names none; every failed read is an error, never "none".
+func TestFirstStartAdmission(t *testing.T) {
+	const runID = "ork-x"
+	ctx := context.Background()
+	digest := "ab" + strings.Repeat("0", 62)
+	plan := RunPlan{Identity: &IdentityPlan{AdmissionSHA256: digest, SpecVersion: 1}}
+	fc := &fakeReadClient{generations: map[string]map[string]*fakeHistory{runID: {
+		"e1": {events: []*historypb.HistoryEvent{startedWithPlan(t, runID, plan)}},
+		"e2": {events: []*historypb.HistoryEvent{startedWithPlan(t, "", RunPlan{Identity: &IdentityPlan{AdmissionSHA256: "forged"}})}},
+		"e3": {events: []*historypb.HistoryEvent{startedWithPlan(t, runID, RunPlan{})}},
+		"e4": {err: serviceerror.NewDeadlineExceeded("slow")},
+	}}}
+	r := newRunReader(fc, converter.GetDefaultDataConverter())
+	if got, err := r.FirstStartAdmission(ctx, runID, "e1"); err != nil || got != digest {
+		t.Fatalf("e1: %q, %v; want %q", got, err, digest)
+	}
+	if len(fc.historyExecutions) != 1 || fc.historyExecutions[0] != "e1" {
+		t.Fatalf("history read executions %v, want [e1]", fc.historyExecutions)
+	}
+	if got, err := r.FirstStartAdmission(ctx, runID, "e3"); err != nil || got != "" {
+		t.Fatalf("a start with no admission: %q, %v; want none", got, err)
+	}
+	for _, execution := range []string{"e4", "gone", ""} {
+		if got, err := r.FirstStartAdmission(ctx, runID, execution); err == nil {
+			t.Fatalf("execution %q: %q, nil; want an error", execution, got)
+		}
+	}
+	// FirstStart names the first execution's digest beside its fingerprint.
+	fc.describes = map[string]*workflowservice.DescribeWorkflowExecutionResponse{runID: describeWithFirst("e1")}
+	if got, err := r.FirstStart(ctx, runID); err != nil || got.AdmissionSHA256 != digest {
+		t.Fatalf("FirstStart = %+v, %v; want admission %q", got, err, digest)
 	}
 }

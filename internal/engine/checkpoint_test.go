@@ -369,15 +369,15 @@ func TestDecodeEventSegment_VerifiesSizeAndHash(t *testing.T) {
 func TestWriteCheckpoint_TheCapIsInclusive(t *testing.T) {
 	run := checkpointRunForTest()
 	in := ContinuationObservationInput{Namespace: "team-a"}
-	sized, err := NewSnapshotActivities(newMemSnapshotStore()).WriteCheckpoint(context.Background(), run, 1, 1<<30, in, nil)
+	sized, err := NewSnapshotActivities(newMemSnapshotStore()).WriteCheckpoint(context.Background(), run, 1, 1<<30, in, nil, "")
 	if err != nil || sized.GetUri() == "" {
 		t.Fatalf("WriteCheckpoint = %v, %v; want it written", sized, err)
 	}
-	at, err := NewSnapshotActivities(newMemSnapshotStore()).WriteCheckpoint(context.Background(), run, 1, sized.GetSizeBytes(), in, nil)
+	at, err := NewSnapshotActivities(newMemSnapshotStore()).WriteCheckpoint(context.Background(), run, 1, sized.GetSizeBytes(), in, nil, "")
 	if err != nil || at.GetUri() == "" || at.GetSizeBytes() != sized.GetSizeBytes() {
 		t.Fatalf("a checkpoint of exactly its cap = %v, %v; want it written", at, err)
 	}
-	over, err := NewSnapshotActivities(newMemSnapshotStore()).WriteCheckpoint(context.Background(), run, 1, sized.GetSizeBytes()-1, in, nil)
+	over, err := NewSnapshotActivities(newMemSnapshotStore()).WriteCheckpoint(context.Background(), run, 1, sized.GetSizeBytes()-1, in, nil, "")
 	if err != nil || over.GetUri() != "" || over.GetSizeBytes() != sized.GetSizeBytes() {
 		t.Fatalf("a checkpoint one byte over its cap = %v, %v; want its size and no URI", over, err)
 	}

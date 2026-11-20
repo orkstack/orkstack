@@ -845,6 +845,9 @@ type taskJSON struct {
 	// SchemaVersion at 1 and costs a workload that never heard of fan-out
 	// nothing.
 	Each *taskJSONEach `json:"each,omitzero"`
+	// Identities is present ONLY for a task that declares an identity: each
+	// one's name, audience and the file its token is read from.
+	Identities []taskJSONIdentity `json:"identities,omitzero"`
 	// Join is present ONLY for a failure handler, absent as a key otherwise
 	// — the precedent of task.pin and each: an added optional key keeps
 	// SchemaVersion at 1 and costs a workload that never heard of joins
@@ -1023,6 +1026,17 @@ type taskJSONPaths struct {
 	// itself does not exist for an unpinned one, so naming its path would be a
 	// lie rather than a convenience (§3.1).
 	Shared string `json:"shared,omitempty"`
+	// Identity is /orkstack/identity, present only for a task that declares
+	// an identity, as the mount is.
+	Identity string `json:"identity,omitempty"`
+}
+
+// taskJSONIdentity is one identity a task holds, as task.json names it:
+// never a token.
+type taskJSONIdentity struct {
+	Name     string `json:"name"`
+	Audience string `json:"audience"`
+	Path     string `json:"path"`
 }
 
 type taskJSONInputs struct {
@@ -1064,6 +1078,9 @@ type taskJSONSecret struct {
 
 // TaskContext is everything the workspace needs that is not on the wire.
 type TaskContext struct {
+	// Identities are the identities the attempt holds, whose files are
+	// bound at /orkstack/identity; nil for a task that declares none.
+	Identities     []*orkstackv1.IdentityRef
 	Attempt        int32
 	Pool           string
 	Namespace      string
@@ -1176,6 +1193,15 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 	if tc.Pin != nil {
 		doc.Paths.Shared = ContainerShared
 		doc.Task.Pin = &taskJSONPin{Name: tc.Pin.GetName(), InstanceID: tc.Pin.GetInstanceId()}
+	}
+	// paths.identity and identities exist only for a task that declares an
+	// identity, as the mount does.
+	if len(tc.Identities) > 0 {
+		doc.Paths.Identity = identityMountPath
+		for _, id := range tc.Identities {
+			doc.Identities = append(doc.Identities, taskJSONIdentity{Name: id.GetName(), Audience: id.GetAudience(),
+				Path: identityMountPath + "/" + id.GetName() + "/token"})
+		}
 	}
 	// each exists only for an item of a fan-out (§3.2), as task.pin does.
 	if e := tc.Each; e != nil {

@@ -206,6 +206,7 @@ func newScheduleCreateCommand(g *globalFlags) *cobra.Command {
 		inputJSON   string
 		description string
 		paused      bool
+		consent     string
 	)
 	cmd := &cobra.Command{
 		Use:   "create NAME --orkflow ORKFLOW (--cron EXPR ... | --interval DUR)",
@@ -215,7 +216,9 @@ func newScheduleCreateCommand(g *globalFlags) *cobra.Command {
 			"pointer, resolved at each fire. --overlap decides what happens when a\n" +
 			"fire is due while the previous run still executes; the default is skip.\n" +
 			"--paused creates it paused, so 'orkctl schedule get' shows the next fire\n" +
-			"times before it ever fires.",
+			"times before it ever fires.\n\n" +
+			"When the orkflow asks for an identity, create needs --consent=DIGEST: the\n" +
+			"digest of what it asks for, which a create without it hands out.",
 		Example: "  orkctl schedule create nightly --orkflow reconcile --cron '0 2 * * *' \\\n" +
 			"    --timezone Europe/Lisbon --overlap skip --paused",
 		Args: cobra.ExactArgs(1),
@@ -231,6 +234,7 @@ func newScheduleCreateCommand(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			request.Consent = consent
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 			response, err := g.scheduleClient().CreateSchedule(ctx, connect.NewRequest(request))
@@ -251,6 +255,7 @@ func newScheduleCreateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&inputJSON, "input-json", "", "input as one JSON object, submitted at every fire")
 	cmd.Flags().StringVar(&description, "description", "", "operator label for this schedule")
 	cmd.Flags().BoolVar(&paused, "paused", false, "create the schedule paused")
+	addConsentFlag(cmd, &consent, false)
 	return cmd
 }
 
@@ -356,6 +361,7 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 		clearInput    bool
 		description   string
 		rebind        bool
+		consent       string
 	)
 	cmd := &cobra.Command{
 		Use:   "update NAME [flags]",
@@ -367,7 +373,10 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 			"create instead.\n\n" +
 			"An update that changes the version pin or the input makes you the\n" +
 			"schedule's binder: the principal its runs are recorded against. --rebind\n" +
-			"makes you the binder without changing anything else.\n\n" +
+			"makes you the binder without changing anything else. A save that binds\n" +
+			"needs --consent when the Orkflow asks for an identity: the digest of\n" +
+			"what it asks for, which schedule get shows (--consent alone shows it and\n" +
+			"asks). A consent changes no binder.\n\n" +
 			"Last writer wins: two concurrent updates are not detected.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -391,6 +400,11 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 				return err
 			}
 			request.Rebind = rebind
+			if request.Consent, err = g.resolveConsent(cmd, consent, "schedule update "+args[0],
+				current.Msg.GetSchedule().GetAsksFor(), current.Msg.GetSchedule().GetConsented(),
+				request.GetOrkflowVersion() != current.Msg.GetSchedule().GetOrkflowVersion()); err != nil {
+				return err
+			}
 			response, err := g.scheduleClient().UpdateSchedule(ctx, connect.NewRequest(request))
 			if err != nil {
 				return rpcError("update schedule", err)
@@ -410,6 +424,7 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&clearInput, "clear-input", false, "clear the input")
 	cmd.Flags().StringVar(&description, "description", "", "replace the description")
 	cmd.Flags().BoolVar(&rebind, "rebind", false, "make yourself the schedule's binder, changing nothing else")
+	addConsentFlag(cmd, &consent, true)
 	return cmd
 }
 

@@ -212,6 +212,7 @@ orker:
     flush_interval: 500ms  # orker
     max_bytes: 16777216  # 16 MiB; orker
     mask_secrets: true  # orker
+    mask_grace: 5m  # orker
   resources:
     default_cpu: 1  # orker
     default_memory: 1Gi  # orker
@@ -244,6 +245,12 @@ orker:
       token_file: ""  # orker
       cert_file: ""  # orker
       key_file: ""  # orker
+  identity:
+    dir: auto  # orker
+    setup_budget: 2m  # orker
+    retry_min: 5s  # orker
+    max_concurrent: 8  # orker
+    max_clock_skew: 2m  # orker
 
 telemetry:
   log_format: text
@@ -313,3 +320,17 @@ identity:
   subject_format: ork  # ork
   spiffe:
     trust_domain: ""  # ork; no SPIFFE ID on any token
+  attempts:
+    extra: 0  # ork
+    max_extra: 4  # ork
+    max: 32  # ork
+  admission_cache_bytes: 134217728  # ork
+  token:
+    ttl: 1h  # ork
+    min_ttl: 10m  # ork
+    max_ttl: 12h  # ork
+  results:
+    commit_wait: 15m  # ork
+  issuance:
+    records: required  # ork
+  unscoped_orkers: refuse  # ork

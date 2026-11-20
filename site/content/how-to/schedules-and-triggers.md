@@ -142,7 +142,7 @@ A failed request starts no run.
 
 ## Who a schedule or trigger runs as
 
-Each schedule and trigger records its binder: who created it, changed what it starts, or last rebound it. `orkctl schedule get` and `orkctl trigger update` show the consent recorded with it. A schedule or trigger made before this release has none; record one with `--rebind`:
+Each schedule and trigger records its binder: who created it, changed what it starts, or last rebound it, and a consent to what its Orkflow asks for. When the Orkflow asks for an identity, a save that binds needs `--consent=DIGEST`, the digest the refusal or `orkctl schedule get` shows you. `orkctl schedule get` and `orkctl trigger update` show the consent recorded with it. A schedule or trigger made before this release has none; record one with `--rebind`:
 
 ```bash
 orkctl schedule update nightly --rebind

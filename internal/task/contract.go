@@ -237,7 +237,35 @@ type HeartbeatProgress struct {
 	// of the beat and leniently: a usage it cannot read leaves the beat's
 	// other fields readable. An older Orker never sends it.
 	Usage jsontext.Value `json:"usage,omitempty"`
+	// Identities is, for a task that declares them, each identity's state:
+	// at most HeartbeatIdentitiesMax entries, never a value, a jti or a
+	// path. An older Orker never sends it.
+	Identities []HeartbeatIdentity `json:"identities,omitempty"`
 }
+
+// HeartbeatIdentitiesMax bounds what one beat says of an attempt's
+// identities and credentials.
+const HeartbeatIdentitiesMax = 16
+
+// HeartbeatIdentity is one identity's state as a beat carries it.
+type HeartbeatIdentity struct {
+	Name string `json:"name"`
+	// Kind is "identity" for a task's identity token.
+	Kind string `json:"kind"`
+	// LastRefresh and ExpiresAt are RFC 3339 instants: when what is on
+	// disk was issued, and when it expires.
+	LastRefresh string `json:"last_refresh"`
+	ExpiresAt   string `json:"expires_at"`
+	// State is HeartbeatIdentityFresh, Retrying or Expired.
+	State string `json:"state"`
+}
+
+// The states a beat gives an identity.
+const (
+	HeartbeatIdentityFresh    = "fresh"
+	HeartbeatIdentityRetrying = "retrying"
+	HeartbeatIdentityExpired  = "expired"
+)
 
 // HeartbeatUsage is the live usage a beat carries: the sampler's last
 // reading and its age, the sampler's interval and the beat's tick, so the

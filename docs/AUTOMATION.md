@@ -127,6 +127,7 @@ that one field; each key absent leaves the stored value exactly as it is.
 | `allowed_secrets` | list of strings | `[]` | set |
 | `require_signed_by` | string | `""` | exact |
 | `budget` | mapping: `cpu_seconds`, `gib_seconds` (integers ≥ 0), `period` (Go duration), `enforce` (boolean) — the `--budget-*` flags | `{}` | per sub-field; written as a unit, an all-zero budget is unset (`--clear-budget`) |
+| `identity` | mapping: the namespace's identity policy (below), written in an update of its own | `{}` | per sub-field; written as a unit |
 
 The comparisons are exactly `CreateNamespace`'s idempotency comparison. A
 document never manages `name` (it is `namespace:`), the registry-owned
@@ -134,6 +135,21 @@ document never manages `name` (it is `namespace:`), the registry-owned
 `settings.hold` is refused, and a live hold is shown as a note and never
 changed. A namespace field a later release adds must be classified as managed
 or unmanaged before it ships; a test walks the descriptor and fails otherwise.
+
+**`identity`, the namespace's identity policy.**
+
+The namespace's identity policy (docs/TASK_IDENTITY.md, "A namespace's
+identity policy"), written as a unit: a document that sets `identity` sets
+every key below, and one it leaves out is cleared. The server writes the
+policy in an update of its own, so a plan that changes it beside other
+settings has two namespace steps, the settings first and the policy after.
+
+| Key | Value | Absent means |
+| --- | --- | --- |
+| `audiences` | list of strings: token audiences the namespace's tasks may ask for; a trailing `*` matches any rest | none |
+| `grants` | mapping of grant names, each with `provider`, `principal`, `orkflows` (a name, `*` or `<owner>/<name>`), `current_only` (boolean) and `origins` (`submit`, `schedule`, `trigger`, `event-source`, `parent-run`, `run-again`) | none |
+| `identities_current_only` | boolean: give an identity only to a run of its Orkflow's current version | `false` |
+| `attempts_extra` | integer ≥ 0, at most `identity.attempts.max_extra`: attempts past a task's own retries that may hold its identity | the deployment's `identity.attempts.extra` |
 
 ### `schedules`
 
@@ -349,7 +365,8 @@ empty exactly when nothing was planned; an empty digest never matches.
 
 ```text
 orkctl automation apply <file|dir>... [--dry-run | --check] [--prune]
-                        [--expect-plan sha256:HEX] [--secrets-out PATH] [-n NS] [-j]
+                        [--expect-plan sha256:HEX] [--secrets-out PATH]
+                        [--consent KIND/NAME=DIGEST]... [-n NS] [-j]
 ```
 
 Each argument is an automation document, or a directory read non-recursively
@@ -384,6 +401,16 @@ Nothing is written until every document has been read, validated and planned:
    gone is `already gone`; any other failure stops everything after it. A partial
    apply is reported, not rolled back: running apply again plans from what now
    exists and finishes.
+
+An apply that creates a schedule, trigger or event source, or changes what one
+submits, makes you its binder, and needs that object's consent when its
+Orkflow asks for an identity: `--consent schedule/nightly=c1:…`, once an
+object ([TASK_IDENTITY.md](./TASK_IDENTITY.md#consent)). The plan warns with
+the digest. A `--consent` that is malformed, given twice, or names an object
+the apply does not save refuses the invocation before anything is written.
+A stale consent of an object the plan leaves as it is is a warning with the
+digest to consent to, never a step, so it is not in the plan's digest. An
+apply of an unchanged document changes no binder and no consent.
 
 A trigger token, or a webhook secret the engine generated, is printed once with
 the trigger's runnable `curl` — or, with `--secrets-out PATH`, written to a new

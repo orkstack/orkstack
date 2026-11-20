@@ -396,6 +396,15 @@ func renderPromotion(out io.Writer, resp *orkstackv1.SetCurrentOrkflowVersionRes
 		fmt.Fprintf(out, "Interface against %s: BREAKING, acknowledged (orkctl orkflow compat %s %s %s "+
 			"lists what breaks)\n", compared, name, compared, current)
 	}
+	if stale := resp.GetStaleConsent(); len(stale) > 0 {
+		fmt.Fprintf(out, "Refused an identity until someone consents to what version %s asks for:\n", current)
+		for _, c := range stale {
+			fmt.Fprintf(out, "  %s %s: orkctl %s update %s --consent=%s\n", c.GetKind(), c.GetName(), c.GetKind(), c.GetName(), c.GetDigest())
+		}
+	}
+	if why := resp.GetStaleConsentUnchecked(); why != "" {
+		fmt.Fprintf(out, "Could not check every schedule, trigger and event source that follows the pointer for a stale consent: %s\n", why)
+	}
 	return nil
 }
 

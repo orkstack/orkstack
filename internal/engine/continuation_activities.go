@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.temporal.io/sdk/activity"
@@ -278,6 +279,7 @@ func (a *SnapshotActivities) WriteCheckpoint(
 	capBytes int64,
 	obs ContinuationObservationInput,
 	lossEvents *orkstackv1.RunLossEvents,
+	chainAdmission string,
 ) (*orkstackv1.ContinuationObject, error) {
 	started := time.Now()
 	failed := func(err error) (*orkstackv1.ContinuationObject, error) {
@@ -328,7 +330,40 @@ func (a *SnapshotActivities) WriteCheckpoint(
 	a.observeWrite(ctx, ContinuationWriteObservation{Namespace: obs.Namespace, Kind: artifacts.ContinuationKindCheckpoint,
 		Outcome: ContinuationOutcomeWritten, StateBytes: obj.SizeBytes, Seconds: time.Since(started).Seconds(),
 		HoldSeconds: obs.HoldSeconds})
+	a.completeChain(ctx, run, chainAdmission)
 	return obj, nil
+}
+
+// chainCompleteBound is the time a switch gives its run's chain record.
+const chainCompleteBound = 5 * time.Second
+
+// chainCompleteMargin is what a switch's attempt keeps for itself past a
+// completion: the time to answer with the checkpoint it stored.
+const chainCompleteMargin = 2 * time.Second
+
+// completeChain writes an admitted root run's chain record, after the
+// switch's own objects are safe, in time of its own: nothing it does can
+// fail the switch. One it cannot write is logged and left for the next
+// switch and for every mint.
+func (a *SnapshotActivities) completeChain(ctx context.Context, run *orkstackv1.Run, admissionSHA256 string) {
+	if a.chains == nil || admissionSHA256 == "" {
+		return
+	}
+	// Only in time the attempt can spare: a completion never runs the
+	// switch's own write out of its deadline, which would discard it.
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < chainCompleteBound+chainCompleteMargin {
+		return
+	}
+	bounded, cancel := context.WithTimeout(ctx, chainCompleteBound)
+	defer cancel()
+	if err := a.chains(bounded, run.GetNamespace(), run.GetId(), admissionSHA256); err != nil {
+		const msg = "the run's chain record was not written at its switch; the next switch and every mint write it"
+		if activity.IsActivity(ctx) {
+			activity.GetLogger(ctx).Warn(msg, "run_id", run.GetId(), "err", err)
+		} else {
+			slog.Warn(msg, "run_id", run.GetId(), "err", err)
+		}
+	}
 }
 
 // ReadContinuationChunk reads length bytes at offset of a run's saved state

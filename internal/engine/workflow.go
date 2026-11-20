@@ -2194,7 +2194,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		return nil, err
 	}
 
-	activityCtx := s.taskActivityContext(activityBase, t, queue, taskRun, id)
+	activityCtx := s.taskActivityContext(activityBase, t, queue, taskRun, id, artifacts.Item{})
 
 	if !detached {
 		input, inputErr = s.taskDispatch(t, id, pool, pinContext)
@@ -2277,7 +2277,7 @@ func (s *runState) taskDispatchInput(
 // with — every item of a fan-out uses its node's, so an item has the task's own
 // timeout, grace, heartbeat and retry budget.
 func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstackv1.Task, queue string,
-	row *orkstackv1.TaskRun, key string) workflow.Context {
+	row *orkstackv1.TaskRun, key string, item artifacts.Item) workflow.Context {
 	// The three timeouts must not be confused, and this is where the
 	// confusion would happen (§6.3):
 	//
@@ -2308,7 +2308,12 @@ func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstac
 		// swaps it for the session's own at ExecuteActivity, so setting it
 		// here is harmless and ignored — and it stays because the pool is what
 		// the author wrote and what every client is told (§6.3).
-		TaskQueue:           queue,
+		TaskQueue: queue,
+		// A run that is admitted names each attempt of a task by the task,
+		// and of an item by the item: the mint finds the attempt it is asked
+		// for under that id in the cluster's describe. Every other run's
+		// activities keep the ids the SDK gives them.
+		ActivityID:          s.attemptActivityID(t.GetId(), item),
 		StartToCloseTimeout: startToClose,
 		// Temporal delivers cancellation to an activity ONLY through a
 		// heartbeat response, so an Orker that never heartbeats can never be
@@ -2394,6 +2399,29 @@ func (s *runState) executeTaskInput(
 		// — every item of a cached fan-out included — so every other task's
 		// payload is byte-identical to what it was before this field existed.
 		Cache: s.cacheContextFor(t),
+
+		// Set ONLY for a task that declares identities or credentials, of a
+		// run its plan admitted: what its attempt needs to ask for its tokens.
+		Identity: s.identityContextFor(t),
+	}
+}
+
+// identityContextFor is t's IdentityContext, or nil for a task that holds no
+// identity or a run with no admission. Everything in it comes from the plan
+// the submitting engine pinned and from the definition, copied verbatim, so
+// an Orker that hashes its input computes the digest the admission recorded.
+// The scopes are 0: this release resumes no run under a new scope.
+func (s *runState) identityContextFor(t *orkstackv1.Task) *orkstackv1.IdentityContext {
+	id := s.plan.Identity
+	if id == nil || (len(t.GetIdentities()) == 0 && len(t.GetCredentials()) == 0) {
+		return nil
+	}
+	return &orkstackv1.IdentityContext{
+		Issuer:          id.Issuer,
+		Identities:      t.GetIdentities(),
+		Credentials:     t.GetCredentials(),
+		AdmissionSha256: id.AdmissionSHA256,
+		DigestVersion:   id.SpecVersion,
 	}
 }
 

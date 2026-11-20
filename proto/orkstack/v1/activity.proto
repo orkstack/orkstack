@@ -655,6 +655,13 @@ message ActivityCommit {
   // §5.4 adoption of it on a retry is the ordinary one. memo_written,
   // memo_write_error and key_components are never set here.
   CacheResult cache = 19;
+
+  // recorded is set by the engine on a result it records for a run whose
+  // results the engine records (docs/TASK_IDENTITY.md, "Results the engine
+  // records"): the pool, the Orker id the caller's credential names, the
+  // admission's digest, the engine's build and the time. Never set by an
+  // Orker; unset on every other commit.
+  CommitRecording recorded = 20;
 }
 
 // ---------------------------------------------------------------- the identity records
@@ -901,10 +908,21 @@ message DescribeOrkerResult {
   // cordoned is true while any is set.
   repeated ProfileCordon profile_cordons = 28;
 
-  // identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // identity_supported is whether this Orker serves task identity now: its
+  // engine confirmed, within the last ten minutes, that its credential names
+  // it and holds identity.token.mint and task.result.commit at its pool,
+  // and its storage credential is confirmed scoped. It alone decides.
   bool identity_supported = 33;
+  // identity_unsupported_reason says why this Orker does not serve task
+  // identity, for display and for naming the cause in a refusal; empty while
+  // identity_supported. It decides nothing.
+  string identity_unsupported_reason = 45;
+  // identity_storage is where this Orker keeps identity token and
+  // credential files: memory-backed storage, or the work root's disk.
+  IdentityStorage identity_storage = 46;
 
-  // providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+  // providers are the providers this Orker declares (ORK_PROVIDERS), which
+  // submit asks every Orker of a pool a task that names one would run on.
   repeated ProviderInfo providers = 34;
 
   // masks_secrets is whether this Orker masks a task's secrets in its logs
@@ -1134,9 +1152,97 @@ message IndexEachLinesResult {
   ArtifactRef index = 3;
 }
 
-// IdentityContext is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message IdentityContext {}
+// IdentityRef is one identity a task holds: a token for one audience,
+// minted for each attempt and refreshed while it runs
+// (docs/TASK_IDENTITY.md).
+message IdentityRef {
+  // name names the identity within its task: the file it is written to.
+  string name = 1;
+  // audience is the token's aud: one the namespace's identity policy allows.
+  string audience = 2;
+  // ttl_seconds is the token's life, held between the deployment's
+  // identity.token.min_ttl and max_ttl; 0 is identity.token.ttl.
+  int32 ttl_seconds = 3;
+  // refresh says what a refresh that keeps failing does to the attempt.
+  RefreshPolicy refresh = 4;
+}
+
+// RefreshPolicy is what a refresh that keeps failing does to the attempt.
+enum RefreshPolicy {
+  // REFRESH_POLICY_UNSPECIFIED is REFRESH_POLICY_REQUIRED.
+  REFRESH_POLICY_UNSPECIFIED = 0;
+  // REFRESH_POLICY_REQUIRED ends the attempt when its token expires
+  // unrefreshed.
+  REFRESH_POLICY_REQUIRED = 1;
+  // REFRESH_POLICY_BEST_EFFORT lets the attempt run on with an expired
+  // token.
+  REFRESH_POLICY_BEST_EFFORT = 2;
+}
+
+// CredentialRef is one credential a task holds: a bundle of files a
+// provider issues for each attempt, as the namespace's grant, and the Orker
+// keeps fresh while the container runs (docs/PROVIDERS.md). It never holds a
+// value.
+message CredentialRef {
+  // name names the credential within its task: the directory it is written
+  // to, /orkstack/credentials/<name>/. ^[a-z][a-z0-9-]{0,62}$, unique in the
+  // task.
+  string name = 1;
+  // grant is a grant of the namespace's identity policy that admits this
+  // Orkflow: which provider, and as whom.
+  string grant = 2;
+  // path is where the provider issues from, for a provider type that issues
+  // from a path; empty for a credential that is the login itself. A locator,
+  // validated and never normalized.
+  string path = 3;
+  // refresh says what a refresh that keeps failing does to the attempt.
+  RefreshPolicy refresh = 4;
+  // params are the literal parameters of a path the provider writes rather
+  // than reads: never templated, at most 16 keys and 4 KiB.
+  map<string, string> params = 5;
+}
+
+// IdentityContext is what an attempt of a task that holds an identity needs
+// to ask for its tokens (docs/TASK_IDENTITY.md), set at submit and pinned
+// in the run's plan. It is set only on a task of a run that holds one.
+message IdentityContext {
+  // issuer is the issuer the run's tokens come from.
+  string issuer = 1;
+  // identities are the task's identities, as admitted.
+  repeated IdentityRef identities = 2;
+  // credentials are the task's credentials, as admitted.
+  repeated CredentialRef credentials = 3;
+  // 4 is the grants the task uses as resolved at submit, added with
+  // providers.
+  reserved 4;
+  // admission_sha256 is the digest of the run's admission record, which a
+  // mint names.
+  string admission_sha256 = 5;
+  // digest_version is the version of the task digest the engine computed
+  // at admission, which the Orker computes again.
+  uint32 digest_version = 6;
+  // root_scope is, for a run below a root, the root's resume scope when the
+  // run was started; 0 otherwise.
+  uint64 root_scope = 7;
+  // resume_scope is the attempt's own resume scope, as
+  // MintAttemptTokensRequest.resume_scope reads it.
+  uint64 resume_scope = 8;
+  // commit_wait_seconds is how long the Orker waits for an engine at a
+  // commit, pinned when the run was submitted
+  // (identity.results.commit_wait).
+  int32 commit_wait_seconds = 20;
+}
+
+// IdentityStorage is where an Orker keeps identity token and credential
+// files.
+enum IdentityStorage {
+  IDENTITY_STORAGE_UNSPECIFIED = 0;
+  // IDENTITY_STORAGE_MEMORY is tmpfs or ramfs: the files do not outlive
+  // the host's boot.
+  IDENTITY_STORAGE_MEMORY = 1;
+  // IDENTITY_STORAGE_DISK is the work root.
+  IDENTITY_STORAGE_DISK = 2;
+}
 
 // MetadataProbe is what an Orker's boot found for one instance metadata
 // address, asked from a container on the default network as a task would ask
@@ -1298,9 +1404,20 @@ message ProfileContractPin {
   repeated string identity_digests = 2;
 }
 
-// ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
-// batch).
-message ProviderInfo {}
+// ProviderInfo is one provider an Orker declares (ORK_PROVIDERS): what
+// submit compares across a pool's Orkers. It never holds a secret: the
+// providers document holds none.
+message ProviderInfo {
+  // name is the declared name: the scheme of the provider's sources.
+  string name = 1;
+  // type is the provider's compiled-in type ("aws", "vault", "image").
+  string type = 2;
+  // image_digest is a provider image's digest; empty for any other type.
+  string image_digest = 3;
+  // contracts are the provider profile versions this Orker runs a provider
+  // image under; empty for any other type.
+  repeated int32 contracts = 4;
+}
 
 // ResultsScope is how far an Orker's storage credential reaches among
 // results: every namespace's, or only named namespaces'.

@@ -8,6 +8,7 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -23,7 +24,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/authz"
-	"github.com/orkstack/orkstack/internal/consent"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/quantity"
@@ -376,15 +376,34 @@ func (s *Service) checkSourcePool(ns *orkstackv1.Namespace, src *orkstackv1.Even
 	return nil
 }
 
-// checkSourceConsent holds a consent the request gave to what the
-// Orkflow's resolved version asks for now: nothing, in this release, since
-// an Orkflow that asks for task identities cannot be bound.
-func checkSourceConsent(given string) error {
-	if given == "" || given == consent.Empty() {
-		return nil
+// sourceConsent decides the consent a source's save records, by the rule
+// schedules and triggers follow (consent_save.go). binds is a create, or a
+// save that changes what the source submits.
+func (s *Service) sourceConsent(ctx context.Context, src *orkstackv1.EventSource, binds bool, given string, prior *orkstackv1.ConsentView, by string) (*orkstackv1.ConsentView, error) {
+	if !binds && given == "" {
+		// Nothing binds and nothing is given: the consent stays as it is,
+		// and the Orkflow need not be read.
+		return prior, nil
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-		"IDENTITY_CONSENT_MISMATCH: consent %q is not the digest of what the Orkflow asks for now (%s)", given, consent.Empty()))
+	asks, unknown, err := s.asksForSave(ctx, src.GetNamespace(), src.GetOrkflowName(), src.GetOrkflowVersion())
+	if err != nil {
+		return nil, err
+	}
+	c, err := decideConsent(consentSave{Kind: "event-source", Name: src.GetName(), Orkflow: src.GetOrkflowName(), Binds: binds,
+		Given: given, Asks: asks, Unknown: unknown, Prior: consentFromView(prior), By: by, Now: s.now().UTC()})
+	if err != nil {
+		return nil, err
+	}
+	return c.view(), nil
+}
+
+// consentFromView is a stored ConsentView as the consent rule reads it.
+func consentFromView(v *orkstackv1.ConsentView) consentRecord {
+	c := consentRecord{Digest: v.GetDigest(), Audiences: v.GetAudiences(), Grants: v.GetGrants()}
+	if v.GetAt() != nil {
+		c.At = v.GetAt().AsTime()
+	}
+	return c
 }
 
 // sourceQuotas holds a write to the namespace's quotas and sums and the
@@ -449,7 +468,10 @@ func (s *Service) CreateEventSource(ctx context.Context, req *connect.Request[or
 	if err != nil {
 		return nil, err
 	}
-	if err := checkSourceConsent(req.Msg.GetConsent()); err != nil {
+	who, verified := recordedWriter(ctx, req.Header())
+	src.Namespace = checked.ns.GetName()
+	consented, err := s.sourceConsent(ctx, src, true, req.Msg.GetConsent(), nil, who)
+	if err != nil {
 		return nil, err
 	}
 	if err := s.sourceQuotas(ctx, store, src); err != nil {
@@ -460,21 +482,20 @@ func (s *Service) CreateEventSource(ctx context.Context, req *connect.Request[or
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	now := timestamppb.New(s.now().UTC())
-	who, verified := recordedWriter(ctx, req.Header())
 	src.Id = id
 	src.Namespace = checked.ns.GetName()
 	src.Image = checked.image
 	src.ServiceRevision, src.JudgingRevision = 1, 1
 	src.CreatedAt, src.UpdatedAt = now, now
 	src.CreatedBy, src.UpdatedBy, src.BoundBy, src.BoundByVerified = who, who, who, verified
-	src.Consented = &orkstackv1.ConsentView{Digest: consent.Empty(), At: now}
+	src.Consented = consented
 	stored, err := store.Create(ctx, src)
 	if err != nil {
 		return nil, sourceStoreError(err, src.GetNamespace(), src.GetName())
 	}
 	warnings := s.writeServiceSpec(ctx, store, stored, checked.labels)
 	noteAudit(ctx, "id="+stored.GetId()+" sha256="+documentDigest(stored))
-	return connect.NewResponse(&orkstackv1.CreateEventSourceResponse{EventSource: s.sourceView(stored), SaveWarnings: warnings}), nil
+	return connect.NewResponse(&orkstackv1.CreateEventSourceResponse{EventSource: s.sourceView(ctx, nil, stored), SaveWarnings: warnings}), nil
 }
 
 // GetEventSource returns one source and its status.
@@ -497,7 +518,7 @@ func (s *Service) GetEventSource(ctx context.Context, req *connect.Request[orkst
 	if err := s.recheckSource(ctx, authz.PermEventSourceRead, src); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&orkstackv1.GetEventSourceResponse{EventSource: s.sourceView(src), Status: s.sourceStatus(src)}), nil
+	return connect.NewResponse(&orkstackv1.GetEventSourceResponse{EventSource: s.sourceView(ctx, nil, src), Status: s.sourceStatus(src)}), nil
 }
 
 // ListEventSources returns a namespace's sources, by name, narrowed by the
@@ -530,8 +551,9 @@ func (s *Service) ListEventSources(ctx context.Context, req *connect.Request[ork
 			eventsources.ReasonDocumentUnreadable, ns, len(skipped)))
 	}
 	out := make([]*orkstackv1.EventSource, 0, len(docs))
+	memo := asksMemo{}
 	for _, src := range docs {
-		if row := s.sourceView(src); set.Match(row) {
+		if row := s.sourceView(ctx, memo, src); set.Match(row) {
 			out = append(out, row)
 		}
 	}
@@ -576,16 +598,23 @@ func (s *Service) UpdateEventSource(ctx context.Context, req *connect.Request[or
 	if err != nil {
 		return nil, err
 	}
-	if err := checkSourceConsent(req.Msg.GetConsent()); err != nil {
+	// The table of workload-identity §3.2: a save that changes what the
+	// source submits binds its caller and needs a consent when the Orkflow
+	// asks for an identity; --rebind binds and keeps the consent; a consent
+	// given leaves the binder as it is.
+	who, verified := recordedWriter(ctx, req.Header())
+	binds := eventsources.ChangesWhatItSubmits(stored, next)
+	rebinds := req.Msg.GetRebind() || binds
+	next.Namespace = stored.GetNamespace()
+	consented, err := s.sourceConsent(ctx, next, binds, req.Msg.GetConsent(), stored.GetConsented(), who)
+	if err != nil {
 		return nil, err
 	}
 	if err := s.sourceQuotas(ctx, store, next); err != nil {
 		return nil, err
 	}
 	service, judging := eventsources.Classify(stored, next)
-	rebinds := req.Msg.GetRebind() || req.Msg.GetConsent() != "" || eventsources.ChangesWhatItSubmits(stored, next)
 	now := timestamppb.New(s.now().UTC())
-	who, verified := recordedWriter(ctx, req.Header())
 
 	next.Id, next.Namespace = stored.GetId(), stored.GetNamespace()
 	next.Image = checked.image
@@ -599,10 +628,9 @@ func (s *Service) UpdateEventSource(ctx context.Context, req *connect.Request[or
 	if judging {
 		next.JudgingRevision++
 	}
-	next.BoundBy, next.BoundByVerified, next.Consented = stored.GetBoundBy(), stored.GetBoundByVerified(), stored.GetConsented()
+	next.BoundBy, next.BoundByVerified, next.Consented = stored.GetBoundBy(), stored.GetBoundByVerified(), consented
 	if rebinds {
 		next.BoundBy, next.BoundByVerified = who, verified
-		next.Consented = &orkstackv1.ConsentView{Digest: consent.Empty(), At: now}
 	}
 	saved, err := store.Replace(ctx, next, etag)
 	if err != nil {
@@ -612,7 +640,7 @@ func (s *Service) UpdateEventSource(ctx context.Context, req *connect.Request[or
 	// digest, so this repairs one an earlier save could not write.
 	warnings := s.writeServiceSpec(ctx, store, saved, checked.labels)
 	noteAudit(ctx, "id="+saved.GetId()+" sha256="+documentDigest(saved))
-	return connect.NewResponse(&orkstackv1.UpdateEventSourceResponse{EventSource: s.sourceView(saved), SaveWarnings: warnings}), nil
+	return connect.NewResponse(&orkstackv1.UpdateEventSourceResponse{EventSource: s.sourceView(ctx, nil, saved), SaveWarnings: warnings}), nil
 }
 
 // PauseEventSource sets a source's pause with the operator's reason.
@@ -655,7 +683,7 @@ func (s *Service) PauseEventSource(ctx context.Context, req *connect.Request[ork
 	if eventsources.Effective(saved, s.eventSourceSettings.Limits).GetDelivery() == orkstackv1.DeliveryClass_DELIVERY_CLASS_AT_MOST_ONCE {
 		warnings = append(warnings, "this source is at-most-once: messages published while it is paused are lost")
 	}
-	return connect.NewResponse(&orkstackv1.PauseEventSourceResponse{EventSource: s.sourceView(saved), Warnings: warnings}), nil
+	return connect.NewResponse(&orkstackv1.PauseEventSourceResponse{EventSource: s.sourceView(ctx, nil, saved), Warnings: warnings}), nil
 }
 
 // ResumeEventSource clears a source's pause after the create's checks other
@@ -684,7 +712,7 @@ func (s *Service) ResumeEventSource(ctx context.Context, req *connect.Request[or
 		return nil, err
 	}
 	if stored.GetPause() == nil {
-		return connect.NewResponse(&orkstackv1.ResumeEventSourceResponse{EventSource: s.sourceView(stored),
+		return connect.NewResponse(&orkstackv1.ResumeEventSourceResponse{EventSource: s.sourceView(ctx, nil, stored),
 			Notice: "source was not paused; nothing changed"}), nil
 	}
 	if _, err := s.checkSource(ctx, stored, stored); err != nil {
@@ -695,7 +723,7 @@ func (s *Service) ResumeEventSource(ctx context.Context, req *connect.Request[or
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&orkstackv1.ResumeEventSourceResponse{EventSource: s.sourceView(saved)}), nil
+	return connect.NewResponse(&orkstackv1.ResumeEventSourceResponse{EventSource: s.sourceView(ctx, nil, saved)}), nil
 }
 
 // replaceSource applies change to a source read with its etag and writes it
@@ -939,11 +967,21 @@ func (s *Service) InspectSourceImage(ctx context.Context, req *connect.Request[o
 
 // sourceView is a stored source as a caller reads it, with what is derived
 // on read.
-func (s *Service) sourceView(src *orkstackv1.EventSource) *orkstackv1.EventSource {
+func (s *Service) sourceView(ctx context.Context, memo asksMemo, src *orkstackv1.EventSource) *orkstackv1.EventSource {
 	out := proto.Clone(src).(*orkstackv1.EventSource)
 	out.Paused = out.GetPause() != nil
-	out.AsksFor = &orkstackv1.AsksFor{Digest: consent.Empty()}
-	out.ConsentStale = out.GetConsented().GetDigest() != "" && out.GetConsented().GetDigest() != consent.Empty()
+	// What its Orkflow asks for now; unset when it cannot be read, so "could
+	// not tell" is never "asks for nothing".
+	asks, err := s.asksForMemo(ctx, memo, src.GetNamespace(), src.GetOrkflowName(), src.GetOrkflowVersion())
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logger.Warn("what an event source's Orkflow asks for could not be read; it is not shown",
+				slog.String("namespace", src.GetNamespace()), slog.String("event_source", src.GetName()), slog.String("error", err.Error()))
+		}
+		return out
+	}
+	out.AsksFor = &orkstackv1.AsksFor{Digest: asks.Digest, Audiences: asks.Audiences, Grants: asks.Grants}
+	out.ConsentStale = consentStale(out.GetConsented(), out.GetAsksFor())
 	return out
 }
 

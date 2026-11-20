@@ -487,7 +487,7 @@ tasks:
     with:                 # image-specific config, rendered into config.json
       op: get
       url: https://example.test/health
-    # each:, await:, sleep: — see "Fan-out", "Awaited tasks" and "Sleeping tasks"
+    # each:, await:, sleep:, identities: — see "Fan-out", "Awaited tasks", "Sleeping tasks" and "Task identity"
 ```
 
 `needs:` is the only thing that orders tasks. Declaration order sequences
@@ -1240,7 +1240,7 @@ tasks:
   what was sent. Keys the schema does not declare are accepted.
 
 An awaited task takes only `id`, `needs`, `condition`, `join` and `await`; every key
-that shapes a container (`uses`, `with`, `command`, `env`, `secrets`,
+that shapes a container (`uses`, `with`, `command`, `env`, `secrets`, `identities`,
 `resources`, `network`, `devices`, `pool`, `pin`, `retry`, `timeout_seconds`,
 `cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
 `cache`) is refused by name. While a task awaits, its run is `RUNNING`;
@@ -1338,7 +1338,7 @@ tasks:
 
 A sleeping task takes only `id`, `needs`, `condition`, `join` and `sleep`.
 `uses` and `await` are refused as another kind of task (rule 6), and every key
-that shapes a container (`with`, `command`, `env`, `secrets`, `resources`,
+that shapes a container (`with`, `command`, `env`, `secrets`, `identities`, `resources`,
 `network`, `devices`, `pool`, `pin`, `retry`, `timeout_seconds`,
 `cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
 `cache`) is refused by name (rule 49). While a task sleeps, its run is
@@ -1632,7 +1632,7 @@ tasks:
   create from breaking another team's run: a new version of a shared Orkflow
   changes nothing for a parent that pinned an older one.
 - **What it may carry:** `id`, `needs`, `condition`, `join`, `uses` and `with`.
-  `command`, `env`, `secrets`, `resources`, `network`, `devices`, `pool`, `pin`,
+  `command`, `env`, `secrets`, `identities`, `resources`, `network`, `devices`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
   `run_as_orker_user`, `each`, `await` and `cache` are refused by name: the
   child's own tasks declare where and how they run (and may be cached). There
@@ -2064,6 +2064,35 @@ How each node reads:
 | a condition that cannot be evaluated | `fails` | the run's own error; every task decided after it is `unreached` |
 | `--assume-failed` | `assumed_failed` | its non-handler dependents are `unreached` |
 
+## Task identity (`identities:`)
+
+`identities:` is optional: the tokens the task holds, one for each audience (see "Task identity").
+Each is a token for one audience, minted for each attempt of the task and
+refreshed while it runs, so no long-lived credential needs storing for it
+(docs/TASK_IDENTITY.md). **Task identity is not available in this build**:
+validate and create refuse a task that declares one, on
+`tasks[i].identities`, after the rules below.
+
+```yaml
+tasks:
+  - id: upload
+    uses: ghcr.io/acme/uploader@sha256:5f2a…
+    identities:
+      - name: gcp
+        audience: //iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/ork/providers/ork
+        ttl_seconds: 1800
+```
+
+| Key | Rule |
+|---|---|
+| `name` | `^[a-z][a-z0-9-]{0,62}$`, unique in the task |
+| `audience` | 1 to 255 bytes, with no whitespace or control character |
+| `ttl_seconds` | optional; at least 600, held between the deployment's `identity.token.min_ttl` and `max_ttl`; absent is `identity.token.ttl` |
+| `refresh` | optional: `required` (the default) or `best_effort` |
+
+At most 8 identities a task. OrkStack sets no environment variable for
+them; a task's own `env:` may point an SDK at the file.
+
 ## Validation rules (enforced by `internal/dsl`)
 
 1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent
@@ -2323,6 +2352,14 @@ How each node reads:
     contract of each profile the task names, and a task naming a profile with
     no `@contract` has an image whose declaration can be read (see "Device
     profiles", Contracts).
+55. An identity's `name` matches `^[a-z][a-z0-9-]{0,62}$` and is unique in
+    its task; its `audience` is 1 to 255 bytes with no whitespace or control
+    character; its `ttl_seconds`, when set, is at least 600; its `refresh` is
+    `required` or `best_effort`; a task declares at most 8.
+56. An awaited, sleeping or composed task declares no `identities` (with rules
+    15, 27 and 49).
+57. A fan-out's identities are the same for every item: their `name` and
+    `audience` are not templates.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

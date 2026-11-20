@@ -24,6 +24,7 @@ settings:
     gib_seconds: 7200
     period: 720h
     enforce: true
+  identity: {}
 
 schedules:
   hourly-sync: # paused: "investigating INC-42" — operational state; not managed here

@@ -317,8 +317,14 @@ func (a *BlobRunArchive) RetireRunArtifacts(ctx context.Context, namespace, runI
 	if err != nil {
 		return CleanupResult{}, err
 	}
-	// The four prefixes are independent: delete them concurrently.
-	prefixes := []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix}
+	// What the engine recorded for the run's tasks is reclaimed with its
+	// commits (docs/TASK_IDENTITY.md, "Results the engine records").
+	attestedPrefix, err := AttestedRunPrefix(namespace, runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	// The five prefixes are independent: delete them concurrently.
+	prefixes := []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix, attestedPrefix}
 	results := make([]CleanupResult, len(prefixes))
 	errs := make([]error, len(prefixes))
 	var wg sync.WaitGroup

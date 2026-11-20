@@ -22,6 +22,660 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type MintAttemptTokensRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	RunId     string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	TaskId    string                 `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// item is a fan-out item's index; unset for a task that is not one.
+	Item    *int32 `protobuf:"varint,4,opt,name=item,proto3,oneof" json:"item,omitempty"`
+	Attempt int32  `protobuf:"varint,5,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// task_spec_sha256 is the digest of the task as the Orker was given it.
+	TaskSpecSha256 string `protobuf:"bytes,6,opt,name=task_spec_sha256,json=taskSpecSha256,proto3" json:"task_spec_sha256,omitempty"`
+	// tokens are what the attempt asks for: at most 16.
+	Tokens []*TokenRequest `protobuf:"bytes,7,rep,name=tokens,proto3" json:"tokens,omitempty"`
+	// admission_sha256 names which admission of the run, as the task's input
+	// named it.
+	AdmissionSha256 string `protobuf:"bytes,8,opt,name=admission_sha256,json=admissionSha256,proto3" json:"admission_sha256,omitempty"`
+	// spec_members maps each member of the task's digest to its own digest,
+	// used only to say what differs.
+	SpecMembers map[string]string `protobuf:"bytes,9,rep,name=spec_members,json=specMembers,proto3" json:"spec_members,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// resume_scope is the resume the attempt runs under; 0 for none.
+	ResumeScope uint64 `protobuf:"varint,10,opt,name=resume_scope,json=resumeScope,proto3" json:"resume_scope,omitempty"`
+	// root_scope is the root run's resume scope, for a run below a root.
+	RootScope     uint64 `protobuf:"varint,11,opt,name=root_scope,json=rootScope,proto3" json:"root_scope,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MintAttemptTokensRequest) Reset() {
+	*x = MintAttemptTokensRequest{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MintAttemptTokensRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MintAttemptTokensRequest) ProtoMessage() {}
+
+func (x *MintAttemptTokensRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MintAttemptTokensRequest.ProtoReflect.Descriptor instead.
+func (*MintAttemptTokensRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *MintAttemptTokensRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *MintAttemptTokensRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *MintAttemptTokensRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *MintAttemptTokensRequest) GetItem() int32 {
+	if x != nil && x.Item != nil {
+		return *x.Item
+	}
+	return 0
+}
+
+func (x *MintAttemptTokensRequest) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *MintAttemptTokensRequest) GetTaskSpecSha256() string {
+	if x != nil {
+		return x.TaskSpecSha256
+	}
+	return ""
+}
+
+func (x *MintAttemptTokensRequest) GetTokens() []*TokenRequest {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+func (x *MintAttemptTokensRequest) GetAdmissionSha256() string {
+	if x != nil {
+		return x.AdmissionSha256
+	}
+	return ""
+}
+
+func (x *MintAttemptTokensRequest) GetSpecMembers() map[string]string {
+	if x != nil {
+		return x.SpecMembers
+	}
+	return nil
+}
+
+func (x *MintAttemptTokensRequest) GetResumeScope() uint64 {
+	if x != nil {
+		return x.ResumeScope
+	}
+	return 0
+}
+
+func (x *MintAttemptTokensRequest) GetRootScope() uint64 {
+	if x != nil {
+		return x.RootScope
+	}
+	return 0
+}
+
+type TokenRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is an identity's name, or "grant:<name>".
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Audience      string `protobuf:"bytes,2,opt,name=audience,proto3" json:"audience,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TokenRequest) Reset() {
+	*x = TokenRequest{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TokenRequest) ProtoMessage() {}
+
+func (x *TokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TokenRequest.ProtoReflect.Descriptor instead.
+func (*TokenRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TokenRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TokenRequest) GetAudience() string {
+	if x != nil {
+		return x.Audience
+	}
+	return ""
+}
+
+type MintAttemptTokensResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tokens        []*IssuedToken         `protobuf:"bytes,1,rep,name=tokens,proto3" json:"tokens,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MintAttemptTokensResponse) Reset() {
+	*x = MintAttemptTokensResponse{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MintAttemptTokensResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MintAttemptTokensResponse) ProtoMessage() {}
+
+func (x *MintAttemptTokensResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MintAttemptTokensResponse.ProtoReflect.Descriptor instead.
+func (*MintAttemptTokensResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *MintAttemptTokensResponse) GetTokens() []*IssuedToken {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+type IssuedToken struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Name     string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Audience string                 `protobuf:"bytes,2,opt,name=audience,proto3" json:"audience,omitempty"`
+	// token is the signed token. Never logged and never stored.
+	Token string `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`
+	// expires_in_seconds is the token's life, counted on the Orker's own
+	// clock.
+	ExpiresInSeconds int32 `protobuf:"varint,4,opt,name=expires_in_seconds,json=expiresInSeconds,proto3" json:"expires_in_seconds,omitempty"`
+	// issued_at is when it was signed, for the Orker's clock check only.
+	IssuedAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	Jti           string                 `protobuf:"bytes,6,opt,name=jti,proto3" json:"jti,omitempty"`
+	Kid           string                 `protobuf:"bytes,7,opt,name=kid,proto3" json:"kid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssuedToken) Reset() {
+	*x = IssuedToken{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssuedToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssuedToken) ProtoMessage() {}
+
+func (x *IssuedToken) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssuedToken.ProtoReflect.Descriptor instead.
+func (*IssuedToken) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *IssuedToken) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *IssuedToken) GetAudience() string {
+	if x != nil {
+		return x.Audience
+	}
+	return ""
+}
+
+func (x *IssuedToken) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *IssuedToken) GetExpiresInSeconds() int32 {
+	if x != nil {
+		return x.ExpiresInSeconds
+	}
+	return 0
+}
+
+func (x *IssuedToken) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
+func (x *IssuedToken) GetJti() string {
+	if x != nil {
+		return x.Jti
+	}
+	return ""
+}
+
+func (x *IssuedToken) GetKid() string {
+	if x != nil {
+		return x.Kid
+	}
+	return ""
+}
+
+type ListIssuedTokensRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	RunId     string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// task_id narrows the list to one task.
+	TaskId string `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// item narrows it to one item of task_id.
+	Item *int32 `protobuf:"varint,4,opt,name=item,proto3,oneof" json:"item,omitempty"`
+	// page_size is at most 100; 0 is 50.
+	PageSize      int32  `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string `protobuf:"bytes,6,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListIssuedTokensRequest) Reset() {
+	*x = ListIssuedTokensRequest{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListIssuedTokensRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListIssuedTokensRequest) ProtoMessage() {}
+
+func (x *ListIssuedTokensRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListIssuedTokensRequest.ProtoReflect.Descriptor instead.
+func (*ListIssuedTokensRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ListIssuedTokensRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *ListIssuedTokensRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ListIssuedTokensRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *ListIssuedTokensRequest) GetItem() int32 {
+	if x != nil && x.Item != nil {
+		return *x.Item
+	}
+	return 0
+}
+
+func (x *ListIssuedTokensRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListIssuedTokensRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+type ListIssuedTokensResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Records []*IssuedTokenRecord   `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	// next_page_token continues the list; empty at its end.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListIssuedTokensResponse) Reset() {
+	*x = ListIssuedTokensResponse{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListIssuedTokensResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListIssuedTokensResponse) ProtoMessage() {}
+
+func (x *ListIssuedTokensResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListIssuedTokensResponse.ProtoReflect.Descriptor instead.
+func (*ListIssuedTokensResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ListIssuedTokensResponse) GetRecords() []*IssuedTokenRecord {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+func (x *ListIssuedTokensResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
+// IssuedTokenRecord is what one granted mint issued.
+type IssuedTokenRecord struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	TaskId  string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Item    *int32                 `protobuf:"varint,2,opt,name=item,proto3,oneof" json:"item,omitempty"`
+	Attempt int32                  `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// principal is the caller's verified principal.
+	Principal string `protobuf:"bytes,4,opt,name=principal,proto3" json:"principal,omitempty"`
+	// orker_id is the Orker its credential names.
+	OrkerId       string                 `protobuf:"bytes,5,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	IssuedAt      *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	Tokens        []*IssuedTokenEntry    `protobuf:"bytes,7,rep,name=tokens,proto3" json:"tokens,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssuedTokenRecord) Reset() {
+	*x = IssuedTokenRecord{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssuedTokenRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssuedTokenRecord) ProtoMessage() {}
+
+func (x *IssuedTokenRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssuedTokenRecord.ProtoReflect.Descriptor instead.
+func (*IssuedTokenRecord) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *IssuedTokenRecord) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *IssuedTokenRecord) GetItem() int32 {
+	if x != nil && x.Item != nil {
+		return *x.Item
+	}
+	return 0
+}
+
+func (x *IssuedTokenRecord) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *IssuedTokenRecord) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *IssuedTokenRecord) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
+}
+
+func (x *IssuedTokenRecord) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
+func (x *IssuedTokenRecord) GetTokens() []*IssuedTokenEntry {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+// IssuedTokenEntry is one issued token's claims.
+type IssuedTokenEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Audience      string                 `protobuf:"bytes,2,opt,name=audience,proto3" json:"audience,omitempty"`
+	Subject       string                 `protobuf:"bytes,3,opt,name=subject,proto3" json:"subject,omitempty"`
+	Jti           string                 `protobuf:"bytes,4,opt,name=jti,proto3" json:"jti,omitempty"`
+	Kid           string                 `protobuf:"bytes,5,opt,name=kid,proto3" json:"kid,omitempty"`
+	IssuedAt      *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssuedTokenEntry) Reset() {
+	*x = IssuedTokenEntry{}
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssuedTokenEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssuedTokenEntry) ProtoMessage() {}
+
+func (x *IssuedTokenEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssuedTokenEntry.ProtoReflect.Descriptor instead.
+func (*IssuedTokenEntry) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *IssuedTokenEntry) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *IssuedTokenEntry) GetAudience() string {
+	if x != nil {
+		return x.Audience
+	}
+	return ""
+}
+
+func (x *IssuedTokenEntry) GetSubject() string {
+	if x != nil {
+		return x.Subject
+	}
+	return ""
+}
+
+func (x *IssuedTokenEntry) GetJti() string {
+	if x != nil {
+		return x.Jti
+	}
+	return ""
+}
+
+func (x *IssuedTokenEntry) GetKid() string {
+	if x != nil {
+		return x.Kid
+	}
+	return ""
+}
+
+func (x *IssuedTokenEntry) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
+func (x *IssuedTokenEntry) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 type GetIssuerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -30,7 +684,7 @@ type GetIssuerRequest struct {
 
 func (x *GetIssuerRequest) Reset() {
 	*x = GetIssuerRequest{}
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[0]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -42,7 +696,7 @@ func (x *GetIssuerRequest) String() string {
 func (*GetIssuerRequest) ProtoMessage() {}
 
 func (x *GetIssuerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[0]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -55,7 +709,7 @@ func (x *GetIssuerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetIssuerRequest.ProtoReflect.Descriptor instead.
 func (*GetIssuerRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{0}
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{8}
 }
 
 type GetIssuerResponse struct {
@@ -96,7 +750,7 @@ type GetIssuerResponse struct {
 
 func (x *GetIssuerResponse) Reset() {
 	*x = GetIssuerResponse{}
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[1]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -108,7 +762,7 @@ func (x *GetIssuerResponse) String() string {
 func (*GetIssuerResponse) ProtoMessage() {}
 
 func (x *GetIssuerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[1]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -121,7 +775,7 @@ func (x *GetIssuerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetIssuerResponse.ProtoReflect.Descriptor instead.
 func (*GetIssuerResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{1}
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetIssuerResponse) GetEnabled() bool {
@@ -230,7 +884,7 @@ type ListSigningKeysRequest struct {
 
 func (x *ListSigningKeysRequest) Reset() {
 	*x = ListSigningKeysRequest{}
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[2]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -242,7 +896,7 @@ func (x *ListSigningKeysRequest) String() string {
 func (*ListSigningKeysRequest) ProtoMessage() {}
 
 func (x *ListSigningKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[2]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -255,7 +909,7 @@ func (x *ListSigningKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSigningKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListSigningKeysRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{2}
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{10}
 }
 
 type ListSigningKeysResponse struct {
@@ -269,7 +923,7 @@ type ListSigningKeysResponse struct {
 
 func (x *ListSigningKeysResponse) Reset() {
 	*x = ListSigningKeysResponse{}
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[3]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -281,7 +935,7 @@ func (x *ListSigningKeysResponse) String() string {
 func (*ListSigningKeysResponse) ProtoMessage() {}
 
 func (x *ListSigningKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[3]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -294,7 +948,7 @@ func (x *ListSigningKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSigningKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListSigningKeysResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{3}
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListSigningKeysResponse) GetKeys() []*SigningKey {
@@ -321,7 +975,7 @@ type RetireSigningKeyRequest struct {
 
 func (x *RetireSigningKeyRequest) Reset() {
 	*x = RetireSigningKeyRequest{}
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[4]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -333,7 +987,7 @@ func (x *RetireSigningKeyRequest) String() string {
 func (*RetireSigningKeyRequest) ProtoMessage() {}
 
 func (x *RetireSigningKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[4]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -346,7 +1000,7 @@ func (x *RetireSigningKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetireSigningKeyRequest.ProtoReflect.Descriptor instead.
 func (*RetireSigningKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{4}
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *RetireSigningKeyRequest) GetKeyId() string {
@@ -373,7 +1027,7 @@ type RetireSigningKeyResponse struct {
 
 func (x *RetireSigningKeyResponse) Reset() {
 	*x = RetireSigningKeyResponse{}
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[5]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -385,7 +1039,7 @@ func (x *RetireSigningKeyResponse) String() string {
 func (*RetireSigningKeyResponse) ProtoMessage() {}
 
 func (x *RetireSigningKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_identity_service_proto_msgTypes[5]
+	mi := &file_orkstack_v1_identity_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -398,7 +1052,7 @@ func (x *RetireSigningKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetireSigningKeyResponse.ProtoReflect.Descriptor instead.
 func (*RetireSigningKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{5}
+	return file_orkstack_v1_identity_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *RetireSigningKeyResponse) GetKey() *SigningKey {
@@ -412,7 +1066,68 @@ var File_orkstack_v1_identity_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_identity_service_proto_rawDesc = "" +
 	"\n" +
-	"\"orkstack/v1/identity_service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/identity.proto\"\x12\n" +
+	"\"orkstack/v1/identity_service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/identity.proto\"\x95\x04\n" +
+	"\x18MintAttemptTokensRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
+	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12\x17\n" +
+	"\x04item\x18\x04 \x01(\x05H\x00R\x04item\x88\x01\x01\x12\x18\n" +
+	"\aattempt\x18\x05 \x01(\x05R\aattempt\x12(\n" +
+	"\x10task_spec_sha256\x18\x06 \x01(\tR\x0etaskSpecSha256\x121\n" +
+	"\x06tokens\x18\a \x03(\v2\x19.orkstack.v1.TokenRequestR\x06tokens\x12)\n" +
+	"\x10admission_sha256\x18\b \x01(\tR\x0fadmissionSha256\x12Y\n" +
+	"\fspec_members\x18\t \x03(\v26.orkstack.v1.MintAttemptTokensRequest.SpecMembersEntryR\vspecMembers\x12!\n" +
+	"\fresume_scope\x18\n" +
+	" \x01(\x04R\vresumeScope\x12\x1d\n" +
+	"\n" +
+	"root_scope\x18\v \x01(\x04R\trootScope\x1a>\n" +
+	"\x10SpecMembersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
+	"\x05_itemJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\">\n" +
+	"\fTokenRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
+	"\baudience\x18\x02 \x01(\tR\baudience\"M\n" +
+	"\x19MintAttemptTokensResponse\x120\n" +
+	"\x06tokens\x18\x01 \x03(\v2\x18.orkstack.v1.IssuedTokenR\x06tokens\"\xde\x01\n" +
+	"\vIssuedToken\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
+	"\baudience\x18\x02 \x01(\tR\baudience\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\x12,\n" +
+	"\x12expires_in_seconds\x18\x04 \x01(\x05R\x10expiresInSeconds\x127\n" +
+	"\tissued_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12\x10\n" +
+	"\x03jti\x18\x06 \x01(\tR\x03jti\x12\x10\n" +
+	"\x03kid\x18\a \x01(\tR\x03kid\"\xd1\x01\n" +
+	"\x17ListIssuedTokensRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
+	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12\x17\n" +
+	"\x04item\x18\x04 \x01(\x05H\x00R\x04item\x88\x01\x01\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x06 \x01(\tR\tpageTokenB\a\n" +
+	"\x05_itemJ\x04\b\a\x10\bJ\x04\b\b\x10\t\"|\n" +
+	"\x18ListIssuedTokensResponse\x128\n" +
+	"\arecords\x18\x01 \x03(\v2\x1e.orkstack.v1.IssuedTokenRecordR\arecords\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x91\x02\n" +
+	"\x11IssuedTokenRecord\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x17\n" +
+	"\x04item\x18\x02 \x01(\x05H\x00R\x04item\x88\x01\x01\x12\x18\n" +
+	"\aattempt\x18\x03 \x01(\x05R\aattempt\x12\x1c\n" +
+	"\tprincipal\x18\x04 \x01(\tR\tprincipal\x12\x19\n" +
+	"\borker_id\x18\x05 \x01(\tR\aorkerId\x127\n" +
+	"\tissued_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x125\n" +
+	"\x06tokens\x18\a \x03(\v2\x1d.orkstack.v1.IssuedTokenEntryR\x06tokensB\a\n" +
+	"\x05_item\"\xf4\x01\n" +
+	"\x10IssuedTokenEntry\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
+	"\baudience\x18\x02 \x01(\tR\baudience\x12\x18\n" +
+	"\asubject\x18\x03 \x01(\tR\asubject\x12\x10\n" +
+	"\x03jti\x18\x04 \x01(\tR\x03jti\x12\x10\n" +
+	"\x03kid\x18\x05 \x01(\tR\x03kid\x127\n" +
+	"\tissued_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x129\n" +
+	"\n" +
+	"expires_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\x12\n" +
 	"\x10GetIssuerRequest\"\x9f\x04\n" +
 	"\x11GetIssuerResponse\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x16\n" +
@@ -440,11 +1155,13 @@ const file_orkstack_v1_identity_service_proto_rawDesc = "" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12E\n" +
 	"\x10compromised_from\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x0fcompromisedFrom\"E\n" +
 	"\x18RetireSigningKeyResponse\x12)\n" +
-	"\x03key\x18\x01 \x01(\v2\x17.orkstack.v1.SigningKeyR\x03key2\x9c\x02\n" +
+	"\x03key\x18\x01 \x01(\v2\x17.orkstack.v1.SigningKeyR\x03key2\xe1\x03\n" +
 	"\x0fIdentityService\x12J\n" +
 	"\tGetIssuer\x12\x1d.orkstack.v1.GetIssuerRequest\x1a\x1e.orkstack.v1.GetIssuerResponse\x12\\\n" +
 	"\x0fListSigningKeys\x12#.orkstack.v1.ListSigningKeysRequest\x1a$.orkstack.v1.ListSigningKeysResponse\x12_\n" +
-	"\x10RetireSigningKey\x12$.orkstack.v1.RetireSigningKeyRequest\x1a%.orkstack.v1.RetireSigningKeyResponseB\xb0\x01\n" +
+	"\x10RetireSigningKey\x12$.orkstack.v1.RetireSigningKeyRequest\x1a%.orkstack.v1.RetireSigningKeyResponse\x12b\n" +
+	"\x11MintAttemptTokens\x12%.orkstack.v1.MintAttemptTokensRequest\x1a&.orkstack.v1.MintAttemptTokensResponse\x12_\n" +
+	"\x10ListIssuedTokens\x12$.orkstack.v1.ListIssuedTokensRequest\x1a%.orkstack.v1.ListIssuedTokensResponseB\xb0\x01\n" +
 	"\x0fcom.orkstack.v1B\x14IdentityServiceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -459,34 +1176,56 @@ func file_orkstack_v1_identity_service_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_identity_service_proto_rawDescData
 }
 
-var file_orkstack_v1_identity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_orkstack_v1_identity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_orkstack_v1_identity_service_proto_goTypes = []any{
-	(*GetIssuerRequest)(nil),         // 0: orkstack.v1.GetIssuerRequest
-	(*GetIssuerResponse)(nil),        // 1: orkstack.v1.GetIssuerResponse
-	(*ListSigningKeysRequest)(nil),   // 2: orkstack.v1.ListSigningKeysRequest
-	(*ListSigningKeysResponse)(nil),  // 3: orkstack.v1.ListSigningKeysResponse
-	(*RetireSigningKeyRequest)(nil),  // 4: orkstack.v1.RetireSigningKeyRequest
-	(*RetireSigningKeyResponse)(nil), // 5: orkstack.v1.RetireSigningKeyResponse
-	(*timestamppb.Timestamp)(nil),    // 6: google.protobuf.Timestamp
-	(*SigningKey)(nil),               // 7: orkstack.v1.SigningKey
+	(*MintAttemptTokensRequest)(nil),  // 0: orkstack.v1.MintAttemptTokensRequest
+	(*TokenRequest)(nil),              // 1: orkstack.v1.TokenRequest
+	(*MintAttemptTokensResponse)(nil), // 2: orkstack.v1.MintAttemptTokensResponse
+	(*IssuedToken)(nil),               // 3: orkstack.v1.IssuedToken
+	(*ListIssuedTokensRequest)(nil),   // 4: orkstack.v1.ListIssuedTokensRequest
+	(*ListIssuedTokensResponse)(nil),  // 5: orkstack.v1.ListIssuedTokensResponse
+	(*IssuedTokenRecord)(nil),         // 6: orkstack.v1.IssuedTokenRecord
+	(*IssuedTokenEntry)(nil),          // 7: orkstack.v1.IssuedTokenEntry
+	(*GetIssuerRequest)(nil),          // 8: orkstack.v1.GetIssuerRequest
+	(*GetIssuerResponse)(nil),         // 9: orkstack.v1.GetIssuerResponse
+	(*ListSigningKeysRequest)(nil),    // 10: orkstack.v1.ListSigningKeysRequest
+	(*ListSigningKeysResponse)(nil),   // 11: orkstack.v1.ListSigningKeysResponse
+	(*RetireSigningKeyRequest)(nil),   // 12: orkstack.v1.RetireSigningKeyRequest
+	(*RetireSigningKeyResponse)(nil),  // 13: orkstack.v1.RetireSigningKeyResponse
+	nil,                               // 14: orkstack.v1.MintAttemptTokensRequest.SpecMembersEntry
+	(*timestamppb.Timestamp)(nil),     // 15: google.protobuf.Timestamp
+	(*SigningKey)(nil),                // 16: orkstack.v1.SigningKey
 }
 var file_orkstack_v1_identity_service_proto_depIdxs = []int32{
-	6, // 0: orkstack.v1.GetIssuerResponse.keys_read_at:type_name -> google.protobuf.Timestamp
-	6, // 1: orkstack.v1.GetIssuerResponse.live_checked_at:type_name -> google.protobuf.Timestamp
-	7, // 2: orkstack.v1.ListSigningKeysResponse.keys:type_name -> orkstack.v1.SigningKey
-	6, // 3: orkstack.v1.RetireSigningKeyRequest.compromised_from:type_name -> google.protobuf.Timestamp
-	7, // 4: orkstack.v1.RetireSigningKeyResponse.key:type_name -> orkstack.v1.SigningKey
-	0, // 5: orkstack.v1.IdentityService.GetIssuer:input_type -> orkstack.v1.GetIssuerRequest
-	2, // 6: orkstack.v1.IdentityService.ListSigningKeys:input_type -> orkstack.v1.ListSigningKeysRequest
-	4, // 7: orkstack.v1.IdentityService.RetireSigningKey:input_type -> orkstack.v1.RetireSigningKeyRequest
-	1, // 8: orkstack.v1.IdentityService.GetIssuer:output_type -> orkstack.v1.GetIssuerResponse
-	3, // 9: orkstack.v1.IdentityService.ListSigningKeys:output_type -> orkstack.v1.ListSigningKeysResponse
-	5, // 10: orkstack.v1.IdentityService.RetireSigningKey:output_type -> orkstack.v1.RetireSigningKeyResponse
-	8, // [8:11] is the sub-list for method output_type
-	5, // [5:8] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	1,  // 0: orkstack.v1.MintAttemptTokensRequest.tokens:type_name -> orkstack.v1.TokenRequest
+	14, // 1: orkstack.v1.MintAttemptTokensRequest.spec_members:type_name -> orkstack.v1.MintAttemptTokensRequest.SpecMembersEntry
+	3,  // 2: orkstack.v1.MintAttemptTokensResponse.tokens:type_name -> orkstack.v1.IssuedToken
+	15, // 3: orkstack.v1.IssuedToken.issued_at:type_name -> google.protobuf.Timestamp
+	6,  // 4: orkstack.v1.ListIssuedTokensResponse.records:type_name -> orkstack.v1.IssuedTokenRecord
+	15, // 5: orkstack.v1.IssuedTokenRecord.issued_at:type_name -> google.protobuf.Timestamp
+	7,  // 6: orkstack.v1.IssuedTokenRecord.tokens:type_name -> orkstack.v1.IssuedTokenEntry
+	15, // 7: orkstack.v1.IssuedTokenEntry.issued_at:type_name -> google.protobuf.Timestamp
+	15, // 8: orkstack.v1.IssuedTokenEntry.expires_at:type_name -> google.protobuf.Timestamp
+	15, // 9: orkstack.v1.GetIssuerResponse.keys_read_at:type_name -> google.protobuf.Timestamp
+	15, // 10: orkstack.v1.GetIssuerResponse.live_checked_at:type_name -> google.protobuf.Timestamp
+	16, // 11: orkstack.v1.ListSigningKeysResponse.keys:type_name -> orkstack.v1.SigningKey
+	15, // 12: orkstack.v1.RetireSigningKeyRequest.compromised_from:type_name -> google.protobuf.Timestamp
+	16, // 13: orkstack.v1.RetireSigningKeyResponse.key:type_name -> orkstack.v1.SigningKey
+	8,  // 14: orkstack.v1.IdentityService.GetIssuer:input_type -> orkstack.v1.GetIssuerRequest
+	10, // 15: orkstack.v1.IdentityService.ListSigningKeys:input_type -> orkstack.v1.ListSigningKeysRequest
+	12, // 16: orkstack.v1.IdentityService.RetireSigningKey:input_type -> orkstack.v1.RetireSigningKeyRequest
+	0,  // 17: orkstack.v1.IdentityService.MintAttemptTokens:input_type -> orkstack.v1.MintAttemptTokensRequest
+	4,  // 18: orkstack.v1.IdentityService.ListIssuedTokens:input_type -> orkstack.v1.ListIssuedTokensRequest
+	9,  // 19: orkstack.v1.IdentityService.GetIssuer:output_type -> orkstack.v1.GetIssuerResponse
+	11, // 20: orkstack.v1.IdentityService.ListSigningKeys:output_type -> orkstack.v1.ListSigningKeysResponse
+	13, // 21: orkstack.v1.IdentityService.RetireSigningKey:output_type -> orkstack.v1.RetireSigningKeyResponse
+	2,  // 22: orkstack.v1.IdentityService.MintAttemptTokens:output_type -> orkstack.v1.MintAttemptTokensResponse
+	5,  // 23: orkstack.v1.IdentityService.ListIssuedTokens:output_type -> orkstack.v1.ListIssuedTokensResponse
+	19, // [19:24] is the sub-list for method output_type
+	14, // [14:19] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_identity_service_proto_init() }
@@ -495,13 +1234,16 @@ func file_orkstack_v1_identity_service_proto_init() {
 		return
 	}
 	file_orkstack_v1_identity_proto_init()
+	file_orkstack_v1_identity_service_proto_msgTypes[0].OneofWrappers = []any{}
+	file_orkstack_v1_identity_service_proto_msgTypes[4].OneofWrappers = []any{}
+	file_orkstack_v1_identity_service_proto_msgTypes[6].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_identity_service_proto_rawDesc), len(file_orkstack_v1_identity_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
