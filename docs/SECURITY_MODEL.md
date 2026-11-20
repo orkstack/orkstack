@@ -727,7 +727,11 @@ runs for long:
   oversized file at a name the Orker reads ends the attempt
   `SERVICE_CONTRACT_VIOLATION`;
 - what it writes for the Orker is a bounded memory filesystem charged to its
-  own memory: it cannot fill a disk;
+  own memory: it cannot fill a disk. Its size is bounded on every runtime;
+  its inode count is stated on Docker (`nr_inodes`), and on Podman, whose
+  CLI takes no inode count, bounded by the container's memory limit, to
+  which the kernel charges the filesystem's inodes: filling it in files or
+  directories exhausts only the container's own memory;
 - its secrets and its conversation are memory-backed and gone with the
   container. On a host with swap, memory can still reach the swap device, so
   use encrypted swap or none.

@@ -5,6 +5,7 @@ package orker_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,9 +48,25 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 	t.Cleanup(func() { _ = exec.Command(containerCLI(t), "rm", "-f", open).Run() })
 	_, port, _ := strings.Cut(strings.Fields(run("port", open, "8080/tcp"))[0], ":")
 	planted := hostAddress(t) + ":" + port
+	// A listener on the host's own address too: a network with a route out
+	// reaches at least one of the two (a host firewall may close this one,
+	// a runtime's strict isolation the published port).
+	hostListener, err := net.Listen("tcp", "0.0.0.0:0")
+	must.OKf(t, err, "listen on the host")
+	t.Cleanup(func() { _ = hostListener.Close() })
+	go func() {
+		for {
+			c, err := hostListener.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	plantedHost := net.JoinHostPort(hostAddress(t), fmt.Sprint(hostListener.Addr().(*net.TCPAddr).Port))
 
 	d := &orker.OCIDispatcher{Runtime: orker.NewDockerRuntime(), OrkerID: owner}
-	got := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, OperatorAddresses: []string{planted}, Cluster: "127.0.0.1:1"})
+	got := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, OperatorAddresses: []string{planted, plantedHost}, Cluster: "127.0.0.1:1"})
 	r := got.Result
 	if !r.Ran {
 		t.Fatalf("the probe did not run: %+v", r)
@@ -58,8 +75,8 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 		t.Error("a service's answer filesystem could not be made and opened")
 	}
 	joined := strings.Join(r.Fitness.Failures, "\n")
-	if !strings.Contains(joined, "question 1: tcp reached "+planted) {
-		t.Fatalf("positive control: the probe did not report the planted address %s reached:\n%s", planted, joined)
+	if !strings.Contains(joined, "question 1: tcp reached "+planted) && !strings.Contains(joined, "question 1: tcp reached "+plantedHost) {
+		t.Fatalf("positive control: the probe reported neither planted address (%s, %s) reached:\n%s", planted, plantedHost, joined)
 	}
 	for _, f := range r.Fitness.Failures {
 		if strings.HasPrefix(f, "question 4:") || strings.Contains(f, "not asked") {
