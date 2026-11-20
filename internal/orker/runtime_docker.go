@@ -223,6 +223,8 @@ func (d *DockerRuntime) dialectWithin(ctx context.Context, within time.Duration)
 		switch {
 		case timedOut():
 			return dialect{}, true, fmt.Errorf("the container engine did not answer `docker version` within %s", within)
+		case ctx.Err() != nil:
+			return dialect{}, false, fmt.Errorf("identify the container engine: %w", ctx.Err())
 		case err != nil:
 			return dialect{}, false, fmt.Errorf("identify the container engine: %w", err)
 		case answer.code != 0:
@@ -247,6 +249,8 @@ func (d *DockerRuntime) dialectWithin(ctx context.Context, within time.Duration)
 	switch {
 	case timedOut():
 		return dialect{}, true, fmt.Errorf("the container engine did not answer `%s info` within %s", cli, within)
+	case ctx.Err() != nil:
+		return dialect{}, false, fmt.Errorf("ask whether the container engine is rootless: %w", ctx.Err())
 	case err != nil:
 		return dialect{}, false, fmt.Errorf("ask whether the container engine is rootless: %w", err)
 	case answer.code != 0:
@@ -1459,12 +1463,15 @@ const usageLocateTimeout = 2 * time.Second
 // again, never a cgroup this host cannot see.
 func (d *DockerRuntime) usageLocator(id ContainerID, host cgroupHost) func(context.Context) (cgroupReader, usageMethod, error) {
 	return func(ctx context.Context) (cgroupReader, usageMethod, error) {
-		ctx, cancel := context.WithTimeout(ctx, usageLocateTimeout)
-		defer cancel()
+		// The dialect is asked once per runtime, on its own bound: a loaded
+		// engine can take longer than the locate's to answer `info`, and the
+		// locate's deadline once killed the CLI mid-answer.
 		spoken, err := d.dialect(ctx)
 		if err != nil {
 			return nil, usageUnmeasured, fmt.Errorf("%w: the engine's dialect: %v", errCgroupRead, err)
 		}
+		ctx, cancel := context.WithTimeout(ctx, usageLocateTimeout)
+		defer cancel()
 		answer, err := d.control(ctx, "inspect", "--format", "{{.State.Pid}}", string(id))
 		if err != nil {
 			return nil, usageUnmeasured, fmt.Errorf("%w: the engine gave no pid for %s: %v", errCgroupRead, id, err)
@@ -2315,6 +2322,46 @@ func serviceBridgeName(network string) string {
 	return ServiceBridgePrefix + hex.EncodeToString(sum[:])[:9]
 }
 
+// ErrServiceNetworkUnsupported is a runtime that cannot make a service's
+// network cut off from every other: the docker CLI against the Podman
+// engine, whose Docker-compatible API does not apply Podman's isolate
+// option. Such an Orker hosts no service; the Podman CLI against the same
+// engine does.
+var ErrServiceNetworkUnsupported = errors.New("service networks on the Podman engine need the podman CLI (" + CLIVar +
+	"=podman): its Docker-compatible API does not keep a network apart from the others")
+
+// ReachControlFromInside says where the reach probe's positive control
+// asks its listeners from. A rootless engine leaves the host no route to a
+// container's address, so the control asks each listener from a container on
+// its own network, which the Podman engine does not keep apart from itself;
+// otherwise the Orker asks them from the host.
+func (d *DockerRuntime) ReachControlFromInside(ctx context.Context) (bool, error) {
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		return false, err
+	}
+	return spoken.rootless, nil
+}
+
+// ServiceNetworksRefused is ErrServiceNetworkUnsupported for a runtime that
+// cannot make a service's network cut off from the others, nil otherwise.
+func (d *DockerRuntime) ServiceNetworksRefused(ctx context.Context) error {
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		return err
+	}
+	if spoken.cli != CLIPodman && spoken.engine == CLIPodman {
+		return ErrServiceNetworkUnsupported
+	}
+	return nil
+}
+
+// serviceNetworkIDArgs reads a network's id by its name: the podman CLI
+// answers `network create` with the name.
+func serviceNetworkIDArgs(name string) []string {
+	return []string{"network", "inspect", "--format", "{{.Id}}", name}
+}
+
 // serviceNetworkArgs is `network create` for a network of a service's own
 // (14 §7). It is a bridge that routes out through the host's address
 // translation, because a service reaches its broker, wherever the host can
@@ -2328,6 +2375,9 @@ func serviceBridgeName(network string) string {
 func serviceNetworkArgs(x dialect, name string, labels map[string]string) ([]string, error) {
 	if !serviceNetworkNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("create service network: %q is not a name", name)
+	}
+	if x.cli != CLIPodman && x.engine == CLIPodman {
+		return nil, ErrServiceNetworkUnsupported
 	}
 	args := []string{"network", "create", "--driver", "bridge", "--ipv6=false"}
 	if x.cli == CLIPodman {
@@ -2366,6 +2416,15 @@ func (d *DockerRuntime) CreateServiceNetwork(ctx context.Context, name string, l
 		return "", fmt.Errorf("create service network %s: %w", name, err)
 	}
 	id := strings.TrimSpace(answer.stdout)
+	if spoken.cli == CLIPodman {
+		// The podman CLI answers with the name it was given; the id is read
+		// back, so everything after this names the network by id.
+		byName, err := d.control(ctx, serviceNetworkIDArgs(name)...)
+		if err != nil {
+			return "", fmt.Errorf("create service network %s: read its id: %w", name, err)
+		}
+		id = strings.TrimSpace(byName.stdout)
+	}
 	if !serviceNetworkIDPattern.MatchString(id) {
 		return "", fmt.Errorf("create service network %s: the runtime answered %q, not a network id", name, terminalSafeShort(id))
 	}

@@ -142,8 +142,36 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 	// that died, is never read as a path that is closed.
 	listeners := []string{net.JoinHostPort(listenerAddr, reachProbePort), net.JoinHostPort(serviceAddr, reachProbePort),
 		net.JoinHostPort(defaultAddr, reachProbePort)}
-	if err := awaitListening(ctx, listeners); err != nil {
-		return notRun("the positive control", err)
+	inside := false
+	if rr, ok := r.d.Runtime.(interface {
+		ReachControlFromInside(context.Context) (bool, error)
+	}); ok {
+		if inside, err = rr.ReachControlFromInside(ctx); err != nil {
+			return notRun("where the positive control asks from", err)
+		}
+	}
+	control := func(when string) *ReachProbeRun {
+		var err error
+		if inside {
+			// The runtime leaves the host no route to a container's address
+			// (ReachControlFromInside): each listener is asked from its own
+			// network.
+			err = r.controlInside(ctx, []dialRun{
+				{"control-p", NetworkService, probeNet, []string{"4,address,tcp," + listeners[0]}},
+				{"control-s", NetworkService, canaryNet, []string{"4,address,tcp," + listeners[1]}},
+				{"control-d", NetworkDefault, "", []string{"4,address,tcp," + listeners[2]}},
+			})
+		} else {
+			err = awaitListening(ctx, listeners)
+		}
+		if err != nil {
+			run := notRun("the positive control"+when, err)
+			return &run
+		}
+		return nil
+	}
+	if failed := control(""); failed != nil {
+		return *failed
 	}
 	hosts, err := hostAddresses()
 	if err != nil {
@@ -158,10 +186,6 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 		Canaries:           []string{net.JoinHostPort(serviceAddr, reachProbePort), net.JoinHostPort(defaultAddr, reachProbePort)},
 	}
 	back := "4,address,tcp," + net.JoinHostPort(listenerAddr, reachProbePort)
-	type dialRun struct {
-		name, mode, network string
-		targets             []string
-	}
 	var dials []dialRun
 	// The probe takes at most reachprobe.MaxTargets at once; a host with many
 	// addresses is asked in several runs from the same network.
@@ -180,11 +204,45 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 		}
 		obs = append(obs, got...)
 	}
-	if err := awaitListening(ctx, listeners); err != nil {
-		return notRun("the positive control, after the probe", err)
+	if failed := control(", after the probe"); failed != nil {
+		return *failed
 	}
 	out.Result = servicehost.ProbeResult{Ran: true, Fitness: servicehost.JudgeAllowed(obs, r.cfg.Allow)}
 	return out
+}
+
+// dialRun is one dialling container: its name, network and targets.
+type dialRun struct {
+	name, mode, network string
+	targets             []string
+}
+
+// controlInside asks each listener from its own network, a few times while
+// it may still be starting, and needs every one to answer.
+func (r *reachRun) controlInside(ctx context.Context, runs []dialRun) error {
+	for _, c := range runs {
+		var last error
+		for attempt := range 10 {
+			obs, err := r.dial(ctx, fmt.Sprintf("%s-%d", c.name, attempt), c.mode, c.network, c.targets)
+			if err == nil && len(obs) == 1 && obs[0].Connected {
+				last = nil
+				break
+			}
+			last = fmt.Errorf("%s did not answer from its own network", c.targets[0])
+			if err != nil {
+				last = err
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+		if last != nil {
+			return last
+		}
+	}
+	return nil
 }
 
 // awaitListening waits, within a bound, until every address accepts a

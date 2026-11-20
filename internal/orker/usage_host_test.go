@@ -1,12 +1,15 @@
 package orker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeHost lays out /proc/<pid>/cgroup and a cgroup mount under a temp dir.
@@ -367,4 +370,57 @@ func TestProbeCgroupIdentity_SaysWhetherThisHostCanVerify(t *testing.T) {
 	}
 	// The real host: its own answer, which the boot logs.
 	t.Logf("this host: %v", probeCgroupIdentity(hostCgroups()))
+}
+
+// TestDockerRuntime_UsageLocatorAsksTheDialectOnItsOwnBound: a runtime that
+// has not yet asked its engine which dialect it speaks asks it on the
+// dialect's own bound, not the locate's: a loaded podman host once took longer
+// than usageLocateTimeout to answer `info`, and the locate's deadline killed
+// the CLI mid-answer, so the usage of a running container went unmeasured.
+func TestDockerRuntime_UsageLocatorAsksTheDialectOnItsOwnBound(t *testing.T) {
+	leaf := "system.slice/docker-" + usageID + ".scope"
+	host := fakeHost(t, "0::/"+leaf+"\n", true, map[string]map[string]string{leaf: v2Files})
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "docker")
+	slow := usageLocateTimeout + 500*time.Millisecond
+	script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  version) echo '[{"Name":"Engine","Version":"27.0.1"}]' ;;
+  info) sleep %.1f; echo '[name=seccomp,profile=builtin]' ;;
+  inspect) echo 41 ;;
+  *) exit 1 ;;
+esac
+`, slow.Seconds())
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &DockerRuntime{Bin: bin, CLI: CLIDocker}
+	read, method, err := runtime.usageLocator(ContainerID(usageID), host)(t.Context())
+	if err != nil {
+		t.Fatalf("locate with an engine that answers `info` in %s = %v; want its cgroup", slow, err)
+	}
+	if r, err := read(false); method != usageCgroupV2 || err != nil || r.cpuSeconds != 1 {
+		t.Errorf("read = %+v, %v (%v)", r, err, method)
+	}
+}
+
+// TestDockerRuntime_DialectNamesItsCallersEnd: when the caller's own context
+// ends while the engine is still answering, the error says so; it is never
+// the "exited -1" of the CLI the context killed.
+func TestDockerRuntime_DialectNamesItsCallersEnd(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "docker")
+	script := "#!/bin/sh\ncase \"$1\" in\n  version) echo '[{\"Name\":\"Engine\",\"Version\":\"27.0.1\"}]' ;;\n  info) echo '[name=seccomp]'; exec sleep 30 ;;\n  *) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	_, err := (&DockerRuntime{Bin: bin, CLI: CLIDocker}).dialect(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("dialect when the caller's context ends = %v; want it to name the deadline", err)
+	}
+	if strings.Contains(err.Error(), "exited -1") {
+		t.Errorf("dialect = %v; a CLI the context killed did not exit on its own", err)
+	}
 }

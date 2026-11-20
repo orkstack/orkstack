@@ -5,6 +5,7 @@ package orker_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
@@ -60,6 +61,24 @@ func TestIntegration_ServiceNetwork_ReachesOutNotSideways(t *testing.T) {
 	must.OKf(t, err, "the broker's published port")
 	brokerContainer := docker("inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", brokerID)
 
+	// A runtime that cannot keep a service's network apart refuses to make
+	// one, by name: the refusal is what such a runtime must show, and making
+	// one anyway would be the failure.
+	refusal := rt.ServiceNetworksRefused(ctx)
+	probeName := fmt.Sprintf("%s-refusal-%d", owner, time.Now().UnixNano()%1e6)
+	id, err := rt.CreateServiceNetwork(ctx, probeName, labels)
+	if refusal != nil {
+		if !errors.Is(err, orker.ErrServiceNetworkUnsupported) {
+			if id != "" {
+				_ = rt.RemoveServiceNetwork(ctx, id)
+			}
+			t.Fatalf("this runtime cannot keep a service network apart (%v), yet creating one answered %v", refusal, err)
+		}
+		t.Logf("refused, as this runtime must: %v", err)
+		return
+	}
+	must.OKf(t, err, "create a service network")
+	must.OK(t, rt.RemoveServiceNetwork(ctx, id))
 	network := func(name string) string {
 		id, err := rt.CreateServiceNetwork(ctx, fmt.Sprintf("%s-%s-%d", owner, name, time.Now().UnixNano()%1e6), labels)
 		must.OKf(t, err, "create service network %s", name)
@@ -90,7 +109,7 @@ func TestIntegration_ServiceNetwork_ReachesOutNotSideways(t *testing.T) {
 	defaultListener, _ := run("default", orker.NetworkDefault, "", listener)
 	theirAddr, err := rt.ContainerAddress(ctx, theirListener, theirs)
 	must.OKf(t, err, "their listener's address")
-	defaultAddr, err := rt.ContainerAddress(ctx, defaultListener, "bridge")
+	defaultAddr, err := rt.ContainerAddress(ctx, defaultListener, "")
 	must.OKf(t, err, "the default listener's address")
 
 	probe := func(host, port string) string {
