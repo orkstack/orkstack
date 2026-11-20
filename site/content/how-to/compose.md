@@ -65,14 +65,16 @@ shared_with:
 
 ## Pass input and read outputs
 
-- `with:` is the child's input. The engine renders it. A child run receives values, never files. Pass a reference that the child can fetch, such as a digest or a URL.
+- `with:` is the child's input. The engine renders it, and it carries values only.
+- To pass a file, the child declares an input of `type: artifact`, and the composed task binds it under `artifacts:` to an artifact of its run, such as `dataset: build/dataset.tar.gz`. A child task reads it as `{{ artifact "_inputs/dataset" }}`. The child gets a reference to the same object, never a copy.
 - `orkctl orkflow create` checks `with:` against the child's `inputs:`.
 - The child's `outputs:` become the task's values. Read them as `{{ .tasks.<id>.output.<name> }}`, or `{{ index .tasks "<id>" "output" "<name>" }}` when the id has a hyphen. Every value is a string.
 - A child with no `outputs:` gives `{}`. Reading an output the child does not declare fails at create.
+- A child returns a file with an output `{artifact: <task>/<name>}`. The composed task records it as its own artifact under the output's name, so a downstream task reads it as `{{ artifact "<id>/<output>" }}`.
 
 ## What a composed task allows
 
-A composed task takes only `id`, `needs`, `condition`, `join`, `uses` and `with`. The child's own tasks set the pool, pin, retries, timeouts, cache and fan-out.
+A composed task takes only `id`, `needs`, `condition`, `join`, `uses`, `with` and `artifacts`. The child's own tasks set the pool, pin, retries, timeouts, cache and fan-out.
 
 ## When a child fails
 

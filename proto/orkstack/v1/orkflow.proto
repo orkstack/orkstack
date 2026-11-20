@@ -170,10 +170,16 @@ message Task {
   // (devices:), never a device path.
   repeated string devices = 26;
 
-  // child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  // child_artifacts are a composed task's artifacts: bindings, one per
+  // artifact input of the child Orkflow, sorted by input. The engine resolves
+  // each from a recorded result at child start and hands the child a
+  // reference, never the bytes. Part of canonicalOrkflow(Task) ONLY when set.
   repeated ChildArtifact child_artifacts = 30;
 
-  // input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  // input_artifacts names, sorted, the artifact inputs of this task's Orkflow
+  // that its fields name literally ({{ artifact "_inputs/<name>" }}); only
+  // those are staged for it, under the reserved producer _inputs. Part of
+  // canonicalOrkflow(Task) ONLY when set.
   repeated string input_artifacts = 31;
 
   // identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
@@ -182,7 +188,7 @@ message Task {
   // credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
   repeated CredentialRef credentials = 29;
 
-  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  // concurrency is set from E88's task-level limits; unset until they land.
   ConcurrencySpec concurrency = 32;
 
   // 27 was a field of a draft that recorded histories hold: never reuse it.
@@ -251,6 +257,22 @@ message EachSpec {
   // the compiler normalises to unset) is one line per item. Refused with over.
   // max_items counts items, so the line ceiling is max_items x batch.
   int32 batch = 8;
+  // on_item_failure is what an item that fails for good does to the rest of
+  // the fan-out: FAIL_FAST (the default, which the compiler normalises to
+  // unset) stops it at the first such item; CONTINUE runs every other item,
+  // and the fan-out then fails with its lowest-index failed item's reason.
+  EachItemFailure on_item_failure = 9;
+  // max_failed_items, with CONTINUE only, bounds how many items may fail: at
+  // the next failure past it the fan-out fails fast. 1 .. max_items-1; 0 is
+  // unbounded.
+  int32 max_failed_items = 10;
+}
+
+// EachItemFailure is a fan-out's on_item_failure.
+enum EachItemFailure {
+  EACH_ITEM_FAILURE_UNSPECIFIED = 0;
+  EACH_ITEM_FAILURE_FAIL_FAST = 1;
+  EACH_ITEM_FAILURE_CONTINUE = 2;
 }
 
 // AwaitSpec makes a Task an awaited task: it starts no container and reaches
@@ -353,10 +375,16 @@ message Orkflow {
   // not part of canonicalOrkflow: definition_digest is the owner's.
   string definition_namespace = 14;
 
-  // output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  // output_artifacts are the artifacts this Orkflow returns to a composing
+  // run, by output name (outputs: <name>: {artifact: <task>/<name>}). Part of
+  // canonicalOrkflow ONLY when set.
   map<string, OutputArtifact> output_artifacts = 15;
 
-  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  // concurrency is the Orkflow's run-level concurrency limit (docs/DSL.md
+  // "Concurrency limits"): its runs share at most limit slots of one key,
+  // and a run past them waits in order. Unset, its runs are not limited. Part
+  // of canonicalOrkflow only when set, so an Orkflow that declares none keeps
+  // its digest.
   ConcurrencySpec concurrency = 16;
 
   // timeout_seconds is the run's own time limit from its start, from the
@@ -366,13 +394,51 @@ message Orkflow {
   int64 timeout_seconds = 17;
 }
 
-// ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-// batch).
-message ChildArtifact {}
+// ChildArtifact binds one artifact input of a composed task's child
+// Orkflow to an artifact of this run: the artifact name of the task task_id
+// (a producer in the composed task's needs closure), or of _inputs for an
+// artifact input of this Orkflow.
+message ChildArtifact {
+  string input = 1;
+  string task_id = 2;
+  string name = 3;
+}
 
-// ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
-// batch).
-message ConcurrencySpec {}
+// ConcurrencySpec is one declared concurrency limit (docs/DSL.md
+// "Concurrency limits"). Its identity is its namespace and its rendered key:
+// every declaration in a namespace that renders the same key shares its
+// slots and its line.
+message ConcurrencySpec {
+  // limit is how many runs may hold a slot of the key at once, from 1.
+  int32 limit = 1;
+  // key is the template a run renders its key from, once, at submit. Empty
+  // is the Orkflow's own key, shared by every version of it in the
+  // namespace that runs it.
+  string key = 2;
+  // on_limit is what a run does when every slot of its key is held.
+  ConcurrencyStrategy on_limit = 3;
+  // queue_timeout_seconds is how long a run waits in line for a slot before
+  // it ends; 0 is the deployment's default.
+  int64 queue_timeout_seconds = 4;
+  // max_queued is how many runs may wait in line for the key, checked at
+  // submit, best-effort; 0 sets no bound of its own.
+  int32 max_queued = 5;
+}
+
+// ConcurrencyStrategy is what a run does when every slot of its key is held.
+enum ConcurrencyStrategy {
+  CONCURRENCY_STRATEGY_UNSPECIFIED = 0;
+  // QUEUE: wait in line, in order of arrival. The default.
+  CONCURRENCY_STRATEGY_QUEUE = 1;
+  // REFUSE: the run fails at once.
+  CONCURRENCY_STRATEGY_REFUSE = 2;
+  // SKIP: the run is not started.
+  CONCURRENCY_STRATEGY_SKIP = 3;
+  // CANCEL_OLDEST: the oldest holder is canceled to make room.
+  CONCURRENCY_STRATEGY_CANCEL_OLDEST = 4;
+  // REPLACE: the runs waiting in line are replaced by this one.
+  CONCURRENCY_STRATEGY_REPLACE = 5;
+}
 
 // CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
 // batch).
@@ -382,6 +448,9 @@ message CredentialRef {}
 // batch).
 message IdentityRef {}
 
-// OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-// batch).
-message OutputArtifact {}
+// OutputArtifact names the artifact an Orkflow returns under an output's
+// name: the artifact name of the task task_id.
+message OutputArtifact {
+  string task_id = 1;
+  string name = 2;
+}

@@ -136,11 +136,13 @@ type config struct {
 	// length and its longest. Refused at boot outside their bounds
 	// (docs/DEPLOY.md §1).
 	runPauseTimeout, runPauseTimeoutMax time.Duration
-	// gateTunables and censusSettings are engine.concurrency.*
-	// (concurrencySettingsFromEnv): what a concurrency gate this engine
-	// starts runs on, and the census schedule's settings.
+	// gateTunables, censusSettings and concurrency are
+	// engine.concurrency.* (concurrencySettingsFromEnv): what a concurrency
+	// gate this engine starts runs on, the census schedule's settings, and
+	// what a run's submit and plan read.
 	gateTunables   engine.GateTunables
 	censusSettings engine.CensusSettings
+	concurrency    engine.ConcurrencySettings
 	// definitionByReference is engine.definition_by_reference's effective
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
@@ -209,7 +211,7 @@ func loadConfig() config {
 	poolMetrics, poolMetricsErr := poolMetricsFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
-	gateTunables, censusSettings, concurrencyErr := concurrencySettingsFromEnv()
+	gateTunables, censusSettings, concurrencySettings, concurrencyErr := concurrencySettingsFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
@@ -243,6 +245,7 @@ func loadConfig() config {
 		runPauseTimeoutMax:            runPauseTimeoutMax,
 		gateTunables:                  gateTunables,
 		censusSettings:                censusSettings,
+		concurrency:                   concurrencySettings,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
 		snapshotOverlays:              snapshotOverlays,
@@ -519,6 +522,7 @@ func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, lo
 	// The engine decodes an Orker's answer leniently (engine.DataConverter);
 	// the Orker dials with the SDK default and stays strict.
 	temporalOptions.DataConverter = engine.DataConverter()
+	temporalOptions.FailureConverter = engine.FailureConverter()
 	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(),
 		append(cfg.auth.capabilities(), described.Tokens()...)...)
 	if dialing != nil {
@@ -1509,6 +1513,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open snapshot store: %w", err)
 	}
+	// Each run tree's run-context object is written to the same store.
+	runContexts, ok := snapshots.(api.RunContextWriter)
+	if !ok {
+		return fmt.Errorf("open snapshot store: %T cannot store run contexts", snapshots)
+	}
 	// engine.definition_by_reference's effective value: on, unset, only
 	// where continuation is (docs/DEPLOY.md §1).
 	logger.Info("definition by reference", "definition_by_reference", cfg.definitionByReference,
@@ -1559,8 +1568,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open artifact store: %w", err)
 	}
-	// The completion records, READ by ExportRunEvidence only, and only at the
-	// uri a run snapshot recorded. Same bucket and backend the Orker writes
+	// The completion records, READ by ExportRunEvidence at the uri a run
+	// snapshot recorded, and by a resumed run's read-back (AdoptRecorded). Same bucket and backend the Orker writes
 	// them through; the conditional-create boot probe is the Orker's concern
 	// and is not run here, because the engine never writes a commit.
 	commitStore, err := artifacts.NewCommitStore(ctx, archiveConfig)
@@ -1651,6 +1660,19 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		engine.NewEachActivities(artifactStore).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems},
 	)
+	// The two local activities of a resumed run (E85): the plan a reset run
+	// loads at R, and the read-back of its kept results. Both read what the
+	// Orkers committed and ResumeRun recorded; neither writes.
+	resumeRecords, err := artifacts.NewRecordStore(ctx, archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open the resume record store: %w", err)
+	}
+	resume := engine.NewResumeActivities(commitStore, artifactStore).
+		WithHistory(temporalClient.WorkflowService(), cfg.temporalNamespace, resumeRecords)
+	runWorker.RegisterActivityWithOptions(resume.LoadResumePlan,
+		activity.RegisterOptions{Name: engine.ActivityLoadResumePlan})
+	runWorker.RegisterActivityWithOptions(resume.AdoptRecorded,
+		activity.RegisterOptions{Name: engine.ActivityAdoptRecorded})
 	// The two local activities a composed task and declared outputs use:
 	// render engine-side templates over upstream values.json, and store a
 	// composed task's values.
@@ -1659,6 +1681,20 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
 	runWorker.RegisterActivityWithOptions(compose.StoreComposedValues,
 		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
+	// The claims a run tree writes for artifacts its runs pass each other:
+	// stat'd in the artifact store, held as markers in the run archive.
+	claimer, ok := archiveStore.(engine.ObjectClaimer)
+	if !ok {
+		return fmt.Errorf("the run archive (%T) cannot write claim markers, so a run tree could pass an "+
+			"artifact no marker holds", archiveStore)
+	}
+	claims := engine.NewArtifactClaimActivities(artifactStore, claimer)
+	runWorker.RegisterActivityWithOptions(claims.StatAndClaimChildInputs,
+		activity.RegisterOptions{Name: engine.ActivityStatAndClaimChildInputs})
+	runWorker.RegisterActivityWithOptions(claims.ClaimReceivedArtifacts,
+		activity.RegisterOptions{Name: engine.ActivityClaimReceivedArtifacts})
+	runWorker.RegisterActivityWithOptions(claims.ClaimReturnedArtifacts,
+		activity.RegisterOptions{Name: engine.ActivityClaimReturnedArtifacts})
 	// The concurrency gates' reads of the cluster, and the census's pass, as
 	// local activities of the worker that runs their workflow tasks (E88
 	// §5.1.8). The census reports nowhere until the telemetry gauges read it.
@@ -1918,6 +1954,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed).
 		WithRootIndex(rootIndexed).
+		// A gate is rebuilt from the limit's attributes and the namespace's.
+		WithConcurrencyIndex(concurrencyIndexed && namespaceIndexed).
 		// What the client was dialed with: a cancellation that records who
 		// asked names them on the cluster itself (TemporalStarter.CancelRun).
 		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity)
@@ -2006,8 +2044,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Releases:   releases,
 		// The fleet check reads the same cluster seam (docs/DEPLOY.md §5).
 		Capabilities: releases,
-		Catalog:      cfg.activityCatalog,
-		Resolver:     resolver,
+		// engine.concurrency.*: what a run's limit is planned with.
+		Concurrency:       cfg.concurrency,
+		GateTunables:      cfg.gateTunables,
+		ConcurrencyReader: engine.NewTemporalConcurrencyReader(temporalClient, 0),
+		Catalog:           cfg.activityCatalog,
+		Resolver:          resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
 		ImagePolicies:       imagePolicies,
@@ -2068,6 +2110,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		RunPauseIndexed:               pausedIndexed,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
+		RunContexts:                   runContexts,
 		SnapshotOverlays:              cfg.snapshotOverlays,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
 		CacheMaxTTL:                   cfg.cacheMaxTTL,

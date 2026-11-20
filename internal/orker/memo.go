@@ -108,6 +108,10 @@ type memoInputFile struct {
 type memoEachUpstream struct {
 	TaskID string `json:"task_id"`
 	Count  int32  `json:"count"`
+	// Failed is in the key: a cached failure handler of a continue fan-out
+	// misses when other items failed. Absent otherwise, so an ordinary
+	// fan-out's key is the one it always had.
+	Failed []int32 `json:"failed,omitempty"`
 }
 
 // deferredFetch is one artifact download stageInputs recorded instead of

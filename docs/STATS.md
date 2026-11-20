@@ -27,6 +27,7 @@ read, `orkctl run timing` (`docs/UI_CLI_PARITY.md`, "Task timing").
 | Field | Where it comes from | Over which runs |
 |---|---|---|
 | `runs_by_status["running"]`, `paused`, `running[]` | the cluster's index of executions | executing now, created before the window's end (§2); a paused run counts in `paused`, never in `running`, and `running[]` lists both, each row with its status |
+| `queued`, `executing` | the same read | of the running runs: those waiting for a concurrency slot, and the rest less the paused. A deployment that does not index concurrency limits reports `queued` 0 |
 | `runs_by_status["succeeded"/"failed"/"canceled"]` | the run archive's INDEX KEYS | created in the window and finished |
 | `success_rate`, `success_rate_defined` | the same index keys | the same |
 | `most_failing[]` | the same index keys | the same |

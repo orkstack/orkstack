@@ -11,6 +11,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/consent"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
@@ -52,9 +53,13 @@ func (s *Service) CreateTrigger(
 		return nil, err
 	}
 	version := req.Msg.GetOrkflowVersion()
-	if _, err := s.orkflows.Get(ctx, ns.GetName(), name, version); err != nil {
+	stored, err := s.orkflows.Get(ctx, ns.GetName(), name, version)
+	if err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
 			name, version, ns.GetName())
+	}
+	if err := refuseArtifactInputs(stored, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, "a trigger"); err != nil {
+		return nil, err
 	}
 
 	trigger, secret, err := s.triggers.Create(ctx, triggers.Registration{
@@ -171,10 +176,17 @@ func (s *Service) UpdateTrigger(
 	}
 	// A pin must exist at update exactly as at create: a trigger must never
 	// be re-pointed at a version a submission would refuse.
-	if version := req.Msg.GetOrkflowVersion(); version != "" {
-		if _, err := s.orkflows.Get(ctx, ns.GetName(), current.OrkflowName, version); err != nil {
-			return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
-				current.OrkflowName, version, ns.GetName())
+	// Nor at one with an artifact input, pinned or followed as current: only a
+	// composing task starts those.
+	version := req.Msg.GetOrkflowVersion()
+	target, err := s.orkflows.Get(ctx, ns.GetName(), current.OrkflowName, version)
+	if err != nil && (version != "" || !errors.Is(err, artifacts.ErrNotFound)) {
+		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
+			current.OrkflowName, version, ns.GetName())
+	}
+	if err == nil {
+		if err := refuseArtifactInputs(target, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, "a trigger"); err != nil {
+			return nil, err
 		}
 	}
 	who := authn.Recorded(ctx, req.Header())

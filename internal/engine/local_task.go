@@ -220,6 +220,26 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		clone.TaskId = id
 		upstream = append(upstream, clone)
 	}
+	// The artifacts the run received that this task names, as RunWorkflow's
+	// upstreamFor hands them.
+	if names := spec.GetInputArtifacts(); len(names) > 0 {
+		ref := t.Upstream[dsl.InputsProducer]
+		delivered := &orkstackv1.UpstreamRef{TaskId: dsl.InputsProducer}
+		for _, name := range names {
+			var found *orkstackv1.ArtifactRef
+			for _, a := range ref.GetArtifacts() {
+				if a.GetName() == name {
+					found = a
+				}
+			}
+			if found == nil {
+				return nil, fmt.Errorf("task %q names artifact input %q, which the run did not receive: "+
+					"run it with --from-run RUN of a child run that received it", t.TaskID, name)
+			}
+			delivered.Artifacts = append(delivered.Artifacts, proto.Clone(found).(*orkstackv1.ArtifactRef))
+		}
+		upstream = append(upstream, delivered)
+	}
 	limits := t.Limits
 	if limits == nil {
 		limits = DefaultLimits().Proto()
@@ -373,7 +393,7 @@ func UpstreamFromRun(run *orkstackv1.Run) map[string]*orkstackv1.UpstreamRef {
 		if tr.GetEach() != nil {
 			out[tr.GetTaskId()] = &orkstackv1.UpstreamRef{
 				TaskId: tr.GetTaskId(),
-				Each:   &orkstackv1.EachUpstream{Count: tr.GetEach().GetCount()},
+				Each:   &orkstackv1.EachUpstream{Count: tr.GetEach().GetCount(), Epochs: itemEpochRuns(tr.GetItems())},
 			}
 			continue
 		}
@@ -383,6 +403,17 @@ func UpstreamFromRun(run *orkstackv1.Run) map[string]*orkstackv1.UpstreamRef {
 			Values:    tr.GetValuesRef(),
 			Artifacts: tr.GetArtifacts(),
 		}
+	}
+	// What the run received, under the reserved producer _inputs: a task
+	// is handed the ones its definition names (LocalTaskInput).
+	if received := run.GetInputArtifacts(); len(received) > 0 {
+		ref := &orkstackv1.UpstreamRef{TaskId: dsl.InputsProducer}
+		for _, n := range received {
+			artifact := proto.Clone(n.GetArtifact()).(*orkstackv1.ArtifactRef)
+			artifact.Name = n.GetName()
+			ref.Artifacts = append(ref.Artifacts, artifact)
+		}
+		out[dsl.InputsProducer] = ref
 	}
 	return out
 }

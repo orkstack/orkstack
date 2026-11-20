@@ -192,7 +192,7 @@ func slots() map[string]slot {
 		"apiVersion": "orkstack/v1", "kind": "Orkflow", "name": "x", "namespace": "ns", "version": `"1"`,
 		"description": "d", "labels": "{l: v}", "inputs": "{i: {type: string}}", "outputs": "{r: x}",
 		"pins": "{p: {}}", "tasks": "[{id: a, uses: 'busybox:1'}]", "shared_with": "[{namespace: b}]",
-		"timeout": "6h",
+		"timeout": "6h", "concurrency": "{limit: 1}",
 	} {
 		s := rootDoc(key, "")
 		s.baseline = baseline
@@ -237,6 +237,11 @@ func slots() map[string]slot {
 	out["tasks[].sleep"] = slot{doc: sleepDoc("@V@"), field: "tasks[0].sleep", baseline: "{seconds: 60}"}
 	out["tasks[].sleep.seconds"] = slot{doc: sleepDoc("{seconds: @V@}"), field: "tasks[0].sleep.seconds", baseline: "60",
 		absent: sleepDoc("{}")}
+	composed := func(value string) string {
+		return slotHeader + "name: x\ntasks:\n  - id: b\n    uses: busybox:1\n  - id: a\n    uses: orkflow:c@1.0.0\n    needs: [b]\n" + value
+	}
+	out["tasks[].artifacts"] = slot{doc: composed("    artifacts: @V@\n"), field: "tasks[1].artifacts", baseline: "{d: b/f}", absent: composed("")}
+	out["tasks[].artifacts.*"] = slot{doc: composed("    artifacts: {d: @V@}\n"), field: "tasks[1].artifacts.d", baseline: "b/f"}
 	out["tasks[].needs[]"] = slot{doc: taskDoc("    needs: [@V@]\n"), field: "tasks[0].needs[0]", baseline: "b"}
 	out["tasks[].devices"] = slot{doc: taskDoc("    devices: @V@\n"), field: "tasks[0].devices", baseline: "[sensor]", absent: taskDoc("")}
 	out["tasks[].devices[]"] = slot{doc: taskDoc("    devices: [@V@]\n"), field: "tasks[0].devices[0]", baseline: "sensor"}
@@ -297,10 +302,25 @@ func slots() map[string]slot {
 		out["tasks[].each."+key] = slot{doc: linesDoc(linesBase[key] + ", " + key + ": @V@"),
 			field: "tasks[1].each." + key, baseline: baseline, absent: absent}
 	}
+	failureBase := map[string]string{
+		"on_item_failure":  "over: '{{ .inputs.l }}', max_items: 4",
+		"max_failed_items": "over: '{{ .inputs.l }}', max_items: 4, on_item_failure: continue",
+	}
+	for key, baseline := range map[string]string{"on_item_failure": "continue", "max_failed_items": "2"} {
+		out["tasks[].each."+key] = slot{doc: taskDocWith("inputs: {l: {type: array}}\n", "    each: {"+failureBase[key]+", "+key+": @V@}\n"),
+			field: "tasks[0].each." + key, baseline: baseline,
+			absent: taskDocWith("inputs: {l: {type: array}}\n", "    each: {"+failureBase[key]+"}\n")}
+	}
 	cacheBase := map[string]string{"enabled": "", "ttl_seconds": "enabled: true, ", "scope": "enabled: true, "}
 	for key, baseline := range map[string]string{"enabled": "true", "ttl_seconds": "60", "scope": "namespace"} {
 		out["tasks[].cache."+key] = slot{doc: taskDoc("    cache: {" + cacheBase[key] + key + ": @V@}\n"), field: "tasks[0].cache." + key,
 			baseline: baseline, absent: taskDoc("    cache: {" + strings.TrimSuffix(cacheBase[key], ", ") + "}\n")}
+	}
+	concurrencyBase := map[string]string{"limit": "", "key": "limit: 1, ", "on_limit": "limit: 1, ", "queue_timeout": "limit: 1, ", "max_queued": "limit: 1, "}
+	for key, baseline := range map[string]string{"limit": "1", "key": "k", "on_limit": "queue", "queue_timeout": "2h", "max_queued": "5"} {
+		out["concurrency."+key] = slot{doc: slotHeader + "name: x\nconcurrency: {" + concurrencyBase[key] + key + ": @V@}\ntasks: [{id: a, uses: 'busybox:1'}]\n",
+			field: "concurrency." + key, baseline: baseline,
+			absent: slotHeader + "name: x\nconcurrency: {" + strings.TrimSuffix(concurrencyBase[key], ", ") + "}\ntasks: [{id: a, uses: 'busybox:1'}]\n"}
 	}
 	return out
 }
@@ -514,14 +534,20 @@ func TestOrkflowSchema_WordsAreTheCompilersWords(t *testing.T) {
 		"tasks[].network":             networkWords,
 		"tasks[].cache.scope":         cacheScopeWords,
 		"tasks[].await.schema.*.type": typeWords,
-		"inputs.*.type":               typeWords,
+		"inputs.*.type":               append(append([]string(nil), typeWords...), InputTypeArtifact),
 	} {
 		if got := enumAt(t, tree, path); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: enum %v, want %v", path, got, want)
 		}
 		ctx := contexts[path]
 		for _, word := range want {
-			if _, err := Compile([]byte(strings.ReplaceAll(ctx.doc, "@V@", word))); err != nil {
+			doc := strings.ReplaceAll(ctx.doc, "@V@", word)
+			if word == InputTypeArtifact {
+				// Rule 55: an artifact input is required, so the word
+				// compiles only beside required: true.
+				doc = strings.ReplaceAll(ctx.doc, "@V@", word+", required: true")
+			}
+			if _, err := Compile([]byte(doc)); err != nil {
 				t.Errorf("%s = %s does not compile: %v", path, word, err)
 			}
 		}

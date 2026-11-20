@@ -37,6 +37,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
@@ -256,6 +257,16 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	configure func(s *chaosStack, cfg *api.Config),
 ) *eachSoak {
 	t.Helper()
+	return startEachSoakOver(t, ctx, scenario, items, configure, false)
+}
+
+// startEachSoakOver is startEachSoakWith; with lines, every Orker of the
+// default pool it or the caller starts answers a fan-out over an artifact's
+// lines with a real Orker's line indexer.
+func startEachSoakOver(t *testing.T, ctx context.Context, scenario string, items int,
+	configure func(s *chaosStack, cfg *api.Config), lines bool,
+) *eachSoak {
+	t.Helper()
 	timing := proof.TimingBounds(t)
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
@@ -269,6 +280,9 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	catalog, err := dsl.ParseCatalog([]byte(strings.TrimPrefix(env, "ORK_ACTIVITY_CATALOG=")))
 	must.OKf(t, err, "parse the local catalog")
 	stores := s.realStores()
+	if lines {
+		s.indexLines = s.realIndexer("indexer", stores)
+	}
 	e := &eachSoak{chaosStack: s, items: items, stores: stores, realIDs: map[string]string{},
 		inflight: map[string]map[string]bool{}, timing: timing}
 
@@ -969,4 +983,111 @@ func TestIntegration_AFanOutAtAReducedItemCeilingMeetsItsThresholds(t *testing.T
 		rec, _ := e.soakRun(t, ctx, "reduced-max-parallel", 64, nil)
 		reportSoak(t, rec)
 	})
+}
+
+// realIndexer boots a real Orker's activities over stores and returns its
+// line indexer: the activity every Orker of the soak's default pool answers
+// IndexEachLines with.
+func (s *chaosStack) realIndexer(name string, stores *realOrkerStores) func(context.Context, *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error) {
+	s.t.Helper()
+	activities := orker.NewActivitiesWithOptions(stores.store, orker.Options{
+		Logs: stores.logs, Commits: stores.commits, Attempts: stores.attempts, Refs: stores.refs,
+		Pool: task.DefaultPool, OrkerID: proof.OrkerID("chaos-" + chaosLabel(s.scenario) + "-" + name),
+		WorkRoot: chaosWorkRoot(s.t, name), EachIndexes: stores.indexes,
+	})
+	if err := activities.Boot(s.ctx); err != nil {
+		infraAbsent(s.t, "orker boot checks failed: %v", err)
+	}
+	s.t.Cleanup(activities.Close)
+	return activities.IndexEachLines
+}
+
+// soakLinesDocument is soakDocument with its fan-out over the lines of an
+// artifact: list writes the numbers 0 … items−1, one per line, and spread
+// runs one item per line, its element the line's text.
+func soakLinesDocument(name string, items, maxParallel int) string {
+	parallel := ""
+	if maxParallel > 0 {
+		parallel = fmt.Sprintf(", max_parallel: %d", maxParallel)
+	}
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
+version: "1.0.0"
+tasks:
+  - id: list
+    uses: shell
+    pool: %s
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      script: "seq 0 %d > /orkstack/output/artifacts/rows.txt"
+  - id: spread
+    uses: shell
+    needs: [list]
+    network: none
+    timeout_seconds: 300
+    retry: {maximum_attempts: 3}
+    each: {over_artifact: list/rows.txt, format: lines, max_items: %d%s}
+    with: {op: exec, command: [echo, "{{ .each.item }}"]}
+`, name, soakListPool, items-1, items, parallel)
+}
+
+// startEachLinesSoak is startEachSoak for soakLinesDocument, with its real
+// item Orkers started.
+func startEachLinesSoak(t *testing.T, ctx context.Context, scenario string, items int,
+	configure func(s *chaosStack, cfg *api.Config),
+) *eachSoak {
+	t.Helper()
+	e := startEachSoakOver(t, ctx, scenario, items, configure, true)
+	e.document = soakLinesDocument
+	for i := 1; i <= soakRealOrkers; i++ {
+		e.startRealItemOrker(fmt.Sprintf("real-%d", i), nil, soakRealOrkerSlots)
+	}
+	return e
+}
+
+// TestIntegration_SoakFanOutLines: one fan-out over the ORK_SOAK_ITEMS lines
+// (default the built-in maximum) of an artifact, with no max_parallel, meets
+// E4's thresholds: the line index is one activity, and each item carries only
+// its index reference, never its line, so history grows as an array fan-out's.
+func TestIntegration_SoakFanOutLines(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
+	defer cancel()
+	items := soakItems(t)
+	soakAlone(t, ctx)
+	e := startEachLinesSoak(t, ctx, fmt.Sprintf("soak-%d-lines", items), items, nil)
+	rec, _ := e.soakRun(t, ctx, "lines", 0, nil)
+	reportSoak(t, rec)
+}
+
+// TestIntegration_EachLinesCarriesOnAtAReducedCeiling: a fan-out over an
+// artifact's lines at the reduced item ceiling, its definition passed by
+// reference and snapshot overlays on, carries on across at least two
+// generations — its line index crossing in the saved state — and meets E4's
+// thresholds: TestIntegration_SoakFanOutLines' merge-gate twin.
+func TestIntegration_EachLinesCarriesOnAtAReducedCeiling(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
+	defer cancel()
+	soakAlone(t, ctx)
+	e := startEachLinesSoak(t, ctx, "reduced-lines-ceiling", reducedItems, func(s *chaosStack, cfg *api.Config) {
+		cfg.DefinitionByReference, cfg.DefinitionObjects, cfg.SnapshotOverlays = true, s.store, true
+	})
+	var plan *engine.RunPlan
+	rec, _ := e.soakRun(t, ctx, "reduced-lines", 0, func(runID string) {
+		plan = decodeRunPlan(t, e, runID)
+	})
+	if rec.GenerationCount < 2 {
+		rec.Missed = append(rec.Missed, fmt.Sprintf("the run used %d generations; a reduced ceiling must still carry on at least once",
+			rec.GenerationCount))
+	}
+	if plan.EachLines == nil {
+		rec.Missed = append(rec.Missed, "the run's plan pins no line policy")
+	}
+	if plan.SnapshotOverlay == nil {
+		rec.Missed = append(rec.Missed, "the run did not write snapshot overlays")
+	}
+	t.Logf("reduced lines ceiling: %d items, %d generations, overlays %t", reducedItems, rec.GenerationCount, plan.SnapshotOverlay != nil)
+	reportSoak(t, rec)
 }

@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -153,6 +154,12 @@ func (s *runState) decodePauseRequest(ctx workflow.Context, raw converter.RawVal
 	payload := raw.Payload()
 	if payload == nil {
 		return drop("no payload")
+	}
+	// Sealed for this run under its key, or it opens for nobody
+	// (payload-encryption.md §4.1 rule 2).
+	payload, err := payloadcrypt.OpenIfSealed(s.scope, payload)
+	if err != nil {
+		return drop("it does not open")
 	}
 	req, err := parsePauseRequest(payload.GetData())
 	if err != nil {

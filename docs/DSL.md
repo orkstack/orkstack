@@ -24,6 +24,7 @@ check among them, reads the same keys ([ACCESS.md](ACCESS.md#how-a-request-is-de
 | `pins`        | no       | Declared task pins (see below).                        |
 | `shared_with` | no       | Other namespaces' Orkflows that may compose this one (see "Sharing across namespaces"). |
 | `timeout`     | no       | optional: a Go duration, 10s to 8760h, bounding the whole run (see "Run timeout"). |
+| `concurrency` | no       | optional: how many runs share one key's slots at once; the rest wait in line (see "Concurrency limits"). |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
 `orkctl orkflow create` and `orkctl automation apply` each read a file's `kind:`
@@ -365,10 +366,14 @@ that create on the exact field.
 ```yaml
 inputs:
   url:
-    type: string          # string | number | boolean | object | array
+    type: string          # string | number | boolean | object | array | artifact
     default: "https://…"  # optional
     required: false       # optional, default false
 ```
+
+An input of `type: artifact` is a file a composing task passes, read as
+`{{ artifact "_inputs/<name>" }}`, never `.inputs.<name>` (see "Passing
+artifacts to a child run"); every other input is a value.
 
 Provided at submit time and referenced as `{{ .inputs.<name> }}`. An input is
 **required** exactly when it says `required: true` and has no `default`; a
@@ -433,6 +438,14 @@ string.
   `OUTPUTS_UNAVAILABLE` when an upstream value cannot be read): every task
   keeps the status it earned, and the run is `FAILED`, never `SUCCEEDED`
   without the interface it declares.
+- **An artifact output** returns a file instead of a value:
+  `model: {artifact: fit/model.bin}` names an artifact a task of the run
+  records, or `_inputs/<name>` for one the run received. It is never
+  rendered: the run's `Run.output_artifacts` lists it under the output's
+  name, a reference to the same object, and an Orkflow composing this one
+  receives it as its composed task's artifact (see "Passing artifacts to a
+  child run"). A producer that recorded no such artifact fails the run
+  `OUTPUTS_ARTIFACT_MISSING`. At most 16 outputs are artifacts (rule 57).
 
 An Orkflow that declares no `outputs:` (absent and `{}` are one value) has no
 return contract: its run's output is the inline values of the tasks no other
@@ -1427,6 +1440,12 @@ lines (below):
   and it sets the per-item bounds below.
 - `max_parallel` — at most this many items run at once; absent or `0` means
   no bound of the task's own (the pool's Orkers are the bound).
+- `on_item_failure` — `fail_fast` (the default) stops the fan-out at its
+  first item that fails for good; `continue` runs every other item and then
+  fails it. See "When an item fails" below.
+- `max_failed_items` — with `on_item_failure: continue` only, 1 to
+  `max_items` − 1: the fan-out fails fast once more than this many items have
+  failed.
 
 **Inside an item.** A fan-out's `with:` may read `.each.<as>` (the element,
 and keys under it), `.each.index` (0-based) and `.each.count`; the element is
@@ -1466,7 +1485,8 @@ Creating an Orkflow refuses a fan-out whose own `with:`, `env`, `secrets` and re
 already exceed the input bound; the run input and upstream references are
 checked per item when the run reaches it (`INPUT_TOO_LARGE`, naming the item).
 
-**Failure is fail-fast.** The first item that fails — after its own retries —
+**Failure is fail-fast by default** (`on_item_failure: fail_fast`). The first
+item that fails — after its own retries —
 fails the task with that item's error, prefixed `item 97 of 120 failed:`, and
 the run with it; items in flight are cancelled, and items never dispatched
 end `CANCELED` without running. An item retries alone: its siblings' commits
@@ -1475,6 +1495,42 @@ fan-out is handed the node's error (`item 97 of 120 failed: …`) and no item
 files. A `none_failed` fan-out whose `each.over` task did not succeed fails
 `EACH_OVER_MISSING`: such a fan-out reads its array from an input or from a
 task that always runs.
+
+#### When an item fails: `on_item_failure: continue`
+
+```yaml
+each:
+  over: "{{ .inputs.files }}"
+  max_items: 500
+  on_item_failure: continue
+  max_failed_items: 20   # optional: fail fast once more than 20 have failed
+```
+
+With `on_item_failure: continue`, an item that fails for good — after its
+own retries — stops nothing: every other item still runs, and the node stays
+`RUNNING` until the last one ends, so the run's other tasks keep starting.
+Once every item has ended, a fan-out with a failed item fails with the
+lowest-index failed item's code, category and retry state, its message
+`3 of 500 items failed; item 7: …`, and the run fails with it exactly as for
+any failed task: its failure handlers run, and it ends `FAILED` with that
+reason.
+
+`max_failed_items: N` (1 … `max_items` − 1, only with `continue`) bounds the
+failures: at the failure after the N-th, the fan-out fails fast as
+`fail_fast` does — items in flight are cancelled, items never dispatched end
+`CANCELED` — with the lowest-index failed item's reason and the message
+`more than max_failed_items 20: 21 of 500 items failed; item 7: …`. An item
+cancelled by the run's own cancel, or by the bound, is not counted.
+
+A failure handler that names a `continue` fan-out in its own `needs:` gets
+the succeeded items' files, staged at their own indices
+(`input/upstream/<task>/<00000>/`), and `inputs.eachUpstream[].failed`, the
+ascending indices of every item that did not succeed — failed, cancelled or
+never dispatched — which have no directory. A dependent that is not a
+failure handler is skipped, as for any failed task; a `fail_fast` fan-out's
+handler still gets no item files and no `failed`. The default compiles to
+the definition a fan-out without the key has: `on_item_failure: fail_fast`
+and no `on_item_failure` have one digest.
 
 A fan-out's own row fails, before any item runs, with one of:
 `EACH_OVER_MISSING` (the array's source is absent), `EACH_OVER_NOT_ARRAY` (it
@@ -1490,9 +1546,8 @@ writing one `/orkstack/shared` multiplies the hazard of "A pin imposes no
 ordering" — may not fan out over another fan-out or name one in `needs:` (no
 nesting, no matrix: a second dimension is a task that writes the flattened
 array), and an awaited or composed task may not declare `each:`. There is no
-per-item condition and no continue-on-error: `condition:` gates the whole node
-once, and an array that must be filtered is filtered by the task that writes
-it.
+per-item condition: `condition:` gates the whole node once, and an array that
+must be filtered is filtered by the task that writes it.
 
 `orkctl run get` shows a fan-out as one row with a progress count;
 `--expand <task>` lists its items, and `run logs`, `run artifacts`,
@@ -1549,7 +1604,13 @@ decoded strictly (duplicate keys refused); in `lines` it is the line's text as
 a JSON string. A line is at most the run's `values_max_bytes` (256 KiB by
 default). Item `i` holds the `i`-th non-empty line, in file order.
 
-**Indexing.** When the run reaches the fan-out, one Orker of its pool reads the
+**Indexing.** Usually the Orker that runs the producing task builds the index
+as it commits the artifact, from the file it has just written, and the
+fan-out expands from it with no index of its own (its `TASK_SCHEDULED` says
+the lines "were indexed as task … committed them"). When the producer built
+none — its result was a memo hit or an adopted commit, its Orker could not
+build it, or a line is invalid — the fan-out indexes the lines itself: when
+the run reaches the fan-out, one Orker of its pool reads the
 source once — every byte held to the producer's committed SHA-256 — checks
 **every** line and writes an immutable line index beside the fan-out's commit
 (`docs/STORAGE.md`, "Line indexes"); the node shows `RUNNING` and "indexing"
@@ -1626,7 +1687,8 @@ tasks:
   "Sharing across namespaces"). The pinned digest is what keeps one team's
   create from breaking another team's run: a new version of a shared Orkflow
   changes nothing for a parent that pinned an older one.
-- **What it may carry:** `id`, `needs`, `condition`, `join`, `uses` and `with`.
+- **What it may carry:** `id`, `needs`, `condition`, `join`, `uses`, `with`
+  and `artifacts` (see "Passing artifacts to a child run").
   `command`, `env`, `secrets`, `resources`, `network`, `devices`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
   `run_as_orker_user`, `each`, `await` and `cache` are refused by name: the
@@ -1637,10 +1699,10 @@ tasks:
 - **`with:` is the child's input**, rendered by the **engine**: values, and
   strings from templates. It reads `.inputs.<declared>` and its `needs:`
   closure like any `with:`, but the Orker's helpers (`artifact`, `env`, `sh`)
-  are refused — a child run receives values, never files; pass a reference it
-  can fetch (a registry digest, a URL). Creating the Orkflow checks it against the child's
-  declared `inputs:`: a required input missing is an error, an undeclared key
-  or a literal of the wrong type a warning.
+  are refused — `with:` carries values, never files; a file reaches the
+  child through `artifacts:`. Creating the Orkflow checks it against the
+  child's declared `inputs:`: a required input missing is an error, an
+  undeclared key or a literal of the wrong type a warning.
 - **The task's values are the child's declared outputs** (`outputs:`), every
   value a string, stored as this task's `values.json` — so a downstream
   container reads them exactly as it reads any upstream's, at
@@ -1686,6 +1748,77 @@ lists one parent's children; a
 child is read, watched and cancelled on its own id. `orkctl run logs` points a
 composed task at its child's logs, and `orkctl task run` refuses one by name.
 See `examples/notify-block.ork.yaml` and `examples/approval-gate.ork.yaml`.
+
+### Passing artifacts to a child run
+
+A child Orkflow declares a file it needs as an input of `type: artifact`,
+and a task of the child reads it as `{{ artifact "_inputs/<name>" }}`:
+
+```yaml
+name: train
+version: 1.0.0
+inputs:
+  dataset:
+    type: artifact
+    required: true
+tasks:
+  - id: fit
+    uses: ghcr.io/acme/fit@sha256:…
+    with:
+      data: '{{ artifact "_inputs/dataset" }}'
+```
+
+A composed task binds each artifact input of its child with `artifacts:`,
+the input's name to `<task>/<name>`, an artifact a task of this run records:
+
+```yaml
+tasks:
+  - id: build
+    uses: ghcr.io/acme/build-dataset@sha256:…
+  - id: train
+    uses: orkflow:train@1.0.0
+    needs:
+      - build
+    artifacts:
+      dataset: build/dataset.tar.gz
+```
+
+- **A reference, never a copy.** When it starts the child, the engine finds
+  the artifact in the producer's recorded result, checks the object is still
+  in object storage, and passes the child a reference to it: the same object,
+  URI and SHA-256. The child's `Run.input_artifacts` lists what it received.
+- **Only the tasks that name it get it.** A task of the child receives
+  `_inputs/<name>` only when its `with:` names it literally; the Orker stages
+  it at `/orkstack/input/artifacts/_inputs/<name>`, and it is listed in that
+  task's `task.json`. A task that names no `_inputs` receives none, and a
+  container that reads the path without naming it finds nothing. Which tasks
+  receive which inputs is decided when the Orkflow is created, so an Orkflow
+  with artifact inputs writes every `artifact` argument as a literal.
+- **Forwarding.** A composed task of the child may bind `_inputs/<name>` to
+  its own child's input; the engine passes the same reference on, and nothing
+  is staged for it.
+- **What a binding may name:** a task in the composed task's `needs:` closure
+  that records artifacts — not an awaited, sleeping or fan-out task — or
+  `_inputs/<name>` for an artifact input of this Orkflow. It is a literal,
+  never a template. Rules 55 and 56 list the rest.
+- **When it is missing.** A binding whose producer recorded no artifact of
+  that name, or whose object has left object storage, fails the composed task
+  `CHILD_INPUT_ARTIFACT_MISSING` (`ContractViolation`) and starts no child; an
+  object store that cannot be read fails it `CHILD_INPUT_UNAVAILABLE`
+  (`InfrastructureError`).
+- **Getting artifacts back.** A child returns files through artifact outputs
+  (see "Outputs"). The composed task records each as its own artifact under
+  the output's name, a reference to the child's object, never a copy, so a
+  downstream task of the parent reads it as `{{ artifact "<task>/<output>" }}`
+  and finds it at `/orkstack/input/artifacts/<task>/<output>`, like any
+  upstream's. The parent claims the objects first; a claim that cannot be
+  written fails the composed task `CHILD_OUTPUTS_UNCLAIMED`
+  (`InfrastructureError`), and the child is not run again.
+- **Only a composing task passes them.** A run of an Orkflow with an artifact
+  input is started only by a composed task: a submit, a schedule, a trigger
+  or "run again" of one is refused with `ARTIFACT_INPUT_UNSUPPORTED`, and so
+  is creating or updating a schedule or a trigger to start one, and making
+  such a version current while a schedule or a trigger follows current.
 
 ### Sharing across namespaces
 
@@ -2022,6 +2155,108 @@ What the run does with it:
   one does not (`docs/DEPLOY.md` §5, "Engine capabilities and the fleet
   check").
 
+## Concurrency limits (`concurrency:`)
+
+`concurrency:` is a top-level key that limits how many of the Orkflow's runs
+hold one key at once. A run past the limit waits in line, in order of
+arrival, and starts when a run holding the key ends:
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: db-migrate
+inputs:
+  env:
+    type: string
+concurrency:
+  key: "db-migrate:{{ .inputs.env }}"
+  limit: 1
+  queue_timeout: 2h
+  max_queued: 50
+tasks:
+  - id: apply
+    uses: ghcr.io/acme/migrate:1
+```
+
+| key | required | meaning |
+|---|---|---|
+| `limit` | yes | how many runs may hold the key at once, from 1 |
+| `key` | no | the key's template; absent is the Orkflow's own key, shared by all its versions in the namespace that runs it |
+| `on_limit` | no | what a run does when every slot is held: `queue`, the default and the only strategy this release supports |
+| `queue_timeout` | no | how long a run waits in line, a Go duration of whole seconds (`30m`, `2h`); absent is the deployment's default (`engine.concurrency.default_queue_timeout`, 2h) |
+| `max_queued` | no | how many runs may wait in line for the key, checked when a run is submitted, best-effort; absent sets no bound of its own |
+
+- **The key** is rendered once, when the run is submitted. Its template reads
+  only fields, `{{ .inputs.<name> }}`, `{{ .run.orkflow }}`,
+  `{{ .run.version }}`, `{{ .run.origin.kind }}` and `{{ .run.origin.id }}`,
+  with no function, pipeline, condition or loop, and is at most 512 bytes. The
+  run id, timestamps and the origin's reference and principal are refused.
+- **A rendered key** is 1 to 128 bytes of letters, digits and `. _ : / @ + = -`,
+  starting with a letter or a digit and not with `ork:`. A key that is not is
+  refused `CONCURRENCY_KEY_INVALID`, naming its first bad byte: at validate
+  when the key is literal, and at submit when it is rendered.
+- **Every declaration in a namespace** that renders the same key shares its
+  slots and its line, across Orkflows and versions. Keys are never shared
+  across namespaces.
+- **At submit** the key is rendered from the run's inputs, defaults applied,
+  and refused `CONCURRENCY_KEY_INVALID` when it does not render or breaks
+  the rule. Validate and create store an Orkflow whose limit the deployment
+  cannot hold now, and warn with the reason a submit would give. A
+  `queue_timeout` outside the deployment's bounds
+  (`engine.concurrency.min_queue_timeout`, 10s, and `max_queue_timeout`,
+  7d) is refused at validate and create, and at submit for a version created
+  before the bounds tightened. A deployment that cannot hold a limit refuses
+  the run `CONCURRENCY_UNSUPPORTED`, naming why (`cause=index`,
+  `cause=fleet`). An Orkflow that declares a limit cannot yet run as a
+  composed child: a tree that would start one is refused
+  `CONCURRENCY_UNSUPPORTED`. A retry under an idempotency key its first
+  submit bound returns that run without these checks.
+- **A full line is refused at submit**, `CONCURRENCY_QUEUE_FULL`: a run that
+  would wait, when its line already holds `max_queued` waiting runs, or its
+  key the most one key holds (`engine.concurrency.max_entries`), or its
+  namespace as many queued runs as it may
+  (`engine.concurrency.max_queued_runs_per_namespace`, 1000). A new key is
+  refused `CONCURRENCY_KEYS_EXHAUSTED` when the namespace already has
+  `engine.concurrency.max_active_keys_per_namespace` (1000) keys in use. These
+  counts are read without a lock, so a burst of submits can overshoot them a
+  little; the limit itself is never exceeded. A run holding a slot that has
+  ended counts as holding until the limit's own check frees it, so a full
+  line can refuse a run a little early. These checks may refuse early; they
+  never let a run past a bound.
+- **A run that ends while it waits**, or that its limit refuses, starts no
+  task, failure handlers included: it never held the key, so it ends `FAILED`
+  or `CANCELED` with its own reason and nothing runs.
+- **A waiting run** is `PENDING`, and emits `RUN_QUEUED` once, when it joins
+  the line. `orkctl run get` and the run page say where it stands, behind whom
+  and when it times out (its place is read from the limit at the moment it is
+  asked); `orkctl run list -F queued=true`, `queued_on=KEY` and
+  `holding=KEY` list the runs waiting for or holding a key, and only a run
+  still going matches them. A run waiting for its slot cannot be paused.
+- **The first run at a key** (or one after the limit's record of the key was
+  lost) waits while the limit reads which runs hold the key: it says so, its
+  place unknown. That usually takes seconds; past
+  `engine.concurrency.rebuild_timeout` (10m) the limit reports the read
+  failing and keeps trying, and the run's `queue_timeout` bounds its wait. A
+  key whose last run ended cleanly grants at once.
+- **A paused run gives its slot back** once nothing of it runs (an open
+  `await:` or `sleep:` does not count), so the next run in line can start; a
+  run unpaused before then keeps it. On unpause it asks again and joins the
+  back of the line: it stays `RUNNING`, starts nothing new until it holds the
+  slot again, and fails `RUN_QUEUE_TIMEOUT` if its `queue_timeout`, counted
+  from the unpause, passes first. A run that is failing when it is paused
+  keeps its slot.
+- **A run that fails with its slot given back** (an await that expires while
+  it is paused) asks for the slot again once unpaused, then runs its failure
+  handlers inside the limit and ends `FAILED` with its own error. If it does
+  not get the slot back before its `queue_timeout`, the handlers do not run,
+  and its error and each handler say so: "failure handlers did not run: the
+  concurrency slot on key … was not regained within …".
+- `on_limit: refuse`, `skip`, `cancel_oldest` and `replace` are refused at
+  validate as not available yet.
+- The block is part of the definition digest, its timeout in its short form
+  (`2h` and `120m` are one definition), and an Orkflow that omits it keeps
+  its digest. It is not part of the declared interface.
+
 ## Planning a run (`orkctl run plan`)
 
 `orkctl run plan NAME` (or `--file DOC` for an unapplied document), and the
@@ -2318,6 +2553,29 @@ How each node reads:
     contract of each profile the task names, and a task naming a profile with
     no `@contract` has an image whose declaration can be read (see "Device
     profiles", Contracts).
+55. An input of `type: artifact` says `required: true` and has no
+    `default`; its name is `^[a-z][a-z0-9_]*$`, at most 64 bytes; an Orkflow
+    declares at most 16. A template reads one only as
+    `artifact "_inputs/<name>"` with a literal argument, never as
+    `.inputs.<name>`; `_inputs/<name>` names a declared artifact input; and
+    an Orkflow that declares one writes every `artifact` argument as a
+    literal. A task's `input_artifacts` is exactly the set its `with:` names.
+56. `artifacts:` is written only on a composed task. Each entry binds an
+    input name (the rule 55 name) to a literal `<task>/<name>`, split on the
+    first `/`: the task is in the composed task's `needs:` closure and is not
+    an awaited, sleeping or fan-out task, or it is `_inputs` and the name is
+    an artifact input of this Orkflow. Compiled, the bindings are sorted by
+    input, each input once.
+57. An `outputs:` entry is a template string or exactly
+    `{artifact: <task>/<name>}`, a literal split on the first `/`; at most 16
+    are artifacts. The task records artifacts (not an awaited, sleeping or
+    fan-out task, and not one whose `join:` is `any_failed`, which rule 41
+    says is always skipped when the run succeeds), or it is `_inputs` and the
+    name is an artifact input of this Orkflow. A composed producer's child
+    returns that artifact (checked by `internal/api`).
+58. `each.on_item_failure` is `fail_fast` (the default, compiled as unset) or
+    `continue`; `each.max_failed_items` is 1 to `max_items` − 1 and is
+    refused without `on_item_failure: continue` (see "When an item fails").
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

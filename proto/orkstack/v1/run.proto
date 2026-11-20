@@ -48,6 +48,11 @@ message TaskChild {
   // namespace through shared_with. Empty for a child of the run's own
   // namespace.
   string orkflow_namespace = 5;
+  // input_artifacts are the artifacts this task passed its child, by the
+  // name of the child's artifact input each binds (artifacts:): set once
+  // they are resolved and claimed, before the child is started, so a start
+  // refused afterwards still records what this run claimed.
+  repeated NamedArtifact input_artifacts = 6;
 }
 
 // TaskRun is the execution record of a single Task within a Run.
@@ -229,7 +234,7 @@ message TaskRun {
   // interruptions is set from E92; unset until it lands (v0.4.0 proto batch).
   TaskInterruptions interruptions = 28;
 
-  // queued is set from E88; unset until it lands (v0.4.0 proto batch).
+  // queued is set from E88's task-level limits; unset until they land.
   ConcurrencyQueued queued = 29;
 
   // pending_reason says why a task, or a fan-out item, of a live run is not
@@ -769,7 +774,8 @@ message Run {
   // by GetRun and never stored; each TaskRun carries its own half.
   RunTiming timing = 18;
 
-  // input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  // input_artifacts are the artifacts a child run received from the task
+  // that composed it, by the name of the artifact input each binds.
   repeated NamedArtifact input_artifacts = 20;
 
   // output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
@@ -778,7 +784,8 @@ message Run {
   // trace_id is set from E87; unset until it lands (v0.4.0 proto batch).
   string trace_id = 22;
 
-  // run_context is set from E86; unset until it lands (v0.4.0 proto batch).
+  // run_context says whether the run's tasks can read its run context (their
+  // task.json and the .run and .task template roots).
   RunContextState run_context = 23;
 
   // canceled_by_verified says canceled_by is a principal OrkStack
@@ -786,7 +793,9 @@ message Run {
   // the deployment's gateway asserted in Ork-Principal, unauthenticated.
   bool canceled_by_verified = 19;
 
-  // queued is set from E88; unset until it lands (v0.4.0 proto batch).
+  // queued is present while the run waits in line for a slot of its
+  // concurrency limit's key (docs/DSL.md "Concurrency limits"): status
+  // PENDING, or RUNNING when an unpaused or resumed run waits again.
   ConcurrencyQueued queued = 24;
 
   // superseded_by is set from E88; unset until it lands (v0.4.0 proto batch).
@@ -984,6 +993,13 @@ enum EventType {
   // the message names the wake-up time. TASK_SUCCEEDED follows when it
   // wakes; a run that ends first records the task CANCELED.
   EVENT_TYPE_TASK_SLEEPING = 14;
+  // RUN_QUEUED: the run waits in line for a slot of its concurrency limit's
+  // key. Status PENDING, or RUNNING for a run that waits again; the message
+  // names the key and its place in line. Not in a webhook's default events.
+  EVENT_TYPE_RUN_QUEUED = 15;
+  // TASK_QUEUED: a task waits in line for a slot of its concurrency limit's
+  // key. Not in a webhook's default events.
+  EVENT_TYPE_TASK_QUEUED = 16;
   // RUN_PAUSED: the run became paused, or is still paused with its causes
   // changed (pause_transition says which). Status PAUSED.
   EVENT_TYPE_RUN_PAUSED = 19;
@@ -1036,9 +1052,57 @@ message AttemptCredential {}
 // batch).
 message AttemptIdentity {}
 
-// ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
-// batch).
-message ConcurrencyQueued {}
+// ConcurrencyQueued is a run waiting in line for a slot of a concurrency
+// limit's key.
+message ConcurrencyQueued {
+  // key is the rendered key the run waits for.
+  string key = 1;
+  // limit is how many runs may hold its slots at once.
+  int32 limit = 2;
+  // strategy is the declaration's on_limit.
+  ConcurrencyStrategy strategy = 3;
+  // position_at_arrival is the run's place in line when it arrived, from 1.
+  int32 position_at_arrival = 4;
+  // position is its place in its key's line now, from 1, where a task
+  // waiting for one of the key's slots counts as a place too. It is read
+  // live by GetRun only, and only when position_known says it could be
+  // read; note_code says why it could not.
+  int32 position = 5;
+  bool position_known = 6;
+  // holders_ahead names runs holding the key's slots, at most ten;
+  // holders_count is how many there are. holders_as_of_arrival says both
+  // are as the run found them when it arrived, not live.
+  repeated string holders_ahead = 7;
+  int32 holders_count = 8;
+  bool holders_as_of_arrival = 9;
+  // queued_since is when the run began waiting; times_out_at is when it
+  // stops.
+  google.protobuf.Timestamp queued_since = 10;
+  google.protobuf.Timestamp times_out_at = 11;
+  // note_code says why the wait may take longer than the line explains:
+  // NOT_ANSWERING, REBUILD_FAILING, REBUILDING, HOLDER_STALLED or LINE_FULL,
+  // empty when nothing does. note says it in words.
+  string note_code = 12;
+  string note = 13;
+  // cause is why the run waits: it arrived, or it waits again after an
+  // unpause or a resume.
+  ConcurrencyQueueCause cause = 14;
+}
+
+// ConcurrencyQueueCause is why a run waits in line.
+enum ConcurrencyQueueCause {
+  CONCURRENCY_QUEUE_CAUSE_UNSPECIFIED = 0;
+  // ARRIVAL: the run arrived to a key whose slots were all held.
+  CONCURRENCY_QUEUE_CAUSE_ARRIVAL = 1;
+  // RESUME: the resumed run waits for its slot again.
+  CONCURRENCY_QUEUE_CAUSE_RESUME = 2;
+  // UNPAUSE: the run gave its slot back while paused and waits for it
+  // again.
+  CONCURRENCY_QUEUE_CAUSE_UNPAUSE = 3;
+  // FAILING: the failing run gave its slot back while paused and waits for
+  // it again so its failure handlers run inside the limit.
+  CONCURRENCY_QUEUE_CAUSE_FAILING = 4;
+}
 
 // EffectiveProfile is one profile an attempt ran under, as the Orker applied
 // it.
@@ -1134,8 +1198,7 @@ message MeasuredUsage {
 }
 
 // NamedArtifact is one artifact a run takes in or hands out, by the name
-// the Orkflow gives it (E87, composed-artifacts/01-design.md §5). Declared
-// whole by the v0.4.0 proto batch; nothing sets it until E87 lands.
+// the Orkflow gives it, with the run and task that recorded it.
 message NamedArtifact {
   string name = 1;
   ArtifactRef artifact = 2;
@@ -1191,19 +1254,47 @@ message PauseWarning {
 // batch).
 message RecordRef {}
 
-// ResumeDisposition is E85's; it holds only its zero value until E85 lands
-// (v0.4.0 proto batch).
+// ResumeAction is what a resume was asked to do.
+enum ResumeAction {
+  RESUME_ACTION_UNSPECIFIED = 0;
+  // RESUME reruns the failed tasks and everything downstream of them.
+  RESUME_ACTION_RESUME = 1;
+  // RETRY_FROM also reruns the chosen task and everything downstream of it.
+  RESUME_ACTION_RETRY_FROM = 2;
+}
+
+// ResumeDisposition is how a resume treats one task or item (E85 §3.4).
 enum ResumeDisposition {
   RESUME_DISPOSITION_UNSPECIFIED = 0;
+  // RERUN runs it again, under the resume's scope.
+  RESUME_DISPOSITION_RERUN = 1;
+  // ADOPT keeps its result, read back from its commit.
+  RESUME_DISPOSITION_ADOPT = 2;
+  // SETTLE keeps an awaited or composed task's recorded result.
+  RESUME_DISPOSITION_SETTLE = 3;
+  // KEEP_SKIPPED keeps it skipped.
+  RESUME_DISPOSITION_KEEP_SKIPPED = 4;
+  // WAIT waits again, from the resume, with a fresh deadline.
+  RESUME_DISPOSITION_WAIT = 5;
+  // SLEEP_UNTIL sleeps until its recorded wake-up time.
+  RESUME_DISPOSITION_SLEEP_UNTIL = 6;
 }
 
 // ResumeHint is E85's; it is empty until E85 lands (v0.4.0 proto
 // batch).
 message ResumeHint {}
 
-// RunContextState is E86's; it is empty until E86 lands (v0.4.0 proto
-// batch).
-message RunContextState {}
+// RunContextState is whether a run's tasks are given its run context.
+message RunContextState {
+  RunContextStatus status = 1;
+}
+
+// RunContextStatus is whether a run carries a run context.
+enum RunContextStatus {
+  RUN_CONTEXT_STATUS_UNSPECIFIED = 0;
+  // AVAILABLE: every task of the run is given the run's context.
+  RUN_CONTEXT_STATUS_AVAILABLE = 1;
+}
 
 // RunDispatchHold is why a run holds back work it could otherwise start.
 enum RunDispatchHold {

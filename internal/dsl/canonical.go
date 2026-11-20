@@ -139,6 +139,15 @@ func canonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	if len(wf.GetOutputs()) > 0 {
 		out["outputs"] = canonicalStringMap(wf.GetOutputs())
 	}
+	// outputArtifacts is emitted ONLY when non-empty, for the same reason:
+	// an Orkflow that returns no artifact keeps its digest.
+	if returned := wf.GetOutputArtifacts(); len(returned) > 0 {
+		m := make(map[string]any, len(returned))
+		for name, a := range returned {
+			m[name] = map[string]any{"taskId": a.GetTaskId(), "name": a.GetName()}
+		}
+		out["outputArtifacts"] = m
+	}
 	// sharedWith is emitted ONLY when non-empty — the canonicalPins exception
 	// again: an Orkflow that shares nothing keeps its digest. It is in the
 	// digest at all because who may compose a version is part of that
@@ -156,6 +165,23 @@ func canonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	// and 360m are one definition.
 	if seconds := wf.GetTimeoutSeconds(); seconds > 0 {
 		out["timeout"] = shortDuration(time.Duration(seconds) * time.Second)
+	}
+	// concurrency is emitted ONLY when declared, as timeout is: a definition
+	// without one keeps its digest. Its queue timeout is Go's short form,
+	// and an absent key, queue timeout or max_queued is left out, so the
+	// defaults written out are the same definition.
+	if c := wf.GetConcurrency(); c != nil {
+		limit := map[string]any{"limit": int64(c.GetLimit()), "onLimit": concurrencyStrategyName(c.GetOnLimit())}
+		if c.GetKey() != "" {
+			limit["key"] = c.GetKey()
+		}
+		if seconds := c.GetQueueTimeoutSeconds(); seconds > 0 {
+			limit["queueTimeout"] = shortDuration(time.Duration(seconds) * time.Second)
+		}
+		if c.GetMaxQueued() > 0 {
+			limit["maxQueued"] = int64(c.GetMaxQueued())
+		}
+		out["concurrency"] = limit
 	}
 	// definition_namespace is NOT here: it is set only on a run's planned
 	// copy, never on a stored definition, and the digest is the owner's.
@@ -282,6 +308,20 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	if len(t.GetDeviceContracts()) > 0 {
 		out["deviceContracts"] = canonicalStringMap(t.GetDeviceContracts())
 	}
+	// childArtifacts and inputArtifacts are emitted ONLY when set — the same
+	// exception, for the same reason, as `pin`: a definition that passes no
+	// artifact to a child keeps its digest. Both change what runs: what the
+	// engine hands a child, and what the Orker stages for a task.
+	if bindings := t.GetChildArtifacts(); len(bindings) > 0 {
+		list := make([]any, 0, len(bindings))
+		for _, b := range bindings {
+			list = append(list, map[string]any{"input": b.GetInput(), "taskId": b.GetTaskId(), "name": b.GetName()})
+		}
+		out["childArtifacts"] = list
+	}
+	if len(t.GetInputArtifacts()) > 0 {
+		out["inputArtifacts"] = canonicalStrings(t.GetInputArtifacts())
+	}
 	// join is emitted ONLY when it is not UNSPECIFIED (all_succeeded) — the
 	// same exception, for the same reason, as `pin`: a definition with no
 	// join keeps its digest.
@@ -341,6 +381,13 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 		}
 		if e.GetBatch() != 0 {
 			each["batch"] = int64(e.GetBatch())
+		}
+		// on_item_failure and its bound, ONLY when set: fail_fast is unset.
+		if e.GetOnItemFailure() != orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_UNSPECIFIED {
+			each["onItemFailure"] = int64(e.GetOnItemFailure())
+		}
+		if e.GetMaxFailedItems() != 0 {
+			each["maxFailedItems"] = int64(e.GetMaxFailedItems())
 		}
 		if a := src.GetArtifact(); a != nil {
 			source["artifact"] = map[string]any{"producer": a.GetProducer(), "name": a.GetName()}

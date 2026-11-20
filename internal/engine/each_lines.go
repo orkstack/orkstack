@@ -137,6 +137,23 @@ func (s *runState) startEachLines(ctx, runCtx workflow.Context, id string, inFli
 		}
 		return s.failExpansion(ctx, id, code, message)
 	}
+	// The producer's Orker may have indexed the lines as it committed them
+	// (b'): then the fan-out expands from that index, with no activity of
+	// its own. An index in any doubt is not used, and the fan-out indexes.
+	if built := builtIndexFor(s.results[art.GetProducer()], id, art.GetName(), int64(k), spec.GetMaxItems()); built != nil {
+		taskRun := s.taskRuns[id]
+		taskRun.Status = orkstackv1.Status_STATUS_RUNNING
+		taskRun.ScheduledAt = timestamppb.New(workflow.Now(ctx))
+		taskRun.Pool = s.poolForTask(t)
+		s.chargeFanOutExpand()
+		e.lines = &orkstackv1.EachLines{Source: source, Index: built.GetIndex(), Format: spec.GetFormat(), Batch: spec.GetBatch()}
+		if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id, orkstackv1.Status_STATUS_RUNNING,
+			fmt.Sprintf("the lines of %s (%s) were indexed as task %q committed them", label, humanBytes(source.GetSizeBytes()),
+				art.GetProducer())); err != nil {
+			return err
+		}
+		return s.expandCounted(ctx, runCtx, id, built.GetCount(), inFlight)
+	}
 	input := &orkstackv1.IndexEachLinesInput{
 		RunId:            s.runID,
 		Namespace:        s.wf.GetNamespace(),
@@ -194,7 +211,7 @@ func (s *runState) collectEachLines(ctx, runCtx workflow.Context, id string, fut
 	art := spec.GetSource().GetArtifact()
 	label := art.GetProducer() + "/" + art.GetName()
 	result := &orkstackv1.IndexEachLinesResult{}
-	if err := future.Get(ctx, result); err != nil {
+	if err := s.openFailure(future.Get(ctx, result)); err != nil {
 		failure := categoryOf(err)
 		// A cancel is the run's only when the run was cancelled; anything
 		// else an index answered is a failure of the expansion.
@@ -322,4 +339,67 @@ func dropSource(refs []*orkstackv1.UpstreamRef, art *orkstackv1.EachArtifactSour
 		out = append(out, kept)
 	}
 	return out
+}
+
+// builtIndexFor is the line index the producer's Orker built for fan-out id
+// over its artifact name, or nil when it built none or one in any doubt: no
+// index, or a count its lines do not make in batches of k, or more items
+// than the fan-out's max_items.
+func builtIndexFor(result *orkstackv1.ExecuteTaskResult, id, name string, k int64, maxItems int32) *orkstackv1.LineIndexBuilt {
+	for _, built := range result.GetLineIndexes() {
+		if built.GetTaskId() != id || built.GetName() != name {
+			continue
+		}
+		idx := built.GetIndex()
+		switch {
+		case idx.GetUri() == "" || !isSHA256Hex(idx.GetSha256()),
+			built.GetCount() < 0 || built.GetCount() > maxItems,
+			int64(built.GetCount()) != (built.GetTotalLines()+k-1)/k:
+			return nil
+		}
+		return built
+	}
+	return nil
+}
+
+// lineIndexRequests are the line indexes task id's Orker is asked to build
+// as it commits its artifacts: one per fan-out over the lines of one of
+// them, with that fan-out's own limits. None without the run's line policy.
+func (s *runState) lineIndexRequests(id string) []*orkstackv1.LineIndexRequest {
+	if s.plan.EachLines == nil {
+		return nil
+	}
+	var out []*orkstackv1.LineIndexRequest
+	for _, t := range s.wf.GetTasks() {
+		spec := t.GetEach()
+		art := spec.GetSource().GetArtifact()
+		if art == nil || art.GetProducer() != id {
+			continue
+		}
+		k, sliceMax, readCap := s.eachLinesBounds(spec)
+		out = append(out, &orkstackv1.LineIndexRequest{
+			TaskId:         t.GetId(),
+			Name:           art.GetName(),
+			Format:         spec.GetFormat(),
+			Batch:          int32(k),
+			MaxItems:       spec.GetMaxItems(),
+			ValuesMaxBytes: s.plan.Limits.Proto().GetValuesMaxBytes(),
+			SliceMaxBytes:  sliceMax,
+			ReadCap:        readCap,
+		})
+	}
+	return out
+}
+
+// isSHA256Hex reports whether s is a SHA-256 in lowercase hex.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

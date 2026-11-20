@@ -767,6 +767,13 @@ func isNotFound(err error) bool {
 		switch apiErr.ErrorCode() {
 		case "NoSuchKey", "NotFound":
 			return true
+		case "":
+		default:
+			// A named 404 that is not about the object — NoSuchBucket, or a
+			// gateway's own — says nothing about whether the object exists,
+			// so it is an error, never "absent" (E85: an absent commit is a
+			// lost result).
+			return false
 		}
 	}
 	// HeadObject has no body, so the SDK surfaces a bare HTTP response error.

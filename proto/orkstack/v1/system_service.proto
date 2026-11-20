@@ -285,6 +285,11 @@ enum ReleaseBlockerKind {
   // UNVERIFIED: part of the evidence could not be read, so the release
   // cannot be shown to pass. Never treated as passing.
   RELEASE_BLOCKER_KIND_UNVERIFIED = 5;
+  // CAPABILITY_MISSING: an engine process of the release lacks a capability
+  // that runs still open need, such as concurrency limits while a run with a
+  // limit is open, so sending new runs to it could leave those limits held by
+  // no one.
+  RELEASE_BLOCKER_KIND_CAPABILITY_MISSING = 6;
 }
 
 message ReleaseBlocker {

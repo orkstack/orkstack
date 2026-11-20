@@ -190,13 +190,15 @@ Every failure is `{"error":{"code":"…","message":"…"}}`:
 | Trigger store unreadable | 500 | `storage_error` |
 | Body not one JSON object, or over 1 MiB; malformed or over-long `Ork-Origin-Reference`; the stored definition names a secret source its namespace does not allow | 400 | `invalid_argument` |
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
-| A resolved pool has no live Orker; the namespace is held, at `max_running`, or over (or unable to measure) an enforced budget; the image policy refuses the definition's image; a composed child can no longer be planned | 412 | `failed_precondition` |
+| A resolved pool has no live Orker; the namespace is held, at `max_running`, or over (or unable to measure) an enforced budget; the image policy refuses the definition's image; a composed child can no longer be planned; the cluster does not index concurrency limits (`CONCURRENCY_UNSUPPORTED`, `cause=index`) | 412 | `failed_precondition` |
 | `Idempotency-Key` already used for another submission (another Orkflow, version or body) | 409 | `already_exists` |
-| Object storage or Temporal unavailable, or Temporal rate-limiting, at submit, or the client left before the answer | 503 | `unavailable` |
+| The run's concurrency limit's line or keys are full (`CONCURRENCY_QUEUE_FULL`, `CONCURRENCY_KEYS_EXHAUSTED`), or the namespace is at `max_running` with runs queued on concurrency limits; the answer carries `Retry-After` (`engine.concurrency.retry_after`, 60 s) | 429 | `resource_exhausted` |
+| Object storage or Temporal unavailable, or Temporal rate-limiting, at submit; an engine process runs a release without concurrency limits, or a limit's checks could not be read (`CONCURRENCY_UNSUPPORTED` with `cause=fleet` only, `CONCURRENCY_CHECK_UNAVAILABLE`); or the client left before the answer | 503 | `unavailable` |
 | Anything else | 500 | `internal` |
 
 Rows from `400` down are `SubmitRun`'s own Connect codes carried through; the
-adapter adds no classification of its own and never turns an error into a
+adapter adds no classification of its own beyond telling a concurrency limit's
+`429` from the cluster's `503` and never turns an error into a
 `201`. The `400`, `404` and `412` refusals happen in `SubmitRun`'s preparation
 before a run id is minted, so a refused invoke leaves nothing behind: no id
 burnt, no claim taken, no run recorded.

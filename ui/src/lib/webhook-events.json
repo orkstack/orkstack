@@ -1,6 +1,8 @@
 {
   "known": [
+    "RUN_QUEUED",
     "RUN_STARTED",
+    "TASK_QUEUED",
     "TASK_SCHEDULED",
     "TASK_STARTED",
     "TASK_AWAITING",
@@ -21,6 +23,7 @@
     "RUN_CANCELED"
   ],
   "task": [
+    "TASK_QUEUED",
     "TASK_SCHEDULED",
     "TASK_STARTED",
     "TASK_AWAITING",

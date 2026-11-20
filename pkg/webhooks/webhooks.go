@@ -67,8 +67,13 @@ const CreateAttempts = 8
 type Event string
 
 const (
+	// EventRunQueued is a run that waits for a concurrency slot before it
+	// starts, or, after a resume or an unpause, before it continues.
+	EventRunQueued Event = "RUN_QUEUED"
 	// EventRunStarted is PENDING → RUNNING.
 	EventRunStarted Event = "RUN_STARTED"
+	// EventTaskQueued is a task that waits for a task-level concurrency slot.
+	EventTaskQueued Event = "TASK_QUEUED"
 	// EventTaskScheduled is a task handed to the interpreter's scheduler.
 	EventTaskScheduled Event = "TASK_SCHEDULED"
 	// EventTaskStarted is a task dispatched to an Orker. It means the activity
@@ -108,11 +113,13 @@ const (
 // events sit between RUN_STARTED and RUN_SUCCEEDED, then a pause's two events
 // (opt-in, inside an open run), which leaves the relative
 // order of the run transitions what it always was; an await's two events sit
-// where an awaited task reaches them, before its outcome.
+// where an awaited task reaches them, before its outcome. A wait for a
+// concurrency slot sits before what it waits for: RUN_QUEUED before
+// RUN_STARTED, TASK_QUEUED before TASK_SCHEDULED.
 func KnownEvents() []Event {
 	return []Event{
-		EventRunStarted,
-		EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
+		EventRunQueued, EventRunStarted,
+		EventTaskQueued, EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
 		EventTaskSleeping, EventTaskSucceeded, EventTaskFailed,
 		EventRunPaused, EventRunUnpaused,
 		EventRunSucceeded, EventRunFailed, EventRunCanceled,
@@ -136,7 +143,7 @@ func isRunEvent(event Event) bool {
 // taskEvents is every task event, in lifecycle order: the one list
 // isTaskEvent and ValidateScope's message read.
 var taskEvents = []Event{
-	EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
+	EventTaskQueued, EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
 	EventTaskSleeping, EventTaskSucceeded, EventTaskFailed,
 }
 

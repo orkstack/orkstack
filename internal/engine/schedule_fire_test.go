@@ -434,3 +434,35 @@ func mustTime(t *testing.T, raw string) time.Time {
 	}
 	return at
 }
+
+// TestScheduleFireWorkflow_StartsARunWithAConcurrencyLimit: a fire decodes a
+// prepared plan whose concurrency limit carries durations (written by
+// stablejson as nanoseconds) and starts the run with the plan intact.
+func TestScheduleFireWorkflow_StartsARunWithAConcurrencyLimit(t *testing.T) {
+	h := newFireHarness(t)
+	h.scheduled(t, nightly)
+	prep := firePreparation(t, "ork-8")
+	plan := firePlan()
+	run := 0
+	plan.Concurrency = &engine.ConcurrencyPlan{Run: &run, AcquireTimeout: 2 * time.Minute, RequeueInterval: time.Minute,
+		Slots: []engine.ConcurrencySlotPlan{{GateID: "g", Key: "db:prod", Label: "db:prod", Limit: 1,
+			Strategy: engine.ConcurrencyStrategyQueue, QueueTimeoutSeconds: 60}}}
+	raw, err := stablejson.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prep.Plan = raw
+	h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+		return prep, nil
+	})
+	var got engine.RunPlan
+	h.child(func(_ workflow.Context, _ string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload, p engine.RunPlan) error {
+		got = p
+		return nil
+	})
+	h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+	must.OKf(t, h.env.GetWorkflowError(), "a fire of a limited Orkflow")
+	if got.Concurrency == nil || got.Concurrency.AcquireTimeout != 2*time.Minute || got.Concurrency.RequeueInterval != time.Minute {
+		t.Fatalf("the run's plan concurrency = %+v; want the prepared durations", got.Concurrency)
+	}
+}

@@ -526,6 +526,10 @@ rule below and an image that has never heard of the feature loses nothing:
   64 MiB.
 - **A task with a fan-out among its direct upstreams** carries
   `inputs.eachUpstream`, so it can tell "zero items" from "no such upstream".
+  A failure handler of an `on_item_failure: continue` fan-out that failed
+  (`docs/DSL.md`, "When an item fails") also reads
+  `inputs.eachUpstream[].failed`: the items that did not succeed, which are
+  not staged.
 - **A failure handler** (`join:` `any_failed` or `all_done`, `docs/DSL.md`,
   "Joins and failure handlers") carries `join`: the policy and how each need
   ended, in `needs:` order:
@@ -551,6 +555,13 @@ rule below and an image that has never heard of the feature loses nothing:
   succeeded upstream's — under `input/artifacts/<need>/`, listed in
   `inputs.artifacts` — with no `inputs.upstream` entry, because a failed need
   has no values.
+- **A task of a child run that names an artifact input**
+  (`{{ artifact "_inputs/<name>" }}`, docs/DSL.md "Passing artifacts to a
+  child run") has it staged under the reserved producer `_inputs`: at
+  `input/artifacts/_inputs/<name>`, listed in `inputs.artifacts` with
+  `producer` `_inputs`, and with no `inputs.upstream` entry, since nothing
+  produced values for it. Only the inputs the task names are staged. No task
+  id can be `_inputs`.
 - **A deployment that exports traces** adds `trace` (`traceparent`, and
   `tracestate` when the propagator set one, W3C header form). It is purely
   informational: a workload that wants to join the trace propagates the two
@@ -571,7 +582,7 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | Path | JSON type | Req. | Empty form | Meaning |
 |---|---|---|---|---|
 | `schemaVersion` | integer | required | — | Major version of this file. `1` today. |
-| `idempotencyKey` | string | required | — | `"{namespace}/{runId}/{taskId}"`, stable across retries; for an item of a fan-out `"{namespace}/{runId}/{taskId}/{index}"`, stable across that item's retries |
+| `idempotencyKey` | string | required | — | `"{namespace}/{runId}/{taskId}"`, stable across retries; for an item of a fan-out `"{namespace}/{runId}/{taskId}/{index}"`, stable across that item's retries. A task a resume runs again is a new logical activity with a key of its own, `"{namespace}/{runId}/{taskId}@r{scope}"` (an item's `"…@r{scope}/{index}"`), stable across that rerun's retries (`docs/STORAGE.md`) |
 | `run.id` | string | required | — | Opaque run id. Never parsed by anything. |
 | `run.namespace` | string | required | `"default"` | Resolved, never empty |
 | `run.orkflow.name` | string | required | — | slug |
@@ -634,7 +645,8 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `inputs.upstream[].item` | integer | optional | absent | present only for one item of a fan-out producer |
 | `inputs.eachUpstream` | array | optional | absent | present only when a direct upstream is a fan-out |
 | `inputs.eachUpstream[].taskId` | string | required | — | the fan-out's task id |
-| `inputs.eachUpstream[].count` | integer | required | `0` | how many items were staged |
+| `inputs.eachUpstream[].count` | integer | required | `0` | how many items the fan-out has; all are staged but those `failed` names |
+| `inputs.eachUpstream[].failed` | array | optional | absent | present only for a failure handler of a failed `on_item_failure: continue` fan-out: the ascending indices of its items that did not succeed (failed, cancelled or never dispatched), none of which is staged |
 | `join` | object | optional | absent | present only for a failure handler — and always present for one |
 | `join.policy` | string | required in `join` | — | `"any_failed"` or `"all_done"` |
 | `join.needs` | array | required in `join` | — | one entry per need, in `needs:` order; at most 32 |
@@ -1146,7 +1158,11 @@ contract limits (`WorkspaceLimits`), the transfer budget (§6.3), and the image
 policy (§4.7). The workflow composes
 `commit_uri = plan.CommitRoot + "/" + CommitKey(namespace, run, task)`, a pure
 function of its arguments. `artifacts.CommitKey` / `ItemCommitKey` are the
-single renderers.
+single renderers. A task a resume runs again commits under the resume's scope
+(`ScopedCommitKey` / `ScopedItemCommitKey`, `docs/STORAGE.md`), and the engine
+sends that URI; an Orker never derives one, except an item of a fan-out
+upstream it stages, whose scope its `EachUpstream.epochs` names (an item no
+range covers is at scope 0).
 
 **Resource policy stays where it is enforced.** The engine owns contract
 limits; the Orker owns resource policy (`ORK_ORKER_MAX_CPU`,

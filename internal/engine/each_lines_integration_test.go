@@ -36,6 +36,19 @@ type linesTap struct {
 	mu      sync.Mutex
 	before  func(ctx context.Context) error
 	indexed atomic.Int32
+	// beforeIndex, when set, runs before the index with its input.
+	beforeIndex func(ctx context.Context, in *orkstackv1.IndexEachLinesInput) error
+	// store, when set, wraps the Orker's artifact store: what its indexer and
+	// its items read the source through.
+	store func(artifacts.Store) artifacts.Store
+	// execute, when set, sits in front of the Orker's ExecuteTask.
+	execute func(ctx context.Context, in *orkstackv1.ExecuteTaskInput, next func() (*orkstackv1.ExecuteTaskResult, error)) (*orkstackv1.ExecuteTaskResult, error)
+	// memos, when set, is the Orker's memo store.
+	memos artifacts.MemoStore
+	// producerIndexes lets the producer's Orker build the line index as it
+	// commits (b'). Off, the Orker is not asked to, so the fan-out's own
+	// indexer runs — the path a test of the indexer means to exercise.
+	producerIndexes bool
 }
 
 // startLinesOrker is startOrker with a line-index store, the cordon
@@ -45,8 +58,16 @@ func (e *eachE2E) startLinesOrker(id string, tap *linesTap) (worker.Worker, *ork
 	refs, _ := e.store.(artifacts.RefPredictor)
 	indexes, err := artifacts.NewEachIndexStore(e.ctx, e.cfg)
 	must.OKf(e.t, err, "open line-index store")
-	activities := orker.NewActivitiesWithOptions(e.store, orker.Options{
-		Logs: e.logs, Commits: e.commits, Attempts: e.attempts, Refs: refs,
+	store := e.store
+	var memos artifacts.MemoStore
+	if tap != nil && tap.store != nil {
+		store = tap.store(store)
+	}
+	if tap != nil {
+		memos = tap.memos
+	}
+	activities := orker.NewActivitiesWithOptions(store, orker.Options{
+		Logs: e.logs, Commits: e.commits, Attempts: e.attempts, Refs: refs, Memos: memos,
 		Pool: task.DefaultPool, OrkerID: id, WorkRoot: e.workRoot, EachIndexes: indexes,
 	})
 	if err := activities.Boot(e.ctx); err != nil {
@@ -60,7 +81,14 @@ func (e *eachE2E) startLinesOrker(id string, tap *linesTap) (worker.Worker, *ork
 		e.mu.Lock()
 		e.scheduled[scheduleKey(in)]++
 		e.mu.Unlock()
-		return activities.ExecuteTask(actx, in)
+		if tap == nil || !tap.producerIndexes {
+			in.IndexLines = nil
+		}
+		next := func() (*orkstackv1.ExecuteTaskResult, error) { return activities.ExecuteTask(actx, in) }
+		if tap != nil && tap.execute != nil {
+			return tap.execute(actx, in, next)
+		}
+		return next()
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error) {
 		if tap != nil {
@@ -70,6 +98,11 @@ func (e *eachE2E) startLinesOrker(id string, tap *linesTap) (worker.Worker, *ork
 			tap.mu.Unlock()
 			if before != nil {
 				if err := before(actx); err != nil {
+					return nil, err
+				}
+			}
+			if tap.beforeIndex != nil {
+				if err := tap.beforeIndex(actx, in); err != nil {
 					return nil, err
 				}
 			}
@@ -210,35 +243,34 @@ func TestIntegration_EachLinesBatchFanOut(t *testing.T) {
 	}
 }
 
-// TestIntegration_EachLinesInvalidLineFailsBeforeAnyItem covers an
-// unbatched source and TestIntegration_EachLinesBatchInvalidLineFailsBeforeAnyItem's
-// case, a bad line in batch 20 of 25.
+// TestIntegration_EachLinesInvalidLineFailsBeforeAnyItem: one invalid line
+// among 50 fails the fan-out EACH_LINE_INVALID before any item is scheduled.
 func TestIntegration_EachLinesInvalidLineFailsBeforeAnyItem(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		id   string // each subtest's Orker has its own identity: Boot refuses one a live Orker holds
-		k    int32
-		bad  int
-	}{{"unbatched", "lines-bad-u", 1, 3}, {"in batch 20", "lines-bad-b", 100, 20*100 + 7}} {
-		t.Run(tc.name, func(t *testing.T) {
-			e := startEachE2E(t, true)
-			e.startLinesOrker(tc.id, nil)
-			rows := rowsOf(2500)
-			if tc.k < 2 {
-				rows = rowsOf(50)
-			}
-			rows[tc.bad] = `{"n": not json}`
-			runID := fmt.Sprintf("ork-lines-bad-%d", time.Now().UnixNano())
-			e.startLines(runID, e.linesDefinition(tc.id, rows, tc.k, `printf '{}' > /orkstack/output/values.json`))
-			run := e.wait(runID)
-			node := taskRunNamed(run, "convert")
-			if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || node.GetError().GetCode() != eachlines.ReasonLineInvalid {
-				t.Fatalf("run %v, convert %v", run.GetStatus(), node.GetError())
-			}
-			if n := e.itemsScheduled("convert"); n != 0 || len(node.GetItems()) != 0 {
-				t.Fatalf("%d items scheduled, %d rows; want none before an invalid line", n, len(node.GetItems()))
-			}
-		})
+	linesInvalidLine(t, "lines-bad-u", 1, rowsOf(50), 3)
+}
+
+// TestIntegration_EachLinesBatchInvalidLineFailsBeforeAnyItem: one invalid
+// line in batch 20 of 25 fails the fan-out before batch 0 is scheduled.
+func TestIntegration_EachLinesBatchInvalidLineFailsBeforeAnyItem(t *testing.T) {
+	linesInvalidLine(t, "lines-bad-b", 100, rowsOf(2500), 20*100+7)
+}
+
+// linesInvalidLine runs a fan-out of batch k over rows with row bad made
+// invalid, on an Orker of identity id: Boot refuses one a live Orker holds.
+func linesInvalidLine(t *testing.T, id string, k int32, rows []string, bad int) {
+	t.Helper()
+	e := startEachE2E(t, true)
+	e.startLinesOrker(id, nil)
+	rows[bad] = `{"n": not json}`
+	runID := fmt.Sprintf("ork-%s-%d", id, time.Now().UnixNano())
+	e.startLines(runID, e.linesDefinition(id, rows, k, `printf '{}' > /orkstack/output/values.json`))
+	run := e.wait(runID)
+	node := taskRunNamed(run, "convert")
+	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || node.GetError().GetCode() != eachlines.ReasonLineInvalid {
+		t.Fatalf("run %v, convert %v", run.GetStatus(), node.GetError())
+	}
+	if n := e.itemsScheduled("convert"); n != 0 || len(node.GetItems()) != 0 {
+		t.Fatalf("%d items scheduled, %d rows; want none before an invalid line", n, len(node.GetItems()))
 	}
 }
 

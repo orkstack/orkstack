@@ -307,7 +307,11 @@ message GetRunResponse { Run run = 1; }
 // needs an equals filter on origin.kind. An id is matched whole, never by
 // part. origin.root_run_id takes only equals and keeps every run below that
 // root in its composed chain, however deep: the root run itself holds no root
-// and is not one of them.
+// and is not one of them. queued, queued_on and holding are a concurrency
+// limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
+// waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
+// a run still going matches them, and a deployment that cannot index
+// concurrency limits refuses them.
 message ListRunsRequest {
   option (orkstack.v1.filterable) = {
     resource: "orkstack.v1.Run"
@@ -345,6 +349,25 @@ message ListRunsRequest {
         path: "origin.root_run_id"
         label: "Root run"
         operators: [FILTER_OPERATOR_EQUALS]
+      },
+      {
+        path: "queued"
+        label: "Queued for a concurrency slot"
+        operators: [FILTER_OPERATOR_EQUALS]
+        indexed: true
+        flag: true
+      },
+      {
+        path: "queued_on"
+        label: "Queued for key"
+        operators: [FILTER_OPERATOR_EQUALS]
+        indexed: true
+      },
+      {
+        path: "holding"
+        label: "Holding key"
+        operators: [FILTER_OPERATOR_EQUALS]
+        indexed: true
       }
     ]
   };

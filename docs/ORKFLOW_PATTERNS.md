@@ -386,7 +386,8 @@ Example: [pinned-checkout](../examples/pinned-checkout.ork.yaml).
 ## Reuse a block with declared outputs
 
 - `uses: orkflow:<name>@<version>` always pins a version.
-- The child receives values, never files.
+- The child receives values in `with:`, and files only as `type: artifact`
+  inputs bound under `artifacts:`.
 - Its `outputs:` are its interface, and they are strings.
 - `orkctl orkflow compat` and the promote gate compare interfaces.
 - A composed failure handler runs its child in a failing parent.

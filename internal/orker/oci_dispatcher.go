@@ -2739,6 +2739,15 @@ func (d *OCIDispatcher) commit(
 		result.ValuesJson = values
 		result.ValuesInlined = true
 	}
+	// The line indexes the engine asked for, from the files just committed,
+	// written before the commit that the result referencing them follows.
+	if len(in.GetIndexLines()) > 0 {
+		produced := make([]producedArtifact, len(items))
+		for i := range items {
+			produced[i] = producedArtifact{ref: uploaded[i], open: items[i].artifact.Open}
+		}
+		result.LineIndexes = d.buildLineIndexes(ctx, in, produced)
+	}
 
 	if d.Commits == nil || in.GetCommitUri() == "" {
 		result.Cache = resultCache(trace.decision())

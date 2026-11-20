@@ -11,6 +11,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -90,8 +91,9 @@ func ScheduleFireWorkflow(ctx workflow.Context, rec *orkstackv1.ScheduleRecord) 
 
 	// 5. Start the run as a child and wait for it, so this fire lives exactly
 	// as long as the run and Temporal's overlap policies apply to the run.
+	// The plan was written by stablejson, its durations as nanoseconds.
 	var plan RunPlan
-	if err := json.Unmarshal(prep.GetPlan(), &plan); err != nil {
+	if err := json.Unmarshal(prep.GetPlan(), &plan, stablejson.DurationAsNano); err != nil {
 		msg := fmt.Sprintf("decode prepared plan for run %s: %v", runID, err)
 		return refuseFire(ctx, msg, err)
 	}

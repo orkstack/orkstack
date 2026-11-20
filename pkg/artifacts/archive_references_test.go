@@ -151,3 +151,31 @@ var (
 	_ ObjectReferenceLister = (*LocalRunArchive)(nil)
 	_ ObjectReferenceLister = (*S3RunArchive)(nil)
 )
+
+// A claim is a marker a run holds on an object before any archive of it: it
+// is listed like an archived run's marker, writing it twice is one marker,
+// and it archives nothing.
+func TestLocalRunArchive_ClaimObjectsWritesMarkersBeforeAnyArchive(t *testing.T) {
+	archive := newReferenceArchive(t)
+	ctx := context.Background()
+	held := objectKey("dataset.tar", strings.Repeat("e", 64))
+	other := objectKey("model.bin", strings.Repeat("f", 64))
+	for range 2 {
+		if err := archive.ClaimObjects(ctx, "ork-parent", []string{held, other}); err != nil {
+			t.Fatalf("ClaimObjects: %v", err)
+		}
+	}
+	if err := archive.ClaimObjects(ctx, "ork-child", []string{held}); err != nil {
+		t.Fatalf("ClaimObjects(child): %v", err)
+	}
+	got, err := archive.ListObjectReferences(ctx, held)
+	if err != nil {
+		t.Fatalf("ListObjectReferences: %v", err)
+	}
+	if want := []string{"ork-child", "ork-parent"}; !slices.Equal(got, want) {
+		t.Fatalf("claims on the dataset = %v, want %v", got, want)
+	}
+	if has, err := archive.HasRun(ctx, "ork-parent"); err != nil || has {
+		t.Fatalf("a claim archived the run: %v, %v", has, err)
+	}
+}

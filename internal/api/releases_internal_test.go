@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -28,6 +29,7 @@ type judgeCase struct {
 	runs      map[string]releaseRunCount
 	running   int64
 	runErr    error
+	caps      releaseCapabilities
 	want      []*orkstackv1.ReleaseBlocker
 }
 
@@ -74,7 +76,14 @@ const (
 	kPins        = orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED
 	kUnversioned = orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS
 	kUnverified  = orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_UNVERIFIED
+	kCapability  = orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_CAPABILITY_MISSING
 )
+
+// engineOf is one engine process of build advertising caps.
+func engineOf(id, build string, caps ...string) engine.EnginePresence {
+	return engine.EnginePresence{Identity: id + "@h@ ork-caps=" + strings.Join(caps, ","),
+		Description: engine.EngineDescription{BuildID: build}}
+}
 
 func notServed(pool, evidence, target string) *orkstackv1.ReleaseBlocker {
 	return blocker(kNotServed, pool, fmt.Sprintf(
@@ -89,7 +98,37 @@ func judgeCases() []judgeCase {
 		return obs
 	}
 	served := []*orkstackv1.Orker{row("orker-v2a", "main", "v2"), row("orker-v2b", "build", "v2")}
+	limited := func(gates int64, engines ...engine.EnginePresence) releaseCapabilities {
+		return releaseCapabilities{asked: true, openGates: gates, engines: engines}
+	}
 	return []judgeCase{
+		{
+			name: "open limits and an engine of the target without them", target: "v2", obs: baseObs(), inventory: served,
+			caps: limited(3, engineOf("1", "v2", engine.CapabilityRunTimeout), engineOf("2", "v2", engine.CapabilityConcurrency),
+				engineOf("3", "v1")),
+			want: []*orkstackv1.ReleaseBlocker{blocker(kCapability, "",
+				"1 engine process of release v2 cannot hold concurrency limits, and 3 concurrency limits are open, so a run sent to it could start without its limit. Run the release's engines at a build with concurrency limits, or let the limited runs finish first.")},
+		},
+		{
+			name: "open limits and every engine of the target holds them", target: "v2", obs: baseObs(), inventory: served,
+			caps: limited(3, engineOf("2", "v2", engine.CapabilityConcurrency), engineOf("3", "v1")),
+		},
+		{
+			name: "no open limit", target: "v2", obs: baseObs(), inventory: served,
+			caps: limited(0, engineOf("1", "v2")),
+		},
+		{
+			name: "the open limits cannot be counted", target: "v2", obs: baseObs(), inventory: served,
+			caps: releaseCapabilities{asked: true, gatesErr: errors.New("count failed")},
+			want: []*orkstackv1.ReleaseBlocker{blocker(kUnverified, "",
+				"whether runs with concurrency limits are open could not be read, so whether release v2 can hold them cannot be established; ask again.")},
+		},
+		{
+			name: "the engines cannot be listed while limits are open", target: "v2", obs: baseObs(), inventory: served,
+			caps: releaseCapabilities{asked: true, openGates: 1, enginesErr: errors.New("describe failed")},
+			want: []*orkstackv1.ReleaseBlocker{blocker(kUnverified, "",
+				"the engine processes could not be listed, so whether release v2 can hold the concurrency limits runs hold now cannot be established; ask again.")},
+		},
 		{
 			name:   "no engine",
 			target: "v2",
@@ -270,7 +309,7 @@ func judgeCases() []judgeCase {
 func TestJudgeRelease_Table(t *testing.T) {
 	for _, tc := range judgeCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			got := judgeRelease(tc.target, tc.obs, tc.inventory, tc.invErr, tc.runs, tc.running, tc.runErr)
+			got := judgeRelease(tc.target, tc.obs, tc.inventory, tc.invErr, tc.runs, tc.running, tc.runErr, tc.caps)
 			if len(got) != len(tc.want) {
 				t.Fatalf("blockers = %v\nwant %v", got, tc.want)
 			}
@@ -281,7 +320,7 @@ func TestJudgeRelease_Table(t *testing.T) {
 				}
 			}
 			// Pure: the same inputs give the same blockers.
-			again := judgeRelease(tc.target, tc.obs, tc.inventory, tc.invErr, tc.runs, tc.running, tc.runErr)
+			again := judgeRelease(tc.target, tc.obs, tc.inventory, tc.invErr, tc.runs, tc.running, tc.runErr, tc.caps)
 			if fmt.Sprint(again) != fmt.Sprint(got) {
 				t.Fatalf("not deterministic:\n%v\n%v", got, again)
 			}
@@ -292,7 +331,7 @@ func TestJudgeRelease_Table(t *testing.T) {
 func TestReleaseBlockers_NeverNameAChannel(t *testing.T) {
 	seen := 0
 	for _, tc := range judgeCases() {
-		for _, b := range judgeRelease(tc.target, tc.obs, tc.inventory, tc.invErr, tc.runs, tc.running, tc.runErr) {
+		for _, b := range judgeRelease(tc.target, tc.obs, tc.inventory, tc.invErr, tc.runs, tc.running, tc.runErr, tc.caps) {
 			seen++
 			if releaseForbidden.MatchString(b.GetMessage()) {
 				t.Errorf("%s: %q names %q", tc.name, b.GetMessage(), releaseForbidden.FindString(b.GetMessage()))

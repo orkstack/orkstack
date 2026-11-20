@@ -559,7 +559,7 @@ func (s *Service) startRun(
 	// never started. Nothing is recorded: the store is what failed, so a
 	// record would not be durable either. A key keeps naming the id, which
 	// the next submission under it starts.
-	if err := s.writeDefinitionObject(ctx, runID, sub); err != nil {
+	if err := s.writeRunObjects(ctx, runID, sub); err != nil {
 		forgetFresh()
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again", err))
 	}
@@ -665,7 +665,7 @@ func (s *Service) replaceForeignID(
 		return nil, err
 	}
 	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
-	if err := s.writeDefinitionObject(ctx, next.GetId(), sub); err != nil {
+	if err := s.writeRunObjects(ctx, next.GetId(), sub); err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again under the same key", err))
 	}
 	claim, err := newClaim(next, sub.plan.IdempotencyFingerprint)

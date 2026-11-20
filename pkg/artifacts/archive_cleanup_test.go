@@ -361,3 +361,45 @@ func mustRefKey(t *testing.T, objectID, runID string) string {
 	}
 	return key
 }
+
+// A resumed run's objects lie under the prefixes cleanup already reclaims:
+// its plan records under the snapshot prefix, its reruns' commits under the
+// commit prefix (docs/STORAGE.md).
+func TestLocalRunArchive_CleanupReclaimsAResumedRunsObjects(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewLocalRunArchive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	plan, err := ResumePlanKey("default", "ork-run", 42, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerun, err := ScopedItemCommitKey("default", "ork-run", "convert", 3, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{plan, rerun} {
+		name := filepath.Join(root, filepath.FromSlash(key))
+		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := store.DeleteRunArtifacts(ctx, "default", "ork-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ObjectsDeleted != 2 {
+		t.Fatalf("result = %+v, want the plan record and the rerun's commit", result)
+	}
+	for _, key := range []string{plan, rerun} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(key))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s survived cleanup: %v", key, err)
+		}
+	}
+}

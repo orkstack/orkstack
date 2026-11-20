@@ -125,6 +125,22 @@ engine:
     census_timeout: 5m  # ork
     census_max_gates: 2000  # ork
     census_parallel: 8  # ork
+    max_active_keys_per_namespace: 1000  # ork
+    max_queued_runs_per_namespace: 1000  # ork
+    max_limits_per_orkflow: 32  # ork
+    max_run_slot_entries: 64  # ork
+    per_slot_bytes: 2048  # 2 KiB; ork
+    default_queue_timeout: 2h  # ork
+    min_queue_timeout: 10s  # ork
+    max_queue_timeout: 168h  # ork
+    acquire_backoff_min: 200ms  # ork
+    acquire_backoff_max: 10s  # ork
+    requeue_interval: 1m  # ork
+    requeue_backoff_factor: 2  # ork
+    requeue_interval_max: 15m  # ork
+    retry_after: 1m  # ork
+    event_holders_shown: 5  # ork
+    api_holders_shown: 10  # ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork
   usage_cache_ttl: 5m  # ork

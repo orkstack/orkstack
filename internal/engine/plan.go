@@ -125,6 +125,11 @@ type RunPlan struct {
 	// predates it, so its plan encodes exactly as before.
 	Pause *PausePlan `json:"pause,omitempty"`
 
+	// Concurrency is the run's concurrency limits as its submit decided
+	// them (E88; concurrency_run.go): nil for a run with no limit, so its
+	// plan encodes exactly as before and its every path is today's.
+	Concurrency *ConcurrencyPlan `json:"concurrency,omitempty"`
+
 	// Awaits holds, per task id, the callback credential of every `await:`
 	// of this run that declares `callback: true`: a salt and the salted
 	// SHA-256 of a token minted at SUBMIT (internal/api). NEVER the token.
@@ -278,6 +283,22 @@ type RunPlan struct {
 	// with none encodes exactly as it did before the field existed.
 	Interruptions *InterruptionBudgets `json:"interruptions,omitzero"`
 
+	// InputArtifacts are the artifacts a child run received from the task
+	// that composed it, by the name of the artifact input each binds
+	// (docs/DSL.md, "Passing artifacts to a child run"): references to
+	// objects a run of the tree recorded, never bytes. Set by the parent's
+	// startChild from recorded results; empty on every other plan. A task of
+	// the run whose definition names one (Task.input_artifacts) is handed it
+	// as the reserved upstream _inputs. omitzero.
+	InputArtifacts []NamedArtifactPlan `json:"input_artifacts,omitzero"`
+
+	// ArtifactClaims bounds the claim markers the engine writes for objects
+	// passed between the runs of a tree: a parent's claim at a child's start
+	// and a child's own before its first dispatch (docs/STORAGE.md,
+	// "Reclaiming space"). Decided at submit, a run-tree value copied into
+	// each child's start plan. omitzero.
+	ArtifactClaims *ArtifactClaimPolicy `json:"artifact_claims,omitzero"`
+
 	// RecordRootRun says this run's child runs record the root of their chain
 	// (RunOrigin.RootRunID, childStartPlan). It changes what a child start
 	// carries and no command. It rides the plan rather than a gate so that a
@@ -304,6 +325,23 @@ type RunPlan struct {
 	// allowed, decided at the parent's submit; workflow code never reads it.
 	// omitzero, so every other plan encodes exactly as before.
 	Shared *authz.Decision `json:"shared,omitzero"`
+
+	// RunContextSHA256 names the run tree's run-context object (the run's
+	// origin, Orkflow and composed lineage, written once at submit under the
+	// root run's prefix), so every task's input carries a run context that
+	// references it (ExecuteTaskInput.run_context). Set at submit on the
+	// top-level plan and copied into each child's start plan by
+	// childStartPlan, as RunContextMaxBytes is. Empty means the run's tasks
+	// are given no run context.
+	RunContextSHA256 string `json:"run_context_sha256,omitzero"`
+	// RunContextIndex is this run's entry in the run-context object: 0 for
+	// the root, then a pre-order walk of the composed children, task ids in
+	// order. Set at submit on each nested child plan.
+	RunContextIndex int32 `json:"run_context_index,omitzero"`
+	// RunContextMaxBytes bounds a task's run context, the one part of its
+	// input that may take it past the 256 KiB payload bound (AGENTS.md §2.2):
+	// DefaultRunContextMaxBytes, pinned per run.
+	RunContextMaxBytes int64 `json:"run_context_max_bytes,omitzero"`
 }
 
 // OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run
@@ -782,4 +820,78 @@ type InterruptionBudgets struct {
 	// one-attempt task outlives a store blip until the cordon can act (design
 	// §4.8 4a). 0, in a plan from before the field, floors nothing.
 	NeverStartedFaultFloorMillis int64 `json:"fault_floor_ms,omitzero"`
+}
+
+// NamedArtifactPlan is orkstackv1.NamedArtifact on the plan: one artifact a
+// run received, by the name of the input it binds, with the run and task that
+// recorded it.
+type NamedArtifactPlan struct {
+	Name     string          `json:"name"`
+	RunID    string          `json:"run_id,omitzero"`
+	TaskID   string          `json:"task_id,omitzero"`
+	Artifact ArtifactRefPlan `json:"artifact"`
+}
+
+// ArtifactRefPlan is orkstackv1.ArtifactRef on the plan.
+type ArtifactRefPlan struct {
+	Name        string            `json:"name"`
+	URI         string            `json:"uri"`
+	ContentType string            `json:"content_type,omitzero"`
+	SizeBytes   int64             `json:"size_bytes,omitzero"`
+	SHA256      string            `json:"sha256,omitzero"`
+	Metadata    map[string]string `json:"metadata,omitzero"`
+}
+
+// ArtifactClaimPolicy is how a run tree passes artifacts: how long one
+// attempt of a claim local activity may take and how many it makes before it
+// fails its run's start (CHILD_INPUT_UNAVAILABLE), and how many bytes each
+// artifacts: binding may add to a child's start (CHILD_START_TOO_LARGE),
+// which the submit reserved inside the tree's 256 KiB plan bound.
+type ArtifactClaimPolicy struct {
+	TimeoutSeconds      int32 `json:"timeout_seconds"`
+	MaxAttempts         int32 `json:"max_attempts"`
+	ReserveBytesPerBind int32 `json:"reserve_bytes_per_binding"`
+}
+
+// ArtifactRefPlanOf copies an ArtifactRef onto the plan.
+func ArtifactRefPlanOf(ref *orkstackv1.ArtifactRef) ArtifactRefPlan {
+	out := ArtifactRefPlan{Name: ref.GetName(), URI: ref.GetUri(), ContentType: ref.GetContentType(),
+		SizeBytes: ref.GetSizeBytes(), SHA256: ref.GetSha256()}
+	if len(ref.GetMetadata()) > 0 {
+		out.Metadata = make(map[string]string, len(ref.GetMetadata()))
+		for k, v := range ref.GetMetadata() {
+			out.Metadata[k] = v
+		}
+	}
+	return out
+}
+
+// Proto is the ArtifactRef the plan holds.
+func (a ArtifactRefPlan) Proto() *orkstackv1.ArtifactRef {
+	out := &orkstackv1.ArtifactRef{Name: a.Name, Uri: a.URI, ContentType: a.ContentType,
+		SizeBytes: a.SizeBytes, Sha256: a.SHA256}
+	if len(a.Metadata) > 0 {
+		out.Metadata = make(map[string]string, len(a.Metadata))
+		for k, v := range a.Metadata {
+			out.Metadata[k] = v
+		}
+	}
+	return out
+}
+
+// Proto is the NamedArtifact the plan holds.
+func (n NamedArtifactPlan) Proto() *orkstackv1.NamedArtifact {
+	return &orkstackv1.NamedArtifact{Name: n.Name, RunId: n.RunID, TaskId: n.TaskID, Artifact: n.Artifact.Proto()}
+}
+
+// namedArtifactsProto converts a plan list for a snapshot or a row.
+func namedArtifactsProto(in []NamedArtifactPlan) []*orkstackv1.NamedArtifact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*orkstackv1.NamedArtifact, 0, len(in))
+	for _, n := range in {
+		out = append(out, n.Proto())
+	}
+	return out
 }
