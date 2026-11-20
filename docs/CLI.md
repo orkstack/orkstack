@@ -2353,8 +2353,11 @@ An Orker that stopped reads this way for up to 90 seconds, because the cluster
 still remembers it polling.
 STATE names every cause that holds a cordon, an operator's first:
 cordoned (operator; profile drifted). PROFILES is each profile the Orker
-offers with its kind and the cause on it, a100 (gpu; drifted), and each
-profile cause is a line under the table with what was found and how it ends.
+offers with its kind and the cause on it, a100 (gpu; drifted), and for a
+profile of more than one contract or another label its contracts, the
+default of several starred, sensor:1*,2 (devices), and what the default
+accepts, sensor:2 +acc 1 (devices);
+each profile cause is a line under the table with what was found and how it ends.
 PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker
 declaring one admits tasks within, and RESERVED what stands reserved against
 it, pinned members included and each outstanding poll counted at the per-task
@@ -3180,6 +3183,11 @@ which is where the failed try's error, phase, exit code and Orker live.
 An attempt whose Orker died before it could file one is still listed, as
 UNREPORTED with dashes: the timeline never has a silent hole, and an
 unreported attempt is an absent record rather than a failure.
+
+PROFILES, for a run whose tasks name device profiles, is each profile an
+attempt ran with and the contract it ran under: sensor (contract 2,
+accepting 1), or sensor (contract 2, needed by the image) when the task's image
+chose it.
 
 With --task the full error of every failed attempt is printed under the
 table, each with the command that prints that attempt's output.

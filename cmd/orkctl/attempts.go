@@ -36,6 +36,10 @@ func newRunAttemptsCommand(g *globalFlags) *cobra.Command {
 			"An attempt whose Orker died before it could file one is still listed, as\n" +
 			"UNREPORTED with dashes: the timeline never has a silent hole, and an\n" +
 			"unreported attempt is an absent record rather than a failure.\n\n" +
+			"PROFILES, for a run whose tasks name device profiles, is each profile an\n" +
+			"attempt ran with and the contract it ran under: sensor (contract 2,\n" +
+			"accepting 1), or sensor (contract 2, needed by the image) when the task's image\n" +
+			"chose it.\n\n" +
 			"With --task the full error of every failed attempt is printed under the\n" +
 			"table, each with the command that prints that attempt's output.\n\n" +
 			"Records are read from the artifact store, never from the engine's memory,\n" +
@@ -117,18 +121,25 @@ func renderAttemptList(out io.Writer, attempts []*orkstackv1.TaskAttempt) error 
 	// The CACHE column appears whenever any record carries a memo decision
 	// (a cached task); with none the table is unchanged.
 	withCache := false
+	// The PROFILES column appears whenever any record ran with a device
+	// profile; with none the table is unchanged.
+	withProfiles := false
 	for _, attempt := range attempts {
 		withItems = withItems || attempt.Item != nil
 		withCache = withCache || attempt.GetCache() != nil
+		withProfiles = withProfiles || len(attempt.GetProfiles()) > 0
 	}
-	cacheHeader := ""
+	extraHeader := ""
 	if withCache {
-		cacheHeader = "\tCACHE"
+		extraHeader = "\tCACHE"
+	}
+	if withProfiles {
+		extraHeader += "\tPROFILES"
 	}
 	if withItems {
-		fmt.Fprintln(table, "TASK\tITEM\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER"+cacheHeader+"\tERROR")
+		fmt.Fprintln(table, "TASK\tITEM\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER"+extraHeader+"\tERROR")
 	} else {
-		fmt.Fprintln(table, "TASK\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER"+cacheHeader+"\tERROR")
+		fmt.Fprintln(table, "TASK\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER"+extraHeader+"\tERROR")
 	}
 	unreported := false
 	for _, attempt := range attempts {
@@ -139,9 +150,13 @@ func renderAttemptList(out io.Writer, attempts []*orkstackv1.TaskAttempt) error 
 		if withItems {
 			task += "\t" + itemCell(attempt.Item)
 		}
-		orker := orDash(attempt.GetOrkerId())
+		// The Orker id is the Orker's own word: shown, never obeyed.
+		orker := terminalSafe(orDash(attempt.GetOrkerId()))
 		if withCache {
 			orker += "\t" + attemptCacheCell(attempt.GetCache())
+		}
+		if withProfiles {
+			orker += "\t" + attemptProfilesCell(attempt.GetProfiles())
 		}
 		fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			task,

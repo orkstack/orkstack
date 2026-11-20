@@ -253,15 +253,106 @@ func orkerProfiles(row *orkstackv1.Orker) string {
 		if c := profileCause(row, p.GetName()); c != nil {
 			inside += "; " + profileCauseWord(c)
 		}
-		parts = append(parts, p.GetName()+" ("+inside+")")
+		parts = append(parts, p.GetName()+profileContractsShort(p)+" ("+inside+")")
 	}
 	return strings.Join(parts, ", ")
+}
+
+// contractsPlain says a profile is one contract "1" accepting nothing, the
+// short form as most write it, which the list and get leave unsaid.
+func contractsPlain(p *orkstackv1.OrkerProfile) bool {
+	cs := p.GetContracts()
+	return len(cs) == 0 || (len(cs) == 1 && cs[0].GetLabel() == "1" && len(cs[0].GetAccepts()) == 0)
+}
+
+// profileContractsShort is a profile's contracts as PROFILES writes them
+// after its name: ":1,2*" with the default of several starred, then " +acc
+// 0" for what the default accepts; "" for a plain profile.
+func profileContractsShort(p *orkstackv1.OrkerProfile) string {
+	if contractsPlain(p) {
+		return ""
+	}
+	labels := make([]string, 0, len(p.GetContracts()))
+	var accepts []string
+	for _, c := range p.GetContracts() {
+		label := c.GetLabel()
+		if label == p.GetDefaultContract() {
+			if len(p.GetContracts()) > 1 {
+				label += "*"
+			}
+			accepts = c.GetAccepts()
+		}
+		labels = append(labels, label)
+	}
+	text := ":" + strings.Join(labels, ",")
+	if len(accepts) > 0 {
+		text += " +acc " + strings.Join(accepts, ",")
+	}
+	return text
+}
+
+// profileContractsLong is a profile's contracts as orkctl orker get writes
+// them: "contracts 1, 2 (default; accepts 1)"; "" for a plain profile.
+func profileContractsLong(p *orkstackv1.OrkerProfile) string {
+	if contractsPlain(p) {
+		return ""
+	}
+	parts := make([]string, 0, len(p.GetContracts()))
+	for _, c := range p.GetContracts() {
+		var notes []string
+		if c.GetLabel() == p.GetDefaultContract() && len(p.GetContracts()) > 1 {
+			notes = append(notes, "default")
+		}
+		if len(c.GetAccepts()) > 0 {
+			notes = append(notes, "accepts "+strings.Join(c.GetAccepts(), ", "))
+		}
+		part := c.GetLabel()
+		if len(notes) > 0 {
+			part += " (" + strings.Join(notes, "; ") + ")"
+		}
+		parts = append(parts, part)
+	}
+	return pick(len(parts), "contract ", "contracts ") + strings.Join(parts, ", ")
+}
+
+// attemptProfilesCell is PROFILES of orkctl run attempts: each profile the
+// attempt ran with and the contract it ran under, "sensor (contract 2,
+// needed by the image)" when its image chose it, "(contract 2, accepting
+// 1)" when it ran under a contract that accepts a pinned one; - for none.
+// Every word of it is the Orker's, so the cell is made terminal-safe: an
+// escape, tab or newline in a profile's name or label is shown, never obeyed.
+func attemptProfilesCell(profiles []*orkstackv1.EffectiveProfile) string {
+	if len(profiles) == 0 {
+		return dash
+	}
+	parts := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		var notes []string
+		if c := p.GetContract(); c != "" {
+			notes = append(notes, "contract "+c)
+			if pinned := p.GetRunContracts(); len(pinned) > 0 && !slices.Contains(pinned, c) {
+				notes = append(notes, "accepting "+strings.Join(pinned, ", "))
+			}
+		}
+		if p.GetDeclared() {
+			notes = append(notes, "needed by the image")
+		}
+		part := p.GetName()
+		if len(notes) > 0 {
+			part += " (" + strings.Join(notes, ", ") + ")"
+		}
+		parts = append(parts, part)
+	}
+	return terminalSafe(strings.Join(parts, "; "))
 }
 
 // profileLine is one profile's value in orkctl orker get: its kind, the cause
 // on it, then a gpu profile's units.
 func profileLine(row *orkstackv1.Orker, p *orkstackv1.OrkerProfile) string {
 	parts := []string{profileKindLabel(p.GetKind())}
+	if contracts := profileContractsLong(p); contracts != "" {
+		parts = append(parts, contracts)
+	}
 	if c := profileCause(row, p.GetName()); c != nil {
 		parts = append(parts, profileCauseWord(c))
 	}

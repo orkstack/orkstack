@@ -2,7 +2,7 @@ ORKER        POOL   BUILD  STATE                                 TASKS  PINS  PR
 orker-none   build  -      ready                                 0      -     -                                    -         -         2026-09-22T09:14:02Z
 orker-both   gpu    -      cordoned (operator; profile drifted)  0      -     a100 (gpu; drifted)                  -         -         2026-09-22T09:14:02Z
 orker-drift  gpu    -      cordoned (profile drifted)            0      -     a100 (gpu; drifted), fpga (devices)  -         -         2026-09-22T09:14:02Z
-orker-ok     gpu    -      ready                                 1      -     a100 (gpu), fpga (devices)           -         -         2026-09-22T09:14:02Z
+orker-ok     gpu    -      ready                                 1      -     a100 (gpu), fpga:2 +acc 1 (devices)  -         -         2026-09-22T09:14:02Z
 orker-out    gpu    -      cordoned (profile out of service)     0      -     fpga (devices; out of service)       -         -         2026-09-22T09:14:02Z
 orker-wait   gpu    -      cordoned (profile unavailable)        0      -     fpga (devices; unavailable)          -         -         2026-09-22T09:14:02Z
 

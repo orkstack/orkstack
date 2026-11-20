@@ -364,4 +364,34 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 	await shot(page, 'timing-after-seed.png');
 	note('P5 the run rendered with its attempt timeline pending (held 2 s); the timeline filled in when it arrived');
 	await page.unroute('**/orkstack.v1.RunService/ListTaskAttempts');
+
+	// E110 CP-7: an attempt that ran with a device profile names it and the
+	// contract it ran under, in `orkctl run attempts`' words. The profile is
+	// the one fake here, and only because no spec can produce it on demand:
+	// a device Orker that runs a task needs the host's usb-serial test node
+	// and a probe image of its own build pushed to a registry, which no
+	// browser spec's stack builds. That the engine records the contract an
+	// attempt ran under is proven against a real device Orker by
+	// TestIntegration_ProfileContractRollingChange and
+	// TestIntegration_ProfileContractBreakingChangeByImage (cmd/orkctl). So
+	// attempt 2's real record, served by the engine, is given a profile on its
+	// way to the page; everything else about the answer is the engine's.
+	await page.route('**/orkstack.v1.RunService/ListTaskAttempts', async (route) => {
+		const response = await route.fetch();
+		const body = await response.json();
+		for (const attempt of body.attempts ?? []) {
+			if (attempt.taskId === 'flaky' && attempt.attempt === 2) {
+				attempt.profiles = [{ name: 'sensor', contract: '2', runContracts: ['1'] }];
+			}
+		}
+		await route.fulfill({ response, json: body });
+	});
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+	await inspectTask(page, 'flaky');
+	const profile = page.getByTestId('task-flaky-attempt-2-profile-sensor');
+	await expect(profile).toHaveText('sensor (contract 2, accepting 1)', { timeout: 30_000 });
+	await expect(page.getByTestId('task-flaky-attempt-1-profile-sensor')).toHaveCount(0);
+	await shot(page, 'attempt-profile-contract.png');
+	note(`CP-7 attempt 2 reads ${await profile.innerText()}`);
+	await page.unroute('**/orkstack.v1.RunService/ListTaskAttempts');
 });

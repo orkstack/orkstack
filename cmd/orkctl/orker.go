@@ -103,8 +103,11 @@ func newOrkerListCommand(g *globalFlags) *cobra.Command {
 			"still remembers it polling.\n" +
 			"STATE names every cause that holds a cordon, an operator's first:\n" +
 			"cordoned (operator; profile drifted). PROFILES is each profile the Orker\n" +
-			"offers with its kind and the cause on it, a100 (gpu; drifted), and each\n" +
-			"profile cause is a line under the table with what was found and how it ends.\n" +
+			"offers with its kind and the cause on it, a100 (gpu; drifted), and for a\n" +
+			"profile of more than one contract or another label its contracts, the\n" +
+			"default of several starred, sensor:1*,2 (devices), and what the default\n" +
+			"accepts, sensor:2 +acc 1 (devices);\n" +
+			"each profile cause is a line under the table with what was found and how it ends.\n" +
 			"PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker\n" +
 			"declaring one admits tasks within, and RESERVED what stands reserved against\n" +
 			"it, pinned members included and each outstanding poll counted at the per-task\n" +

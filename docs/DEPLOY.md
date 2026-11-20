@@ -1628,7 +1628,13 @@ cordon keeps a stamp of its own.
 `STATE` names every cause that holds the cordon, an operator's first, as in
 `cordoned (operator; profile drifted)` or `cordoned (profile unavailable)`.
 `PROFILES` lists each profile with its kind and the cause on it, as in
-`a100 (gpu; drifted), fpga (devices)`. Under the table, each profile cause is
+`a100 (gpu; drifted), fpga (devices)`, and, for a profile of more than one
+contract or a label other than `1`, its contracts, the default of several
+starred, as in `sensor:1*,2 (devices)`, and what the default accepts, as in
+`sensor:2 +acc 1 (devices)`.
+`orkctl run attempts` names the contract each attempt ran under, as in
+`sensor (contract 2, accepting 1)` or `sensor (contract 2, needed by the
+image)`. Under the table, each profile cause is
 one line with its reason's code and how it ends. `get` gives each profile a
 line of its own, with a `gpu` profile's units, and each cause in full.
 `--json` carries `profiles` and `profileCordons` as the inventory has them.
