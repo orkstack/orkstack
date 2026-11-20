@@ -107,6 +107,10 @@ type Options struct {
 	// instance metadata endpoints from a container on the default network,
 	// and what an answer does (metadata_probe.go). Empty is off.
 	MetadataProbe MetadataProbeMode
+	// Identity is the Orker's task identity settings, set when it reaches an
+	// engine (orker.engine.url); nil, it serves no identity and chooses no
+	// identity storage.
+	Identity *IdentityConfig
 	// Profiles is orker.profiles (profiles.go): what this Orker offers tasks
 	// by name. Boot refuses a profile of a kind this build does not
 	// implement.
@@ -193,7 +197,9 @@ type Activities struct {
 	// metadataProbe is orker.metadata_probe; metadata is what Boot's probe
 	// found, nil until it ran, which DescribeOrker reports.
 	metadataProbe MetadataProbeMode
-	metadata      atomic.Pointer[[]MetadataFinding]
+	// identityConfig is Options.Identity.
+	identityConfig *IdentityConfig
+	metadata       atomic.Pointer[[]MetadataFinding]
 	// identityLock is held for the process's lifetime once Boot claims this
 	// Orker's identity, so no second live Orker can reap by the same label.
 	identityLock *os.File
@@ -234,6 +240,22 @@ type Activities struct {
 	// eachIndexes is Options.EachIndexes, as an interface so a test can
 	// write indexes elsewhere; nil when none was given.
 	eachIndexes eachIndexStore
+}
+
+// WatchIdentitySupport records the self-check DescribeOrker reports and
+// dispatch asks of a task that holds an identity.
+func (a *Activities) WatchIdentitySupport(s *IdentitySupport) *IdentitySupport {
+	a.dispatcher.identity.Store(s)
+	return s
+}
+
+// StoreScopeNow is the storage scope verdict now: unknown until the watch
+// has one.
+func (a *Activities) StoreScopeNow() orkstackv1.StoreScope {
+	if w := a.scope.Load(); w != nil {
+		return w.Report().Scope
+	}
+	return orkstackv1.StoreScope_STORE_SCOPE_UNKNOWN
 }
 
 // NewActivitiesWithOptions builds the activity set with explicit options.
@@ -286,6 +308,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		usage:       usage,
 		eachIndexes: eachIndexStoreOf(opts.EachIndexes),
 		dispatcher: &OCIDispatcher{
+			identityConfig:      opts.Identity,
 			Runtime:             runtime,
 			Store:               store,
 			Commits:             scopeCommits(opts.Commits, opts.CommitRoot, opts.Namespaces),
@@ -315,17 +338,18 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			LogUnmasked:         opts.LogUnmasked,
 			AllowSecretValues:   opts.AllowSecretValues,
 		},
-		pool:          opts.Pool,
-		maxConc:       maxConc,
-		maxPins:       opts.MaxPins,
-		metadataProbe: opts.MetadataProbe,
-		profiles:      newProfileState(opts.Profiles, opts.Build).withProbe(opts.ReleaseProbe, opts.Logger),
-		cordon:        NewCordon(),
-		pins:          newOpenPins(),
-		stops:         newStopRegistry(),
-		capacity:      capacity,
-		capacityErr:   capacityErr,
-		taskQueue:     opts.TaskQueue,
+		pool:           opts.Pool,
+		maxConc:        maxConc,
+		maxPins:        opts.MaxPins,
+		metadataProbe:  opts.MetadataProbe,
+		identityConfig: opts.Identity,
+		profiles:       newProfileState(opts.Profiles, opts.Build).withProbe(opts.ReleaseProbe, opts.Logger),
+		cordon:         NewCordon(),
+		pins:           newOpenPins(),
+		stops:          newStopRegistry(),
+		capacity:       capacity,
+		capacityErr:    capacityErr,
+		taskQueue:      opts.TaskQueue,
 	}
 	// A typed interruption that depends on the stop (CONTAINER_STOPPED_BY_RUNTIME)
 	// asks the cordon whether this Orker is stopping (emission.go).
@@ -618,6 +642,10 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		result.StoreScopeConfirmedAt = scope.ConfirmedAt
 		result.ResultsScope = scope.Results
 	}
+	if id := a.dispatcher.identity.Load(); id != nil {
+		result.IdentitySupported, result.IdentityUnsupportedReason = id.Report()
+	}
+	result.IdentityStorage = identityStorageReport(a.dispatcher.identityStorage.Load())
 	a.describeMetadata(result)
 	a.profiles.report(result)
 	result.Pins = a.describePins()
@@ -1163,6 +1191,13 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// orphans; if it is held, a peer is alive and this Orker refuses rather
 	// than destroying that peer's running work.
 	if err := a.claimIdentity(); err != nil {
+		return err
+	}
+	// Where identity tokens live, chosen once the runtime is known to run a
+	// task's container, and only under the identity lock: the choice reaps
+	// what an earlier process under this id left, which a live peer's would
+	// otherwise be (identity_probe.go).
+	if err := a.bootIdentityStorage(ctx, root); err != nil {
 		return err
 	}
 	// Reap this Orker's own previous life's containers. An Orker crash does

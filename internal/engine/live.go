@@ -283,5 +283,8 @@ func (r *TemporalRunReader) liveAttempt(
 		out.Attempt = progress.Ordinal
 	}
 	out.Usage = liveUsage(progress, beat, now)
+	// What the Orker says of the attempt's identities: fresh, retrying or
+	// expired. It wins over what the records of what was issued imply.
+	out.Identity = liveIdentities(progress.Identities, now)
 	return out
 }

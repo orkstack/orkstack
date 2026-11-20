@@ -52,9 +52,19 @@ type ScheduleBinding struct {
 	BinderVerified bool      `json:"binderVerified,omitempty"`
 	BinderMethod   string    `json:"binderMethod,omitempty"`
 	BoundAt        time.Time `json:"boundAt"`
+	// BinderBinding is the binding that granted the binder run.submit on
+	// the Orkflow when it bound, by which later admissions judge it; none
+	// for an asserted binder or one bound before it was recorded.
+	BinderBinding *BinderBinding `json:"binderBinding,omitempty"`
 	// Consent is the consent digest recorded with the binder (internal/consent).
 	Consent   string    `json:"consent"`
 	ConsentAt time.Time `json:"consentAt"`
+	// ConsentBy is who gave the consent: the binder, or whoever consented
+	// later. ConsentAudiences and ConsentGrants are the short list a person
+	// reads beside the digest.
+	ConsentBy        string   `json:"consentBy,omitempty"`
+	ConsentAudiences []string `json:"consentAudiences,omitempty"`
+	ConsentGrants    []string `json:"consentGrants,omitempty"`
 	// SavedAt is when this entry was written.
 	SavedAt time.Time `json:"savedAt"`
 }

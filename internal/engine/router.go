@@ -65,6 +65,14 @@ type RunStarter interface {
 	SignalPause(ctx context.Context, runID string, signal *orkstackv1.RunPauseSignal) error
 }
 
+// ExecutionStarter is a RunStarter that also answers the id of the
+// execution a start opened (TemporalStarter). A starter that is not one
+// leaves a root's chain record to be completed by the first engine that
+// needs it.
+type ExecutionStarter interface {
+	StartRunExecution(ctx context.Context, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, plan RunPlan) (string, error)
+}
+
 // ErrNoBinding reports a namespace no binding serves.
 var ErrNoBinding = errors.New("no binding serves this namespace")
 

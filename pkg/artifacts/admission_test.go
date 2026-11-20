@@ -75,9 +75,11 @@ func TestAdmission_IsNamedByItsBytesAndReadBack(t *testing.T) {
 	if same, _, _ := EncodeAdmission(empty); !bytes.Equal(same, raw) {
 		t.Fatal("an empty children table encodes differently from none")
 	}
-	for range 2 {
-		if got, err := s.writeAdmission(ctx, a); err != nil || got != sha {
-			t.Fatalf("write = %s, %v", got, err)
+	// The first write creates it; the second finds the same bytes, which
+	// are success and not the caller's own.
+	for i, wantCreated := range []bool{true, false} {
+		if got, created, err := s.WriteAdmission(ctx, a); err != nil || got != sha || created != wantCreated {
+			t.Fatalf("write %d = %s, created %t, %v; want created %t", i+1, got, created, err, wantCreated)
 		}
 	}
 	got, err := s.ReadAdmission(ctx, "ns", "ork-1", sha)
@@ -301,4 +303,37 @@ func newFastRecordStoreDown(t *testing.T) (*RecordStore, *downBlobs) {
 	s, b := newTestRecordStore(t)
 	s.reader = &recordReader{b: s.reader.b, slots: s.reader.slots, spacing: fast, many: s.reader.many}
 	return s, b
+}
+
+// TestAdmission_DeleteRemovesOnlyThatRecord: a submit that ends before any
+// start was attempted deletes what it created, by its digest, and a delete
+// of one already gone is not an error.
+func TestAdmission_DeleteRemovesOnlyThatRecord(t *testing.T) {
+	s := newFastRecordStore(t)
+	ctx := context.Background()
+	a := testAdmission()
+	other := a
+	other.Nonce = "0123456789abcdef0123456789abcdef"
+	sha, _, err := s.WriteAdmission(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSHA, _, err := s.WriteAdmission(ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.DeleteAdmission(ctx, a.Namespace, a.RunID, sha); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := s.ReadAdmission(ctx, a.Namespace, a.RunID, sha); err != nil || got.Answer != RecordNone {
+		t.Fatalf("the deleted record reads %+v, %v", got, err)
+	}
+	if got, err := s.ReadAdmission(ctx, a.Namespace, a.RunID, otherSHA); err != nil || got.Answer != RecordFound {
+		t.Fatalf("the other record reads %+v, %v", got, err)
+	}
+	if err := s.DeleteAdmission(ctx, a.Namespace, a.RunID, "not-a-digest"); err == nil {
+		t.Fatal("a delete by no digest was accepted")
+	}
 }

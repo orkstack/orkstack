@@ -93,5 +93,6 @@ func isRecordKey(key string) bool {
 // Admission writes a run's admission record, as the submit path will, and
 // answers its digest.
 func (w *RecordTestWriter) Admission(ctx context.Context, a Admission) (string, error) {
-	return newRecordStore(w.b).writeAdmission(ctx, a)
+	sha, _, err := newRecordStore(w.b).WriteAdmission(ctx, a)
+	return sha, err
 }

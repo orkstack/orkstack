@@ -688,7 +688,7 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		s.noteCommand(runCtx, 1, s.itemInputLimit+limit.Reserve.CommandBytes)
 		s.chargeItemDispatch()
 	}
-	activityCtx := s.taskActivityContext(runCtx, t, queue, item, itemFlightKey(id, index))
+	activityCtx := s.taskActivityContext(runCtx, t, queue, item, itemFlightKey(id, index), artifacts.Item{Index: index, Set: true})
 	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, converter.NewRawValue(payload)), nil
 }
 
@@ -1100,4 +1100,18 @@ func ActivityTaskInput(arg any) (*orkstackv1.ExecuteTaskInput, bool) {
 		return in, true
 	}
 	return nil, false
+}
+
+// attemptActivityID is the activity id a task's attempts run under in an
+// admitted run (identity.ActivityID's rule: ork/<task>, or ork/<task>/<item>
+// for an item of a fan-out), and "" in every other run, which the SDK then
+// numbers as it always has.
+func (s *runState) attemptActivityID(taskID string, item artifacts.Item) string {
+	if s.plan.Identity == nil {
+		return ""
+	}
+	if !item.Set {
+		return "ork/" + taskID
+	}
+	return "ork/" + taskID + "/" + strconv.Itoa(int(item.Index))
 }

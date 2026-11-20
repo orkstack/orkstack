@@ -9,6 +9,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // RunPlan is a run's routing, decided at submit and bound into the workflow
@@ -304,6 +305,44 @@ type RunPlan struct {
 	// allowed, decided at the parent's submit; workflow code never reads it.
 	// omitzero, so every other plan encodes exactly as before.
 	Shared *authz.Decision `json:"shared,omitzero"`
+
+	// Identity is set at submit on the plan of every run of a tree that is
+	// admitted (docs/TASK_IDENTITY.md, "The admission record"), and nil on
+	// every other plan, so their plans encode exactly as before. It is
+	// derived from the same value as the run's admission record, so the two
+	// cannot disagree. omitzero.
+	Identity *IdentityPlan `json:"identity,omitzero"`
+}
+
+// IdentityPlan is what a run's plan carries of its admission.
+type IdentityPlan struct {
+	// AdmissionSHA256 names the run's admission record, which an engine
+	// wrote under the run's id before the run was started. Until the start
+	// it is a secret: unguessable for the record's nonce, and written
+	// nowhere but here and in the record's own name. Never logged.
+	AdmissionSHA256 string `json:"admission_sha256"`
+	// Issuer is the issuer the run was admitted under: the only one whose
+	// tokens its tasks are given.
+	Issuer string `json:"issuer"`
+	// TokenTTLSeconds is identity.token.ttl as admitted: the life of a token
+	// for an identity that names none.
+	TokenTTLSeconds int32 `json:"token_ttl_seconds"`
+	// SpecVersion is the projection the run's tasks' spec digests use
+	// (task.IdentitySpecDigest).
+	SpecVersion uint32 `json:"spec_v"`
+	// AttemptsExtra is the attempts past a task's retry policy that may hold
+	// an identity, resolved at submit with the run's namespace in hand.
+	AttemptsExtra int32 `json:"attempts_extra"`
+	// Grants are the run's grants as admitted, by name; nil when it names
+	// none.
+	Grants map[string]artifacts.GrantSelection `json:"grants,omitempty"`
+}
+
+// AttemptDeadlineSeconds is the deadline the interpreter gives the cluster
+// for one attempt of t, the task's timeout, its grace and the plan's
+// transfer budget: the attempt_deadline_seconds a task's admission pins.
+func AttemptDeadlineSeconds(t *orkstackv1.Task, transferBudgetSeconds int32) int64 {
+	return int64(timeoutSecondsFor(t)) + int64(graceSecondsFor(t)) + int64(transferBudgetSeconds)
 }
 
 // OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run

@@ -68,6 +68,11 @@ type accessRow struct {
 	list     *listRule
 	// noPermission is a row any authenticated principal may call on itself.
 	noPermission bool
+	// decidedByHandler is a row whose checks the handler asks itself, at a
+	// scope only it can read (the mint's pool, from the run's admission):
+	// the interceptor requires an authenticated caller and asks none of
+	// them, and the handler refuses every mode but enforce.
+	decidedByHandler bool
 	// public is a row anyone may call, authenticated or not; its pattern is
 	// exempt from the middleware's authentication too (exemptPatterns).
 	public bool
@@ -813,8 +818,20 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.IdentityServiceGetIssuerProcedure:        {res: deployment, checks: perms(authz.PermIdentityRead)},
 	orkstackv1connect.IdentityServiceListSigningKeysProcedure:  {res: deployment, checks: perms(authz.PermIdentityRead)},
 	orkstackv1connect.IdentityServiceRetireSigningKeyProcedure: {res: deployment, checks: perms(authz.PermIdentityKeysRetire)},
-	orkstackv1connect.SystemServiceRampReleaseProcedure:        {res: deployment, checks: perms(authz.PermReleaseOperate)},
-	orkstackv1connect.SystemServicePromoteReleaseProcedure:     {res: deployment, checks: perms(authz.PermReleaseOperate)},
+	// The mint asks its two permissions at the pool the run's admission
+	// names, which only its handler reads (docs/TASK_IDENTITY.md). Until the
+	// handler lands it answers that it is not available, and its row asks
+	// both at the deployment, which no Orker's pool binding holds.
+	orkstackv1connect.IdentityServiceMintAttemptTokensProcedure: {res: deployment, decidedByHandler: true,
+		checks: perms(authz.PermIdentityTokenMint, authz.PermTaskResultCommit)},
+	orkstackv1connect.IdentityServiceListIssuedTokensProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	// AttemptService: an Orker's calls for an attempt it holds. The commit
+	// asks task.result.commit at the pool the run's admission names, which
+	// only its handler reads (attempt_commit.go).
+	orkstackv1connect.AttemptServiceCommitResultProcedure: {res: deployment, decidedByHandler: true,
+		checks: perms(authz.PermTaskResultCommit)},
+	orkstackv1connect.SystemServiceRampReleaseProcedure:    {res: deployment, checks: perms(authz.PermReleaseOperate)},
+	orkstackv1connect.SystemServicePromoteReleaseProcedure: {res: deployment, checks: perms(authz.PermReleaseOperate)},
 
 	// AuditService: the deployment's trail, or one namespace's with a
 	// namespace filter.

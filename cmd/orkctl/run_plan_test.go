@@ -239,3 +239,19 @@ func TestRunPlan_RowsOrderWaveThenDeclarationWithWaveZeroLast(t *testing.T) {
 		t.Fatalf("planRows = %v, want %v", got, want)
 	}
 }
+
+// TestPlanFollowsLines: a plan names what each task follows, for a run whose
+// tree holds a task identity, and nothing for a task that follows none.
+func TestPlanFollowsLines(t *testing.T) {
+	plan := &orkstackv1.PlanRunResponse{Tasks: []*orkstackv1.PlanTask{
+		{TaskId: "approve"}, {TaskId: "deploy", Follows: []string{"approve"}}, {TaskId: "report", Follows: []string{"deploy", "approve"}},
+	}}
+	got := planFollowsLines(plan)
+	want := []string{"  deploy follows approve", "  report follows deploy, approve"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("planFollowsLines = %q; want %q", got, want)
+	}
+	if lines := planFollowsLines(&orkstackv1.PlanRunResponse{Tasks: []*orkstackv1.PlanTask{{TaskId: "a"}}}); len(lines) != 0 {
+		t.Fatalf("a plan with no follows printed %q", lines)
+	}
+}

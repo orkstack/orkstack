@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "orkstack/v1/activity.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// AttemptService is the calls an Orker makes for an attempt it holds
+// (docs/TASK_IDENTITY.md). Served only when callers are authenticated
+// (auth.mode enforce).
+service AttemptService {
+  // CommitResult records an attempt's result for a run whose results the
+  // engine records: the engine writes the manifest the Orker hands it,
+  // create-only, where no Orker may write, for an attempt the caller holds,
+  // at the pool the run was admitted with for the task, dispatched as it was
+  // admitted. With preflight set it only asks, and writes nothing. A result
+  // already recorded is answered as it is. Needs task.result.commit at the
+  // task's pool, asked once the run's admission names the pool.
+  rpc CommitResult(CommitResultRequest) returns (CommitResultResponse);
+}
+
+message CommitResultRequest {
+  string namespace = 1;
+  string run_id = 2;
+  string task_id = 3;
+  // item is a fan-out item's index; unset for a task that is not one.
+  optional int32 item = 4;
+  int32 attempt = 5;
+  // resume_scope is the resume the attempt runs under; 0 for none.
+  uint64 resume_scope = 6;
+  // root_scope is the root run's resume scope, for a run below a root.
+  uint64 root_scope = 7;
+  // task_spec_sha256 is the digest of the task as the Orker was given it.
+  string task_spec_sha256 = 8;
+  // admission_sha256 names which admission of the run, as the task's input
+  // named it.
+  string admission_sha256 = 9;
+  // spec_members maps each member of the task's digest to its own digest,
+  // used only to say what differs.
+  map<string, string> spec_members = 10;
+  // commit_key is the commit key the task's input named, under
+  // metadata/commits/.
+  string commit_key = 11;
+  // commit is the attempt's manifest, at most the commit's own bound.
+  // Absent in a preflight.
+  ActivityCommit commit = 12;
+  // preflight asks whether this attempt may commit, before its container
+  // starts; nothing is written.
+  bool preflight = 13;
+}
+
+message CommitResultResponse {
+  // commit names the record now at the key. Unset for a preflight.
+  CommitRef commit = 1;
+  // created is false when a record was already there: this attempt's
+  // repeat, or another attempt's that came first.
+  bool created = 2;
+  // existing is that record, set when created is false.
+  ActivityCommit existing = 3;
+}

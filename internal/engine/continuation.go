@@ -591,7 +591,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
 	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes-definition, obs, s.lossEvents).Get(writeCtx, &checkpoint); err != nil {
+		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.chainAdmission()).Get(writeCtx, &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -943,4 +943,22 @@ var runStateFieldClass = map[string]fieldClass{
 	"pinState.readyConsumed": fieldEphemeral, "pinState.ctx": fieldEphemeral, "pinState.openErr": fieldEphemeral,
 	"pinState.done": fieldEphemeral, "pinState.doneSent": fieldEphemeral, "pinState.closed": fieldEphemeral,
 	"pinState.closedSettable": fieldEphemeral, "pinState.lost": fieldEphemeral,
+}
+
+// chainAdmission is the admission a switch completes the run's chain record
+// for: an admitted run an engine started itself. A child run, or a run a
+// fire started, has a parent and no chain record.
+func (s *runState) chainAdmission() string {
+	if s.plan.Identity == nil {
+		return ""
+	}
+	kind := ""
+	if s.plan.Origin != nil {
+		kind = s.plan.Origin.Kind
+	}
+	switch kind {
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN.String(), orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE.String():
+		return ""
+	}
+	return s.plan.Identity.AdmissionSHA256
 }

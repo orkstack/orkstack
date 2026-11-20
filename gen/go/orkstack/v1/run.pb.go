@@ -2407,7 +2407,9 @@ func (x *RunPauseSignal) GetPrincipalVerified() bool {
 // "timeout" and "cancel"; "image-policy" is entered only when the task
 // carries an image policy (ExecuteTaskInput.image_policy), between
 // "commit-check" and "workspace"; "memo" and "stage-artifacts" are entered
-// only by an attempt of a cached task, after "stage-inputs" — and are not an enum, for the reason
+// only by an attempt of a cached task, after "stage-inputs"; "identity" is
+// entered only by an attempt of a task that declares an identity, between
+// "image" and "render" — and are not an enum, for the reason
 // TaskAttempt.phase is a string: a reader of an older build must be able to
 // read a phase it has never heard of.
 type PhaseSpan struct {
@@ -3722,10 +3724,26 @@ func (*AttemptCredential) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{19}
 }
 
-// AttemptIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
+// AttemptIdentity is what one identity of an attempt was issued, as its
+// Orker reported at the attempt's end: never a token. It is best-effort, as
+// the record is: an Orker that is killed writes none, and the engine's own
+// records of what it issued are the trail that does not depend on the Orker.
 type AttemptIdentity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the identity's name in its task.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// audience is its tokens' audience.
+	Audience string `protobuf:"bytes,2,opt,name=audience,proto3" json:"audience,omitempty"`
+	// tokens_issued is how many tokens the attempt was given, the first and
+	// each refresh.
+	TokensIssued int32 `protobuf:"varint,3,opt,name=tokens_issued,json=tokensIssued,proto3" json:"tokens_issued,omitempty"`
+	// first_jti and last_jti are the jti of the first and the last of them.
+	FirstJti string `protobuf:"bytes,4,opt,name=first_jti,json=firstJti,proto3" json:"first_jti,omitempty"`
+	LastJti  string `protobuf:"bytes,5,opt,name=last_jti,json=lastJti,proto3" json:"last_jti,omitempty"`
+	// last_kid is the key that signed the last.
+	LastKid string `protobuf:"bytes,6,opt,name=last_kid,json=lastKid,proto3" json:"last_kid,omitempty"`
+	// last_expires_at is when the last expires.
+	LastExpiresAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=last_expires_at,json=lastExpiresAt,proto3" json:"last_expires_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3758,6 +3776,55 @@ func (x *AttemptIdentity) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AttemptIdentity.ProtoReflect.Descriptor instead.
 func (*AttemptIdentity) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *AttemptIdentity) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *AttemptIdentity) GetAudience() string {
+	if x != nil {
+		return x.Audience
+	}
+	return ""
+}
+
+func (x *AttemptIdentity) GetTokensIssued() int32 {
+	if x != nil {
+		return x.TokensIssued
+	}
+	return 0
+}
+
+func (x *AttemptIdentity) GetFirstJti() string {
+	if x != nil {
+		return x.FirstJti
+	}
+	return ""
+}
+
+func (x *AttemptIdentity) GetLastJti() string {
+	if x != nil {
+		return x.LastJti
+	}
+	return ""
+}
+
+func (x *AttemptIdentity) GetLastKid() string {
+	if x != nil {
+		return x.LastKid
+	}
+	return ""
+}
+
+func (x *AttemptIdentity) GetLastExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastExpiresAt
+	}
+	return nil
 }
 
 // ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
@@ -5189,8 +5256,15 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"request_id\x18\f \x01(\tR\trequestId\x12G\n" +
 	"\x10pause_transition\x18\r \x01(\x0e2\x1c.orkstack.v1.PauseTransitionR\x0fpauseTransitionB\a\n" +
 	"\x05_item\"\x13\n" +
-	"\x11AttemptCredential\"\x11\n" +
-	"\x0fAttemptIdentity\"\x13\n" +
+	"\x11AttemptCredential\"\xfd\x01\n" +
+	"\x0fAttemptIdentity\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
+	"\baudience\x18\x02 \x01(\tR\baudience\x12#\n" +
+	"\rtokens_issued\x18\x03 \x01(\x05R\ftokensIssued\x12\x1b\n" +
+	"\tfirst_jti\x18\x04 \x01(\tR\bfirstJti\x12\x19\n" +
+	"\blast_jti\x18\x05 \x01(\tR\alastJti\x12\x19\n" +
+	"\blast_kid\x18\x06 \x01(\tR\alastKid\x12B\n" +
+	"\x0flast_expires_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\rlastExpiresAt\"\x13\n" +
 	"\x11ConcurrencyQueued\"\xfd\x01\n" +
 	"\x10EffectiveProfile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12,\n" +
@@ -5557,32 +5631,33 @@ var file_orkstack_v1_run_proto_depIdxs = []int32{
 	45,  // 91: orkstack.v1.Event.resumed:type_name -> orkstack.v1.RunResumed
 	48,  // 92: orkstack.v1.Event.interruption:type_name -> orkstack.v1.TaskInterruption
 	8,   // 93: orkstack.v1.Event.pause_transition:type_name -> orkstack.v1.PauseTransition
-	63,  // 94: orkstack.v1.EffectiveProfile.kind:type_name -> orkstack.v1.ProfileKind
-	55,  // 95: orkstack.v1.InheritedPause.since:type_name -> google.protobuf.Timestamp
-	55,  // 96: orkstack.v1.InheritedPause.backstop_at:type_name -> google.protobuf.Timestamp
-	6,   // 97: orkstack.v1.MeasuredUsage.method:type_name -> orkstack.v1.MeasurementMethod
-	55,  // 98: orkstack.v1.MeasuredUsage.first_sampled_at:type_name -> google.protobuf.Timestamp
-	55,  // 99: orkstack.v1.MeasuredUsage.last_sampled_at:type_name -> google.protobuf.Timestamp
-	55,  // 100: orkstack.v1.MeasuredUsage.container_started_at:type_name -> google.protobuf.Timestamp
-	55,  // 101: orkstack.v1.MeasuredUsage.container_exited_at:type_name -> google.protobuf.Timestamp
-	7,   // 102: orkstack.v1.MeasuredUsage.unmeasured_reason:type_name -> orkstack.v1.UnmeasuredReason
-	53,  // 103: orkstack.v1.NamedArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
-	55,  // 104: orkstack.v1.RunPause.paused_at:type_name -> google.protobuf.Timestamp
-	55,  // 105: orkstack.v1.RunPause.expires_at:type_name -> google.protobuf.Timestamp
-	9,   // 106: orkstack.v1.RunPause.end:type_name -> orkstack.v1.PauseEnd
-	55,  // 107: orkstack.v1.RunPause.ended_at:type_name -> google.protobuf.Timestamp
-	55,  // 108: orkstack.v1.RunTimeout.deadline:type_name -> google.protobuf.Timestamp
-	55,  // 109: orkstack.v1.RunTimeout.hard_end:type_name -> google.protobuf.Timestamp
-	12,  // 110: orkstack.v1.TaskInterruption.phase:type_name -> orkstack.v1.InterruptionPhase
-	55,  // 111: orkstack.v1.TaskInterruption.at:type_name -> google.protobuf.Timestamp
-	55,  // 112: orkstack.v1.TaskInterruption.orker_stopping_since:type_name -> google.protobuf.Timestamp
-	48,  // 113: orkstack.v1.TaskInterruptions.last:type_name -> orkstack.v1.TaskInterruption
-	55,  // 114: orkstack.v1.TaskInterruptions.not_before:type_name -> google.protobuf.Timestamp
-	115, // [115:115] is the sub-list for method output_type
-	115, // [115:115] is the sub-list for method input_type
-	115, // [115:115] is the sub-list for extension type_name
-	115, // [115:115] is the sub-list for extension extendee
-	0,   // [0:115] is the sub-list for field type_name
+	55,  // 94: orkstack.v1.AttemptIdentity.last_expires_at:type_name -> google.protobuf.Timestamp
+	63,  // 95: orkstack.v1.EffectiveProfile.kind:type_name -> orkstack.v1.ProfileKind
+	55,  // 96: orkstack.v1.InheritedPause.since:type_name -> google.protobuf.Timestamp
+	55,  // 97: orkstack.v1.InheritedPause.backstop_at:type_name -> google.protobuf.Timestamp
+	6,   // 98: orkstack.v1.MeasuredUsage.method:type_name -> orkstack.v1.MeasurementMethod
+	55,  // 99: orkstack.v1.MeasuredUsage.first_sampled_at:type_name -> google.protobuf.Timestamp
+	55,  // 100: orkstack.v1.MeasuredUsage.last_sampled_at:type_name -> google.protobuf.Timestamp
+	55,  // 101: orkstack.v1.MeasuredUsage.container_started_at:type_name -> google.protobuf.Timestamp
+	55,  // 102: orkstack.v1.MeasuredUsage.container_exited_at:type_name -> google.protobuf.Timestamp
+	7,   // 103: orkstack.v1.MeasuredUsage.unmeasured_reason:type_name -> orkstack.v1.UnmeasuredReason
+	53,  // 104: orkstack.v1.NamedArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
+	55,  // 105: orkstack.v1.RunPause.paused_at:type_name -> google.protobuf.Timestamp
+	55,  // 106: orkstack.v1.RunPause.expires_at:type_name -> google.protobuf.Timestamp
+	9,   // 107: orkstack.v1.RunPause.end:type_name -> orkstack.v1.PauseEnd
+	55,  // 108: orkstack.v1.RunPause.ended_at:type_name -> google.protobuf.Timestamp
+	55,  // 109: orkstack.v1.RunTimeout.deadline:type_name -> google.protobuf.Timestamp
+	55,  // 110: orkstack.v1.RunTimeout.hard_end:type_name -> google.protobuf.Timestamp
+	12,  // 111: orkstack.v1.TaskInterruption.phase:type_name -> orkstack.v1.InterruptionPhase
+	55,  // 112: orkstack.v1.TaskInterruption.at:type_name -> google.protobuf.Timestamp
+	55,  // 113: orkstack.v1.TaskInterruption.orker_stopping_since:type_name -> google.protobuf.Timestamp
+	48,  // 114: orkstack.v1.TaskInterruptions.last:type_name -> orkstack.v1.TaskInterruption
+	55,  // 115: orkstack.v1.TaskInterruptions.not_before:type_name -> google.protobuf.Timestamp
+	116, // [116:116] is the sub-list for method output_type
+	116, // [116:116] is the sub-list for method input_type
+	116, // [116:116] is the sub-list for extension type_name
+	116, // [116:116] is the sub-list for extension extendee
+	0,   // [0:116] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }

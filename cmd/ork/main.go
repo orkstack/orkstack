@@ -1993,51 +1993,81 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	} else {
 		logger.Warn("the run archive cannot be listed for a restore reconcile; ReconcileRestore answers FAILED_PRECONDITION")
 	}
+	minter, issuedRecords, err := newMinter(ctx, cfg, issuer, temporalClient, namespaces, incarnations)
+	if err != nil {
+		return err
+	}
+	// A switch of an admitted root run completes its chain record, as a
+	// mint does, before the run's first history can be let go.
+	if issuedRecords != nil {
+		snapshotActivities.WithChainCompleter(chainCompleter(issuedRecords, temporalClient))
+	}
+	var issued api.IssuedLister
+	if issuedRecords != nil {
+		issued = issuedRecords
+	}
+	// The build the recorder names is the one an admission records, by the
+	// same rule, so the two compare.
+	recorder := newRecorder(minter, issuedRecords, orkflows.Get, engineBuild(cfg.deployment.BuildID))
 	svc := api.NewService(api.Config{
-		Orkflows:   orkflows,
-		Namespaces: namespaces,
-		Reader:     reader,
-		Runs:       runs,
-		Bus:        bus,
-		Starter:    starter,
-		Pools:      pools,
-		Orkers:     starter,
-		Fleet:      starter,
-		Releases:   releases,
+		Minter:                 minter,
+		MintObserver:           identityMetrics,
+		Recorder:               recorder,
+		IdentityCommitWait:     cfg.identity.commitWait,
+		CommitObserver:         identityMetrics,
+		IdentityUnscopedOrkers: cfg.identity.unscopedOrkers,
+		IssuedRecords:          issued,
+		Orkflows:               orkflows,
+		Namespaces:             namespaces,
+		Reader:                 reader,
+		Runs:                   runs,
+		Bus:                    bus,
+		Starter:                starter,
+		Pools:                  pools,
+		Orkers:                 starter,
+		Fleet:                  starter,
+		Releases:               releases,
 		// The fleet check reads the same cluster seam (docs/DEPLOY.md §5).
 		Capabilities: releases,
 		Catalog:      cfg.activityCatalog,
 		Resolver:     resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
-		ImagePolicies:       imagePolicies,
-		Signatures:          &dsl.SignatureVerifier{Resolver: resolver},
-		Activities:          activities,
-		RawQueue:            cfg.defaultRouteOverride,
-		Archive:             archive,
-		Logs:                logStore,
-		ArtifactStore:       artifactStore,
-		Attempts:            attemptStore,
-		Commits:             commitStore,
-		Idempotency:         idempotency,
-		OnLegacyPending:     idempotencyInstruments.CountLegacyPending,
-		Webhooks:            webhookRegistry,
-		Redelivery:          webhookDispatcher,
-		Deliveries:          deliveryStore,
-		Triggers:            triggerStore,
-		EventSources:        eventSourceStore,
-		EventSourceSettings: eventSourceSettings,
-		Schedules:           scheduler,
-		ScheduleBindings:    scheduleBindings,
-		Incarnations:        incarnations,
-		Issuer:              issuer,
-		ServeDiscovery:      cfg.identity.serveDiscovery,
-		EnginePresence:      releases,
-		AuditStore:          auditStore,
-		AuditCounter:        auditInstruments,
-		Notifier:            runNotifier,
-		Logger:              logger,
-		System:              system,
+		ImagePolicies:            imagePolicies,
+		Signatures:               &dsl.SignatureVerifier{Resolver: resolver},
+		Activities:               activities,
+		RawQueue:                 cfg.defaultRouteOverride,
+		Archive:                  archive,
+		Logs:                     logStore,
+		ArtifactStore:            artifactStore,
+		Attempts:                 attemptStore,
+		Commits:                  commitStore,
+		Idempotency:              idempotency,
+		OnLegacyPending:          idempotencyInstruments.CountLegacyPending,
+		Webhooks:                 webhookRegistry,
+		Redelivery:               webhookDispatcher,
+		Deliveries:               deliveryStore,
+		Triggers:                 triggerStore,
+		EventSources:             eventSourceStore,
+		EventSourceSettings:      eventSourceSettings,
+		Schedules:                scheduler,
+		ScheduleBindings:         scheduleBindings,
+		Incarnations:             incarnations,
+		NamespacePolicies:        incarnations,
+		IdentityAttemptsMaxExtra: cfg.identity.attemptsMaxExtra,
+		IdentityAttemptsExtra:    cfg.identity.attemptsExtra,
+		IdentityAttemptsMax:      cfg.identity.attemptsMax,
+		IdentityTokenTTL:         cfg.identity.tokenTTL.Default,
+		IdentityAdmissions:       admissionRecords(issuedRecords),
+		EngineBuild:              engineBuild(cfg.deployment.BuildID),
+		Issuer:                   issuer,
+		ServeDiscovery:           cfg.identity.serveDiscovery,
+		EnginePresence:           releases,
+		AuditStore:               auditStore,
+		AuditCounter:             auditInstruments,
+		Notifier:                 runNotifier,
+		Logger:                   logger,
+		System:                   system,
 		// Retention backs SystemService's
 		// GetRetentionPolicy/UpdateRetentionPolicy, and also validates a
 		// namespace's own run_retention against the ceiling
@@ -2239,4 +2269,23 @@ func ensureCensusSchedule(ctx context.Context, logger *slog.Logger, c client.Cli
 		case <-time.After(censusEnsureRetry):
 		}
 	}
+}
+
+// admissionRecords is the store a run's admission records are written to:
+// the identity record store, when this engine issues task identity.
+func admissionRecords(records *artifacts.RecordStore) api.AdmissionRecords {
+	if records == nil {
+		return nil
+	}
+	return records
+}
+
+// engineBuild is the build an admission records: ORK_BUILD_ID, or, when it
+// is unset, the commit the binary was built from, so two different binaries
+// never compare equal for want of a name.
+func engineBuild(buildID string) string {
+	if buildID != "" {
+		return buildID
+	}
+	return buildinfo.Commit(commit)
 }

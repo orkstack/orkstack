@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -280,6 +281,9 @@ func (s *MemoryCommitStore) Create(ctx context.Context, uri string, c *orkstackv
 	if uri == "" {
 		return CommitRecord{}, fmt.Errorf("artifacts: memory commit create: %w: empty uri", ErrInvalidCommitKey)
 	}
+	if strings.Contains(uri, "/"+AttestedPrefix+"/") || strings.HasPrefix(uri, AttestedPrefix+"/") {
+		return CommitRecord{}, fmt.Errorf("artifacts: memory commit create %q: only an engine records a result there: %w", uri, ErrInvalidURI)
+	}
 	document, err := MarshalCommit(c)
 	if err != nil {
 		return CommitRecord{}, err
@@ -344,4 +348,10 @@ func recordFor(document []byte, c *orkstackv1.ActivityCommit) (CommitRecord, err
 		Bytes:  int64(len(document)),
 		Raw:    document,
 	}, nil
+}
+
+// commitKeyShape reports whether key may be a commit store's object: a
+// commit or the boot probe, and, for a read, an engine-recorded result.
+func commitKeyShape(key string, read bool) bool {
+	return key == CommitProbeKey || strings.HasPrefix(key, CommitPrefix+"/") || (read && strings.HasPrefix(key, AttestedPrefix+"/"))
 }
