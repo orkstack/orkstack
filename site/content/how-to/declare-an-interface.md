@@ -86,4 +86,5 @@ A label the engine cannot read does not stop a run. The image still runs, and th
 - [docs/ACTIVITY_IMAGES.md, "Describing the activity"](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#describing-the-activity): the descriptions and their bounds
 - [docs/ACTIVITY_IMAGES.md, "The icon"](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#the-icon): the icon rules
 - [docs/ACTIVITY_IMAGES.md, "The label"](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#the-label): the label's value
+- [docs/ORKER_SERVICE_CONTRACT.md, "A service image"](https://github.com/orkstack/orkstack/blob/main/docs/ORKER_SERVICE_CONTRACT.md#a-service-image): a service image's `kind: ServiceInterface`, packed the same way
 - [docs/CLI.md, "orkctl activity build"](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md#orkctl-activity-build): every build flag

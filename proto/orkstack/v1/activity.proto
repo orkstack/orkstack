@@ -1314,9 +1314,73 @@ enum ResultsScope {
 // batch).
 message RunContext {}
 
-// ServiceHost is E90's; it is empty until E90 lands (v0.4.0 proto
-// batch).
-message ServiceHost {}
+// ServiceHost is what an Orker says about hosting services
+// (docs/ORKER_SERVICE_CONTRACT.md): the contract and profile versions it
+// hosts, and whether it is fit to host them now, with every reason it is
+// not.
+message ServiceHost {
+  // contract_versions are the Orker Service Contract versions it hosts.
+  repeated int32 contract_versions = 1;
+  // profiles are the profiles it hosts, each with its versions.
+  repeated ServiceProfileVersions profiles = 2;
+  // fit is true only when every condition holds: it can make the bounded
+  // answer filesystem, its reach probe is clean, it is in no stuck-service
+  // cordon, and it can reach an engine.
+  bool fit = 3;
+  // unfit names each condition that does not hold, one fixed sentence each.
+  repeated string unfit = 4;
+  // max_instances is the most event-source instances it runs at once; 0
+  // means it hosts none.
+  int32 max_instances = 5;
+  // instances is how many it runs now.
+  int32 instances = 6;
+  // max_request is the largest request one instance may make.
+  ResourceRequest max_request = 7;
+  // probed_at is when its last reach probe ended.
+  google.protobuf.Timestamp probed_at = 8;
+}
+
+// ServiceProfileVersions is one profile an Orker hosts and its versions.
+message ServiceProfileVersions {
+  // name is the profile's name: "event-source".
+  string name = 1;
+  // versions are the profile's versions it hosts.
+  repeated int32 versions = 2;
+}
+
+// HostEventSourceInput is the input of the activity that runs one attempt
+// of one event-source instance on a pool's source channel. It is small on
+// purpose: what the container is and holds comes from the engine when the
+// instance confirms.
+message HostEventSourceInput {
+  // namespace, name and event_source_id name the source.
+  string namespace = 1;
+  string name = 2;
+  string event_source_id = 3;
+  // index is the instance's index, of instances.
+  int32 index = 4;
+  int32 instances = 5;
+  // epoch is the instance's epoch the source's workflow scheduled it under.
+  int64 epoch = 6;
+  // service_digest names the service spec the instance runs.
+  string service_digest = 7;
+  // resources is the instance's request, reserved before it starts.
+  ResourceRequest resources = 8;
+  // trial is the breaker that paused the source, when a resume scheduled
+  // this activity: honoured on its first attempt only.
+  string trial = 9;
+  // ready_within, for a replacement a roll is trying, is how long one
+  // attempt may run with a status and without becoming ready; 0 is no
+  // bound.
+  int32 ready_within_seconds = 10;
+  // complete_after_healthy: a failure after a healthy run completes the
+  // activity instead of failing it.
+  bool complete_after_healthy = 11;
+  // confirm_unavailable_max_seconds and provider_refused_max are the two
+  // bounds the Orker applies from the source's carry.
+  int32 confirm_unavailable_max_seconds = 12;
+  int32 provider_refused_max = 13;
+}
 
 // StoreScope is an Orker's verdict on its own storage credential: scoped
 // when a round of its scope check found every control-plane prefix refused,

@@ -79,6 +79,7 @@ func built(t *testing.T) []metriccatalog.Instrument {
 	logger := slog.New(slog.DiscardHandler)
 	telemetry.NewCleanupObserver(p, nil, telemetry.CleanupSettings{Enabled: true, Interval: time.Minute, RetentionBuffer: time.Hour}, logger)
 	telemetry.NewGCObserver(p, nil, archive.ReclaimDryRun, time.Hour, logger)
+	telemetry.NewRetentionObserver(p, logger)
 	telemetry.WatchOrkerPresence(p, "o1", "p", false, logger)
 	inst, err := telemetry.NewOrkerInstruments(p)
 	must.OK(t, err)

@@ -218,3 +218,25 @@ test('the cloud and the task panel read one retry phrase off the failing task', 
 	// No task to blame (a run that failed on its own): nothing about retries.
 	expect(retryPhrase(undefined)).toBeNull();
 });
+
+test('attemptProfileLabels names the contract each profile ran under, in the CLI words', async () => {
+	const { attemptProfileLabels } = await import('../src/lib/attempts');
+	const { EffectiveProfileSchema } = await import('../src/lib/gen/orkstack/v1/run_pb');
+	const attempt = create(TaskAttemptSchema, {
+		profiles: [
+			create(EffectiveProfileSchema, { name: 'sensor', contract: '2', runContracts: ['1'] }),
+			create(EffectiveProfileSchema, { name: 'modem', contract: '3', runContracts: ['3'], declared: true }),
+			create(EffectiveProfileSchema, { name: 'fpga', contract: '1', runContracts: ['1'] }),
+			create(EffectiveProfileSchema, { name: 'old' }),
+			create(EffectiveProfileSchema, { name: 'cam', contract: '4', runContracts: ['2', '3'], declared: true })
+		]
+	});
+	expect(attemptProfileLabels(attempt)).toEqual([
+		{ name: 'sensor', detail: 'contract 2, accepting 1' },
+		{ name: 'modem', detail: 'contract 3, needed by the image' },
+		{ name: 'fpga', detail: 'contract 1' },
+		{ name: 'old', detail: '' },
+		{ name: 'cam', detail: 'contract 4, accepting 2, 3, needed by the image' }
+	]);
+	expect(attemptProfileLabels(create(TaskAttemptSchema, {}))).toEqual([]);
+});

@@ -10,13 +10,32 @@ import (
 )
 
 // externalMetrics are the series the dashboards read that OrkStack's own
-// instruments do not name: Prometheus's alert series, and the Temporal
-// SDK's client metrics (internal/telemetry.TemporalMetricsHandler turns
-// them on; their names are the SDK's).
+// instruments do not name: Prometheus's alert series, the Temporal SDK's
+// client metrics (internal/telemetry.TemporalMetricsHandler turns them on;
+// their names are the SDK's), the Go runtime's and the Collector's.
 var externalMetrics = map[string]bool{
-	"ALERTS":                         true,
-	"temporal_request_total":         true,
-	"temporal_request_failure_total": true,
+	"ALERTS":                              true,
+	"temporal_request_total":              true,
+	"temporal_request_failure_total":      true,
+	"temporal_long_request_total":         true,
+	"temporal_long_request_failure_total": true,
+	// The Go runtime instrumentation's names (docs/DEPLOY.md, "Go runtime
+	// metrics"), which internal/telemetry turns on in both binaries.
+	"go_goroutine_count":   true,
+	"go_memory_used_bytes": true,
+	// The kit's Collector's own metrics, pushed to the same Prometheus
+	// (deploy/observability/otel-collector.yaml, service.telemetry).
+	"otelcol_receiver_accepted_metric_points_total": true,
+	"otelcol_receiver_accepted_log_records_total":   true,
+	"otelcol_receiver_accepted_spans_total":         true,
+	"otelcol_receiver_refused_metric_points_total":  true,
+	"otelcol_receiver_refused_log_records_total":    true,
+	"otelcol_receiver_refused_spans_total":          true,
+	"otelcol_receiver_failed_metric_points_total":   true,
+	"otelcol_receiver_failed_log_records_total":     true,
+	"otelcol_receiver_failed_spans_total":           true,
+	"otelcol_exporter_queue_size":                   true,
+	"otelcol_exporter_queue_capacity":               true,
 }
 
 // The extraction itself: a matcher's label, a grouping label and a function

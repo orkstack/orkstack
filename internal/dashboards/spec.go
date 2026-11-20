@@ -22,6 +22,9 @@ const (
 	timeseriesPanel
 	logsPanel
 	tablePanel
+	// heatmapPanel draws a Prometheus histogram's buckets over time, with
+	// its exemplars, each linking to its trace.
+	heatmapPanel
 )
 
 // query is one target of a panel.
@@ -31,6 +34,9 @@ type query struct {
 	instant bool
 	// spans lists a TraceQL query's matching spans rather than its traces.
 	spans bool
+	// dashed draws a series' line dashed: a limit or a bound beside what
+	// it bounds.
+	dashed bool
 }
 
 // threshold is one colour step of a stat: at value and above, colour.
@@ -95,9 +101,18 @@ func table(title, description, unit string, queries ...query) panel {
 	return panel{kind: tablePanel, title: title, description: description, unit: unit, source: prom, queries: queries}
 }
 
+// heatmap draws the buckets of one histogram, summed by le.
+func heatmap(title, description, unit, bucketExpr string) panel {
+	return panel{kind: heatmapPanel, title: title, description: description, unit: unit, source: prom,
+		queries: []query{{expr: bucketExpr, legend: "{{le}}"}}}
+}
+
 // q is a range query; qi an instant one.
 func q(expr, legend string) query  { return query{expr: expr, legend: legend} }
 func qi(expr, legend string) query { return query{expr: expr, legend: legend, instant: true} }
+
+// dash is a range query drawn dashed.
+func dash(expr, legend string) query { return query{expr: expr, legend: legend, dashed: true} }
 
 func (p panel) withThresholds(t ...threshold) panel { p.thresholds = t; return p }
 func (p panel) withNoValue(s string) panel          { p.noValue = s; return p }

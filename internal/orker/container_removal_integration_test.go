@@ -474,11 +474,11 @@ func removalWorkRoot(t *testing.T, name string) string {
 	return root
 }
 
-// startHeldOrker runs the child Orker on the input and returns once its
-// container is running. kill is a real SIGKILL of that one process, what an
-// out-of-memory kill or a lost host's process does, so the two CLIs it started
-// are left to exit by themselves as they are in a crash.
-func startHeldOrker(ctx context.Context, t *testing.T, orkerID, workRoot string, in *orkstackv1.ExecuteTaskInput) (container string, kill func()) {
+// spawnHeldOrker runs the child Orker on the input and returns at once. kill is
+// a real SIGKILL of that one process, what an out-of-memory kill or a lost
+// host's process does, so the two CLIs it started are left to exit by
+// themselves as they are in a crash. exited closes when the child has ended.
+func spawnHeldOrker(t *testing.T, orkerID, workRoot string, in *orkstackv1.ExecuteTaskInput) (kill func(), exited <-chan struct{}, output *boundedOutput) {
 	t.Helper()
 	encoded, err := protojson.Marshal(in)
 	must.OK(t, err)
@@ -492,25 +492,33 @@ func startHeldOrker(ctx context.Context, t *testing.T, orkerID, workRoot string,
 	must.OK(t, err)
 	cmd := exec.Command(exe)
 	cmd.Env = append(os.Environ(), heldOrkerVar+"="+specPath)
-	output := &boundedOutput{}
+	output = &boundedOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
 	// The output is copied through a pipe the two CLIs it starts inherit
 	// nothing of, because they get pipes of their own, so Wait returns with
 	// the child.
 	must.OKf(t, cmd.Start(), "start the Orker")
-	exited := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
-		close(exited)
+		close(done)
 	}()
 	var once sync.Once
 	kill = func() {
 		once.Do(func() {
 			_ = cmd.Process.Signal(syscall.SIGKILL)
-			<-exited
+			<-done
 		})
 	}
 	t.Cleanup(kill)
+	return kill, done, output
+}
+
+// startHeldOrker runs the child Orker on the input and returns once its
+// container is running.
+func startHeldOrker(ctx context.Context, t *testing.T, orkerID, workRoot string, in *orkstackv1.ExecuteTaskInput) (container string, kill func()) {
+	t.Helper()
+	kill, exited, output := spawnHeldOrker(t, orkerID, workRoot, in)
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for {

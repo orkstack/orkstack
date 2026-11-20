@@ -273,7 +273,7 @@ orkctl run artifacts <run-id> -t <task>                # the recorded stdout and
 
 **Confirm.** On the Orker's host, read the daemon's log around the attempt's end, for example `journalctl -u docker`, and look for who ran `stop`, `kill` or `rm --force` against that container.
 
-**Fix.** Nothing in the workload. It retries under the task's `retry:`, so give a task that should survive a daemon restart one. Drain an Orker before restarting its daemon (`orkctl orker drain`).
+**Fix.** Nothing in the workload. When the Orker saw the daemon itself go away (the message says the runtime itself went away), or the Orker was stopping, the task runs again without spending an attempt. Otherwise, an operator's stop, it retries under the task's `retry:`, so give a task that should survive one a `retry:`. Drain an Orker before restarting its daemon (`orkctl orker drain`).
 
 ### A task failed with `CONTAINER_TIMEOUT` ("exceeded its timeout of N seconds")
 

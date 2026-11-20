@@ -11,14 +11,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -115,6 +118,8 @@ type DockerRuntime struct {
 	watches map[ContainerID]*stopWatch
 	// stopSettle overrides stopWatchSettle, for a test.
 	stopSettle time.Duration
+	// goneWindow overrides runtimeGoneWindow, for a test.
+	goneWindow time.Duration
 	// startState, when set, bounds how long Start waits for the container to
 	// leave created (startStateTimeout otherwise); tests shorten it.
 	startState time.Duration
@@ -571,7 +576,10 @@ func dockerContainerFlags(spec ContainerSpec, name string, spoken dialect) ([]st
 		return nil, fmt.Errorf("create container: spec weakens the mandatory security profile "+
 			"(readonly=%t cap-drop-all=%t no-new-privileges=%t init=%t)",
 			spec.ReadOnlyRootfs, spec.DropAllCapabilities, spec.NoNewPrivileges, spec.Init)
-	case spec.Network != NetworkNone && spec.Network != NetworkDefault:
+	case spec.Network == NetworkService && !serviceNetworkIDPattern.MatchString(spec.ServiceNetworkID),
+		spec.Network != NetworkService && spec.ServiceNetworkID != "":
+		return nil, errors.New("create container: a service network is named by its 64-hex id, and only with the service mode")
+	case spec.Network != NetworkNone && spec.Network != NetworkDefault && spec.Network != NetworkService:
 		return nil, fmt.Errorf("create container: network mode %q is not %q or %q",
 			spec.Network, NetworkDefault, NetworkNone)
 	case spec.CPUs == "" || spec.Memory == "" || spec.PidsLimit <= 0 ||
@@ -598,7 +606,7 @@ func dockerContainerFlags(spec ContainerSpec, name string, spoken dialect) ([]st
 	args = append(args,
 		"--init",
 		"--workdir", spec.WorkDir,
-		"--network", spec.Network,
+		"--network", dockerNetworkFor(spec),
 		"--cpus", dockerCPUs(spec.CPUs),
 		"--memory", dockerMemory(spec.Memory),
 		"--pids-limit", strconv.FormatInt(spec.PidsLimit, 10),
@@ -613,6 +621,22 @@ func dockerContainerFlags(spec ContainerSpec, name string, spoken dialect) ([]st
 		// userns-remap) the uid is another host user, which the boot probe
 		// finds.
 		args = append(args, spoken.runAsOrkerFlags()...)
+	}
+	if spec.NoSwap {
+		args = append(args, "--memory-swap", dockerMemory(spec.Memory))
+	}
+	if spec.NoCoreDumps {
+		args = append(args, "--ulimit", "core=0")
+	}
+	if t := spec.ServiceTmpfs; t != nil {
+		// A comma or a colon in the path would add options of the caller's
+		// choosing to the mount (exec, a size): refused, not escaped.
+		if !strings.HasPrefix(t.Path, "/") || strings.ContainsAny(t.Path, ",:") || t.Bytes <= 0 || t.Inodes <= 0 ||
+			t.UID < 0 || t.GID < 0 || !plainArgument(t.Path) {
+			return nil, errors.New("create container: a service's answer filesystem has a path, a size, an inode count and an owner")
+		}
+		args = append(args, "--tmpfs", fmt.Sprintf("%s:rw,nosuid,nodev,noexec,size=%d,nr_inodes=%d,mode=0700,uid=%d,gid=%d",
+			t.Path, t.Bytes, t.Inodes, t.UID, t.GID))
 	}
 	if spec.TmpfsPath != "" {
 		// noexec is spelled rather than left to the runtime: Docker adds it to
@@ -865,17 +889,56 @@ type stopWatch struct {
 	// how its CLI ended when it ended first, with an error (exited).
 	stopping bool
 	cliErr   error
+	// selfEnded is set when the stream's CLI ended before the Orker stopped
+	// it, with an error or without: the runtime closed it. cliDone closes
+	// once the CLI has ended, however; nil for a stream never opened.
+	selfEnded bool
+	cliDone   chan struct{}
 
 	// failure is why the stream was never opened; nil for one that was. Set
 	// in watchStops before the watch is shared (trackWatch), and never after.
 	failure *StopWatchFailure
 }
 
+// runtimeGoneWindow is how long Wait, having heard the container stopped from
+// outside, waits for the stream to end by itself, which says its runtime went
+// away as it stopped the container (ExitStatus.RuntimeWentAway). A daemon that
+// shuts down closes the stream within tens of milliseconds of its last word;
+// one an operator asked to stop a container stays up, so such an attempt
+// reports this much later.
+const runtimeGoneWindow = 5 * time.Second
+
 // stopWatchSettle is how long Wait gives the stream to say what happened once
 // the container has ended. It is an upper bound for a stream that is stuck: on
 // Docker the `die` follows `wait`'s answer within tens of milliseconds, and it
 // closes at once when the daemon goes away.
 const stopWatchSettle = 5 * time.Second
+
+// runtimeGone reports whether the runtime no longer answers a control call:
+// the evidence, beside its stream ending by itself, that it went away. A
+// daemon that shuts down is still gone moments after its stream ends; one that
+// answers, even after restarting that fast, gives no evidence, which only
+// spends the task's own attempt.
+func (d *DockerRuntime) runtimeGone(ctx context.Context) bool {
+	answer, err := d.controlWithin(ctx, runtimeGoneProbe, "version", "--format", "{{.Server.Version}}")
+	return err != nil || answer.code != 0
+}
+
+// runtimeGoneProbe bounds that control call.
+const runtimeGoneProbe = 2 * time.Second
+
+// defaultRuntimeGoneWindow is the bound a runtime with no goneWindow of its
+// own waits. A variable only so the unit tests, whose fake streams stay open
+// after every stop they say, do not each wait it out.
+var defaultRuntimeGoneWindow = runtimeGoneWindow
+
+// runtimeGoneWindow is runtimeGoneWindow, or a test's shorter bound.
+func (d *DockerRuntime) runtimeGoneWindow() time.Duration {
+	if d.goneWindow > 0 {
+		return d.goneWindow
+	}
+	return defaultRuntimeGoneWindow
+}
 
 func (d *DockerRuntime) stopWatchSettle() time.Duration {
 	if d.stopSettle > 0 {
@@ -911,6 +974,7 @@ func (d *DockerRuntime) watchStops(ctx context.Context, bin string, id Container
 		return watch.failed(StopWatchStart, err)
 	}
 	watch.cmd = cmd
+	watch.cliDone = make(chan struct{})
 	go func() {
 		// A stream that could not be read further ends at once; only one
 		// whose CLI closed it waits for how the CLI ended.
@@ -986,8 +1050,38 @@ func (w *stopWatch) exited(err error, stderr *boundedBuffer) {
 		w.cliErr = fmt.Errorf("the events CLI exited before the container ended: %w: %s",
 			err, strings.TrimSpace(stderr.String()))
 	}
+	w.selfEnded = !w.stopping
 	w.mu.Unlock()
 	w.finish()
+	if w.cliDone != nil {
+		close(w.cliDone)
+	}
+}
+
+// wentAway waits, up to within or ctx, for a stream that heard the container
+// stopped to end by itself, then asks gone whether the runtime still answers:
+// only a stream the runtime closed as it went away, and a runtime that no
+// longer answers, say the runtime went away. A stream whose CLI ended for its
+// own reasons, a crash or a wrapper dying, while the runtime still answers is
+// an operator's stop through a runtime that stayed up. A stream that heard no
+// stop, or was never opened, says nothing about its runtime.
+func (w *stopWatch) wentAway(ctx context.Context, seen stopSeen, within time.Duration, gone func(context.Context) bool) bool {
+	if !seen.stopped || w.cliDone == nil {
+		return false
+	}
+	timer := time.NewTimer(within)
+	defer timer.Stop()
+	select {
+	case <-w.cliDone:
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+	w.mu.Lock()
+	selfEnded := w.selfEnded
+	w.mu.Unlock()
+	return selfEnded && gone(ctx)
 }
 
 // exitFailure is why a stream whose CLI did start stopped following it, or nil.
@@ -1009,9 +1103,12 @@ func (w *stopWatch) failed(stage string, err error) *stopWatch {
 	return w
 }
 
-// settle waits for the stream's answer, up to within or ctx, ends the stream, and
-// returns what it said.
-func (w *stopWatch) settle(ctx context.Context, within time.Duration) stopSeen {
+// settleWatching waits for the stream's answer, up to within or ctx. Once it
+// says the container was stopped from outside, it waits up to gone more for
+// the stream to end by itself and asks probe whether the runtime still
+// answers (wentAway). It then ends the stream, and returns what it said and
+// whether the runtime went away.
+func (w *stopWatch) settleWatching(ctx context.Context, within, gone time.Duration, probe func(context.Context) bool) (stopSeen, bool) {
 	timer := time.NewTimer(within)
 	defer timer.Stop()
 	select {
@@ -1019,10 +1116,14 @@ func (w *stopWatch) settle(ctx context.Context, within time.Duration) stopSeen {
 	case <-timer.C:
 	case <-ctx.Done():
 	}
+	w.mu.Lock()
+	seen := w.seen
+	w.mu.Unlock()
+	went := gone > 0 && probe != nil && w.wentAway(ctx, seen, gone, probe)
 	w.stop()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.seen
+	return w.seen, went
 }
 
 // stop ends the stream. Closing the pipe is what ends it where the kill cannot
@@ -1298,8 +1399,9 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 	// attempt that took any other way out of this function ends the stream in
 	// Remove.
 	if watch := d.takeWatch(id); watch != nil {
-		seen := watch.settle(ctx, d.stopWatchSettle())
+		seen, went := watch.settleWatching(ctx, d.stopWatchSettle(), d.runtimeGoneWindow(), d.runtimeGone)
 		status.StoppedFromOutside = seen.stopped
+		status.RuntimeWentAway = seen.stopped && went
 		status.StopCauseUnknown = !seen.stopped && !seen.ended
 		status.StopWatchFailure = watch.failure
 		if status.StopWatchFailure == nil && status.StopCauseUnknown {
@@ -2181,3 +2283,276 @@ func memoryReadsAsUnlimited(raw string) bool {
 // the Orker's last act on a third stop signal; the containers they drove are
 // left to the daemon, and the next boot's reap removes them.
 func (d *DockerRuntime) KillChildren() int { return d.children.killAll() }
+
+// serviceNetworkIDPattern is a service network's id as the runtime names it.
+var serviceNetworkIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// dockerNetworkFor is --network's value: the mode, or a service network's id.
+func dockerNetworkFor(spec ContainerSpec) string {
+	if spec.Network == NetworkService {
+		return spec.ServiceNetworkID
+	}
+	return spec.Network
+}
+
+// ServiceNetworkLabel marks every network the Orker makes for a service, so
+// its boot reaps what an earlier process left.
+const ServiceNetworkLabel = "ork.service"
+
+// serviceNetworkNamePattern is a name the Orker gives a service network.
+var serviceNetworkNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,127}$`)
+
+// ServiceBridgePrefix begins the name of every service network's bridge
+// interface, so that one host firewall rule on it (iifname "orksvc*")
+// closes the host's own listeners to service networks and to nothing else
+// (docs/DEPLOY.md, "Source hosts").
+const ServiceBridgePrefix = "orksvc"
+
+// serviceBridgeName is a service network's bridge interface: the prefix and
+// nine hex digits of its name's hash, 15 bytes, the kernel's limit.
+func serviceBridgeName(network string) string {
+	sum := sha256.Sum256([]byte(network))
+	return ServiceBridgePrefix + hex.EncodeToString(sum[:])[:9]
+}
+
+// serviceNetworkArgs is `network create` for a network of a service's own
+// (14 §7). It is a bridge that routes out through the host's address
+// translation, because a service reaches its broker, wherever the host can
+// route; it is never internal and never the host's. It is cut off from
+// every other network: Docker separates its bridges from each other and
+// from its default one by itself, and is also told to keep containers on
+// one network apart; Podman separates nothing unless told, so it is told
+// strictly, which keeps it from its default network too. What the host
+// itself exposes at the network's gateway is not assumed either way: the
+// reach probe's second and third questions measure it.
+func serviceNetworkArgs(x dialect, name string, labels map[string]string) ([]string, error) {
+	if !serviceNetworkNamePattern.MatchString(name) {
+		return nil, fmt.Errorf("create service network: %q is not a name", name)
+	}
+	args := []string{"network", "create", "--driver", "bridge", "--ipv6=false"}
+	if x.cli == CLIPodman {
+		args = append(args, "--interface-name", serviceBridgeName(name))
+	} else {
+		args = append(args, "-o", "com.docker.network.bridge.name="+serviceBridgeName(name))
+	}
+	if x.engine == CLIPodman {
+		args = append(args, "-o", "isolate=strict")
+	} else {
+		args = append(args, "-o", "com.docker.network.bridge.enable_icc=false")
+	}
+	args = append(args, "--label", ServiceNetworkLabel+"=1")
+	for _, key := range sortedKeys(labels) {
+		if !plainArgument(key) || !plainArgument(labels[key]) || strings.Contains(key, "=") {
+			return nil, fmt.Errorf("create service network %s: label %q is not plain", name, key)
+		}
+		args = append(args, "--label", key+"="+labels[key])
+	}
+	return append(args, name), nil
+}
+
+// CreateServiceNetwork makes a network of a service's own
+// (serviceNetworkArgs); labels mark it. It returns the network's id.
+func (d *DockerRuntime) CreateServiceNetwork(ctx context.Context, name string, labels map[string]string) (string, error) {
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		return "", fmt.Errorf("create service network %s: %w", name, err)
+	}
+	args, err := serviceNetworkArgs(spoken, name, labels)
+	if err != nil {
+		return "", err
+	}
+	answer, err := d.control(ctx, args...)
+	if err != nil {
+		return "", fmt.Errorf("create service network %s: %w", name, err)
+	}
+	id := strings.TrimSpace(answer.stdout)
+	if !serviceNetworkIDPattern.MatchString(id) {
+		return "", fmt.Errorf("create service network %s: the runtime answered %q, not a network id", name, terminalSafeShort(id))
+	}
+	// An engine may ignore an option rather than refuse it: the network is
+	// read back, and one that is not what was asked for is removed.
+	inspected, err := d.control(ctx, serviceNetworkInspectArgs(spoken, id)...)
+	if err == nil {
+		err = verifyServiceNetwork(spoken, inspected.stdout)
+	}
+	if err != nil {
+		if rmErr := d.RemoveServiceNetwork(context.WithoutCancel(ctx), id); rmErr != nil {
+			err = errors.Join(err, rmErr)
+		}
+		return "", fmt.Errorf("create service network %s: %w", name, err)
+	}
+	return id, nil
+}
+
+// serviceNetworkInspectArgs reads back what makes a service network cut
+// off: its options, whether it is internal, whether it has IPv6. The two
+// CLIs name the last field differently.
+func serviceNetworkInspectArgs(x dialect, id string) []string {
+	ipv6 := "{{.EnableIPv6}}"
+	if x.cli == CLIPodman {
+		ipv6 = "{{.IPv6Enabled}}"
+	}
+	return []string{"network", "inspect", "--format", "{{json .Options}}|{{.Internal}}|" + ipv6, id}
+}
+
+// verifyServiceNetwork checks what serviceNetworkInspectArgs read: the
+// isolation option the engine was given, not internal, no IPv6.
+func verifyServiceNetwork(x dialect, raw string) error {
+	parts := strings.Split(strings.TrimSpace(raw), "|")
+	if len(parts) != 3 {
+		return fmt.Errorf("the runtime's account of the network did not read")
+	}
+	var options map[string]string
+	if err := json.Unmarshal([]byte(parts[0]), &options); err != nil {
+		return fmt.Errorf("the runtime's account of the network's options did not read")
+	}
+	key, want := "com.docker.network.bridge.enable_icc", "false"
+	if x.engine == CLIPodman {
+		key, want = "isolate", "strict"
+	}
+	switch {
+	case options[key] != want:
+		return fmt.Errorf("the runtime did not keep %s=%s, so the network would not be cut off", key, want)
+	case x.engine != CLIPodman && !strings.HasPrefix(options["com.docker.network.bridge.name"], ServiceBridgePrefix):
+		return fmt.Errorf("the runtime did not name the network's bridge %s…, which the host's firewall rule matches", ServiceBridgePrefix)
+	case parts[1] != "false":
+		return fmt.Errorf("the network is internal: a service could reach nothing outside it")
+	case parts[2] != "false":
+		return fmt.Errorf("the network has IPv6, which nothing of a service network accounts for")
+	}
+	return nil
+}
+
+// ContainerAddress is a running container's IPv4 address on one network:
+// a service network by its id, or a runtime network by its name ("bridge"
+// for the default one). The reach probe dials its canaries at it.
+func (d *DockerRuntime) ContainerAddress(ctx context.Context, id ContainerID, network string) (string, error) {
+	if !plainArgument(string(id)) || (network != "" && !plainArgument(network)) {
+		return "", fmt.Errorf("inspect container: %q on %q is not a container and a network", id, network)
+	}
+	answer, err := d.control(ctx, "inspect", "--type", "container", "--format", "{{json .NetworkSettings.Networks}}", string(id))
+	if err != nil {
+		return "", fmt.Errorf("inspect container %s: %w", id, err)
+	}
+	return parseContainerAddress(answer.stdout, network)
+}
+
+// parseContainerAddress reads `.NetworkSettings.Networks` for one network,
+// matched by its id or its name.
+func parseContainerAddress(raw, network string) (string, error) {
+	var nets map[string]struct {
+		NetworkID string `json:"NetworkID"`
+		IPAddress string `json:"IPAddress"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &nets); err != nil || nets == nil {
+		return "", fmt.Errorf("the runtime's networks of a container did not decode")
+	}
+	for name, n := range nets {
+		// "" is the container's only network: the default one, whatever the
+		// runtime calls it ("bridge" on Docker, "podman" on Podman).
+		if network == "" && len(nets) != 1 {
+			return "", fmt.Errorf("the container is on %d networks, not one", len(nets))
+		}
+		if network != "" && name != network && n.NetworkID != network {
+			continue
+		}
+		ip := net.ParseIP(n.IPAddress)
+		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsLoopback() {
+			return "", fmt.Errorf("the container has no IPv4 address on network %s", terminalSafeShort(network))
+		}
+		return ip.String(), nil
+	}
+	return "", fmt.Errorf("the container is not on network %s", terminalSafeShort(network))
+}
+
+// NetworkGateway is a network's IPv4 gateway: the address by which its
+// containers reach their host. A network with more than one IPv4 range
+// answers with its first; a service network has one.
+func (d *DockerRuntime) NetworkGateway(ctx context.Context, network string) (string, error) {
+	if !plainArgument(network) {
+		return "", fmt.Errorf("inspect network: %q is not a network", network)
+	}
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		return "", fmt.Errorf("inspect network %s: %w", terminalSafeShort(network), err)
+	}
+	answer, err := d.control(ctx, "network", "inspect", "--format", networkGatewayFormat(spoken), network)
+	if err != nil {
+		return "", fmt.Errorf("inspect network %s: %w", terminalSafeShort(network), err)
+	}
+	return parseNetworkGateway(answer.stdout)
+}
+
+// networkGatewayFormat reads a network's gateways: the docker CLI names
+// them under IPAM, the podman CLI under its subnets.
+func networkGatewayFormat(x dialect) string {
+	if x.cli == CLIPodman {
+		return "{{range .Subnets}}{{.Gateway}} {{end}}"
+	}
+	return "{{range .IPAM.Config}}{{.Gateway}} {{end}}"
+}
+
+func parseNetworkGateway(raw string) (string, error) {
+	for _, f := range strings.Fields(raw) {
+		if ip := net.ParseIP(f); ip != nil && ip.To4() != nil && !ip.IsUnspecified() && !ip.IsLoopback() {
+			return ip.String(), nil
+		}
+	}
+	return "", fmt.Errorf("the network has no IPv4 gateway")
+}
+
+// RemoveServiceNetwork removes a service network; one already gone is
+// removed.
+func (d *DockerRuntime) RemoveServiceNetwork(ctx context.Context, id string) error {
+	if !serviceNetworkIDPattern.MatchString(id) {
+		return fmt.Errorf("remove service network: %q is not a network id", id)
+	}
+	answer, err := d.control(ctx, "network", "rm", id)
+	if err != nil && !strings.Contains(answer.stderr, "No such network") && !strings.Contains(answer.stderr, "network not found") {
+		return fmt.Errorf("remove service network %s: %w", id, err)
+	}
+	return nil
+}
+
+// ListServiceNetworks lists the ids of the service networks carrying label
+// (key=value).
+func (d *DockerRuntime) ListServiceNetworks(ctx context.Context, label string) ([]string, error) {
+	answer, err := d.control(ctx, "network", "ls", "-q", "--no-trunc", "--filter", "label="+ServiceNetworkLabel, "--filter", "label="+label)
+	if err != nil {
+		return nil, fmt.Errorf("list service networks: %w", err)
+	}
+	var ids []string
+	for _, line := range strings.Fields(answer.stdout) {
+		if serviceNetworkIDPattern.MatchString(line) {
+			ids = append(ids, line)
+		}
+	}
+	return ids, nil
+}
+
+// ContainerPid is the host pid of a running container's first process,
+// which the Orker opens a process handle on before it opens the container's
+// answer filesystem.
+func (d *DockerRuntime) ContainerPid(ctx context.Context, id ContainerID) (int, error) {
+	answer, err := d.control(ctx, "inspect", "--type", "container", "--format", "{{.State.Pid}}", string(id))
+	if err != nil {
+		return 0, fmt.Errorf("inspect container %s: %w", id, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(answer.stdout))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("inspect container %s: no running process (%q)", id, terminalSafeShort(answer.stdout))
+	}
+	return pid, nil
+}
+
+func terminalSafeShort(s string) string {
+	if len(s) > 80 {
+		s = s[:80]
+	}
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return '?'
+		}
+		return r
+	}, s)
+}

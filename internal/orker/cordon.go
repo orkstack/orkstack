@@ -70,6 +70,11 @@ type Cordon struct {
 	// drift until the process exits, an unavailable profile until its
 	// checks pass again.
 	profiles *CordonCause
+	// stuck is the stuck-service cause (docs/ORKER_SERVICE_CONTRACT.md): a
+	// service container not gone a minute after its SIGKILL. It holds until
+	// the container is gone, and the next boot sets it again when its reap
+	// cannot remove one.
+	stuck *CordonCause
 	// changed is closed and replaced whenever the last cause clears, so a
 	// blocked slot reservation wakes without polling.
 	changed chan struct{}
@@ -168,7 +173,40 @@ func (c *Cordon) Stopping() (StoppingCause, bool) {
 
 // held reports whether any cause holds. The caller holds the lock.
 func (c *Cordon) held() bool {
-	return c.operator != nil || c.outage != nil || c.stopping != nil || c.profiles != nil
+	return c.operator != nil || c.outage != nil || c.stopping != nil || c.profiles != nil || c.stuck != nil
+}
+
+// SetServiceStuck sets the stuck-service cause; setting it again keeps its
+// first since.
+func (c *Cordon) SetServiceStuck(reason string, since time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stuck == nil {
+		c.stuck = &CordonCause{Reason: reason, Since: since}
+	}
+}
+
+// ClearServiceStuck ends the stuck-service cause once no stuck container
+// is left; no other cause is touched.
+func (c *Cordon) ClearServiceStuck() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stuck == nil {
+		return
+	}
+	c.stuck = nil
+	c.wakeIfClear()
+}
+
+// ServiceStuck is the stuck-service cause, nil when it does not hold.
+func (c *Cordon) ServiceStuck() *CordonCause {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stuck == nil {
+		return nil
+	}
+	cause := *c.stuck
+	return &cause
 }
 
 // wakeIfClear wakes the blocked reservations once no cause holds. The caller
@@ -193,6 +231,8 @@ func (c *Cordon) State() (bool, string, time.Time) {
 		return true, c.outage.Reason, c.outage.Since
 	case c.profiles != nil:
 		return true, c.profiles.Reason, c.profiles.Since
+	case c.stuck != nil:
+		return true, c.stuck.Reason, c.stuck.Since
 	case c.stopping != nil:
 		return true, stoppingReason, c.stopping.Since
 	}

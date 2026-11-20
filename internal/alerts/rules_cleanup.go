@@ -69,6 +69,18 @@ func cleanupRules() []Rule {
 			},
 		},
 		{
+			Name: "RetentionBackstopShort", Group: g, Component: "cleanup", Severity: Critical, For: "0m",
+			Expr:        NEW(`ork_retention_backstop_refused_total{outcome="short"}`, "1h"),
+			Summary:     "Temporal keeps closed runs for less than OrkStack's retention needs, and refuses to change it.",
+			Description: "The cluster refused the engine the right to set its namespace's retention, and the retention it keeps is shorter than the backstop.",
+			Meaning:     "The engine's Temporal credential may not update the namespace, and the namespace's retention is below the maximum run retention plus the retention buffer. At boot the engine refuses to start; in the cleanup loop it keeps running on the shorter retention.",
+			Impact:      "The cluster may delete a closed run before OrkStack archives it.",
+			Confirm:     "the engine log names the retention to set and the command; kit: `ork_retention_backstop_refused_total` by `outcome`.",
+			Fix:         "Either have a cluster admin raise the namespace's retention to the value the log names (`temporal operator namespace update --namespace <ns> --retention <value>`), or lower OrkStack's maximum run retention until the retention covers it (`orkctl admin retention set`). The engine keeps running and accepting runs meanwhile.",
+			Related:     []string{"ExecutionsMissing", "#the-archive-sweep-risk"},
+			Cases:       newCases("ork_retention_backstop_refused_total", `outcome="short"`, out()),
+		},
+		{
 			Name: "ExecutionsMissing", Group: g, Component: "cleanup", Severity: Critical, For: "0m",
 			Expr:        NEW(`ork_deployment_cleanup_runs_total{outcome="not_found_not_due"}`, "1h"),
 			Summary:     "Runs are missing from Temporal before their retention ended.",

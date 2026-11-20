@@ -11,7 +11,7 @@ import { API_VERSION, ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/
 const repo = `${import.meta.dir}/../..`;
 const read = (path: string) => readFileSync(`${repo}/${path}`, 'utf8');
 const schema = (name: string) => JSON.parse(read(`docs/schemas/${name}`));
-const NAMES = ['orkflow.v1.json', 'automation.v1.json', 'activityinterface.v1.json', 'eventsource.v1.json', 'orkstack.v1.json'];
+const NAMES = ['orkflow.v1.json', 'automation.v1.json', 'activityinterface.v1.json', 'eventsource.v1.json', 'serviceinterface.v1.json', 'orkstack.v1.json'];
 
 function compile(name: string) {
 	const ajv = new Ajv({ allErrors: true, strict: true, strictRequired: false, allowUnionTypes: true });
@@ -49,6 +49,7 @@ test('API_VERSION is the generated schemas’ apiVersion', () => {
 	expect(schema('automation.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('activityinterface.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('eventsource.v1.json').properties.apiVersion.const).toBe(API_VERSION);
+	expect(schema('serviceinterface.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('orkstack.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 });
 
@@ -177,4 +178,13 @@ test('an event source document validates against its schema and the dispatcher',
 	);
 	expectValid('an event source document', doc, 'eventsource.v1.json');
 	expect(validators['eventsource.v1.json']({ apiVersion: API_VERSION, kind: 'EventSource', orkflow: 'f', uses: 'r', queue: 'x' })).toBe(false);
+});
+
+test('a service interface document validates against its schema and the dispatcher', () => {
+	const doc = Bun.YAML.parse(
+		`apiVersion: ${API_VERSION}\nkind: ServiceInterface\nprofile: event-source\nwith:\n  stream:\n    type: string\n    required: true\n` +
+			'event_source:\n  delivery: at-least-once\n  max_concurrency: 4\n'
+	);
+	expectValid('a service interface document', doc, 'serviceinterface.v1.json');
+	expect(validators['serviceinterface.v1.json']({ apiVersion: API_VERSION, kind: 'ServiceInterface', profile: 'event-source', with: { required: ['x'] } })).toBe(false);
 });

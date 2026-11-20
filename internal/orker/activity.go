@@ -103,6 +103,9 @@ type Options struct {
 	// at submit rather than left waiting for a slot that does not exist
 	// (docs/DEPLOY.md "Pin hosting is a pool-wide setting").
 	MaxPins int32
+	// SourceHost is orker.event_sources.* and orker.services.*: whether this
+	// Orker hosts event-source instances, and how.
+	SourceHost SourceHostSettings
 	// MetadataProbe is orker.metadata_probe: whether Boot asks the host's
 	// instance metadata endpoints from a container on the default network,
 	// and what an answer does (metadata_probe.go). Empty is off.
@@ -190,6 +193,16 @@ type Activities struct {
 	pool    string
 	maxConc int32
 	maxPins int32
+	// sourceHost is orker.event_sources.* and orker.services.*; services is
+	// what DescribeOrker reports of hosting services.
+	sourceHost SourceHostSettings
+	// reachImage is where the reach probe's image comes from: the operator's
+	// orker.services.probe_image, or this release's own orker image, judged
+	// as the profile probes' is (probe_image.go); build is this Orker's
+	// commit, which the image's label must carry.
+	reachImage *probeImageSource
+	build      string
+	services   serviceHostState
 	// metadataProbe is orker.metadata_probe; metadata is what Boot's probe
 	// found, nil until it ran, which DescribeOrker reports.
 	metadataProbe MetadataProbeMode
@@ -318,8 +331,11 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		pool:          opts.Pool,
 		maxConc:       maxConc,
 		maxPins:       opts.MaxPins,
+		sourceHost:    opts.SourceHost,
 		metadataProbe: opts.MetadataProbe,
 		profiles:      newProfileState(opts.Profiles, opts.Build).withProbe(opts.ReleaseProbe, opts.Logger),
+		build:         opts.Build,
+		reachImage:    newReachImageSource(opts.SourceHost.ProbeImage, opts.ReleaseProbe, opts.Logger),
 		cordon:        NewCordon(),
 		pins:          newOpenPins(),
 		stops:         newStopRegistry(),
@@ -619,6 +635,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		result.ResultsScope = scope.Results
 	}
 	a.describeMetadata(result)
+	a.describeServiceHost(result)
 	a.profiles.report(result)
 	result.Pins = a.describePins()
 	result.OpenPins = int32(len(result.Pins))
@@ -1177,6 +1194,7 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := a.reapContainers(ctx); err != nil {
 		return err
 	}
+	a.reapServiceNetworks(ctx)
 	// The GPU host lock and the lock-scoped reap (gpu_boot.go), after the
 	// by-id reap and before any device-bearing probe.
 	if err := a.bootGPU(ctx); err != nil {

@@ -149,6 +149,10 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 			p.errorAt("kind", value, "kind: %s is an activity interface, not an automation document: "+
 				"pack it into an image's label with orkctl activity interface pack", dsl.KindActivityInterface)
 			return nil, p.issues
+		case dsl.KindServiceInterface:
+			p.errorAt("kind", value, "kind: %s is a service interface, not an automation document: "+
+				"pack it into a service image's label with orkctl activity interface pack", dsl.KindServiceInterface)
+			return nil, p.issues
 		case dsl.KindEventSource:
 			p.errorAt("kind", value, "kind: %s is one event source, not an automation document: "+
 				"create it with orkctl event-source create --file, or declare it under event_sources:", dsl.KindEventSource)

@@ -27,7 +27,6 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/quantity"
-	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/eventsources"
@@ -993,35 +992,12 @@ func (s *Service) writeServiceSpec(ctx context.Context, store eventsources.Store
 }
 
 // serviceSpec is a source's service spec: what its containers are started
-// with, and the digest that names it.
+// with, and the digest that names it (eventsources.BuildServiceSpec). The
+// park is the default: event_sources.park arrives with the source workflow,
+// which then builds the spec with it here and there alike.
 func serviceSpec(src *orkstackv1.EventSource, img eventsources.Image, l eventsources.Limits) ([]byte, string, error) {
-	e := eventsources.Effective(src, l)
-	secrets := make([]map[string]string, 0, len(e.GetSecrets()))
-	for _, sec := range e.GetSecrets() {
-		secrets = append(secrets, map[string]string{"name": sec.GetName(), "source": sec.GetSource()})
-	}
-	spec := map[string]any{
-		"format":      1,
-		"image":       e.GetImage(),
-		"contracts":   img.Contracts,
-		"profiles":    img.Profiles,
-		"pool":        e.GetPool(),
-		"concurrency": e.GetConcurrency(),
-		"delivery":    e.GetDelivery().String(),
-		"maxBytes":    e.GetMaxBytes(),
-		"env":         e.GetEnv(),
-		"secrets":     secrets,
-		"resources":   map[string]string{"cpu": e.GetResources().GetCpu(), "memory": e.GetResources().GetMemory()},
-	}
-	if e.GetWith() != nil {
-		spec["with"] = e.GetWith().AsMap()
-	}
-	body, err := stablejson.Marshal(spec)
-	if err != nil {
-		return nil, "", fmt.Errorf("encode the service spec: %w", err)
-	}
-	sum := sha256.Sum256(body)
-	return body, hex.EncodeToString(sum[:]), nil
+	_, body, digest, err := eventsources.BuildServiceSpec(src, img, l, 0)
+	return body, digest, err
 }
 
 // documentDigest is the SHA-256 of a stored document, for its audit

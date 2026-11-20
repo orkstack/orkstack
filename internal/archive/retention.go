@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"go.temporal.io/api/serviceerror"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -88,6 +91,99 @@ type RetentionController struct {
 	// before its key has expired. Zero when nothing is wired.
 	keyLife time.Duration
 	logger  *slog.Logger
+	// observer is told each time the cluster refuses to change the
+	// backstop; nil reports nothing.
+	observer RetentionObserver
+	// warnedMu guards warned, the last covered refusal logged at WARN, so a
+	// refusal that repeats every cleanup pass is logged once at WARN and
+	// then at DEBUG until what it reports changes.
+	warnedMu sync.Mutex
+	warned   [2]time.Duration
+}
+
+// RetentionObserver is told each time the cluster refuses the engine the
+// right to change its namespace's retention: covered when the retention the
+// cluster keeps is already at least the backstop, so nothing is at risk, and
+// not covered when it is shorter, which the caller then fails on.
+type RetentionObserver interface {
+	ObserveBackstopRefused(ctx context.Context, covered bool)
+}
+
+// WithObserver sets where refusals are reported.
+func (c *RetentionController) WithObserver(o RetentionObserver) *RetentionController {
+	c.observer = o
+	return c
+}
+
+// BackstopRefusedError is a cluster that refused to set its namespace's
+// retention to the backstop, and that keeps closed runs for less than it: the
+// cluster could delete a run before OrkStack retires it into the archive, so
+// the caller must not go on as if the backstop held. It names the retention a
+// cluster admin must set, and the command that sets it.
+type BackstopRefusedError struct {
+	Namespace string
+	// Current is the retention the cluster keeps; Want is the backstop.
+	Current, Want time.Duration
+	Err           error
+}
+
+func (e *BackstopRefusedError) Error() string {
+	return fmt.Sprintf("archive: the cluster refused to set temporal namespace %q's retention to %s, and the %s it keeps is shorter, "+
+		"so it could delete a closed run before OrkStack archives it; have a cluster admin set it: "+
+		"temporal operator namespace update --namespace %s --retention %s: %v",
+		e.Namespace, retentionFlag(e.Want), retentionFlag(e.Current), e.Namespace, retentionFlag(e.Want), e.Err)
+}
+
+func (e *BackstopRefusedError) Unwrap() error { return e.Err }
+
+// retentionFlag writes d as the temporal CLI's --retention takes it: whole
+// hours as "96h", anything else in Go's form.
+func retentionFlag(d time.Duration) string {
+	if d > 0 && d%time.Hour == 0 {
+		return fmt.Sprintf("%dh", d/time.Hour)
+	}
+	return d.String()
+}
+
+// updateRefused reports whether err is the cluster refusing the engine the
+// right to update its namespace: PermissionDenied, from an authorizer, or
+// Unimplemented, from a cluster that takes no namespace updates from clients.
+// Any other failure is not a refusal of rights and is returned as it was.
+func updateRefused(err error) bool {
+	var denied *serviceerror.PermissionDenied
+	var unimplemented *serviceerror.Unimplemented
+	if errors.As(err, &denied) || errors.As(err, &unimplemented) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.PermissionDenied, codes.Unimplemented:
+		return true
+	}
+	return false
+}
+
+// refused decides a refused update: covered when the cluster already keeps
+// closed runs at least as long as want, which boots with a warning, and a
+// *BackstopRefusedError otherwise. Each is reported to the observer.
+func (c *RetentionController) refused(ctx context.Context, current, want time.Duration, err error) error {
+	covered := current >= want
+	if c.observer != nil {
+		c.observer.ObserveBackstopRefused(ctx, covered)
+	}
+	if !covered {
+		return &BackstopRefusedError{Namespace: c.temporalNamespace, Current: current, Want: want, Err: err}
+	}
+	c.warnedMu.Lock()
+	repeat := c.warned == [2]time.Duration{current, want}
+	c.warned = [2]time.Duration{current, want}
+	c.warnedMu.Unlock()
+	level := slog.LevelWarn
+	if repeat {
+		level = slog.LevelDebug
+	}
+	c.logger.Log(ctx, level, "the cluster refused to set the retention backstop; the retention it keeps covers it",
+		"temporal_namespace", c.temporalNamespace, "cluster_retention", current, "backstop", want, "error", err)
+	return nil
 }
 
 // NewRetentionController builds a controller over the given policy store and
@@ -171,6 +267,9 @@ func (c *RetentionController) Reconcile(ctx context.Context, max time.Duration) 
 		_, err := c.admin.SetNamespaceRetention(ctx, c.temporalNamespace, want)
 		return err
 	}); err != nil {
+		if updateRefused(err) {
+			return c.refused(ctx, current, want, err)
+		}
 		return fmt.Errorf("archive: set cluster retention for %q to %s: %w", c.temporalNamespace, want, err)
 	}
 	c.logger.Info("retention backstop reconciled",
@@ -207,19 +306,48 @@ func (c *RetentionController) Ensure(ctx context.Context) (*orkstackv1.Retention
 	default:
 		return nil, fmt.Errorf("archive: read retention policy: %w", err)
 	}
-	var observed time.Duration
-	if err := retryOnNamespaceNotFound(ctx, func() error {
-		var err error
-		observed, err = c.admin.NamespaceRetention(ctx, c.temporalNamespace)
-		return err
-	}); err != nil {
-		return nil, fmt.Errorf("archive: observe cluster retention for %q: %w", c.temporalNamespace, err)
-	}
-	if observed <= 0 {
-		observed = DefaultMaxRunRetention
+	// The maximum is derived from the retention the cluster keeps, and the
+	// probe that asks whether this engine may change it writes that same
+	// value back. A writer that changes the retention around the probe (most
+	// likely another replica materializing first) is seen by the re-read
+	// after it, and the derivation starts again from what that writer left,
+	// a bounded number of times. A change made between the read and the probe
+	// is overwritten with the value read; the Reconcile below sets the
+	// backstop the stored maximum implies either way.
+	var max time.Duration
+	for attempt := 1; ; attempt++ {
+		var observed time.Duration
+		if err := retryOnNamespaceNotFound(ctx, func() error {
+			var err error
+			observed, err = c.admin.NamespaceRetention(ctx, c.temporalNamespace)
+			return err
+		}); err != nil {
+			return nil, fmt.Errorf("archive: observe cluster retention for %q: %w", c.temporalNamespace, err)
+		}
+		max, err = c.firstMaximum(ctx, observed)
+		if !errors.Is(err, errRetentionMoved) {
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
+		if attempt == firstBootAttempts {
+			return nil, fmt.Errorf("archive: the retention of temporal namespace %q kept changing while this engine derived its maximum, %d times: %w",
+				c.temporalNamespace, attempt, err)
+		}
+		switch winner, gerr := c.policies.Get(ctx); {
+		case gerr == nil:
+			// Another replica materialized the policy meanwhile: adopt it.
+			if err := c.Reconcile(ctx, winner.GetMaxRunRetention().AsDuration()); err != nil {
+				return nil, err
+			}
+			return winner, nil
+		case !errors.Is(gerr, artifacts.ErrNotFound):
+			return nil, fmt.Errorf("archive: read retention policy: %w", gerr)
+		}
 	}
 	written, err := c.policies.Put(ctx, &orkstackv1.RetentionPolicy{
-		MaxRunRetention: durationpb.New(observed),
+		MaxRunRetention: durationpb.New(max),
 	}, artifacts.PutConditions{IfAbsent: true})
 	switch {
 	case err == nil:
@@ -240,6 +368,73 @@ func (c *RetentionController) Ensure(ctx context.Context) (*orkstackv1.Retention
 		return nil, err
 	}
 	return policy, nil
+}
+
+// firstBootAttempts bounds how many times a first boot derives its maximum
+// again because the cluster's retention changed while it did.
+const firstBootAttempts = 3
+
+// errRetentionMoved is the cluster's retention changing around the probe
+// that asks whether this engine may set it.
+var errRetentionMoved = errors.New("the cluster's retention changed while it was read")
+
+// firstMaximum is the maximum a first boot materializes from the retention
+// the cluster keeps, observed: observed itself where this engine may change
+// the namespace's retention, so the backstop then rises a margin above it.
+// Whether it may is asked by setting the retention to the value it already
+// has, which changes nothing. Where the cluster refuses, the backstop must be
+// what the cluster already keeps, so the maximum is observed less the margin,
+// logged as derived from the cluster; a cluster that keeps runs too briefly
+// for that, or for an idempotency key's life, is a *BackstopRefusedError
+// naming the retention to set. An observed retention of zero (none reported)
+// takes DefaultMaxRunRetention and asks nothing: Reconcile then decides.
+func (c *RetentionController) firstMaximum(ctx context.Context, observed time.Duration) (time.Duration, error) {
+	if observed <= 0 {
+		return DefaultMaxRunRetention, nil
+	}
+	// A policy another replica wrote since this boot found none is adopted
+	// rather than probed past: its backstop may already be above observed,
+	// which the probe would lower. The window between this read and the
+	// probe remains; there the probe can set the retention back to observed,
+	// below that replica's backstop, until this engine's Reconcile, which
+	// follows at once, or the next cleanup pass raises it again.
+	switch _, gerr := c.policies.Get(ctx); {
+	case gerr == nil:
+		return 0, fmt.Errorf("%w: another engine stored the retention policy meanwhile", errRetentionMoved)
+	case !errors.Is(gerr, artifacts.ErrNotFound):
+		return 0, fmt.Errorf("archive: read retention policy: %w", gerr)
+	}
+	err := retryOnNamespaceNotFound(ctx, func() error {
+		_, err := c.admin.SetNamespaceRetention(ctx, c.temporalNamespace, observed)
+		return err
+	})
+	switch {
+	case err == nil:
+		after, rerr := c.admin.NamespaceRetention(ctx, c.temporalNamespace)
+		if rerr != nil {
+			return 0, fmt.Errorf("archive: read cluster retention for %q after confirming the right to set it: %w", c.temporalNamespace, rerr)
+		}
+		if after != observed {
+			return 0, fmt.Errorf("%w: read %s, then %s", errRetentionMoved, observed, after)
+		}
+		return observed, nil
+	case !updateRefused(err):
+		return 0, fmt.Errorf("archive: confirm the right to set cluster retention for %q: %w", c.temporalNamespace, err)
+	}
+	derived := observed - c.margin
+	if derived <= 0 {
+		return 0, c.refused(ctx, observed, c.Enforced(DefaultMaxRunRetention), err)
+	}
+	if want := c.Enforced(derived); want > observed {
+		return 0, c.refused(ctx, observed, want, err)
+	}
+	if c.observer != nil {
+		c.observer.ObserveBackstopRefused(ctx, true)
+	}
+	c.logger.Info("retention maximum derived from the cluster: this engine may not change the namespace's retention",
+		"temporal_namespace", c.temporalNamespace, "cluster_retention", observed, "margin", c.margin, "max_run_retention", derived,
+		"error", err)
+	return derived, nil
 }
 
 // SetMax is the admin write: it changes the deployment maximum and keeps the

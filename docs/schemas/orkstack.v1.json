@@ -61,6 +61,21 @@
       "then": {
         "$ref": "#/definitions/eventsource"
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "ServiceInterface"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/definitions/serviceinterface"
+      }
     }
   ],
   "definitions": {
@@ -2607,9 +2622,107 @@
         "op"
       ],
       "type": "object"
+    },
+    "serviceinterface": {
+      "additionalProperties": false,
+      "description": "A service image's interface (kind: ServiceInterface, docs/ORKER_SERVICE_CONTRACT.md): `orkctl activity interface pack` packs it into the image's `org.orkstack.service.interface` label, which the engine reads.",
+      "properties": {
+        "apiVersion": {
+          "const": "orkstack/v1",
+          "description": "The document format's version: exactly `orkstack/v1`."
+        },
+        "event_source": {
+          "$ref": "#/definitions/serviceinterface.event_source"
+        },
+        "kind": {
+          "const": "ServiceInterface",
+          "description": "Exactly `ServiceInterface`: a service image's interface, packed into its `org.orkstack.service.interface` label at build time."
+        },
+        "profile": {
+          "const": "event-source",
+          "description": "The profile the image implements: `event-source`."
+        },
+        "with": {
+          "additionalProperties": {
+            "$ref": "#/definitions/serviceinterface.field"
+          },
+          "description": "The keys of the image's `with:` block, each with its own `type`, `required` and `default`, as an activity interface's `fields:`.",
+          "maxProperties": 256,
+          "propertyNames": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$",
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "profile"
+      ],
+      "title": "OrkStack service interface (orkstack/v1)",
+      "type": "object"
+    },
+    "serviceinterface.event_source": {
+      "additionalProperties": false,
+      "description": "What an image of the event-source profile declares about how it delivers.",
+      "properties": {
+        "dead_letter": {
+          "description": "The broker stops delivering a message after a maximum; an at-least-once image must not say false.",
+          "type": "boolean"
+        },
+        "delivery": {
+          "description": "The image's delivery class — absent means `at-least-once`.",
+          "enum": [
+            "at-least-once",
+            "at-most-once"
+          ]
+        },
+        "extends_leases": {
+          "description": "The image keeps a message leased until its verdict; an at-least-once image must not say false.",
+          "type": "boolean"
+        },
+        "max_concurrency": {
+          "description": "The most messages one container handles at once — absent means 1.",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ordering": {
+          "description": "Messages can carry a group the image delivers in order.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "serviceinterface.field": {
+      "additionalProperties": false,
+      "description": "One `with:` key: `type`, `required` and `default`.",
+      "properties": {
+        "default": {
+          "description": "What the image assumes when the key is absent; not null, and of the declared type."
+        },
+        "required": {
+          "description": "A source without this key is refused. A key with a default is never required.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "One of string, number, boolean, object, array, or several joined by `|`.",
+          "pattern": "^(string|number|boolean|object|array)(\\|(string|number|boolean|object|array))*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
     }
   },
-  "description": "An Orkflow (kind: Orkflow, docs/DSL.md), an automation document (kind: Automation, docs/AUTOMATION.md), an activity interface (kind: ActivityInterface, docs/ACTIVITY_IMAGES.md) or an event source (kind: EventSource, docs/EVENT_SOURCES.md); apiVersion and kind select the schema.",
+  "description": "An Orkflow (kind: Orkflow, docs/DSL.md), an automation document (kind: Automation, docs/AUTOMATION.md), an activity interface (kind: ActivityInterface, docs/ACTIVITY_IMAGES.md), an event source (kind: EventSource, docs/EVENT_SOURCES.md) or a service interface (kind: ServiceInterface, docs/ORKER_SERVICE_CONTRACT.md); apiVersion and kind select the schema.",
   "properties": {
     "apiVersion": {
       "const": "orkstack/v1"
@@ -2619,7 +2732,8 @@
         "ActivityInterface",
         "Automation",
         "EventSource",
-        "Orkflow"
+        "Orkflow",
+        "ServiceInterface"
       ]
     }
   },

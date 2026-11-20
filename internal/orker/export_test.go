@@ -141,3 +141,11 @@ func LocateUsage(ctx context.Context, d *DockerRuntime, id ContainerID) (func() 
 func CheckReleaseProbeImage(ctx context.Context, rt *DockerRuntime, release *ReleaseProbe, build string) (string, orkstackv1.ProfileCordonReason, string, error) {
 	return checkProbeImage(ctx, rt, newProbeImageSource("", release, time.Second), build)
 }
+
+// ListInterruptions makes d's attempts see types as the NonRetryableErrorTypes
+// of their retry policy, as an attempt of a run that pinned the interruption
+// class does. It is exported for the integration tests, which run a dispatcher
+// outside a Temporal activity and so have no retry policy to read.
+func ListInterruptions(d *OCIDispatcher, types ...string) {
+	d.listed = func(context.Context) []string { return types }
+}

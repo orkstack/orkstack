@@ -1,6 +1,6 @@
 // Package schemas generates the JSON Schemas of OrkStack's authored
 // documents (docs/schemas/): orkflow.v1.json, automation.v1.json,
-// activityinterface.v1.json, eventsource.v1.json, and the dispatcher orkstack.v1.json, which
+// activityinterface.v1.json, eventsource.v1.json, serviceinterface.v1.json, and the dispatcher orkstack.v1.json, which
 // selects one by kind. They are generated,
 // never hand-written: `go run ./internal/schemas/cmd/genschemas` writes them,
 // and TestSchemas_AreGenerated refuses a stale one.
@@ -40,6 +40,7 @@ const (
 	AutomationFile        = "automation.v1.json"
 	ActivityInterfaceFile = "activityinterface.v1.json"
 	EventSourceFile       = "eventsource.v1.json"
+	ServiceInterfaceFile  = "serviceinterface.v1.json"
 	DispatcherFile        = "orkstack.v1.json"
 )
 
@@ -201,12 +202,17 @@ func Trees(repoRoot string) (map[string]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	service, err := dsl.ServiceInterfaceSchema()
+	if err != nil {
+		return nil, err
+	}
 	return map[string]map[string]any{
 		OrkflowFile:           orkflow,
 		AutomationFile:        auto,
 		ActivityInterfaceFile: iface,
 		EventSourceFile:       source,
-		DispatcherFile:        dispatcher(orkflow, auto, iface, source),
+		ServiceInterfaceFile:  service,
+		DispatcherFile:        dispatcher(orkflow, auto, iface, source, service),
 	}, nil
 }
 
@@ -225,10 +231,10 @@ func body(schema map[string]any) map[string]any {
 
 // dispatcher holds every kind's definitions in one flat table and selects
 // the kind's root by kind, so one *.ork.yaml editor mapping serves them all.
-func dispatcher(orkflow, auto, iface, source map[string]any) map[string]any {
+func dispatcher(orkflow, auto, iface, source, service map[string]any) map[string]any {
 	definitions := map[string]any{"orkflow": body(orkflow), "automation": body(auto), "activityinterface": body(iface),
-		"eventsource": body(source)}
-	for _, schema := range []map[string]any{orkflow, auto, iface, source} {
+		"eventsource": body(source), "serviceinterface": body(service)}
+	for _, schema := range []map[string]any{orkflow, auto, iface, source, service} {
 		for name, def := range schema["definitions"].(map[string]any) {
 			definitions[name] = def
 		}
@@ -244,16 +250,18 @@ func dispatcher(orkflow, auto, iface, source map[string]any) map[string]any {
 		"$comment": dsl.SchemaComment,
 		"title":    "OrkStack authored document (" + dsl.APIVersion + ")",
 		"description": "An Orkflow (kind: Orkflow, docs/DSL.md), an automation document (kind: Automation, docs/AUTOMATION.md), " +
-			"an activity interface (kind: ActivityInterface, docs/ACTIVITY_IMAGES.md) or an event source " +
-			"(kind: EventSource, docs/EVENT_SOURCES.md); apiVersion and kind select the schema.",
+			"an activity interface (kind: ActivityInterface, docs/ACTIVITY_IMAGES.md), an event source " +
+			"(kind: EventSource, docs/EVENT_SOURCES.md) or a service interface (kind: ServiceInterface, " +
+			"docs/ORKER_SERVICE_CONTRACT.md); apiVersion and kind select the schema.",
 		"type":     "object",
 		"required": []any{"apiVersion", "kind"},
 		"properties": map[string]any{
 			"apiVersion": map[string]any{"const": dsl.APIVersion},
-			"kind":       map[string]any{"enum": []any{dsl.KindActivityInterface, dsl.KindAutomation, dsl.KindEventSource, dsl.KindOrkflow}},
+			"kind":       map[string]any{"enum": []any{dsl.KindActivityInterface, dsl.KindAutomation, dsl.KindEventSource, dsl.KindOrkflow, dsl.KindServiceInterface}},
 		},
 		"allOf": []any{selects(dsl.KindOrkflow, "orkflow"), selects(dsl.KindAutomation, "automation"),
-			selects(dsl.KindActivityInterface, "activityinterface"), selects(dsl.KindEventSource, "eventsource")},
+			selects(dsl.KindActivityInterface, "activityinterface"), selects(dsl.KindEventSource, "eventsource"),
+			selects(dsl.KindServiceInterface, "serviceinterface")},
 		"definitions": definitions,
 	}
 }

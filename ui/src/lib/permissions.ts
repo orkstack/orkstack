@@ -31,6 +31,17 @@ export function covers(scope: string, target: Target): boolean {
 	return false;
 }
 
+/**
+ * runTarget is where a run's own actions (run.pause, run.cancel) are decided,
+ * named as the server names it (internal/api access_rows, runIn): the run's
+ * namespace and its Orkflow, which for a child run of another namespace's
+ * shared Orkflow is `<owner>/<name>`.
+ */
+export function runTarget(namespace: string, run: { orkflowName: string; orkflowNamespace: string } | null | undefined): Target {
+	if (!run) return { namespace };
+	return { namespace, orkflow: run.orkflowNamespace ? `${run.orkflowNamespace}/${run.orkflowName}` : run.orkflowName };
+}
+
 /** The caller's permissions, and whether this deployment checks them at all. */
 export interface Grants {
 	/** False in asserted mode: nothing is checked, and nothing is hidden. */

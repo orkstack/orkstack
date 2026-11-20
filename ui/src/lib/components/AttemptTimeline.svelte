@@ -20,6 +20,7 @@
 	import { AttemptOutcome, type TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import {
 		UNREPORTED_CAPTION,
+		attemptProfileLabels,
 		attemptOutcomeClasses,
 		attemptOutcomeLabel,
 		attemptOutcomeWord,
@@ -162,6 +163,20 @@
 								<span>{formatDuration(attempt.startedAt, attempt.finishedAt)}</span>
 							{/if}
 							{#if orker}<span class="font-mono break-all">{orker}</span>{/if}
+							{#each attemptProfileLabels(attempt) as profile, i (`${profile.name}:${i}`)}
+								<!--
+									The device profile and the contract this attempt ran under,
+									in the words orkctl run attempts prints: a kind, so a tag. One
+									text node, so the space before the contract is a character a
+									flex tag cannot collapse; it wraps rather than overflow a phone.
+								-->
+								<span
+									class="tag h-auto min-h-5.5 whitespace-normal"
+									data-testid="task-{taskId}-attempt-{attempt.attempt}-profile-{profile.name}"
+								>
+									{profile.detail ? `${profile.name} (${profile.detail})` : profile.name}
+								</span>
+							{/each}
 							{#if exitCode !== undefined}
 								<span class={exitCode === 0 ? '' : 'text-failed-fg'}>exit {exitCode}</span>
 							{/if}

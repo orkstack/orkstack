@@ -45,6 +45,15 @@ func TestDispatcher_TellsAContainerStoppedFromOutsideFromOneThatExited(t *testin
 			status:     ExitStatus{Code: 143, StoppedFromOutside: true},
 			wantReason: ReasonContainerStoppedByRuntime,
 			wantInMsg:  "exited 143",
+			notInMsg:   "went away",
+		},
+		{
+			// The same stop, with the evidence that the runtime itself went:
+			// the reason is the same, and the message says what was seen.
+			name:       "stopped as its runtime went away",
+			status:     ExitStatus{Code: 143, StoppedFromOutside: true, RuntimeWentAway: true},
+			wantReason: ReasonContainerStoppedByRuntime,
+			wantInMsg:  "the runtime itself went away",
 		},
 		{
 			name:       "stopped past its grace, exit 137",

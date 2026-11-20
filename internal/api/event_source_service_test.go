@@ -2,7 +2,11 @@ package api_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -78,6 +82,8 @@ type sourceFixture struct {
 	resolver *sourceResolver
 	orkflows *engine.MemoryOrkflowStore
 	client   orkstackv1connect.EventSourceServiceClient
+	// storeDir is the local event source store's root.
+	storeDir string
 }
 
 func newSourceFixture(t *testing.T, edit func(*api.Config)) *sourceFixture {
@@ -100,7 +106,8 @@ func newSourceFixture(t *testing.T, edit func(*api.Config)) *sourceFixture {
 	put("default", "handle-order", orderInputs)
 	put("payments", "handle-order", orderInputs)
 	put("default", "callback", map[string]any{}, &orkstackv1.Task{Id: "wait", Await: &orkstackv1.AwaitSpec{Callback: true}})
-	store, err := artifacts.NewLocalEventSourceStore(t.TempDir())
+	storeDir := t.TempDir()
+	store, err := artifacts.NewLocalEventSourceStore(storeDir)
 	must.OKf(t, err, "store")
 	settings := eventsources.DefaultSettings()
 	settings.Enabled, settings.AllowAsserted = true, true
@@ -115,7 +122,8 @@ func newSourceFixture(t *testing.T, edit func(*api.Config)) *sourceFixture {
 			edit(cfg)
 		}
 	})
-	return &sourceFixture{fixture: f, resolver: resolver, orkflows: orkflows, client: orkstackv1connect.NewEventSourceServiceClient(f.client, f.baseURL)}
+	return &sourceFixture{fixture: f, resolver: resolver, orkflows: orkflows, storeDir: storeDir,
+		client: orkstackv1connect.NewEventSourceServiceClient(f.client, f.baseURL)}
 }
 
 func orderSource(ns string) *orkstackv1.EventSource {
@@ -168,6 +176,28 @@ func TestEventSourceService_CreateStoresTheDocument(t *testing.T) {
 	if st := read.Msg.GetStatus(); st.GetState() != orkstackv1.EventSourceState_EVENT_SOURCE_STATE_DISABLED ||
 		st.GetReason() != eventsources.ReasonRequireAuthentication {
 		t.Errorf("status %v: a source written under the opt-in reads DISABLED until authentication is enforced", st)
+	}
+}
+
+// TestEventSourceService_StoresATypedServiceSpec: a save stores the source's
+// service spec under its id and digest, and the bytes read back as a
+// ServiceSpec of this release's format, named by their own SHA-256.
+func TestEventSourceService_StoresATypedServiceSpec(t *testing.T) {
+	f := newSourceFixture(t, nil)
+	got := f.create(t, orderSource(""))
+	paths, err := filepath.Glob(filepath.Join(f.storeDir, "metadata", "event-source-specs", got.GetId(), "*.json"))
+	must.OKf(t, err, "glob")
+	if len(paths) != 1 {
+		t.Fatalf("specs %v: want one", paths)
+	}
+	body, err := os.ReadFile(paths[0])
+	must.OKf(t, err, "read")
+	spec, err := eventsources.ReadServiceSpec(body)
+	must.OKf(t, err, "the stored spec reads")
+	sum := sha256.Sum256(body)
+	if filepath.Base(paths[0]) != hex.EncodeToString(sum[:])+".json" || spec.Source.ID != got.GetId() || spec.Image != got.GetImage() ||
+		spec.Limits.HoldSeconds != eventsources.HoldSeconds(0) {
+		t.Fatalf("spec %s at %s", body, paths[0])
 	}
 }
 

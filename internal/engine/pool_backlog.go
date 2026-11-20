@@ -51,6 +51,9 @@ type TemporalPoolBacklog struct {
 	pools  []string
 	queues map[string]string // pool → channel
 	now    func() time.Time
+	// releases, when set, breaks each pool's backlog down by release
+	// (WithReleases).
+	releases *poolReleases
 }
 
 // NewTemporalPoolBacklog reads through c, in temporalNamespace, for the

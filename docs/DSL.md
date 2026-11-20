@@ -111,6 +111,10 @@ tables (`go run ./internal/schemas/cmd/genschemas`) and checked in under
 - [`eventsource.v1.json`](schemas/eventsource.v1.json) — `kind: EventSource`
   (`docs/EVENT_SOURCES.md`, the file `orkctl event-source create -f`
   reads);
+- [`serviceinterface.v1.json`](schemas/serviceinterface.v1.json) —
+  `kind: ServiceInterface`, a service image's interface (`service.ork.yaml`
+  beside its Dockerfile), which `orkctl activity interface pack` packs into
+  its `org.orkstack.service.interface` label;
 - [`orkstack.v1.json`](schemas/orkstack.v1.json) — any of them: it selects the
   kind's schema by `apiVersion` and `kind`.
 
@@ -180,7 +184,8 @@ returns.
 
 The docs site will serve the schemas at `/schemas/orkflow/v1.json`,
 `/schemas/automation/v1.json`, `/schemas/activityinterface/v1.json`,
-`/schemas/eventsource/v1.json` and `/schemas/orkstack/v1.json`; until it does, point at the files in a checkout.
+`/schemas/eventsource/v1.json`, `/schemas/serviceinterface/v1.json` and
+`/schemas/orkstack/v1.json`; until it does, point at the files in a checkout.
 
 ### `namespace`
 

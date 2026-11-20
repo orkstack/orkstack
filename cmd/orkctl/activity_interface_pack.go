@@ -5,8 +5,10 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // `orkctl activity interface pack <file>` (docs/ACTIVITY_IMAGES.md,
@@ -30,7 +32,7 @@ func newActivityInterfacePackCommand() *cobra.Command {
 	var which string
 	cmd := &cobra.Command{
 		Use:   "pack <file>",
-		Short: "Print a label value a kind: ActivityInterface document packs into",
+		Short: "Print a label value an image's interface document packs into",
 		Long: "Read a kind: ActivityInterface document and print the value of one label it\n" +
 			"packs into: one line — compact JSON, or the icon's canonical SVG — the same\n" +
 			"bytes for the same declaration.\n" +
@@ -42,7 +44,11 @@ func newActivityInterfacePackCommand() *cobra.Command {
 			"declares no icon, or no description, prints an empty line: the empty value\n" +
 			"declares none, and clears a label a base image set.\n\n" +
 			"Pass the values to any toolchain's --label, or use `orkctl activity build\n" +
-			"--interface FILE`, which passes all three itself.",
+			"--interface FILE`, which passes all three itself.\n\n" +
+			"A kind: ServiceInterface document (a service image's, by convention\n" +
+			"service.ork.yaml) packs into one label, " + eventsources.InterfaceLabel + ";\n" +
+			"the image also carries " + eventsources.ContractLabel + "=1 and\n" +
+			eventsources.ProfileLabel + "=" + eventsources.ProfileEventSource + "/1.",
 		Example: "  orkctl activity interface pack interface.ork.yaml\n" +
 			"  orkctl activity interface pack --label icon interface.ork.yaml\n" +
 			`  docker build --label "` + dsl.InterfaceLabel + `=$(orkctl activity interface pack interface.ork.yaml)" \` + "\n" +
@@ -54,6 +60,19 @@ func newActivityInterfacePackCommand() *cobra.Command {
 			case "interface", "icon", "docs":
 			default:
 				return fmt.Errorf("--label %q is not a label an activity interface packs into: interface, icon or docs", which)
+			}
+			if kind, err := peekDocumentKind(args[0]); err != nil {
+				return err
+			} else if kind == dsl.KindServiceInterface {
+				if which != "interface" {
+					return fmt.Errorf("--label %q: a service interface packs into one label, interface (%s)", which, eventsources.InterfaceLabel)
+				}
+				label, err := packServiceInterfaceFile(args[0])
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), label)
+				return nil
 			}
 			labels, err := packDocumentFile(args[0])
 			if err != nil {
@@ -69,6 +88,40 @@ func newActivityInterfacePackCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&which, "label", "interface", "the label to print: interface, icon or docs")
 	return cmd
+}
+
+// peekDocumentKind is the kind: a document names, "" when it names none or does
+// not parse (the kind's own parser then explains).
+func peekDocumentKind(path string) (string, error) {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	var peek struct {
+		Kind string `yaml:"kind"`
+	}
+	if yaml.Unmarshal(source, &peek) != nil {
+		return "", nil
+	}
+	return peek.Kind, nil
+}
+
+// packServiceInterfaceFile reads one kind: ServiceInterface document and
+// returns its interface label's value. Every refusal names the file.
+func packServiceInterfaceFile(path string) (string, error) {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	iface, err := dsl.ParseServiceInterfaceDocument(source)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	label, err := dsl.PackServiceInterfaceLabel(iface)
+	if err != nil {
+		return "", fmt.Errorf("%s: %s label: %w", path, eventsources.InterfaceLabel, err)
+	}
+	return label, nil
 }
 
 // packedLabel is one label a document packs into: its short name, its key

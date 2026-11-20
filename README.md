@@ -260,7 +260,9 @@ reference.
   [Patterns](./docs/ORKFLOW_PATTERNS.md) · [JSON and enums](./docs/JSON.md) ·
   [Schemas](./docs/schemas/)
 - **Activities:** [OCI activity contract](./docs/OCI_ACTIVITY_CONTRACT.md) ·
-  [Activity images](./docs/ACTIVITY_IMAGES.md)
+  [Activity images](./docs/ACTIVITY_IMAGES.md) ·
+  [Orker Service Contract](./docs/ORKER_SERVICE_CONTRACT.md) ·
+  [Event source images](./docs/EVENT_SOURCE_IMAGES.md)
 - **Starting runs:** [Triggers](./docs/ORKFLOW_TRIGGERS.md) ·
   [Schedules](./docs/ORKFLOW_SCHEDULES.md) ·
   [Automation documents](./docs/AUTOMATION.md) · [Webhooks](./docs/WEBHOOKS.md) ·

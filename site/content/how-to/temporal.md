@@ -40,7 +40,7 @@ OrkStack sets the cluster's own retention from the deployment's maximum run rete
 
 A run that carries on past its history budget is a chain of executions in the cluster. Every OrkStack surface, including `orkctl` and the web UI, shows it as one run with one id and one event stream. To cancel a run, use `orkctl run cancel`. End a run through the cluster only as the upgrade procedure directs.
 
-At boot, each engine asks the cluster to index the run fields that run lists filter on. If the cluster refuses, the engine logs a warning. Run lists then walk the whole index, and a list that cannot finish that walk fails rather than returning a short one.
+At boot, each engine asks the cluster to index the run fields that run lists filter on. If the cluster refuses, the engine logs a warning. Run lists then walk the whole index, and a list that cannot finish that walk fails rather than returning a short one. [Add Temporal search attributes](/docs/operate/temporal-search-attributes/) lists them and how to add them by hand.
 
 ## Back up both stores
 

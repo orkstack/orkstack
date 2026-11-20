@@ -348,3 +348,69 @@ message SourceImage {
   // interface_error says why a declared interface could not be read.
   string interface_error = 7;
 }
+
+// ReceiptOutcome is what was decided about one message delivery.
+enum ReceiptOutcome {
+  RECEIPT_OUTCOME_UNSPECIFIED = 0;
+  RECEIPT_OUTCOME_ACCEPTED = 1;
+  RECEIPT_OUTCOME_DUPLICATE = 2;
+  RECEIPT_OUTCOME_FILTERED = 3;
+  RECEIPT_OUTCOME_REJECTED = 4;
+  RECEIPT_OUTCOME_RELEASED = 5;
+  RECEIPT_OUTCOME_DEAD_LETTERED = 6;
+  // DROPPED is a message an at-most-once source had in hand and could not
+  // accept: it is gone.
+  RECEIPT_OUTCOME_DROPPED = 7;
+}
+
+// Receipt is the record of one settled message delivery, written by the
+// Orker that held it, before its verdict. A record, never read for a
+// decision; it never holds a body, an attribute value, a credential or a
+// broker's error text.
+message Receipt {
+  // id is rcp- and the receipt's stamp.
+  string id = 1;
+  string namespace = 2;
+  string event_source_id = 3;
+  string event_source_name = 4;
+  // provider is the source image's broker kind, as its status reported it.
+  string provider = 5;
+  // message_id is the message's identity.
+  string message_id = 6;
+  // delivery_count is the delivery's number at the broker.
+  int32 delivery_count = 7;
+  // max_deliveries is the broker's delivery limit the count was compared
+  // with.
+  int32 max_deliveries = 8;
+  string body_sha256 = 9;
+  int64 body_bytes = 10;
+  ReceiptOutcome outcome = 11;
+  // reason is the outcome's reason code.
+  string reason = 12;
+  // message is the reason's one fixed sentence; never variable text.
+  string message = 13;
+  // run_id is the message's run, for ACCEPTED and DUPLICATE.
+  string run_id = 14;
+  // received_at is when the Orker took the message from its container.
+  google.protobuf.Timestamp received_at = 15;
+  // decided_at is when the outcome was decided.
+  google.protobuf.Timestamp decided_at = 16;
+  // broker holds at most 16 short facts the image reported (a stream and
+  // sequence, the SQS ids).
+  map<string, string> broker = 17;
+  // cause is, for RELEASED, DROPPED and DEAD_LETTERED, the reason the
+  // delivery was refused or waiting for.
+  string cause = 18;
+  // limit_checked_at is when max_deliveries was read from the broker.
+  google.protobuf.Timestamp limit_checked_at = 19;
+  // superseded is output only: a DEAD_LETTERED receipt followed by an
+  // ACCEPTED or DUPLICATE receipt of the same message.
+  bool superseded = 20;
+  // instance is the instance's index that held the delivery.
+  int32 instance = 21;
+  // orker_id is the Orker that settled it.
+  string orker_id = 22;
+  // retired_run: a DUPLICATE answered from the started marker of a run that
+  // has since been retired.
+  bool retired_run = 23;
+}

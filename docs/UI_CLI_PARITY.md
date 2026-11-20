@@ -782,7 +782,11 @@ on the log stream.
 CLI: `run attempts RUN [--task TASK] [--item N]` and `run get RUN --attempts`
 (`run get --attempts --json` is refused, pointing at `run attempts --json`).
 UI: a per-task retry badge and an attempt timeline with each failed attempt's
-own error and a link that pins the log pane to that attempt. The run page
+own error and a link that pins the log pane to that attempt. An attempt that
+ran with device profiles names each and the contract it ran under in the same
+words on both: the CLI's PROFILES column and a tag on the attempt's row,
+`sensor (contract 2, accepting 1)` or `sensor (contract 2, needed by the
+image)`. The run page
 renders from `GetRun` and reads the run's timeline afterwards; retry badges
 and timing fill in when it arrives.
 

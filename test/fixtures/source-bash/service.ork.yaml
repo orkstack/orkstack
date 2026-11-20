@@ -1,0 +1,8 @@
+apiVersion: orkstack/v1
+kind: ServiceInterface
+profile: event-source
+event_source:
+  delivery: at-least-once
+  max_concurrency: 1
+  dead_letter: true
+  extends_leases: true

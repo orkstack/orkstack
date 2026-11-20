@@ -317,5 +317,9 @@ func DeclaredAttributes(t testing.TB) map[string]bool {
 	return out
 }
 
-// PromLabels are Prometheus's own labels, which no instrument records.
-var PromLabels = map[string]bool{"le": true, "alertname": true, "alertstate": true, "severity": true}
+// PromLabels are Prometheus's own labels, which no instrument records: a
+// histogram's le, the alert series' labels, and job, which the kit's
+// Prometheus derives from the OTLP resource's service.name
+// (deploy/observability/prometheus.yml): one value per binary. instance,
+// one per process, is not one a dashboard groups by.
+var PromLabels = map[string]bool{"le": true, "alertname": true, "alertstate": true, "severity": true, "job": true}

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { can, canAnywhere, covers, missing, permissionRefusal } from '../src/lib/permissions';
+import { can, canAnywhere, covers, missing, permissionRefusal, runTarget } from '../src/lib/permissions';
 
 test('a scope covers what lies inside it, and nothing beside it', () => {
 	expect(covers('deployment', { namespace: 'a', orkflow: 'x' })).toBe(true);
@@ -39,4 +39,17 @@ test('permissionRefusal reads a missing permission out of the engine’s refusal
 	});
 	expect(permissionRefusal("[permission_denied] SIGNIN_CSRF: the request does not carry the sign-in's Ork-CSRF token")).toBeNull();
 	expect(permissionRefusal('[unavailable] the engine did not answer')).toBeNull();
+});
+
+// A run's own actions (run.pause, run.cancel) are decided at its Orkflow as
+// the server names it (access_rows runIn): the run's namespace and, for a
+// child run of another namespace's shared Orkflow, the owner's name before
+// the Orkflow's.
+test('runTarget names a shared Orkflow by its owner, as the server does', () => {
+	expect(runTarget('payments', { orkflowName: 'deploy', orkflowNamespace: '' })).toEqual({ namespace: 'payments', orkflow: 'deploy' });
+	expect(runTarget('payments', { orkflowName: 'deploy', orkflowNamespace: 'platform' })).toEqual({ namespace: 'payments', orkflow: 'platform/deploy' });
+	expect(runTarget('payments', undefined)).toEqual({ namespace: 'payments' });
+	const grants = { enforced: true, held: [{ scope: 'orkflow:payments/platform/deploy', permissions: ['run.cancel'] }] };
+	expect(can(grants, 'run.cancel', runTarget('payments', { orkflowName: 'deploy', orkflowNamespace: 'platform' }))).toBe(true);
+	expect(can(grants, 'run.cancel', runTarget('payments', { orkflowName: 'deploy', orkflowNamespace: '' }))).toBe(false);
 });

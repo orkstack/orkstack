@@ -1591,7 +1591,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	retention := archivecleanup.NewRetentionController(
 		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger).
-		WithKeyLife(engine.ClaimLife(cfg.idempotencyTTL))
+		WithKeyLife(engine.ClaimLife(cfg.idempotencyTTL)).WithObserver(telemetry.NewRetentionObserver(sinks.Default(), logger))
 	policy, err := retention.Ensure(ctx)
 	if err != nil {
 		// Fail closed: an engine that cannot establish the ceiling must not
@@ -1829,13 +1829,28 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			if backlog, err := engine.NewTemporalPoolBacklog(temporalClient, cfg.temporalNamespace, cfg.orkerQueue, cfg.poolMetrics.pools); err != nil {
 				logger.Warn("the pool backlog gauges could not be set up; ork.pool.* is not reported", "error", err)
 			} else {
+				// The breakdown by release (ork.pool.release.backlog.*), only
+				// where versioning is on.
+				if cfg.deployment.Versioned() {
+					backlog.WithTemporalReleases(cfg.deployment.Name)
+				}
 				sources.PoolBacklog = &telemetry.PoolBacklogSource{
 					Pools:    backlog.Pools(),
 					Interval: cfg.poolMetrics.interval,
 					Read: func(ctx context.Context, pool string) (telemetry.PoolReading, error) {
 						r, err := backlog.Read(ctx, pool)
-						return telemetry.PoolReading{Backlog: r.Backlog, BacklogAge: r.BacklogAge,
-							AddRate: r.AddRate, DispatchRate: r.DispatchRate, Pollers: int64(r.Pollers)}, err
+						reading := telemetry.PoolReading{Backlog: r.Backlog, BacklogAge: r.BacklogAge,
+							AddRate: r.AddRate, DispatchRate: r.DispatchRate, Pollers: int64(r.Pollers)}
+						if err != nil {
+							return reading, err
+						}
+						releases, rerr := backlog.Releases(ctx, pool, r.Backlog)
+						reading.ReleasesErr = rerr
+						for _, rb := range releases {
+							reading.Releases = append(reading.Releases, telemetry.PoolReleaseReading{
+								Release: rb.Release, Backlog: rb.Backlog, BacklogAge: rb.BacklogAge, HasAge: rb.HasAge})
+						}
+						return reading, nil
 					},
 				}
 			}

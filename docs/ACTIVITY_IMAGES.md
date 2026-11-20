@@ -155,6 +155,15 @@ which the dispatcher `orkstack.v1.json` selects by `kind`, so the
 its command line and skips one it finds in a directory, naming it on
 stderr.
 
+A service image (an event source's) declares its interface the same way, as a
+`kind: ServiceInterface` document, by convention `service.ork.yaml`: a
+`profile:` (`event-source`), its `with:` keys in the grammar above, and the
+profile's block (`event_source:` with `delivery`, `max_concurrency`,
+`ordering`, `dead_letter`, `extends_leases`). `orkctl activity interface pack
+service.ork.yaml` prints the value of its one label,
+`org.orkstack.service.interface`, held to the rules the engine reads it by;
+editors complete it from [`serviceinterface.v1.json`](schemas/serviceinterface.v1.json).
+
 Labels are inherited from a base image: an image built `FROM` a labelled image
 declares the base's interface, icon and descriptions until it declares its
 own, with `--interface` (which sets all three) or a `LABEL` of each key; an

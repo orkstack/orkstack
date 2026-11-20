@@ -8,7 +8,9 @@ Scope: the engine↔Orker wire, the container-facing filesystem ABI, the durable
 commit protocol, image resolution, delivery and policy, Orker dispatch,
 failure categories, the security profile, and the first-party activity images.
 It does not design a plugin marketplace, a general policy engine, or a second
-runtime.
+runtime. A long-lived container an Orker keeps running, such as an event
+source's, is a service, not a task: its contract is the
+[Orker Service Contract](ORKER_SERVICE_CONTRACT.md).
 
 An image author needs §0, §3, §8.2 and §10. Everything else is how the
 platform keeps the promises §3 makes. The rationale behind the rules that look
@@ -2100,7 +2102,12 @@ same `Error` shape.
 error types the Orker then emits for an interruption instead of the category:
 `OrkInterruption:<REASON>` for `ORKER_STOPPED`, for `ATTEMPT_STORE_UNAVAILABLE`
 when the attempt started no container, and for `CONTAINER_STOPPED_BY_RUNTIME`
-while the Orker is stopping. Such an error is non-retryable, so it ends the
+while the Orker is stopping, or when the Orker observed its runtime go away as
+it stopped the container: the container's event stream, open when the stop was
+heard, ended by itself within 5 seconds, as a Docker daemon that shuts down
+ends it. An operator's stop through a daemon that stays up leaves the stream
+open, so it is not one, and that attempt reports 5 seconds later. Podman keeps
+no daemon whose going away stops a container, so there it never applies. Such an error is non-retryable, so it ends the
 execution and the engine decides whether to run the task again; its detail
 still carries the reason. A listed type the Orker may not emit is declined:
 logged, and the failure stays category-typed. With `TemporalTimeout:Heartbeat`

@@ -706,6 +706,60 @@ starts and no broker is read. A source's own identities, credentials and
 grant-backed secrets are refused until task identity is available, and
 `env:` holds configuration, never a secret ([EVENT_SOURCES.md](EVENT_SOURCES.md)).
 
+### Service containers
+
+A source runs its image as a long-lived **service container**
+([ORKER_SERVICE_CONTRACT.md](ORKER_SERVICE_CONTRACT.md)), whose image is
+chosen by whoever may write the source. No release yet starts one; when one
+runs, it is held to everything an activity container is
+([What the Orker refuses](#what-the-orker-refuses)) and to more, because it
+runs for long:
+
+- it runs as the Orker's own non-root uid, whatever its image declares, and
+  an image that needs root fails `SERVICE_RUNS_AS_ROOT`;
+- no core dumps, and no swap of its own: its memory-and-swap limit is its
+  memory limit;
+- it talks to its Orker only through two mounts, one per direction: it cannot
+  write what the Orker writes, and the Orker reads what it writes through one
+  handle opened from the verified container process, following no link,
+  crossing no other filesystem, taking only regular files with one name and
+  within their bound, and copying each once. A link, device, socket, FIFO or
+  oversized file at a name the Orker reads ends the attempt
+  `SERVICE_CONTRACT_VIOLATION`;
+- what it writes for the Orker is a bounded memory filesystem charged to its
+  own memory: it cannot fill a disk;
+- its secrets and its conversation are memory-backed and gone with the
+  container. On a host with swap, memory can still reach the swap device, so
+  use encrypted swap or none.
+
+**What a service container can reach is the operator's decision, not a
+property OrkStack guarantees of every host.** A service that needs a network
+gets one of its own, a bridge that no other container joins and that is cut
+off from the runtime's other networks, with IPv4 only, and reaches what the
+host routes it to through address translation: its broker,
+and also the internet, the local network, the engine's API (which asks for a
+credential when authentication is enforced) and the cluster's frontend
+where the host can route to it. That a network of its own keeps other
+containers out is the runtime's packet rules' doing, so each "cannot reach"
+below holds only on a host whose reach probe is clean
+([DEPLOY.md](DEPLOY.md#source-hosts)):
+
+| Cannot reach, on a host whose probe is clean | Checked by |
+|---|---|
+| an instance-metadata endpoint, or an address the operator listed in `orker.services.probe_addresses` | question 1 |
+| a listener bound to the host's loopback, the Orker's admin listener among them | question 2 |
+| the cluster as a client it will serve without a credential, and any of its membership ports | question 3 |
+| any other container, on another service's network or on the runtime's default one | question 4 |
+| the runtime's socket and any host path | the sandbox, always |
+
+**The cluster is the one reach that matters most.** OrkStack's own
+authentication does not cover the cluster's frontend: a frontend that serves
+callers with no credential lets whoever reaches it take any tenant's tasks,
+signal and terminate anything. An Orker whose probe finds one is unfit to
+host services unless the operator accepts it with
+`orker.services.allow_open_cluster`, which is logged at every boot; run the
+cluster with mutual TLS ([DEPLOY.md](DEPLOY.md#temporal-over-tls)).
+
 ## Webhook secrets and destinations
 
 A webhook's signing secret is not a bearer credential. It signs outbound deliveries,

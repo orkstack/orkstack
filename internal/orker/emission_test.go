@@ -38,6 +38,11 @@ func TestEmission_TypesAListedInterruption(t *testing.T) {
 	}
 	startedStore := func() *Failure { return Fail(ReasonAttemptStoreUnavailable, "store gone") }
 	byRuntime := func() *Failure { return Fail(ReasonContainerStoppedByRuntime, "daemon stopped") }
+	runtimeWentAway := func() *Failure {
+		f := Fail(ReasonContainerStoppedByRuntime, "daemon stopped, and its stream ended")
+		f.RuntimeWentAway = true
+		return f
+	}
 	neverStartedDrift := func() *Failure {
 		f := Fail(ReasonProfileDrifted, "profile drifted")
 		f.NeverStarted = true
@@ -71,6 +76,8 @@ func TestEmission_TypesAListedInterruption(t *testing.T) {
 		{"a store fault after its start is declined", startedStore(), listed(ReasonAttemptStoreUnavailable), false, CategoryInfrastructureError, -1},
 		{"stopped by its runtime while stopping: typed", byRuntime(), listed(ReasonContainerStoppedByRuntime), true, InterruptionType(ReasonContainerStoppedByRuntime), 1},
 		{"stopped by its runtime, not stopping, is declined", byRuntime(), listed(ReasonContainerStoppedByRuntime), false, CategoryInfrastructureError, -1},
+		{"stopped as its runtime went away, not stopping: typed", runtimeWentAway(), listed(ReasonContainerStoppedByRuntime), false, InterruptionType(ReasonContainerStoppedByRuntime), 1},
+		{"stopped as its runtime went away, nothing listed: today's error", runtimeWentAway(), nil, false, CategoryInfrastructureError, 0},
 		{"a never-started profile drift listed: typed", neverStartedDrift(), listed(ReasonProfileDrifted), false, InterruptionType(ReasonProfileDrifted), 1},
 		{"a profile drift not marked never-started is declined", startedDrift(), listed(ReasonProfileDrifted), false, CategoryInfrastructureError, -1},
 		{"a never-started drift whose container started is declined", neverStartedDrift().stampFor(listed(ReasonProfileDrifted), true, 0), listed(ReasonProfileDrifted), false, CategoryInfrastructureError, -1},

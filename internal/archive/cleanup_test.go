@@ -32,9 +32,12 @@ type fakeCluster struct {
 	// backstop TTL. Defaulted by newFakeCluster to whatever the test's
 	// RetentionController would want, so Reconcile is a no-op unless a test
 	// deliberately sets it to something else.
-	retention           time.Duration
-	retentionErr        error
-	setRetentionErr     error
+	retention       time.Duration
+	retentionErr    error
+	setRetentionErr error
+	// afterSet, when set, runs after each successful SetNamespaceRetention:
+	// another writer acting on the cluster right after this engine's call.
+	afterSet            func(f *fakeCluster)
 	setRetentionCalls   []time.Duration
 	retentionNamespaces []string
 
@@ -75,6 +78,9 @@ func (f *fakeCluster) SetNamespaceRetention(_ context.Context, namespace string,
 		return 0, f.setRetentionErr
 	}
 	f.retention = d
+	if f.afterSet != nil {
+		f.afterSet(f)
+	}
 	return d, nil
 }
 

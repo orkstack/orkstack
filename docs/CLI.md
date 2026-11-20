@@ -115,7 +115,7 @@ Inherited flags:
 
 ## `orkctl activity interface pack`
 
-Print a label value a kind: ActivityInterface document packs into
+Print a label value an image's interface document packs into
 
 Read a kind: ActivityInterface document and print the value of one label it
 packs into: one line — compact JSON, or the icon's canonical SVG — the same
@@ -131,6 +131,11 @@ declares none, and clears a label a base image set.
 
 Pass the values to any toolchain's --label, or use `orkctl activity build
 --interface FILE`, which passes all three itself.
+
+A kind: ServiceInterface document (a service image's, by convention
+service.ork.yaml) packs into one label, org.orkstack.service.interface;
+the image also carries org.orkstack.service.contract=1 and
+org.orkstack.service.profile=event-source/1.
 
 Flags:
 
@@ -2353,8 +2358,11 @@ An Orker that stopped reads this way for up to 90 seconds, because the cluster
 still remembers it polling.
 STATE names every cause that holds a cordon, an operator's first:
 cordoned (operator; profile drifted). PROFILES is each profile the Orker
-offers with its kind and the cause on it, a100 (gpu; drifted), and each
-profile cause is a line under the table with what was found and how it ends.
+offers with its kind and the cause on it, a100 (gpu; drifted), and for a
+profile of more than one contract or another label its contracts, the
+default of several starred, sensor:1*,2 (devices), and what the default
+accepts, sensor:2 +acc 1 (devices);
+each profile cause is a line under the table with what was found and how it ends.
 PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker
 declaring one admits tasks within, and RESERVED what stands reserved against
 it, pinned members included and each outstanding poll counted at the per-task
@@ -3180,6 +3188,11 @@ which is where the failed try's error, phase, exit code and Orker live.
 An attempt whose Orker died before it could file one is still listed, as
 UNREPORTED with dashes: the timeline never has a silent hole, and an
 unreported attempt is an absent record rather than a failure.
+
+PROFILES, for a run whose tasks name device profiles, is each profile an
+attempt ran with and the contract it ran under: sensor (contract 2,
+accepting 1), or sensor (contract 2, needed by the image) when the task's image
+chose it.
 
 With --task the full error of every failed attempt is printed under the
 table, each with the command that prints that attempt's output.
@@ -4159,6 +4172,63 @@ Flags:
 - `--start-at STRING` — no fire before this RFC3339 time
 - `--timezone STRING` — IANA time zone the cron expressions are evaluated in (default UTC)
 - `--version STRING` — pin this orkflow version
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl service`
+
+Work with service images (event sources)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl service test`
+
+Check a service image against the Orker Service Contract
+
+Run a service image through the Orker's own host code, with no deployment.
+
+The image runs as this user's uid (never root), with network none, the
+bounded answer filesystem, no swap and no core dumps, and is pinned by
+digest first: push it to a registry (`orkctl activity build`), as for
+`activity test`. The engine's side is played by an in-process door that
+accepts every message.
+
+--publish-exec runs a command that publishes one message to the image's
+broker; it is given ORK_SERVICE_ROOT, the container's root as this host
+sees it. Without it the message checks are skipped, never passed.
+
+Requires a working container runtime on Linux. Exits non-zero if any check
+fails.
+
+Flags:
+
+- `--keep` — keep the workspace for inspection (never a secret)
+- `--publish-exec STRING` — a command that publishes one message to the image's broker (run with ORK_SERVICE_ROOT)
+- `--startup DURATION` (default `1m0s`) — how long the image may take to write its first status
 
 Inherited flags:
 

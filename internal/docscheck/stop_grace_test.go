@@ -134,6 +134,7 @@ func runsOrker(text string) bool {
 // their package one whose handed programs may be the Orker.
 var orkerBuildOnly = map[string]string{
 	"internal/orker/gpuhost_fixture_gpuhost_test.go": "copies the Orker into the GPU probe image it builds; never runs it",
+	"internal/orker/reach_probe_integration_test.go": "copies the Orker into the reach probe's image it builds; never runs it on the host",
 }
 
 // orkerStartingPackages are the directories one of whose tests starts

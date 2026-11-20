@@ -2,13 +2,18 @@ package orker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path"
 	"strings"
+	"syscall"
+
+	"github.com/orkstack/orkstack/internal/orker/servicehost/reachprobe"
 )
 
 // The host-native rule (design §4.12): a profile's devices are what the
@@ -223,6 +228,12 @@ const maxProbePaths = 64
 // and reaches nothing: its only output is the report. Exit 2 is a malformed
 // invocation, which writes nothing to stdout.
 func Probe(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "reach" {
+		// The reach probe (reach_probe.go): stopped by SIGTERM, as a canary is.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		defer stop()
+		return reachprobe.Main(ctx, args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "unit" {
 		return probeUnitNodes(args[1:], stdout, stderr)
 	}

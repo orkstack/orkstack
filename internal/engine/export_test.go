@@ -105,6 +105,15 @@ func DisableHistoryGuardForTest() (restore func()) {
 	return func() { historyGuardDisabledForTest = false }
 }
 
+// SetHistoryGuardProbeForTest installs the guard's test-only probe, which
+// reports at every guard check the history as the guard counts it and the
+// reserve it kept back for the run's failure path, and returns the function
+// that removes it. One test at a time may hold it.
+func SetHistoryGuardProbeForTest(probe func(runID string, events, reserve int64)) (restore func()) {
+	historyGuardProbeForTest = probe
+	return func() { historyGuardProbeForTest = nil }
+}
+
 // IsHistoryLimitTerminationForTest is isHistoryLimitTermination: whether a
 // termination reason is the cluster's own at its history limit, the text the
 // reader's backstop matches (TestIntegration_ContinueAsNewServerContract, h).

@@ -1,7 +1,7 @@
 {
   "uid": "orkstack-run",
   "title": "OrkStack / Run",
-  "description": "One run: its spans, the engine's events, its attempts' usage and its tasks' logs.",
+  "description": "One run: its spans, the engine's events, its attempts' usage against their limits, its tasks' logs and its webhook deliveries.",
   "tags": [
     "orkstack"
   ],
@@ -227,6 +227,173 @@
         "w": 24,
         "x": 0,
         "y": 24
+      },
+      "repeatDirection": "h",
+      "options": {
+        "showLabels": false,
+        "showCommonLabels": false,
+        "showTime": true,
+        "showLogContextToggle": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": ""
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (ork_task_id) (max_over_time({service_name=~\".*orker\"} | ork_record=\"usage\" | ork_usage_kind=\"sample\" | ork_run_id=\"$run\" | ork_task_id=~\"$task\" | unwrap ork_usage_memory_bytes [$__interval]))",
+          "legendFormat": "{{ork_task_id}}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        },
+        {
+          "expr": "max by (ork_task_id) (max_over_time({service_name=~\".*orker\"} | ork_record=\"usage\" | ork_usage_kind=\"sample\" | ork_run_id=\"$run\" | ork_task_id=~\"$task\" | unwrap ork_usage_memory_limit_bytes [$__interval]))",
+          "legendFormat": "{{ork_task_id}} limit",
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        }
+      ],
+      "title": "Memory against the limit",
+      "description": "Each task's memory over time from its attempts' usage samples, with its limit dashed.",
+      "transparent": false,
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "repeatDirection": "h",
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "",
+          "sort": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (ork_task_id) (max_over_time({service_name=~\".*orker\"} | ork_record=\"usage\" | ork_usage_kind=\"sample\" | ork_run_id=\"$run\" | ork_task_id=~\"$task\" | unwrap ork_usage_cpu_cores [$__interval]))",
+          "legendFormat": "{{ork_task_id}}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        }
+      ],
+      "title": "CPU in use",
+      "description": "Each task's CPU cores over time from its attempts' usage samples.",
+      "transparent": false,
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "repeatDirection": "h",
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "",
+          "sort": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "logs",
+      "targets": [
+        {
+          "expr": "{service_name=~\".*ork\"} |~ \"webhook delivered|webhook delivery failed\" | run_id=\"$run\"",
+          "legendFormat": "",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        }
+      ],
+      "title": "Webhook deliveries",
+      "description": "The engine's lines for the run's webhook deliveries that settled: delivered, or failed for good. Never the URL.",
+      "transparent": false,
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 42
       },
       "repeatDirection": "h",
       "options": {
