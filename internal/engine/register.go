@@ -36,7 +36,7 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 	// the new build on its next workflow task. Pinned keeps the run on its own
 	// version; the price is that v1 workers must stay up until the deployment
 	// version reports Drained (docs/DEPLOY.md).
-	w.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{
+	w.RegisterWorkflowWithOptions(RunWorkflowRaw, workflow.RegisterOptions{
 		Name:               RunWorkflowType,
 		VersioningBehavior: workflow.VersioningBehaviorPinned,
 	})

@@ -42,6 +42,12 @@ const (
 	// IdentityServiceRetireSigningKeyProcedure is the fully-qualified name of the IdentityService's
 	// RetireSigningKey RPC.
 	IdentityServiceRetireSigningKeyProcedure = "/orkstack.v1.IdentityService/RetireSigningKey"
+	// IdentityServiceMintAttemptTokensProcedure is the fully-qualified name of the IdentityService's
+	// MintAttemptTokens RPC.
+	IdentityServiceMintAttemptTokensProcedure = "/orkstack.v1.IdentityService/MintAttemptTokens"
+	// IdentityServiceListIssuedTokensProcedure is the fully-qualified name of the IdentityService's
+	// ListIssuedTokens RPC.
+	IdentityServiceListIssuedTokensProcedure = "/orkstack.v1.IdentityService/ListIssuedTokens"
 )
 
 // IdentityServiceClient is a client for the orkstack.v1.IdentityService service.
@@ -59,6 +65,16 @@ type IdentityServiceClient interface {
 	// instant than it was is FAILED_PRECONDITION. Needs identity.keys.retire
 	// at the deployment.
 	RetireSigningKey(context.Context, *connect.Request[v1.RetireSigningKeyRequest]) (*connect.Response[v1.RetireSigningKeyResponse], error)
+	// MintAttemptTokens signs the tokens one attempt of an admitted run's
+	// task holds, for the Orker that holds the attempt. Served only when
+	// callers are authenticated (auth.mode enforce). Needs
+	// identity.token.mint and task.result.commit at the task's pool, asked
+	// once the run's admission names the pool.
+	MintAttemptTokens(context.Context, *connect.Request[v1.MintAttemptTokensRequest]) (*connect.Response[v1.MintAttemptTokensResponse], error)
+	// ListIssuedTokens lists what was issued for a run's attempts, in key
+	// order: who asked, and each token's claims, never a token. Needs
+	// run.read on the run's Orkflow.
+	ListIssuedTokens(context.Context, *connect.Request[v1.ListIssuedTokensRequest]) (*connect.Response[v1.ListIssuedTokensResponse], error)
 }
 
 // NewIdentityServiceClient constructs a client for the orkstack.v1.IdentityService service. By
@@ -90,14 +106,28 @@ func NewIdentityServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(identityServiceMethods.ByName("RetireSigningKey")),
 			connect.WithClientOptions(opts...),
 		),
+		mintAttemptTokens: connect.NewClient[v1.MintAttemptTokensRequest, v1.MintAttemptTokensResponse](
+			httpClient,
+			baseURL+IdentityServiceMintAttemptTokensProcedure,
+			connect.WithSchema(identityServiceMethods.ByName("MintAttemptTokens")),
+			connect.WithClientOptions(opts...),
+		),
+		listIssuedTokens: connect.NewClient[v1.ListIssuedTokensRequest, v1.ListIssuedTokensResponse](
+			httpClient,
+			baseURL+IdentityServiceListIssuedTokensProcedure,
+			connect.WithSchema(identityServiceMethods.ByName("ListIssuedTokens")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // identityServiceClient implements IdentityServiceClient.
 type identityServiceClient struct {
-	getIssuer        *connect.Client[v1.GetIssuerRequest, v1.GetIssuerResponse]
-	listSigningKeys  *connect.Client[v1.ListSigningKeysRequest, v1.ListSigningKeysResponse]
-	retireSigningKey *connect.Client[v1.RetireSigningKeyRequest, v1.RetireSigningKeyResponse]
+	getIssuer         *connect.Client[v1.GetIssuerRequest, v1.GetIssuerResponse]
+	listSigningKeys   *connect.Client[v1.ListSigningKeysRequest, v1.ListSigningKeysResponse]
+	retireSigningKey  *connect.Client[v1.RetireSigningKeyRequest, v1.RetireSigningKeyResponse]
+	mintAttemptTokens *connect.Client[v1.MintAttemptTokensRequest, v1.MintAttemptTokensResponse]
+	listIssuedTokens  *connect.Client[v1.ListIssuedTokensRequest, v1.ListIssuedTokensResponse]
 }
 
 // GetIssuer calls orkstack.v1.IdentityService.GetIssuer.
@@ -115,6 +145,16 @@ func (c *identityServiceClient) RetireSigningKey(ctx context.Context, req *conne
 	return c.retireSigningKey.CallUnary(ctx, req)
 }
 
+// MintAttemptTokens calls orkstack.v1.IdentityService.MintAttemptTokens.
+func (c *identityServiceClient) MintAttemptTokens(ctx context.Context, req *connect.Request[v1.MintAttemptTokensRequest]) (*connect.Response[v1.MintAttemptTokensResponse], error) {
+	return c.mintAttemptTokens.CallUnary(ctx, req)
+}
+
+// ListIssuedTokens calls orkstack.v1.IdentityService.ListIssuedTokens.
+func (c *identityServiceClient) ListIssuedTokens(ctx context.Context, req *connect.Request[v1.ListIssuedTokensRequest]) (*connect.Response[v1.ListIssuedTokensResponse], error) {
+	return c.listIssuedTokens.CallUnary(ctx, req)
+}
+
 // IdentityServiceHandler is an implementation of the orkstack.v1.IdentityService service.
 type IdentityServiceHandler interface {
 	// GetIssuer answers the issuer, its documents as this engine serves and
@@ -130,6 +170,16 @@ type IdentityServiceHandler interface {
 	// instant than it was is FAILED_PRECONDITION. Needs identity.keys.retire
 	// at the deployment.
 	RetireSigningKey(context.Context, *connect.Request[v1.RetireSigningKeyRequest]) (*connect.Response[v1.RetireSigningKeyResponse], error)
+	// MintAttemptTokens signs the tokens one attempt of an admitted run's
+	// task holds, for the Orker that holds the attempt. Served only when
+	// callers are authenticated (auth.mode enforce). Needs
+	// identity.token.mint and task.result.commit at the task's pool, asked
+	// once the run's admission names the pool.
+	MintAttemptTokens(context.Context, *connect.Request[v1.MintAttemptTokensRequest]) (*connect.Response[v1.MintAttemptTokensResponse], error)
+	// ListIssuedTokens lists what was issued for a run's attempts, in key
+	// order: who asked, and each token's claims, never a token. Needs
+	// run.read on the run's Orkflow.
+	ListIssuedTokens(context.Context, *connect.Request[v1.ListIssuedTokensRequest]) (*connect.Response[v1.ListIssuedTokensResponse], error)
 }
 
 // NewIdentityServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -157,6 +207,18 @@ func NewIdentityServiceHandler(svc IdentityServiceHandler, opts ...connect.Handl
 		connect.WithSchema(identityServiceMethods.ByName("RetireSigningKey")),
 		connect.WithHandlerOptions(opts...),
 	)
+	identityServiceMintAttemptTokensHandler := connect.NewUnaryHandler(
+		IdentityServiceMintAttemptTokensProcedure,
+		svc.MintAttemptTokens,
+		connect.WithSchema(identityServiceMethods.ByName("MintAttemptTokens")),
+		connect.WithHandlerOptions(opts...),
+	)
+	identityServiceListIssuedTokensHandler := connect.NewUnaryHandler(
+		IdentityServiceListIssuedTokensProcedure,
+		svc.ListIssuedTokens,
+		connect.WithSchema(identityServiceMethods.ByName("ListIssuedTokens")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.IdentityService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case IdentityServiceGetIssuerProcedure:
@@ -165,6 +227,10 @@ func NewIdentityServiceHandler(svc IdentityServiceHandler, opts ...connect.Handl
 			identityServiceListSigningKeysHandler.ServeHTTP(w, r)
 		case IdentityServiceRetireSigningKeyProcedure:
 			identityServiceRetireSigningKeyHandler.ServeHTTP(w, r)
+		case IdentityServiceMintAttemptTokensProcedure:
+			identityServiceMintAttemptTokensHandler.ServeHTTP(w, r)
+		case IdentityServiceListIssuedTokensProcedure:
+			identityServiceListIssuedTokensHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -184,4 +250,12 @@ func (UnimplementedIdentityServiceHandler) ListSigningKeys(context.Context, *con
 
 func (UnimplementedIdentityServiceHandler) RetireSigningKey(context.Context, *connect.Request[v1.RetireSigningKeyRequest]) (*connect.Response[v1.RetireSigningKeyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.IdentityService.RetireSigningKey is not implemented"))
+}
+
+func (UnimplementedIdentityServiceHandler) MintAttemptTokens(context.Context, *connect.Request[v1.MintAttemptTokensRequest]) (*connect.Response[v1.MintAttemptTokensResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.IdentityService.MintAttemptTokens is not implemented"))
+}
+
+func (UnimplementedIdentityServiceHandler) ListIssuedTokens(context.Context, *connect.Request[v1.ListIssuedTokensRequest]) (*connect.Response[v1.ListIssuedTokensResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.IdentityService.ListIssuedTokens is not implemented"))
 }

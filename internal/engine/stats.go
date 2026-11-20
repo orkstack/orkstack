@@ -81,6 +81,10 @@ type StatsWindow struct {
 type Executions struct {
 	Running   []*orkstackv1.Run
 	Durations []time.Duration
+	// Queued holds the ids of the Running runs the cluster indexes as
+	// waiting for a concurrency slot (OrkflowRunQueued). GetStats' queued
+	// bucket counts the ones it keeps as running.
+	Queued map[string]struct{}
 }
 
 // ErrSeriesInconsistent reports a series that does not fit the scan it was
@@ -117,7 +121,7 @@ func (r *TemporalRunReader) Executions(ctx context.Context, w StatsWindow) (Exec
 		return Executions{}, fmt.Errorf(
 			"engine: stats window needs both bounds (since=%v until=%v)", w.Since, w.Until)
 	}
-	running, err := r.runningExecutions(ctx, w)
+	running, queued, err := r.runningExecutions(ctx, w)
 	if err != nil {
 		return Executions{}, err
 	}
@@ -125,15 +129,16 @@ func (r *TemporalRunReader) Executions(ctx context.Context, w StatsWindow) (Exec
 	if err != nil {
 		return Executions{}, err
 	}
-	return Executions{Running: running, Durations: durations}, nil
+	return Executions{Running: running, Durations: durations, Queued: queued}, nil
 }
 
 // runningExecutions lists the namespace's unfinished runs as shallow
-// projections, newest first.
+// projections, newest first, and the ids of those among them indexed as
+// queued for a concurrency slot.
 func (r *TemporalRunReader) runningExecutions(
 	ctx context.Context,
 	w StatsWindow,
-) ([]*orkstackv1.Run, error) {
+) ([]*orkstackv1.Run, map[string]struct{}, error) {
 	// Live runs, a chain caught between its two records included: one row
 	// per run, its ContinuedAsNew record settled (visibility.go).
 	query := fmt.Sprintf("WorkflowType = %q AND %s", RunWorkflowType, liveRunPredicate(r.clock()))
@@ -144,13 +149,14 @@ func (r *TemporalRunReader) runningExecutions(
 		}
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	records, _, err = r.resolveChains(ctx, records)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := []*orkstackv1.Run{}
+	queued := map[string]struct{}{}
 	for _, info := range records {
 		run := r.listedRun(info)
 		if started := run.GetCreatedAt(); started != nil && !started.AsTime().Before(w.Until) {
@@ -159,6 +165,9 @@ func (r *TemporalRunReader) runningExecutions(
 			continue
 		}
 		out = append(out, run)
+		if indexedRunQueued(info) {
+			queued[run.GetId()] = struct{}{}
+		}
 	}
 	// Newest first, stably: the index already answers in start-time order, and
 	// a stable sort therefore leaves two replicas with the same list. Nothing
@@ -168,7 +177,22 @@ func (r *TemporalRunReader) runningExecutions(
 	sort.SliceStable(out, func(i, j int) bool {
 		return runStartTime(out[i]).After(runStartTime(out[j]))
 	})
-	return out, nil
+	return out, queued, nil
+}
+
+// indexedRunQueued reports whether an open execution's index entry says the
+// run waits for a concurrency slot: OrkflowRunQueued holds exactly "true"
+// while it waits and is absent otherwise (concurrency_run.go
+// syncConcAttributes). Only the run itself writes the attribute, always as
+// that keyword, so anything else, an undecodable payload included, is a run
+// that is not waiting.
+func indexedRunQueued(info *workflowpb.WorkflowExecutionInfo) bool {
+	p := info.GetSearchAttributes().GetIndexedFields()[task.SearchAttrOrkflowRunQueued]
+	if p == nil {
+		return false
+	}
+	var value string
+	return DataConverter().FromPayload(p, &value) == nil && value == "true"
 }
 
 // RunningCount is how many runs of namespace are in flight now, from the

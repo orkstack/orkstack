@@ -4,9 +4,11 @@
 
 import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
-import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { Event, InheritedPause, Run, RunPause, RunPauseSignal, TaskRun } from "./run_pb";
+import type { Duration, Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_duration, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { ArtifactRef } from "./common_pb";
+import { file_orkstack_v1_common } from "./common_pb";
+import type { Event, InheritedPause, ResumeAction, ResumeDisposition, Run, RunPause, RunPauseSignal, TaskRun } from "./run_pb";
 import { file_orkstack_v1_run } from "./run_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -14,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/continuation.proto.
  */
 export const file_orkstack_v1_continuation: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QikgYKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QSKwoGcmVzdW1lGAsgASgLMhsub3Jrc3RhY2sudjEuUnVuUmVzdW1lQ2FycnkSJAoFcGF1c2UYDCABKAsyFS5vcmtzdGFjay52MS5SdW5QYXVzZRIpCgpsYXN0X3BhdXNlGA0gASgLMhUub3Jrc3RhY2sudjEuUnVuUGF1c2USNQoQcGF1c2VkX2J5X3BhcmVudBgOIAEoCzIbLm9ya3N0YWNrLnYxLkluaGVyaXRlZFBhdXNlEhgKEGxhc3RfY2FzY2FkZV9zZXEYDyABKAMSNQoLY29uY3VycmVuY3kYECABKAsyIC5vcmtzdGFjay52MS5SdW5Db25jdXJyZW5jeUNhcnJ5EjwKF2RlZmVycmVkX3BhdXNlX3JlcXVlc3RzGBEgAygLMhsub3Jrc3RhY2sudjEuUnVuUGF1c2VTaWduYWwaNwoVVmVyc2lvbkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEitAEKEVJ1bkNoZWNrcG9pbnRQYXJ0EiAKBmhlYWRlchgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAiADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIvCgtsb3NzX2V2ZW50cxgEIAEoCzIaLm9ya3N0YWNrLnYxLlJ1bkxvc3NFdmVudHMiiAEKD1J1bkV2ZW50U2VnbWVudBIOCgZydW5faWQYASABKAkSEgoKZ2VuZXJhdGlvbhgCIAEoAxIWCg5maXJzdF9zZXF1ZW5jZRgDIAEoAxIVCg1sYXN0X3NlcXVlbmNlGAQgASgDEiIKBmV2ZW50cxgFIAMoCzISLm9ya3N0YWNrLnYxLkV2ZW50IqsBChJSdW5TbmFwc2hvdE92ZXJsYXkSEAoIYmFzZV91cmkYASABKAkSIAoGaGVhZGVyGAIgASgLMhAub3Jrc3RhY2sudjEuUnVuEicKCXRhc2tfcnVucxgDIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SIwoFaXRlbXMYBCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEhMKC2Jhc2Vfc2hhMjU2GAUgASgJIhUKE1J1bkNvbmN1cnJlbmN5Q2FycnkiSAoNUnVuTG9zc0V2ZW50cxINCgVjb3VudBgBIAEoBRIoCgRvcGVuGAIgAygLMhoub3Jrc3RhY2sudjEuT3Blbkxvc3NFdmVudCJPCg1PcGVuTG9zc0V2ZW50EhAKCG9ya2VyX2lkGAEgASgJEiwKCGZpcnN0X2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIQCg5SdW5SZXN1bWVDYXJyeUKtAQoPY29tLm9ya3N0YWNrLnYxQhFDb250aW51YXRpb25Qcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_orkstack_v1_run]);
+  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QikgYKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QSKwoGcmVzdW1lGAsgASgLMhsub3Jrc3RhY2sudjEuUnVuUmVzdW1lQ2FycnkSJAoFcGF1c2UYDCABKAsyFS5vcmtzdGFjay52MS5SdW5QYXVzZRIpCgpsYXN0X3BhdXNlGA0gASgLMhUub3Jrc3RhY2sudjEuUnVuUGF1c2USNQoQcGF1c2VkX2J5X3BhcmVudBgOIAEoCzIbLm9ya3N0YWNrLnYxLkluaGVyaXRlZFBhdXNlEhgKEGxhc3RfY2FzY2FkZV9zZXEYDyABKAMSNQoLY29uY3VycmVuY3kYECABKAsyIC5vcmtzdGFjay52MS5SdW5Db25jdXJyZW5jeUNhcnJ5EjwKF2RlZmVycmVkX3BhdXNlX3JlcXVlc3RzGBEgAygLMhsub3Jrc3RhY2sudjEuUnVuUGF1c2VTaWduYWwaNwoVVmVyc2lvbkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEitAEKEVJ1bkNoZWNrcG9pbnRQYXJ0EiAKBmhlYWRlchgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAiADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIvCgtsb3NzX2V2ZW50cxgEIAEoCzIaLm9ya3N0YWNrLnYxLlJ1bkxvc3NFdmVudHMiiAEKD1J1bkV2ZW50U2VnbWVudBIOCgZydW5faWQYASABKAkSEgoKZ2VuZXJhdGlvbhgCIAEoAxIWCg5maXJzdF9zZXF1ZW5jZRgDIAEoAxIVCg1sYXN0X3NlcXVlbmNlGAQgASgDEiIKBmV2ZW50cxgFIAMoCzISLm9ya3N0YWNrLnYxLkV2ZW50IqsBChJSdW5TbmFwc2hvdE92ZXJsYXkSEAoIYmFzZV91cmkYASABKAkSIAoGaGVhZGVyGAIgASgLMhAub3Jrc3RhY2sudjEuUnVuEicKCXRhc2tfcnVucxgDIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SIwoFaXRlbXMYBCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEhMKC2Jhc2Vfc2hhMjU2GAUgASgJInkKE1J1bkNvbmN1cnJlbmN5Q2FycnkSEQoJYXR0ZW1wdGVkGAEgAygJEiMKBGhlbGQYAiADKAsyFS5vcmtzdGFjay52MS5IZWxkU2xvdBIqCghvcmRpbmFscxgDIAMoCzIYLm9ya3N0YWNrLnYxLlNsb3RPcmRpbmFsIigKCEhlbGRTbG90Eg8KB2dhdGVfaWQYASABKAkSCwoDc2VxGAIgASgDIjoKC1Nsb3RPcmRpbmFsEg8KB2dhdGVfaWQYASABKAkSDwoHdGFza19peBgCIAEoBRIJCgFuGAMgASgDIkgKDVJ1bkxvc3NFdmVudHMSDQoFY291bnQYASABKAUSKAoEb3BlbhgCIAMoCzIaLm9ya3N0YWNrLnYxLk9wZW5Mb3NzRXZlbnQiTwoNT3Blbkxvc3NFdmVudBIQCghvcmtlcl9pZBgBIAEoCRIsCghmaXJzdF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiEAoOUnVuUmVzdW1lQ2Fycnki0QIKC1Jlc3VtZUJsb2NrEhAKCHNlcV9iYXNlGAEgASgEEg0KBXNjb3BlGAIgASgEEisKBXJlcnVuGAMgAygLMhwub3Jrc3RhY2sudjEuUmVzdW1lVW5pdFJhbmdlEjgKDGRpc3Bvc2l0aW9ucxgEIAMoCzIiLm9ya3N0YWNrLnYxLlJlc3VtZVVuaXREaXNwb3NpdGlvbhIpCgZhY3Rpb24YBSABKA4yGS5vcmtzdGFjay52MS5SZXN1bWVBY3Rpb24SFAoMZnJvbV90YXNrX2lkGAYgASgJEi0KCHJlYWRiYWNrGAcgASgLMhsub3Jrc3RhY2sudjEuUmVzdW1lUmVhZGJhY2sSFgoOcmVzdW1lc19iZWZvcmUYCCABKAUSGQoRcHJldmlvdXNfc2VxX2Jhc2UYCSABKAQSFwoPcmVvcGVuZWRfYXdhaXRzGAogAygJIkUKD1Jlc3VtZVVuaXRSYW5nZRIPCgd0YXNrX2lkGAEgASgJEhIKCmZpcnN0X2l0ZW0YAiABKAUSDQoFY291bnQYAyABKAUi8gEKFVJlc3VtZVVuaXREaXNwb3NpdGlvbhIPCgd0YXNrX2lkGAEgASgJEgwKBGl0ZW0YAiABKAUSMwoLZGlzcG9zaXRpb24YAyABKA4yHi5vcmtzdGFjay52MS5SZXN1bWVEaXNwb3NpdGlvbhIsCgp2YWx1ZXNfcmVmGAQgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoHd2FrZV9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASFAoMcmVzdWx0X2Vwb2NoGAYgASgDEhQKDGVuY29kZWRfc2l6ZRgHIAEoAyLQAgoOUmVzdW1lUmVhZGJhY2sSKwoIZGVhZGxpbmUYASABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SDgoGYnVkZ2V0GAIgASgDEhMKC21heF9lbnRyaWVzGAMgASgFEhMKC2NvbmN1cnJlbmN5GAQgASgFEi4KC2dldF90aW1lb3V0GAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhEKCWdldF90cmllcxgGIAEoBRIvCgxjYWxsX3RpbWVvdXQYByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SMAoNcmV0cnlfaW5pdGlhbBgIIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIZChFyZXRyeV9jb2VmZmljaWVudBgJIAEoARIWCg5jYWxsc19wZXJfdGFzaxgKIAEoBSLfAwoQUmVzdW1lUGxhblJlY29yZBIOCgZmb3JtYXQYASABKAUSEQoJbmFtZXNwYWNlGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRINCgVzY29wZRgEIAEoBBIJCgFuGAUgASgFEh0KFWJhc2VfZXhlY3V0aW9uX3J1bl9pZBgGIAEoCRIcChRyX3NjaGVkdWxlZF9ldmVudF9pZBgHIAEoAxIaChJyX3N0YXJ0ZWRfZXZlbnRfaWQYCCABKAMSHgoWYmFzZV90ZXJtaW5hbF9zZXF1ZW5jZRgJIAEoAxImCgJhdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKZXhwaXJlc19hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASJwoFYmxvY2sYDCABKAsyGC5vcmtzdGFjay52MS5SZXN1bWVCbG9jaxIRCglwcmluY2lwYWwYDSABKAkSGgoScHJpbmNpcGFsX3ZlcmlmaWVkGA4gASgIEg4KBnJlYXNvbhgPIAEoCRIZChFzdXBlcnNlZGVkX3JlYXNvbhgQIAEoCRIWCg5wcmV2aW91c19zY29wZRgRIAEoBBISCgpyZXF1ZXN0X2lkGBIgASgJQq0BCg9jb20ub3Jrc3RhY2sudjFCEUNvbnRpbnVhdGlvblByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_run]);
 
 /**
  * ContinuationPart is one gzip member of a checkpoint object: the unit a
@@ -274,7 +276,8 @@ export type RunContinuation = Message<"orkstack.v1.RunContinuation"> & {
   lastCascadeSeq: bigint;
 
   /**
-   * concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+   * concurrency is the run's concurrency slots carried forward: only held
+   * run-level slots cross, since a waiting run never carries on.
    *
    * @generated from field: orkstack.v1.RunConcurrencyCarry concurrency = 16;
    */
@@ -448,12 +451,32 @@ export const RunSnapshotOverlaySchema: GenMessage<RunSnapshotOverlay> = /*@__PUR
   messageDesc(file_orkstack_v1_continuation, 6);
 
 /**
- * RunConcurrencyCarry is E88's; it is empty until E88 lands (v0.4.0 proto
- * batch).
+ * RunConcurrencyCarry is a run's concurrency slots as it carries on.
  *
  * @generated from message orkstack.v1.RunConcurrencyCarry
  */
 export type RunConcurrencyCarry = Message<"orkstack.v1.RunConcurrencyCarry"> & {
+  /**
+   * attempted is every gate the run asked for a slot.
+   *
+   * @generated from field: repeated string attempted = 1;
+   */
+  attempted: string[];
+
+  /**
+   * held is every run-level slot it holds.
+   *
+   * @generated from field: repeated orkstack.v1.HeldSlot held = 2;
+   */
+  held: HeldSlot[];
+
+  /**
+   * ordinals is each slot's current ordinal, for those given back and
+   * asked for again (n above 0).
+   *
+   * @generated from field: repeated orkstack.v1.SlotOrdinal ordinals = 3;
+   */
+  ordinals: SlotOrdinal[];
 };
 
 /**
@@ -462,6 +485,61 @@ export type RunConcurrencyCarry = Message<"orkstack.v1.RunConcurrencyCarry"> & {
  */
 export const RunConcurrencyCarrySchema: GenMessage<RunConcurrencyCarry> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_continuation, 7);
+
+/**
+ * HeldSlot is one run-level slot a run holds: its gate and the line's seq
+ * it was granted at.
+ *
+ * @generated from message orkstack.v1.HeldSlot
+ */
+export type HeldSlot = Message<"orkstack.v1.HeldSlot"> & {
+  /**
+   * @generated from field: string gate_id = 1;
+   */
+  gateId: string;
+
+  /**
+   * @generated from field: int64 seq = 2;
+   */
+  seq: bigint;
+};
+
+/**
+ * Describes the message orkstack.v1.HeldSlot.
+ * Use `create(HeldSlotSchema)` to create a new message.
+ */
+export const HeldSlotSchema: GenMessage<HeldSlot> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 8);
+
+/**
+ * SlotOrdinal is one slot's ordinal: how many times the run gave it back
+ * and asked for it again.
+ *
+ * @generated from message orkstack.v1.SlotOrdinal
+ */
+export type SlotOrdinal = Message<"orkstack.v1.SlotOrdinal"> & {
+  /**
+   * @generated from field: string gate_id = 1;
+   */
+  gateId: string;
+
+  /**
+   * @generated from field: int32 task_ix = 2;
+   */
+  taskIx: number;
+
+  /**
+   * @generated from field: int64 n = 3;
+   */
+  n: bigint;
+};
+
+/**
+ * Describes the message orkstack.v1.SlotOrdinal.
+ * Use `create(SlotOrdinalSchema)` to create a new message.
+ */
+export const SlotOrdinalSchema: GenMessage<SlotOrdinal> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 9);
 
 /**
  * RunLossEvents is a run's lost-Orker events so far, carried forward with
@@ -490,7 +568,7 @@ export type RunLossEvents = Message<"orkstack.v1.RunLossEvents"> & {
  * Use `create(RunLossEventsSchema)` to create a new message.
  */
 export const RunLossEventsSchema: GenMessage<RunLossEvents> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_continuation, 8);
+  messageDesc(file_orkstack_v1_continuation, 10);
 
 /**
  * OpenLossEvent is one Orker's loss event, still open.
@@ -514,7 +592,7 @@ export type OpenLossEvent = Message<"orkstack.v1.OpenLossEvent"> & {
  * Use `create(OpenLossEventSchema)` to create a new message.
  */
 export const OpenLossEventSchema: GenMessage<OpenLossEvent> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_continuation, 9);
+  messageDesc(file_orkstack_v1_continuation, 11);
 
 /**
  * RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
@@ -530,5 +608,345 @@ export type RunResumeCarry = Message<"orkstack.v1.RunResumeCarry"> & {
  * Use `create(RunResumeCarrySchema)` to create a new message.
  */
 export const RunResumeCarrySchema: GenMessage<RunResumeCarry> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_continuation, 10);
+  messageDesc(file_orkstack_v1_continuation, 12);
+
+/**
+ * ResumeBlock is one resume's plan as the reset run executes it (E85 §4.1,
+ * engine-internal): written into the resume's record before the reset and
+ * loaded at R (LoadResumePlan). It is the pin: nothing of it is re-read.
+ *
+ * @generated from message orkstack.v1.ResumeBlock
+ */
+export type ResumeBlock = Message<"orkstack.v1.ResumeBlock"> & {
+  /**
+   * seq_base is the sequence RUN_RESUMED takes; the rerun commits under it.
+   *
+   * @generated from field: uint64 seq_base = 1;
+   */
+  seqBase: bigint;
+
+  /**
+   * scope is the first seq_base of the resume's scope (§28.22 E85-16).
+   *
+   * @generated from field: uint64 scope = 2;
+   */
+  scope: bigint;
+
+  /**
+   * rerun is S, the units run again, as ranges in task order.
+   *
+   * @generated from field: repeated orkstack.v1.ResumeUnitRange rerun = 3;
+   */
+  rerun: ResumeUnitRange[];
+
+  /**
+   * dispositions is every unit's disposition outside S.
+   *
+   * @generated from field: repeated orkstack.v1.ResumeUnitDisposition dispositions = 4;
+   */
+  dispositions: ResumeUnitDisposition[];
+
+  /**
+   * @generated from field: orkstack.v1.ResumeAction action = 5;
+   */
+  action: ResumeAction;
+
+  /**
+   * @generated from field: string from_task_id = 6;
+   */
+  fromTaskId: string;
+
+  /**
+   * @generated from field: orkstack.v1.ResumeReadback readback = 7;
+   */
+  readback?: ResumeReadback | undefined;
+
+  /**
+   * resumes_before is how many resumes of the run got going before this one.
+   *
+   * @generated from field: int32 resumes_before = 8;
+   */
+  resumesBefore: number;
+
+  /**
+   * @generated from field: uint64 previous_seq_base = 9;
+   */
+  previousSeqBase: bigint;
+
+  /**
+   * @generated from field: repeated string reopened_awaits = 10;
+   */
+  reopenedAwaits: string[];
+};
+
+/**
+ * Describes the message orkstack.v1.ResumeBlock.
+ * Use `create(ResumeBlockSchema)` to create a new message.
+ */
+export const ResumeBlockSchema: GenMessage<ResumeBlock> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 13);
+
+/**
+ * ResumeUnitRange is count consecutive items of a task from first_item, or
+ * the task itself when first_item is -1.
+ *
+ * @generated from message orkstack.v1.ResumeUnitRange
+ */
+export type ResumeUnitRange = Message<"orkstack.v1.ResumeUnitRange"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: int32 first_item = 2;
+   */
+  firstItem: number;
+
+  /**
+   * @generated from field: int32 count = 3;
+   */
+  count: number;
+};
+
+/**
+ * Describes the message orkstack.v1.ResumeUnitRange.
+ * Use `create(ResumeUnitRangeSchema)` to create a new message.
+ */
+export const ResumeUnitRangeSchema: GenMessage<ResumeUnitRange> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 14);
+
+/**
+ * ResumeUnitDisposition is one unit outside S.
+ *
+ * @generated from message orkstack.v1.ResumeUnitDisposition
+ */
+export type ResumeUnitDisposition = Message<"orkstack.v1.ResumeUnitDisposition"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * item is the item's index, or -1 for the task itself.
+   *
+   * @generated from field: int32 item = 2;
+   */
+  item: number;
+
+  /**
+   * @generated from field: orkstack.v1.ResumeDisposition disposition = 3;
+   */
+  disposition: ResumeDisposition;
+
+  /**
+   * values_ref is a SETTLE unit's recorded values.
+   *
+   * @generated from field: orkstack.v1.ArtifactRef values_ref = 4;
+   */
+  valuesRef?: ArtifactRef | undefined;
+
+  /**
+   * wake_at is a SLEEP_UNTIL unit's recorded wake-up time.
+   *
+   * @generated from field: google.protobuf.Timestamp wake_at = 5;
+   */
+  wakeAt?: Timestamp | undefined;
+
+  /**
+   * result_epoch is the scope a kept result's commit lives under.
+   *
+   * @generated from field: int64 result_epoch = 6;
+   */
+  resultEpoch: bigint;
+
+  /**
+   * encoded_size is a read-back entry's encoded result, as ResumeRun measured it.
+   *
+   * @generated from field: int64 encoded_size = 7;
+   */
+  encodedSize: bigint;
+};
+
+/**
+ * Describes the message orkstack.v1.ResumeUnitDisposition.
+ * Use `create(ResumeUnitDispositionSchema)` to create a new message.
+ */
+export const ResumeUnitDispositionSchema: GenMessage<ResumeUnitDisposition> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 15);
+
+/**
+ * ResumeReadback is the read-back's pinned bounds (E85 §4.1).
+ *
+ * @generated from message orkstack.v1.ResumeReadback
+ */
+export type ResumeReadback = Message<"orkstack.v1.ResumeReadback"> & {
+  /**
+   * @generated from field: google.protobuf.Duration deadline = 1;
+   */
+  deadline?: Duration | undefined;
+
+  /**
+   * @generated from field: int64 budget = 2;
+   */
+  budget: bigint;
+
+  /**
+   * @generated from field: int32 max_entries = 3;
+   */
+  maxEntries: number;
+
+  /**
+   * @generated from field: int32 concurrency = 4;
+   */
+  concurrency: number;
+
+  /**
+   * @generated from field: google.protobuf.Duration get_timeout = 5;
+   */
+  getTimeout?: Duration | undefined;
+
+  /**
+   * @generated from field: int32 get_tries = 6;
+   */
+  getTries: number;
+
+  /**
+   * @generated from field: google.protobuf.Duration call_timeout = 7;
+   */
+  callTimeout?: Duration | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Duration retry_initial = 8;
+   */
+  retryInitial?: Duration | undefined;
+
+  /**
+   * @generated from field: double retry_coefficient = 9;
+   */
+  retryCoefficient: number;
+
+  /**
+   * @generated from field: int32 calls_per_task = 10;
+   */
+  callsPerTask: number;
+};
+
+/**
+ * Describes the message orkstack.v1.ResumeReadback.
+ * Use `create(ResumeReadbackSchema)` to create a new message.
+ */
+export const ResumeReadbackSchema: GenMessage<ResumeReadback> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 16);
+
+/**
+ * ResumePlanRecord is one resume plan's immutable record (E85 §11, §30.3,
+ * engine-internal), written create-only before the reset at
+ * metadata/run-resumes/{namespace}/{encoded-run-id}/{scope:020}.{n:03}.resume.json.
+ * The reset's reason names it by the SHA-256 of its stored bytes.
+ *
+ * @generated from message orkstack.v1.ResumePlanRecord
+ */
+export type ResumePlanRecord = Message<"orkstack.v1.ResumePlanRecord"> & {
+  /**
+   * @generated from field: int32 format = 1;
+   */
+  format: number;
+
+  /**
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: string run_id = 3;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: uint64 scope = 4;
+   */
+  scope: bigint;
+
+  /**
+   * @generated from field: int32 n = 5;
+   */
+  n: number;
+
+  /**
+   * base_execution_run_id is the execution the reset resets.
+   *
+   * @generated from field: string base_execution_run_id = 6;
+   */
+  baseExecutionRunId: string;
+
+  /**
+   * r_scheduled_event_id and r_started_event_id are R's workflow task in that base.
+   *
+   * @generated from field: int64 r_scheduled_event_id = 7;
+   */
+  rScheduledEventId: bigint;
+
+  /**
+   * @generated from field: int64 r_started_event_id = 8;
+   */
+  rStartedEventId: bigint;
+
+  /**
+   * @generated from field: int64 base_terminal_sequence = 9;
+   */
+  baseTerminalSequence: bigint;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp at = 10;
+   */
+  at?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires_at = 11;
+   */
+  expiresAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: orkstack.v1.ResumeBlock block = 12;
+   */
+  block?: ResumeBlock | undefined;
+
+  /**
+   * @generated from field: string principal = 13;
+   */
+  principal: string;
+
+  /**
+   * @generated from field: bool principal_verified = 14;
+   */
+  principalVerified: boolean;
+
+  /**
+   * @generated from field: string reason = 15;
+   */
+  reason: string;
+
+  /**
+   * @generated from field: string superseded_reason = 16;
+   */
+  supersededReason: string;
+
+  /**
+   * @generated from field: uint64 previous_scope = 17;
+   */
+  previousScope: bigint;
+
+  /**
+   * @generated from field: string request_id = 18;
+   */
+  requestId: string;
+};
+
+/**
+ * Describes the message orkstack.v1.ResumePlanRecord.
+ * Use `create(ResumePlanRecordSchema)` to create a new message.
+ */
+export const ResumePlanRecordSchema: GenMessage<ResumePlanRecord> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 17);
 

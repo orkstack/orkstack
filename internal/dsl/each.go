@@ -46,6 +46,20 @@ type eachDocument struct {
 	// rather than read as 0.
 	MaxItems    *int32 `yaml:"max_items"`
 	MaxParallel *int32 `yaml:"max_parallel"`
+	// OnItemFailure and MaxFailedItems are what an item that fails for good
+	// does to the rest of the fan-out (docs/DSL.md, "When an item fails").
+	OnItemFailure string `yaml:"on_item_failure"`
+	// MaxFailedItems is a pointer so a written `max_failed_items: 0` is
+	// refused by name rather than read as absent.
+	MaxFailedItems *int32 `yaml:"max_failed_items"`
+}
+
+// eachItemFailureWords are on_item_failure's words; fail_fast, the default,
+// compiles to unset, so a fan-out that names it has the digest of one that
+// does not.
+var eachItemFailureWords = map[string]orkstackv1.EachItemFailure{
+	"fail_fast": orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_UNSPECIFIED,
+	"continue":  orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_CONTINUE,
 }
 
 // compileEach builds a task's EachSpec, or nil when the document declares no
@@ -96,6 +110,29 @@ func compileEach(taskIndex int, td taskDocument) (*orkstackv1.EachSpec, error) {
 	if td.Each.MaxParallel != nil {
 		maxParallel = *td.Each.MaxParallel
 	}
+	var onItemFailure orkstackv1.EachItemFailure
+	if td.Each.OnItemFailure != "" {
+		f, ok := eachItemFailureWords[td.Each.OnItemFailure]
+		if !ok {
+			return nil, validationError(at("on_item_failure"), fmt.Errorf(
+				"task %q: each.on_item_failure %q is not fail_fast or continue", td.ID, td.Each.OnItemFailure))
+		}
+		onItemFailure = f
+	}
+	var maxFailed int32
+	if td.Each.MaxFailedItems != nil {
+		if onItemFailure != orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_CONTINUE {
+			return nil, validationError(at("max_failed_items"), fmt.Errorf(
+				"task %q: each.max_failed_items needs on_item_failure: continue — a fail_fast fan-out "+
+					"already stops at its first failed item", td.ID))
+		}
+		if n := *td.Each.MaxFailedItems; n < 1 || n >= *td.Each.MaxItems {
+			return nil, validationError(at("max_failed_items"), fmt.Errorf(
+				"task %q: each.max_failed_items %d is out of range (1 … %d): a bound of max_items or "+
+					"more could never be passed", td.ID, n, *td.Each.MaxItems-1))
+		}
+		maxFailed = *td.Each.MaxFailedItems
+	}
 	spec := &orkstackv1.EachSpec{
 		Over:         td.Each.Over,
 		OverArtifact: td.Each.OverArtifact,
@@ -104,6 +141,9 @@ func compileEach(taskIndex int, td taskDocument) (*orkstackv1.EachSpec, error) {
 		As:           as,
 		MaxItems:     *td.Each.MaxItems,
 		MaxParallel:  maxParallel,
+
+		OnItemFailure:  onItemFailure,
+		MaxFailedItems: maxFailed,
 	}
 	if td.Each.OverArtifact != "" {
 		if producer, name, err := ParseOverArtifact(td.Each.OverArtifact); err == nil {
@@ -362,6 +402,12 @@ func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, clos
 				"task %q: each.max_parallel %d must be between 0 (no bound of its own) and max_items %d",
 				id, p, spec.GetMaxItems()))
 		}
+
+		// Rule 58: on_item_failure is the compiler's, and max_failed_items
+		// bounds a continue fan-out only.
+		if err := validateItemFailure(spec, at, id); err != nil {
+			return err
+		}
 	}
 
 	// Rule 21 (per Orkflow): the declared total stays inside the built-in
@@ -459,4 +505,37 @@ func checkEachInput(wf *orkstackv1.Orkflow, taskID string, source *orkstackv1.Ea
 	}
 	return fmt.Errorf("task %q: each.over: input %q is declared %s; a fan-out needs an array — declare it "+
 		"type: array, or name the key that holds one", taskID, name, declared)
+}
+
+// validateItemFailure is rule 58: on_item_failure is unset (fail_fast) or
+// CONTINUE — the compiler writes fail_fast as unset, so a fan-out has one
+// digest — and max_failed_items, with CONTINUE only, is 1 … max_items−1.
+func validateItemFailure(spec *orkstackv1.EachSpec, at func(string) string, id string) error {
+	switch f := spec.GetOnItemFailure(); f {
+	case orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_UNSPECIFIED, orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_CONTINUE:
+	case orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_FAIL_FAST:
+		return validationError(at("each.on_item_failure"), fmt.Errorf(
+			"task %q: each.on_item_failure is FAIL_FAST; the compiler writes fail_fast as unset", id))
+	default:
+		return validationError(at("each.on_item_failure"), fmt.Errorf(
+			"task %q: each.on_item_failure %d is not fail_fast or continue", id, f))
+	}
+	n := spec.GetMaxFailedItems()
+	switch {
+	case n == 0:
+		return nil
+	case spec.GetOnItemFailure() != orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_CONTINUE:
+		return validationError(at("each.max_failed_items"), fmt.Errorf(
+			"task %q: each.max_failed_items needs on_item_failure: continue", id))
+	case n < 1 || n >= spec.GetMaxItems():
+		return validationError(at("each.max_failed_items"), fmt.Errorf(
+			"task %q: each.max_failed_items %d is out of range (1 … %d)", id, n, spec.GetMaxItems()-1))
+	}
+	return nil
+}
+
+// EachContinues reports whether a fan-out runs its other items after one
+// fails for good (on_item_failure: continue).
+func EachContinues(spec *orkstackv1.EachSpec) bool {
+	return spec.GetOnItemFailure() == orkstackv1.EachItemFailure_EACH_ITEM_FAILURE_CONTINUE
 }

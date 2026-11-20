@@ -37,6 +37,11 @@ const BUCKET = ownBucket('fan-out-lines');
 // "Indexing …" while an Orker of its pool has its line index in flight, and
 // then fills its grid like any fan-out.
 //
+// The first run's producer, `list`, builds the line index as it commits its
+// artifact, so its fan-out never reads "Indexing". `list` is cached: the
+// second run's is a memo hit, which builds no index, so that run's fan-out
+// indexes the lines itself — and that is the state this spec holds.
+//
 // Indexing is held observable without a timer: the only Orker runs one task
 // at a time (ORK_ORKER_MAX_CONCURRENT=1), and `convert` also needs `go`, an
 // await this spec resolves only once `hold` is RUNNING on that one slot. The
@@ -71,6 +76,8 @@ tasks:
   - id: list
     uses: shell
     timeout_seconds: 120
+    cache:
+      enabled: true
     with:
       op: script
       interpreter: sh
@@ -166,7 +173,8 @@ test.afterAll(async () => {
 	removeBucket(BUCKET);
 });
 
-test('a lines fan-out names its source, reads indexing, then fills its batches', async ({ page }) => {
+/** submitHeld submits a run and resolves `go` once `hold` holds the slot. */
+async function submitHeld(): Promise<string> {
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: LINES });
 	const runId = submitted.run.id;
 	note(`submitted run ${runId}`);
@@ -178,7 +186,21 @@ test('a lines fan-out names its source, reads indexing, then fills its batches',
 		return (got.run?.taskRuns ?? []).some((t) => t.taskId === 'hold' && t.status === 'STATUS_RUNNING');
 	});
 	await rpc('RunService/ResolveAwait', { namespace: 'default', runId, taskId: 'go', valuesJson: '{}' });
-	note('resolved go while hold ran, so the index waits for the slot');
+	note(`resolved go of ${runId} while hold ran`);
+	return runId;
+}
+
+test('a lines fan-out names its source, reads indexing, then fills its batches', async ({ page }) => {
+	// The first run: list's Orker indexes rows.jsonl as it commits it.
+	const first = await submitHeld();
+	await page.goto(`${UI_ORIGIN}/runs/${first}?ns=default`);
+	await selectTask(page, 'convert');
+	await expect(page.getByTestId('task-convert-each-summary')).toContainText('2 succeeded', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 60_000 });
+	note('the first run: list indexed its own lines, and the card filled two batches');
+
+	// The second run: list is a memo hit, so the fan-out indexes the lines.
+	const runId = await submitHeld();
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
 	await selectTask(page, 'convert');
 	const summary = page.getByTestId('task-convert-each-summary');

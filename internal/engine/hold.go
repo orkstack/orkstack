@@ -54,6 +54,11 @@ func (s *runState) holdsDispatch(ctx workflow.Context, id string, inFlight map[s
 	if s.pauseHolds(id) {
 		return true
 	}
+	// A run waiting for its concurrency slot again after an unpause starts
+	// nothing new until it is granted (waitingForSlot).
+	if s.concWaiting() {
+		return true
+	}
 	if s.quiescing && !s.pinClosureAllows(id) {
 		s.noteHold(orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_CARRYING_ON)
 		return true

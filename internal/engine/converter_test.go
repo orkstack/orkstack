@@ -2,6 +2,8 @@ package engine_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -12,6 +14,8 @@ import (
 
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
@@ -23,6 +27,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -190,6 +195,80 @@ func TestDataConverter_EncodesAsTheSDKDefaultDoes(t *testing.T) {
 		if !proto.Equal(want, got) {
 			t.Errorf("%T encodes as %s with the engine's converter, want %s as the SDK default", v, got, want)
 		}
+	}
+}
+
+// TestDataConverter_IsByteIdenticalWithEncryptionOff: with no key configured
+// the engine's converters, payload encryption's among them, write every
+// payload and failure byte for byte as the SDK defaults do.
+func TestDataConverter_IsByteIdenticalWithEncryptionOff(t *testing.T) {
+	values := []any{
+		&orkstackv1.ExecuteTaskInput{RunId: "ork-1", TaskId: "build"},
+		&orkstackv1.ExecuteTaskResult{TaskId: "build", ValuesJson: []byte(`{"a":1}`)},
+		map[string]any{"run": "ork-1", "n": 2},
+		[]byte("raw"),
+		nil,
+		"text",
+	}
+	det := proto.MarshalOptions{Deterministic: true}
+	for _, v := range values {
+		want, err := converter.GetDefaultDataConverter().ToPayload(v)
+		must.OKf(t, err, "default encode %T", v)
+		got, err := engine.DataConverter().ToPayload(v)
+		must.OKf(t, err, "engine encode %T", v)
+		wantB, _ := det.Marshal(want)
+		gotB, _ := det.Marshal(got)
+		if !bytes.Equal(wantB, gotB) {
+			t.Errorf("%T: the engine writes %x, the SDK default %x", v, gotB, wantB)
+		}
+	}
+	for _, err := range []error{
+		errors.New("plain"),
+		temporal.NewApplicationErrorWithCause("m", "ActivityFailed", errors.New("cause"), &orkstackv1.ActivityFailureDetail{}),
+		temporal.NewNonRetryableApplicationError("m", "ContractViolation", nil, "detail"),
+		temporal.NewCanceledError("why"),
+	} {
+		want := temporal.GetDefaultFailureConverter().ErrorToFailure(err)
+		got := engine.FailureConverter().ErrorToFailure(err)
+		wantB, _ := det.Marshal(want)
+		gotB, _ := det.Marshal(got)
+		if !bytes.Equal(wantB, gotB) {
+			t.Errorf("%v: the engine writes failure %v, the SDK default %v", err, got, want)
+		}
+	}
+}
+
+// TestDataConverter_GuardsASealedRun: an engine that holds no payload key,
+// which is every engine of this release, does not run workflow code of a run
+// whose memo carries one; the converter panics at the first payload it reads,
+// failing the workflow task rather than deciding anything
+// (payload-encryption.md §4.1 rule 3).
+func TestDataConverter_GuardsASealedRun(t *testing.T) {
+	ek, err := payloadcrypt.NewKey(bytes.Repeat([]byte{1}, payloadcrypt.KeySize))
+	must.OK(t, err)
+	_, memo, err := payloadcrypt.NewRunTree(context.Background(), payloadcrypt.NewStaticDataKeys("pk_t", ek), ek, "ns", "ns_1", "ork-guard")
+	must.OK(t, err)
+
+	run := func(withMemo bool) error {
+		var s testsuite.WorkflowTestSuite
+		env := s.NewTestWorkflowEnvironment()
+		env.SetDataConverter(engine.DataConverter())
+		env.SetFailureConverter(engine.FailureConverter())
+		if withMemo {
+			must.OK(t, env.SetMemoOnStart(map[string]any{payloadcrypt.MemoField: memo}))
+		}
+		env.RegisterWorkflowWithOptions(func(ctx workflow.Context, in string) (string, error) { return in, nil },
+			workflow.RegisterOptions{Name: "guarded"})
+		env.ExecuteWorkflow("guarded", "input")
+		return env.GetWorkflowError()
+	}
+	if err := run(false); err != nil {
+		t.Fatalf("a run with no payload key failed: %v", err)
+	}
+	err = run(true)
+	var panicked *temporal.PanicError
+	if !errors.As(err, &panicked) || !strings.Contains(err.Error(), payloadcrypt.ErrEngineKeyMissing.Error()) {
+		t.Fatalf("a run whose memo carries a payload key ended %v, want the guard's panic", err)
 	}
 }
 

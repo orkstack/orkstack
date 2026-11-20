@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -64,6 +65,10 @@ type incarnationRecord struct {
 	// written before heads recorded one).
 	BoundTo  time.Time `json:"boundTo"`
 	MintedAt time.Time `json:"mintedAt"`
+	// Policy is the namespace's identity policy, decoded on its own so a
+	// policy this release cannot read never makes the id unreadable
+	// (namespace_identity.go). An Orkflow's record holds none.
+	Policy jsontext.Value `json:"policy,omitzero"`
 }
 
 // incarnationRef names one record.
@@ -183,7 +188,7 @@ func (s *IncarnationStore) DeleteOrkflowID(ctx context.Context, namespace, name 
 
 // get reads ref's record and its version; a missing one is found false.
 func (s *IncarnationStore) get(ctx context.Context, ref incarnationRef) (rec incarnationRecord, version string, found bool, err error) {
-	raw, version, err := s.b.get(ctx, ref.key, incarnationMaxBytes)
+	raw, version, err := s.b.get(ctx, ref.key, incarnationMaxBytes+1)
 	if errors.Is(err, errBlobNotFound) {
 		return incarnationRecord{}, "", false, nil
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -338,16 +339,15 @@ func startNamespacedEngine(
 	enginePath, temporalAddr, temporalNamespace, orkerQueue string,
 ) (string, <-chan struct{}) {
 	t.Helper()
-	addr := freeAddress(t)
-	exited := startProcess(ctx, t, "ork", enginePath,
-		"ORK_HTTP_ADDR="+addr,
+	p := launch(ctx, t, "ork", enginePath,
+		"ORK_HTTP_ADDR="+listenaddr.Loopback,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
 		"ORK_ORKER_QUEUE="+orkerQueue,
 		"ORK_ARTIFACT_BACKEND=local",
 		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 	)
-	return addr, exited
+	return p.api(ctx, t), p.exited
 }
 
 // writeNamespacedOrkflow writes a one-task orkflow pinned to this test's pool.

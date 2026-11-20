@@ -38,14 +38,18 @@ const (
 // It is the sibling of PoolEmptyError: a well-formed request the deployment
 // is not accepting right now, so it maps to FailedPrecondition.
 type AdmissionRefusedError struct {
-	Namespace  string
-	Reason     AdmissionReason
-	Hold       *orkstackv1.NamespaceHold // set for AdmissionHeld
-	Running    int64                     // set for AdmissionMaxRunning
-	MaxRunning int32                     // set for AdmissionMaxRunning
-	Budget     *orkstackv1.Budget        // set for AdmissionBudgetExceeded and AdmissionBudgetUnmeasurable
-	Usage      BudgetUsage               // set for AdmissionBudgetExceeded
-	Unmeasured error                     // set for AdmissionBudgetUnmeasurable
+	Namespace string
+	Reason    AdmissionReason
+	Hold      *orkstackv1.NamespaceHold // set for AdmissionHeld
+	Running   int64                     // set for AdmissionMaxRunning
+	// Queued is how many of Running wait in a concurrency limit's line,
+	// counted only on a max_running refusal of a cluster that indexes it; 0
+	// keeps today's text.
+	Queued     int64
+	MaxRunning int32              // set for AdmissionMaxRunning
+	Budget     *orkstackv1.Budget // set for AdmissionBudgetExceeded and AdmissionBudgetUnmeasurable
+	Usage      BudgetUsage        // set for AdmissionBudgetExceeded
+	Unmeasured error              // set for AdmissionBudgetUnmeasurable
 }
 
 // Error is the human-readable half: the cause and the fix, in one sentence
@@ -60,9 +64,13 @@ func (e *AdmissionRefusedError) Error() string {
 		return fmt.Sprintf("namespace %q is on hold%s: %q. Release it with `orkctl namespace update %s --release-hold`",
 			e.Namespace, since, e.Hold.GetReason(), e.Namespace)
 	case AdmissionMaxRunning:
-		return fmt.Sprintf("namespace %q already has %d runs in flight, which is its max_running. "+
+		queued := ""
+		if e.Queued > 0 {
+			queued = fmt.Sprintf(", %d of them queued on concurrency limits,", min(e.Queued, e.Running))
+		}
+		return fmt.Sprintf("namespace %q already has %d runs in flight%s which is its max_running. "+
 			"Wait for one to finish, or raise the cap with `orkctl namespace update %s --max-running N`",
-			e.Namespace, e.Running, e.Namespace)
+			e.Namespace, e.Running, commaOr(queued), e.Namespace)
 	case AdmissionBudgetExceeded:
 		unit, flag, used, bound := "cpu-seconds", "--budget-cpu-seconds", e.Usage.CPUSeconds, e.Budget.GetCpuSeconds()
 		if !cpuReached(e.Budget, e.Usage) {
@@ -223,4 +231,13 @@ type AdmissionReader interface {
 	// that continued as new once) wherever it reaches the ceiling, and may be
 	// an upper bound below it.
 	RunningCount(ctx context.Context, namespace string, ceiling int64) (int64, error)
+}
+
+// commaOr is the queued clause, which ends in its own comma, or today's
+// ", " before "which".
+func commaOr(clause string) string {
+	if clause == "" {
+		return ","
+	}
+	return clause
 }

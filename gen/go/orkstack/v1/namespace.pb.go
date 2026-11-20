@@ -626,11 +626,30 @@ func (x *Pool) GetUnavailableReason() string {
 	return ""
 }
 
-// NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
-// registered for the policy itself (audiences, grants and their bounds),
-// which a later change adds.
+// NamespaceIdentity is the namespace's identity policy: the audiences its
+// tasks may ask for, the principals they may act as, and its id. It is
+// written with its own etag, and an UpdateNamespace that changes it changes
+// nothing else (docs/TASK_IDENTITY.md).
 type NamespaceIdentity struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// audiences are the token audiences the namespace's tasks may ask for. A
+	// trailing `*` matches any rest.
+	Audiences []string `protobuf:"bytes,1,rep,name=audiences,proto3" json:"audiences,omitempty"`
+	// grants are the principals the namespace's tasks may act as, by name.
+	Grants map[string]*Grant `protobuf:"bytes,2,rep,name=grants,proto3" json:"grants,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// identities_current_only, true, gives an identity only to a run of its
+	// Orkflow's current version.
+	IdentitiesCurrentOnly bool `protobuf:"varint,3,opt,name=identities_current_only,json=identitiesCurrentOnly,proto3" json:"identities_current_only,omitempty"`
+	// etag is the policy's own: an update that names another is
+	// FAILED_PRECONDITION. Output only.
+	Etag string `protobuf:"bytes,4,opt,name=etag,proto3" json:"etag,omitempty"`
+	// revision counts the policy's changes: each change writes an immutable
+	// revision. Output only.
+	Revision int64 `protobuf:"varint,5,opt,name=revision,proto3" json:"revision,omitempty"`
+	// attempts_extra is how many attempts past a task's own retries may hold
+	// its identity, inside the deployment's identity.attempts.max_extra.
+	// Unset takes the deployment's identity.attempts.extra.
+	AttemptsExtra *int32 `protobuf:"varint,7,opt,name=attempts_extra,json=attemptsExtra,proto3,oneof" json:"attempts_extra,omitempty"`
 	// namespace_id is the namespace's immutable id: a namespace deleted and
 	// created again under its name has another one, and a binding pinned to
 	// this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default`
@@ -672,11 +691,140 @@ func (*NamespaceIdentity) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{4}
 }
 
+func (x *NamespaceIdentity) GetAudiences() []string {
+	if x != nil {
+		return x.Audiences
+	}
+	return nil
+}
+
+func (x *NamespaceIdentity) GetGrants() map[string]*Grant {
+	if x != nil {
+		return x.Grants
+	}
+	return nil
+}
+
+func (x *NamespaceIdentity) GetIdentitiesCurrentOnly() bool {
+	if x != nil {
+		return x.IdentitiesCurrentOnly
+	}
+	return false
+}
+
+func (x *NamespaceIdentity) GetEtag() string {
+	if x != nil {
+		return x.Etag
+	}
+	return ""
+}
+
+func (x *NamespaceIdentity) GetRevision() int64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *NamespaceIdentity) GetAttemptsExtra() int32 {
+	if x != nil && x.AttemptsExtra != nil {
+		return *x.AttemptsExtra
+	}
+	return 0
+}
+
 func (x *NamespaceIdentity) GetNamespaceId() string {
 	if x != nil {
 		return x.NamespaceId
 	}
 	return ""
+}
+
+// Grant is a principal a namespace's tasks may act as, through a provider,
+// and which of its Orkflows may use it.
+type Grant struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// provider names where the principal is.
+	Provider string `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	// principal is whom the provider gives the task, such as a role.
+	Principal string `protobuf:"bytes,2,opt,name=principal,proto3" json:"principal,omitempty"`
+	// orkflows may use the grant: a name of this namespace, `*` for every
+	// Orkflow of it, or `<owner>/<name>` for one another namespace shares.
+	Orkflows []string `protobuf:"bytes,3,rep,name=orkflows,proto3" json:"orkflows,omitempty"`
+	// current_only, true, lets only a run of its Orkflow's current version
+	// use the grant.
+	CurrentOnly bool `protobuf:"varint,4,opt,name=current_only,json=currentOnly,proto3" json:"current_only,omitempty"`
+	// origins are the kinds of start the grant serves: submit, schedule,
+	// trigger, event-source, parent-run, run-again. Empty serves every kind.
+	// A child run is judged by its root's.
+	Origins       []string `protobuf:"bytes,5,rep,name=origins,proto3" json:"origins,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Grant) Reset() {
+	*x = Grant{}
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Grant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Grant) ProtoMessage() {}
+
+func (x *Grant) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Grant.ProtoReflect.Descriptor instead.
+func (*Grant) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *Grant) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *Grant) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *Grant) GetOrkflows() []string {
+	if x != nil {
+		return x.Orkflows
+	}
+	return nil
+}
+
+func (x *Grant) GetCurrentOnly() bool {
+	if x != nil {
+		return x.CurrentOnly
+	}
+	return false
+}
+
+func (x *Grant) GetOrigins() []string {
+	if x != nil {
+		return x.Origins
+	}
+	return nil
 }
 
 var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
@@ -725,9 +873,25 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
 	"is_default\x18\x04 \x01(\bR\tisDefault\x127\n" +
 	"\tlast_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12-\n" +
-	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonJ\x04\b\x03\x10\x04R\aplugins\"6\n" +
-	"\x11NamespaceIdentity\x12!\n" +
-	"\fnamespace_id\x18\x06 \x01(\tR\vnamespaceIdB\xaa\x01\n" +
+	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonJ\x04\b\x03\x10\x04R\aplugins\"\x8e\x03\n" +
+	"\x11NamespaceIdentity\x12\x1c\n" +
+	"\taudiences\x18\x01 \x03(\tR\taudiences\x12B\n" +
+	"\x06grants\x18\x02 \x03(\v2*.orkstack.v1.NamespaceIdentity.GrantsEntryR\x06grants\x126\n" +
+	"\x17identities_current_only\x18\x03 \x01(\bR\x15identitiesCurrentOnly\x12\x12\n" +
+	"\x04etag\x18\x04 \x01(\tR\x04etag\x12\x1a\n" +
+	"\brevision\x18\x05 \x01(\x03R\brevision\x12*\n" +
+	"\x0eattempts_extra\x18\a \x01(\x05H\x00R\rattemptsExtra\x88\x01\x01\x12!\n" +
+	"\fnamespace_id\x18\x06 \x01(\tR\vnamespaceId\x1aM\n" +
+	"\vGrantsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12(\n" +
+	"\x05value\x18\x02 \x01(\v2\x12.orkstack.v1.GrantR\x05value:\x028\x01B\x11\n" +
+	"\x0f_attempts_extra\"\xa0\x01\n" +
+	"\x05Grant\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x1c\n" +
+	"\tprincipal\x18\x02 \x01(\tR\tprincipal\x12\x1a\n" +
+	"\borkflows\x18\x03 \x03(\tR\borkflows\x12!\n" +
+	"\fcurrent_only\x18\x04 \x01(\bR\vcurrentOnly\x12\x18\n" +
+	"\aorigins\x18\x05 \x03(\tR\aoriginsJ\x04\b\x06\x10\aB\xaa\x01\n" +
 	"\x0fcom.orkstack.v1B\x0eNamespaceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -742,35 +906,39 @@ func file_orkstack_v1_namespace_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_namespace_proto_rawDescData
 }
 
-var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_orkstack_v1_namespace_proto_goTypes = []any{
 	(*Namespace)(nil),             // 0: orkstack.v1.Namespace
 	(*NamespaceHold)(nil),         // 1: orkstack.v1.NamespaceHold
 	(*Budget)(nil),                // 2: orkstack.v1.Budget
 	(*Pool)(nil),                  // 3: orkstack.v1.Pool
 	(*NamespaceIdentity)(nil),     // 4: orkstack.v1.NamespaceIdentity
-	nil,                           // 5: orkstack.v1.Namespace.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 7: google.protobuf.Duration
-	(*TelemetryPolicy)(nil),       // 8: orkstack.v1.TelemetryPolicy
+	(*Grant)(nil),                 // 5: orkstack.v1.Grant
+	nil,                           // 6: orkstack.v1.Namespace.LabelsEntry
+	nil,                           // 7: orkstack.v1.NamespaceIdentity.GrantsEntry
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 9: google.protobuf.Duration
+	(*TelemetryPolicy)(nil),       // 10: orkstack.v1.TelemetryPolicy
 }
 var file_orkstack_v1_namespace_proto_depIdxs = []int32{
-	5,  // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
-	6,  // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
-	6,  // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
-	7,  // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
-	8,  // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
+	6,  // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
+	8,  // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
+	8,  // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
+	9,  // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
+	10, // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
 	1,  // 5: orkstack.v1.Namespace.hold:type_name -> orkstack.v1.NamespaceHold
 	2,  // 6: orkstack.v1.Namespace.budget:type_name -> orkstack.v1.Budget
 	4,  // 7: orkstack.v1.Namespace.identity:type_name -> orkstack.v1.NamespaceIdentity
-	6,  // 8: orkstack.v1.NamespaceHold.since:type_name -> google.protobuf.Timestamp
-	7,  // 9: orkstack.v1.Budget.period:type_name -> google.protobuf.Duration
-	6,  // 10: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	8,  // 8: orkstack.v1.NamespaceHold.since:type_name -> google.protobuf.Timestamp
+	9,  // 9: orkstack.v1.Budget.period:type_name -> google.protobuf.Duration
+	8,  // 10: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
+	7,  // 11: orkstack.v1.NamespaceIdentity.grants:type_name -> orkstack.v1.NamespaceIdentity.GrantsEntry
+	5,  // 12: orkstack.v1.NamespaceIdentity.GrantsEntry.value:type_name -> orkstack.v1.Grant
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_namespace_proto_init() }
@@ -779,13 +947,14 @@ func file_orkstack_v1_namespace_proto_init() {
 		return
 	}
 	file_orkstack_v1_telemetry_proto_init()
+	file_orkstack_v1_namespace_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_namespace_proto_rawDesc), len(file_orkstack_v1_namespace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -49,6 +49,8 @@ orkctl run submit each-fan-out -w
 | `as` | no | The element's name under `.each`. Default `item`. |
 | `max_items` | yes | The most items this task may run: 1 to 10,000. More elements fail the task before any item starts. |
 | `max_parallel` | no | How many items run at once. Default: no limit of the task's own. |
+| `on_item_failure` | no | `fail_fast` (default) or `continue`: see [When an item fails](#when-an-item-fails). |
+| `max_failed_items` | no | With `continue`: stop once more than this many items have failed. |
 
 ## Use the item
 
@@ -118,6 +120,22 @@ An item retries on its own, under the task's `retry:`. If it still fails, the
 task and the run fail with that item's error: items still running are
 cancelled, and items not yet started never run.
 
+To run every item anyway, set `on_item_failure: continue`:
+
+```yaml
+each:
+  over: "{{ .inputs.files }}"
+  max_items: 500
+  on_item_failure: continue
+  max_failed_items: 20
+```
+
+Every other item still runs. Then the task fails with the first failed item's
+error, as `3 of 500 items failed; item 7: …`. With `max_failed_items: 20`, the
+21st failure stops it early, as `fail_fast` would. A failure handler
+(`join: any_failed`) that needs the task gets the items that succeeded, and
+`inputs.eachUpstream[].failed` lists the ones that did not.
+
 ## Limits
 
 - An Orkflow declares at most 1,000 items in total by default, the sum of
@@ -130,4 +148,5 @@ cancelled, and items not yet started never run.
 ## See also
 
 - [DSL reference, “Fan-out”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#fan-out-each): every rule
+- [DSL reference, “When an item fails”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#when-an-item-fails-on_item_failure-continue): `continue` and `max_failed_items`
 - [`examples/each-fan-out.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/each-fan-out.ork.yaml): the example, runnable

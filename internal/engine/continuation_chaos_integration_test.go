@@ -2159,7 +2159,7 @@ func TestIntegration_ContinuationChaosC18_MalformedSavedStateEndsExplicitly(t *t
 		switched := state(rows(atSwitch...))
 		snapshot, err := writers.WriteSwitchSnapshot(ctx, switched, "default", 0, obs)
 		must.OKf(t, err, "write the switch snapshot")
-		checkpoint, err := writers.WriteCheckpoint(ctx, state(checkpointRows), 0, budget.CheckpointMaxBytes, obs, nil)
+		checkpoint, err := writers.WriteCheckpoint(ctx, state(checkpointRows), 0, budget.CheckpointMaxBytes, obs, nil, "")
 		if err != nil || checkpoint.GetUri() == "" {
 			t.Fatalf("write the checkpoint: %v (%v)", err, checkpoint)
 		}

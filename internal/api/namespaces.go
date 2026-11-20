@@ -203,6 +203,14 @@ func (s *Service) CreateNamespace(
 	if err := validNamespaceName(spec.GetName()); err != nil {
 		return nil, err
 	}
+	// The identity policy is kept beside the namespace, never in its
+	// document, and is written by an update of its own once the namespace
+	// exists.
+	if !samePolicy(policyOf(spec.GetIdentity()), artifacts.NamespacePolicy{}) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"namespace %q: a namespace is created with no identity policy; set it with an update once it exists", spec.GetName()))
+	}
+	spec = withoutIdentity(spec)
 	if err := s.validNamespaceRetention(ctx, spec); err != nil {
 		return nil, err
 	}
@@ -443,12 +451,15 @@ func (s *Service) GetNamespace(
 	if err != nil {
 		s.logger.Warn("the namespace is answered without its id: it could not be read", "namespace", ns.GetName(), "error", err)
 	}
-	if id != "" {
-		ns = proto.Clone(ns).(*orkstackv1.Namespace)
-		if ns.Identity == nil {
-			ns.Identity = &orkstackv1.NamespaceIdentity{}
-		}
-		ns.Identity.NamespaceId = id
+	policy, err := s.namespacePolicy(ctx, ns)
+	if err != nil {
+		return nil, policyReadError(ns.GetName(), err)
+	}
+	ns = proto.Clone(ns).(*orkstackv1.Namespace)
+	fillPolicy(ns, policy)
+	ns.Identity.NamespaceId = id
+	if proto.Size(ns.Identity) == 0 {
+		ns.Identity = nil
 	}
 	return connect.NewResponse(&orkstackv1.GetNamespaceResponse{Namespace: ns}), nil
 }
@@ -684,6 +695,12 @@ func (s *Service) UpdateNamespace(
 	if err != nil {
 		return nil, err
 	}
+	if updated, changed, err := s.updateNamespacePolicy(ctx, req, spec, stored); err != nil {
+		return nil, err
+	} else if changed {
+		return connect.NewResponse(&orkstackv1.UpdateNamespaceResponse{Namespace: updated}), nil
+	}
+	spec = withoutIdentity(spec)
 	if err := s.mayChangeNamespacePolicy(ctx, spec, stored); err != nil {
 		return nil, err
 	}
@@ -793,7 +810,31 @@ func (s *Service) DeleteNamespace(
 				"namespace %q still holds an event source; delete it first (orkctl event-source list -n %s)", name, name))
 		}
 	}
+	// The policy goes before the document: a delete that stops half way
+	// leaves a namespace with no grants, never grants with no namespace.
+	var kept artifacts.NamespacePolicy
+	if s.namespacePolicies != nil {
+		created := doomed.GetCreatedAt().AsTime()
+		if p, ok, err := s.namespacePolicies.NamespacePolicy(ctx, name, created); err == nil && ok {
+			kept = p
+		}
+		if err := s.namespacePolicies.ClearNamespacePolicy(ctx, name, created); err != nil {
+			if errors.Is(err, artifacts.ErrIncarnationUnreadable) {
+				return nil, policyReadError(name, err)
+			}
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("delete namespace %q: remove its identity policy first: %w", name, err))
+		}
+	}
 	if err := registry.Delete(ctx, name); err != nil {
+		// The namespace stays, so its policy does too: put back what the
+		// clear removed, as a new generation.
+		if kept.Generation > 0 {
+			if _, rerr := s.namespacePolicies.SetNamespacePolicy(ctx, name, doomed.GetCreatedAt().AsTime(), kept, kept.Generation+1,
+				artifacts.PolicyWriter{Principal: kept.ChangedBy, Verified: kept.ChangedByVerified}); rerr != nil {
+				s.logger.Error("the namespace was not deleted, and its identity policy, removed first, could not be put back",
+					"namespace", name, "generation", kept.Generation, "error", rerr)
+			}
+		}
 		return nil, namespaceStoreError(err, "delete namespace %q", name)
 	}
 	s.forgetNamespaceID(ctx, name, doomed.GetCreatedAt().AsTime())

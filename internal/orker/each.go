@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -66,7 +67,18 @@ func (d *OCIDispatcher) stageEachUpstream(
 			return FailCause(ReasonWorkdirFailed, err, "stage the items of fan-out task %q: %v", producer, err)
 		}
 	}
-	staged.eachUpstream = append(staged.eachUpstream, taskJSONEachUpstream{TaskID: producer, Count: each.GetCount()})
+	// failed is the engine's own list: ascending, unique, within count.
+	// Anything else is a contradiction, refused before anything is read.
+	skip := make(map[int32]bool, len(each.GetFailed()))
+	for k, i := range each.GetFailed() {
+		if i < 0 || i >= each.GetCount() || (k > 0 && i <= each.GetFailed()[k-1]) {
+			return Fail(ReasonEachItemUnavailable,
+				"fan-out task %q's failed items %v are not ascending indices below its count %d", producer, each.GetFailed(), each.GetCount())
+		}
+		skip[i] = true
+	}
+	staged.eachUpstream = append(staged.eachUpstream, taskJSONEachUpstream{TaskID: producer, Count: each.GetCount(),
+		Failed: each.GetFailed()})
 	if each.GetCount() == 0 {
 		return nil
 	}
@@ -74,10 +86,16 @@ func (d *OCIDispatcher) stageEachUpstream(
 		return Fail(ReasonInputUnavailable,
 			"this orker has no commit store, so it cannot read the items of fan-out task %q", producer)
 	}
+	if why := epochRunsFault(each); why != "" {
+		return Fail(ReasonInputUnavailable, "the items of fan-out task %q: %s", producer, why)
+	}
 	commits := make([]*orkstackv1.ActivityCommit, each.GetCount())
 	failures := make([]*Failure, each.GetCount())
 	at, err := eachBounded(ctx, int(each.GetCount()), d.transferLimit(), func(ctx context.Context, i int) error {
-		commit, failure := d.readItemCommit(ctx, in, producer, each.GetCommitRoot(), int32(i))
+		if skip[int32(i)] {
+			return nil // a failed item has no commit
+		}
+		commit, failure := d.readItemCommit(ctx, in, producer, each.GetCommitRoot(), int32(i), itemEpoch(each, int32(i)))
 		if failure != nil {
 			failures[i] = failure
 			return failure
@@ -92,6 +110,9 @@ func (d *OCIDispatcher) stageEachUpstream(
 		return FailCause(ReasonInputUnavailable, err, "stage the items of fan-out task %q: %v", producer, err)
 	}
 	for i := int32(0); i < each.GetCount(); i++ {
+		if skip[i] {
+			continue
+		}
 		commit := commits[i]
 		segment := itemSegmentOf(i)
 		index := i
@@ -140,14 +161,46 @@ func (d *OCIDispatcher) stageEachUpstream(
 	return nil
 }
 
-// readItemCommit reads and checks one item's commit of a fan-out upstream.
+// epochRunsFault is why each's item ranges cannot be read, or "": they must
+// be ascending, disjoint, non-empty, within the items and at a scope above 0
+// (EachUpstream.epochs).
+func epochRunsFault(each *orkstackv1.EachUpstream) string {
+	next := int64(0)
+	for _, run := range each.GetEpochs() {
+		first, count := int64(run.GetFirst()), int64(run.GetCount())
+		switch {
+		case count <= 0 || run.GetEpoch() == 0:
+			return fmt.Sprintf("an item range {first %d, count %d, scope %d} names no item of a resume", first, count, run.GetEpoch())
+		case first < next:
+			return fmt.Sprintf("the item ranges are not ascending and disjoint at item %d", first)
+		case first+count > int64(each.GetCount()):
+			return fmt.Sprintf("an item range ends at item %d, past the fan-out's %d items", first+count-1, each.GetCount())
+		}
+		next = first + count
+	}
+	return ""
+}
+
+// itemEpoch is the resume scope item i of each was committed under: the
+// scope of the range that covers it, 0 when none does.
+func itemEpoch(each *orkstackv1.EachUpstream, i int32) uint64 {
+	runs := each.GetEpochs()
+	at := sort.Search(len(runs), func(k int) bool { return runs[k].GetFirst()+runs[k].GetCount() > i })
+	if at < len(runs) && runs[at].GetFirst() <= i {
+		return runs[at].GetEpoch()
+	}
+	return 0
+}
+
+// readItemCommit reads and checks one item's commit of a fan-out upstream,
+// at the resume scope it was committed under.
 func (d *OCIDispatcher) readItemCommit(
-	ctx context.Context, in *orkstackv1.ExecuteTaskInput, producer, commitRoot string, i int32,
+	ctx context.Context, in *orkstackv1.ExecuteTaskInput, producer, commitRoot string, i int32, scope uint64,
 ) (*orkstackv1.ActivityCommit, *Failure) {
 	if err := ctx.Err(); err != nil {
 		return nil, FailCause(ReasonInputUnavailable, err, "stage the items of fan-out task %q: %v", producer, err)
 	}
-	key, err := artifacts.ItemCommitKey(in.GetNamespace(), in.GetRunId(), producer, i)
+	key, err := artifacts.ScopedItemCommitKey(in.GetNamespace(), in.GetRunId(), producer, i, scope)
 	if err != nil {
 		return nil, FailCause(ReasonInputUnavailable, err,
 			"fan-out task %q item %d: compose its commit key: %v", producer, i, err)
@@ -172,7 +225,7 @@ func (d *OCIDispatcher) readItemCommit(
 			"fan-out task %q item %d: the commit at %s has schema_version %d; this orker understands %d",
 			producer, i, uri, commit.GetSchemaVersion(), artifacts.CommitSchemaVersion)
 	}
-	if mismatch := itemCommitIdentityMismatch(commit, in, producer, i); mismatch != "" {
+	if mismatch := itemCommitIdentityMismatch(commit, in, producer, i, scope); mismatch != "" {
 		return nil, Fail(ReasonCommitIdentity,
 			"fan-out task %q item %d: the commit at %s is for a different activity: %s",
 			producer, i, uri, mismatch)
@@ -183,7 +236,7 @@ func (d *OCIDispatcher) readItemCommit(
 // itemCommitIdentityMismatch is commitIdentityMismatch for one item of a
 // fan-out upstream: the commit must be that item's, of this run and this
 // definition.
-func itemCommitIdentityMismatch(commit *orkstackv1.ActivityCommit, in *orkstackv1.ExecuteTaskInput, producer string, index int32) string {
+func itemCommitIdentityMismatch(commit *orkstackv1.ActivityCommit, in *orkstackv1.ExecuteTaskInput, producer string, index int32, scope uint64) string {
 	checks := []struct {
 		field, stored, wanted string
 	}{
@@ -191,7 +244,7 @@ func itemCommitIdentityMismatch(commit *orkstackv1.ActivityCommit, in *orkstackv
 		{"run_id", commit.GetRunId(), in.GetRunId()},
 		{"task_id", commit.GetTaskId(), producer},
 		{"idempotency_key", commit.GetIdempotencyKey(),
-			task.ItemIdempotencyKeyFor(in.GetNamespace(), in.GetRunId(), producer, index)},
+			task.ScopedItemIdempotencyKeyFor(in.GetNamespace(), in.GetRunId(), producer, index, scope)},
 		{"orkflow_definition_digest", commit.GetOrkflowDefinitionDigest(), in.GetOrkflowDefinitionDigest()},
 	}
 	for _, check := range checks {

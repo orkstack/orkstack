@@ -55,11 +55,11 @@ ADMIN_HOST=127.0.0.1
 # digits-only — %Y%m%dT%H%M%SZ's 'T'/'Z' would otherwise be refused.
 STAMP="$(date -u +%Y%m%d%H%M%S)"
 NS="proof-$STAMP"
-ENGINE_PORT="$(go run ./test/tools/proofrun free-port)" || {
-	printf 'FAIL: no free port for the engine API\n'
-	exit 1
-}
-ENGINE_URL="http://127.0.0.1:$ENGINE_PORT"
+# The engine's API binds a port of its own (ORK_HTTP_ADDR=127.0.0.1:0), and
+# the gate reads the address from that engine's own log (engine_url): a port
+# found free and handed on could be taken by another process first, and the
+# gate would then talk to it.
+ENGINE_URL=""
 COLLECTOR="http://127.0.0.1:4318"
 LOKI="http://127.0.0.1:3100"
 TEMPO="http://127.0.0.1:3200"
@@ -68,7 +68,7 @@ PROM="http://127.0.0.1:9090"
 GRAFANA="http://localhost:3000"
 BIN="${ORK_TEST_BIN_DIR:-$OUT/bin}"
 IMAGE_TAG="${ORK_TEST_IMAGE_TAG:-dev}"
-ORKCTL=("$BIN/orkctl" --server "$ENGINE_URL")
+ORKCTL=()
 
 say() { printf '%s\n' "$*"; }
 fail() { say "FAIL: $*"; exit 1; }
@@ -216,10 +216,28 @@ ORK_STARTED_AT="$(date +%s)"
 env \
 	ORK_ARTIFACT_BACKEND=s3 \
 	ORK_S3_BUCKET="$BUCKET" \
-	ORK_HTTP_ADDR="127.0.0.1:$ENGINE_PORT" \
+	ORK_HTTP_ADDR="127.0.0.1:0" \
 	ORK_ACTIVITY_CATALOG="$CATALOG" \
 	"$BIN/ork" --config "$CONFIG_FILE" >"$OUT/ork.log" 2>&1 &
 ORK_PID=$!
+
+# engine_url LOG PID — the URL of the API the engine of PID bound, from the
+# "api listener ready" line of its own LOG (text or JSON), waiting up to 60s
+# and failing fast if the engine has exited.
+engine_url() {
+	local log="$1" pid="$2" addr i
+	for i in $(seq 1 120); do
+		addr="$(sed -n -e 's/.*"msg":"api listener ready".*"addr":"\([^"]*\)".*/\1/p' \
+			-e 's/.*msg="api listener ready" addr=\([^ ]*\).*/\1/p' "$log" | head -n 1)"
+		if [ -n "$addr" ]; then
+			printf 'http://%s' "$addr"
+			return 0
+		fi
+		kill -0 "$pid" 2>/dev/null || fail "ork exited before it logged its API address; see $log"
+		sleep 0.5
+	done
+	fail "ork did not log its API address within 60s; see $log"
+}
 
 # wait_ready NAME PORT PID — poll /readyz for up to 60s, failing fast if the
 # process has already died so a crash loop is not mistaken for slow startup.
@@ -239,6 +257,9 @@ wait_ready() {
 }
 wait_ready orker 9465 "$ORKER_PID"
 wait_ready ork 9464 "$ORK_PID"
+ENGINE_URL="$(engine_url "$OUT/ork.log" "$ORK_PID")"
+ORKCTL=("$BIN/orkctl" --server "$ENGINE_URL")
+say "  ork API at $ENGINE_URL"
 
 # ---- 2. admin surface -------------------------------------------------------
 {
@@ -510,9 +531,11 @@ ORKER_PID=""
 env ORK_ARTIFACT_BACKEND=s3 ORK_S3_BUCKET="$BUCKET" ORK_ORKER_WORKDIR="$WORK_DIR" \
 	"$BIN/orker" >"$OUT/orker-plain.log" 2>&1 &
 ORKER_PID=$!
-env ORK_ARTIFACT_BACKEND=s3 ORK_S3_BUCKET="$BUCKET" ORK_HTTP_ADDR="127.0.0.1:$ENGINE_PORT" ORK_ACTIVITY_CATALOG="$CATALOG" \
+env ORK_ARTIFACT_BACKEND=s3 ORK_S3_BUCKET="$BUCKET" ORK_HTTP_ADDR="127.0.0.1:0" ORK_ACTIVITY_CATALOG="$CATALOG" \
 	"$BIN/ork" >"$OUT/ork-plain.log" 2>&1 &
 ORK_PID=$!
+ENGINE_URL="$(engine_url "$OUT/ork-plain.log" "$ORK_PID")"
+ORKCTL=("$BIN/orkctl" --server "$ENGINE_URL")
 
 ready=1
 for i in $(seq 1 120); do

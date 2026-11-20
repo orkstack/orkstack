@@ -19,6 +19,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 
@@ -68,15 +70,17 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 		base = task.DefaultNamespace
 	}
 	ns := fmt.Sprintf("%s-hc-%d-%d", base, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
-	adminAddr := freeAddress(t)
 	binary := buildOrk(t)
 	// The check runs in the environment a container's health check would:
-	// the daemon's own settings, here only the admin address.
-	checkEnv := append(testbin.StackEnv(os.Environ()),
-		telemetry.AdminAddrVar+"="+adminAddr)
+	// the daemon's own settings, here only the admin address. Before the
+	// engine starts it is an address nothing listens on; once it has started,
+	// the one its admin listener bound, read from its own log.
+	checkAt := func(addr string) []string {
+		return append(testbin.StackEnv(os.Environ()), telemetry.AdminAddrVar+"="+addr)
+	}
 
 	transcript := &strings.Builder{}
-	fmt.Fprintf(transcript, "# ork --healthcheck follows the engine's readiness, admin listener %s, namespace %s\n\n", adminAddr, ns)
+	fmt.Fprintf(transcript, "# ork --healthcheck follows the engine's readiness, namespace %s\n\n", ns)
 	check := func(label string, environ []string) healthcheckResult {
 		t.Helper()
 		result := runHealthcheck(ctx, t, binary, environ)
@@ -85,15 +89,19 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	}
 
 	// Nothing has started: there is no listener to ask.
-	before := check("before the engine starts", checkEnv)
+	before := check("before the engine starts", checkAt(listenaddr.Closed))
 	if before.code != 1 || before.stdout != "" || !strings.HasPrefix(before.stderr, "ork: not ready: ") ||
 		strings.Count(before.stderr, "\n") != 1 {
 		t.Fatalf("before the engine starts: exit %d, stdout %q, stderr %q; want exit 1 and one line on stderr",
 			before.code, before.stdout, before.stderr)
 	}
 
-	apiAddr, process := startEngine(ctx, t, binary, temporal, "engine-hc",
-		"ORK_TEMPORAL_NAMESPACE="+ns, telemetry.AdminAddrVar+"="+adminAddr)
+	process := startEngine(ctx, t, binary, temporal, "engine-hc",
+		"ORK_TEMPORAL_NAMESPACE="+ns, telemetry.AdminAddrVar+"="+listenaddr.Loopback)
+	adminAddr, err := process.log.Addr(ctx, "engine-hc", listenaddr.Admin, process.done, bootwait.Deadline)
+	must.OK(t, err)
+	fmt.Fprintf(transcript, "# admin listener %s\n\n", adminAddr)
+	checkEnv := checkAt(adminAddr)
 
 	// Poll with a deadline, not a sleep: the engine is ready when the check says
 	// so, and every answer on the way there is exit 1 with a one-line reason.
@@ -131,6 +139,8 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 
 	// Ready means the API serves: the very first call after the check passes
 	// is answered, with no retry.
+	apiAddr, err := process.apiAddr(ctx, "engine-hc")
+	must.OK(t, err)
 	client := orkflowClient(t, apiAddr)
 	if _, err := client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{})); err != nil {
 		t.Fatalf("the check said ready, but the API did not answer: %v", err)

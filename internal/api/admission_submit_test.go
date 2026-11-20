@@ -1,0 +1,499 @@
+package api_test
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"errors"
+	"io/fs"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/identity"
+	"github.com/orkstack/orkstack/internal/jwt"
+	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+)
+
+// The admission record at submit (docs/TASK_IDENTITY.md, "The admission
+// record"). Each test runs SubmitRun against a real local record store: the
+// records it writes are read back from that store, and the files under its
+// directory are what a test counts. The task identity gate of this build
+// still refuses `identities:` at apply, so the definitions are put straight
+// into the Orkflow store, as one applied once the gate lifts would be.
+
+const admissionIssuer = "https://ork-id.admission.test"
+
+// admissionWorld is a service with a task identity issuer and the identity
+// record store under dir.
+type admissionWorld struct {
+	svc         *api.Service
+	records     *artifacts.RecordStore
+	dir         string
+	starter     *executionStarter
+	runContexts *artifacts.LocalRunSnapshotStore
+}
+
+// executionStarter is the unit tests' stand-in cluster, answering each
+// start with the execution it opened, as engine.TemporalStarter does.
+type executionStarter struct {
+	fakeStarter
+}
+
+func (s *executionStarter) StartRunExecution(ctx context.Context, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, plan engine.RunPlan) (string, error) {
+	if err := s.StartRun(ctx, runID, wf, input, plan); err != nil {
+		return "", err
+	}
+	return "exec-" + strings.TrimPrefix(runID, "ork-"), nil
+}
+
+type admissionOptions struct {
+	claimer     api.IdempotencyClaimer
+	records     api.AdmissionRecords
+	dir         string
+	attemptsMax int
+	definitions []*orkstackv1.Orkflow
+}
+
+func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
+	t.Helper()
+	ctx := context.Background()
+	if o.dir == "" {
+		o.dir = t.TempDir()
+	}
+	records, err := artifacts.NewRecordStore(ctx, artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: o.dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnations, err := artifacts.NewIncarnationStore(ctx, artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The built-in namespace's policy lets its tasks ask for the audience.
+	if _, err := incarnations.SetNamespacePolicy(ctx, artifacts.DefaultNamespace, time.Unix(0, 0).UTC(),
+		artifacts.NamespacePolicy{Audiences: []string{"sts.amazonaws.com"}}, 0, artifacts.PolicyWriter{Principal: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	orkflows := engine.NewMemoryOrkflowStore()
+	for _, def := range o.definitions {
+		if _, _, err := orkflows.Put(ctx, def, artifacts.HeadExpectation{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var store api.AdmissionRecords = records
+	if o.records != nil {
+		store = o.records
+	}
+	if o.attemptsMax == 0 {
+		o.attemptsMax = identity.DefaultAttemptsMax
+	}
+	starter := &executionStarter{}
+	runContexts, err := artifacts.NewLocalRunSnapshotStore(o.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := api.NewService(api.Config{
+		RunContexts:            runContexts,
+		Orkflows:               orkflows,
+		Runs:                   engine.NewRunStore(),
+		Bus:                    engine.NewEventBus(),
+		Starter:                starter,
+		Idempotency:            o.claimer,
+		Issuer:                 admissionTestIssuer(t),
+		IdentityAdmissions:     store,
+		IdentityUnscopedOrkers: identity.UnscopedReport,
+		IdentityAttemptsMax:    o.attemptsMax,
+		IdentityTokenTTL:       time.Hour,
+		Incarnations:           incarnations,
+		NamespacePolicies:      incarnations,
+		EngineBuild:            "build-test",
+	})
+	return &admissionWorld{svc: svc, records: records, dir: o.dir, starter: starter, runContexts: runContexts}
+}
+
+func admissionTestIssuer(t *testing.T) *identity.Issuer {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jwt.NewSigner(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := artifacts.NewPublishedKeysStore(context.Background(), artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i, err := identity.New(identity.Config{URL: admissionIssuer, Keys: []*jwt.Signer{signer}, Algorithm: jwt.ES256,
+		ActivationDelay: time.Hour, Engine: "e1"}, keys, nothingLive{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return i
+}
+
+// nothingLive serves no published key: nothing here signs.
+type nothingLive struct{}
+
+func (nothingLive) PublishedKeyIDs(context.Context) (map[string]bool, error) { return nil, nil }
+
+// identityOrkflow is Orkflow deploy@1 of namespace default: a task that
+// holds identity aws, one that holds none, and an awaited task.
+func identityOrkflow() *orkstackv1.Orkflow {
+	pinned := &orkstackv1.ImageRef{Reference: "ghcr.io/acme/deploy:1", Pinned: "ghcr.io/acme/deploy@sha256:" + strings.Repeat("a", 64)}
+	return &orkstackv1.Orkflow{Name: "deploy", Version: "1", DefinitionDigest: strings.Repeat("d", 64), Tasks: []*orkstackv1.Task{
+		{Id: "apply", Image: pinned, Command: []string{"apply"}, Retry: &orkstackv1.RetryPolicy{MaximumAttempts: 3},
+			Identities: []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts.amazonaws.com", TtlSeconds: 900}}},
+		{Id: "report", Image: pinned, Needs: []string{"apply"}},
+		{Id: "approve", Needs: []string{"report"}, Await: &orkstackv1.AwaitSpec{TimeoutSeconds: 60}},
+	}}
+}
+
+// composingOrkflows is Orkflow release@1, whose task ship composes
+// child@1, whose task push holds identity aws.
+func composingOrkflows() (parent, child *orkstackv1.Orkflow) {
+	child = identityOrkflow()
+	child.Name = "child"
+	child.Tasks = child.Tasks[:1]
+	child.Tasks[0].Id = "push"
+	pinned := &orkstackv1.ImageRef{Reference: "ghcr.io/acme/build:1", Pinned: "ghcr.io/acme/build@sha256:" + strings.Repeat("b", 64)}
+	parent = &orkstackv1.Orkflow{Name: "release", Version: "1", DefinitionDigest: strings.Repeat("e", 64), Tasks: []*orkstackv1.Task{
+		{Id: "build", Image: pinned},
+		{Id: "ship", Needs: []string{"build"}, Uses: "orkflow:child@1", Orkflow: &orkstackv1.OrkflowRef{Name: "child", Version: "1", DefinitionDigest: child.GetDefinitionDigest()}},
+	}}
+	return parent, child
+}
+
+func (w *admissionWorld) submit(t *testing.T, name, key string) (*orkstackv1.Run, error) {
+	t.Helper()
+	resp, err := w.svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name, IdempotencyKey: key}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg.GetRun(), nil
+}
+
+// admissionFiles lists the admission records under the store's directory.
+func (w *admissionWorld) admissionFiles(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(w.dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasPrefix(d.Name(), "admission-") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestSubmitRun_AdmitsARunThatHoldsAnIdentity: the run is started with a
+// plan naming its admission, the record is in the store under its id with
+// every container task in its table, and the chain record names the
+// execution the start opened and that digest.
+func TestSubmitRun_AdmitsARunThatHoldsAnIdentity(t *testing.T) {
+	ctx := context.Background()
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
+	run, err := w.submit(t, "deploy", "")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	plans := w.starter.startedPlans()
+	if len(plans) != 1 || plans[0].Identity == nil {
+		t.Fatalf("started plans %+v; want one naming its admission", plans)
+	}
+	ip := plans[0].Identity
+	if ip.AttemptsExtra != identity.DefaultAttemptsExtra || ip.SpecVersion != task.IdentitySpecVersion || ip.Issuer != admissionIssuer || ip.TokenTTLSeconds != 3600 || len(ip.AdmissionSHA256) != 64 {
+		t.Fatalf("the plan's identity = %+v", ip)
+	}
+	read, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, run.GetId(), ip.AdmissionSHA256)
+	if err != nil || read.Answer != artifacts.RecordFound {
+		t.Fatalf("the admission the plan names reads %+v, %v", read, err)
+	}
+	a := read.Value
+	if a.Starter != (artifacts.Starter{Kind: artifacts.StarterEngine}) || a.RootRunID != "" || a.Issuer != admissionIssuer ||
+		a.EngineBuild != "build-test" || a.TokenTTL != 3600 || a.NamespaceID == "" || a.OrkflowID == "" ||
+		a.Origin.Kind != "submit" || a.DefinitionDigest != strings.Repeat("d", 64) {
+		t.Fatalf("admission = %+v", a)
+	}
+	wantSet := artifacts.AdmittedIdentity{Name: "aws", Audience: "sts.amazonaws.com", TTLSeconds: 900, Refresh: artifacts.RefreshRequired}
+	if len(a.Tasks) != 2 || len(a.Sets) != 1 || a.Sets[0].Identities[0] != wantSet {
+		t.Fatalf("tasks %+v, sets %+v; want apply and report, and one set", a.Tasks, a.Sets)
+	}
+	def := identityOrkflow()
+	for _, tk := range def.GetTasks()[:2] {
+		want, _, _ := task.IdentitySpecDigest(1, task.IdentitySpecOfTask(tk))
+		if got := a.Tasks[tk.GetId()]; got.SpecSHA256 != want || got.Pool != task.DefaultPool {
+			t.Errorf("task %q: %+v; want spec %s at pool %s", tk.GetId(), got, want, task.DefaultPool)
+		}
+	}
+	apply := a.Tasks["apply"]
+	if apply.Set != 1 || apply.IdentitySlots != 3 || int64(apply.AttemptDeadline) != engine.AttemptDeadlineSeconds(def.GetTasks()[0], plans[0].TransferBudgetSeconds) {
+		t.Errorf("apply = %+v; want set 1, 3 slots and the attempt's deadline", apply)
+	}
+	if report := a.Tasks["report"]; report.Set != 0 || report.IdentitySlots != 0 || report.AttemptDeadline != 0 {
+		t.Errorf("report = %+v; a task that holds no identity has no slots", report)
+	}
+	chain, err := w.records.ReadChain(ctx, artifacts.DefaultNamespace, run.GetId())
+	wantChain := artifacts.Chain{FirstExecutionID: "exec-" + strings.TrimPrefix(run.GetId(), "ork-"), AdmissionSHA256: ip.AdmissionSHA256}
+	if err != nil || chain.Answer != artifacts.RecordFound || chain.Value != wantChain {
+		t.Fatalf("chain = %+v, %v; want %+v", chain, err, wantChain)
+	}
+	if files := w.admissionFiles(t); len(files) != 1 {
+		t.Fatalf("admission records %v; want one", files)
+	}
+}
+
+// TestSubmitRun_AdmitsNothingForARunThatHoldsNone: a plain Orkflow's plan
+// encodes as it did, and nothing is written.
+func TestSubmitRun_AdmitsNothingForARunThatHoldsNone(t *testing.T) {
+	plain := identityOrkflow()
+	plain.Name = "plain"
+	plain.Tasks[0].Identities = nil
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{plain}})
+	run, err := w.submit(t, "plain", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plans := w.starter.startedPlans(); len(plans) != 1 || plans[0].Identity != nil {
+		t.Fatalf("started plans %+v; want one with no identity", plans)
+	}
+	if files := w.admissionFiles(t); len(files) != 0 {
+		t.Fatalf("admission records %v; want none", files)
+	}
+	if chain, err := w.records.ReadChain(context.Background(), artifacts.DefaultNamespace, run.GetId()); err != nil || chain.Answer != artifacts.RecordNone {
+		t.Fatalf("chain = %+v, %v; want none", chain, err)
+	}
+}
+
+// observedClaimer runs onClaim before each claim reaches the shared
+// claimer: what was written by then, and a binding another replica makes
+// just before this one claims.
+type observedClaimer struct {
+	*sharedClaimer
+	onClaim func()
+}
+
+func (c *observedClaimer) Claim(ctx context.Context, key string, candidate engine.Claim) (engine.Claim, error) {
+	if c.onClaim != nil {
+		c.onClaim()
+	}
+	return c.sharedClaimer.Claim(ctx, key, candidate)
+}
+
+// TestSubmitRun_AKeyedSubmissionAdmitsBeforeTheClaim: the record is in
+// the store when the key is claimed, and a submission told that another
+// run holds the key deletes what its candidate created and starts nothing.
+func TestSubmitRun_AKeyedSubmissionAdmitsBeforeTheClaim(t *testing.T) {
+	t.Run("winner", func(t *testing.T) {
+		claimer := &observedClaimer{sharedClaimer: newSharedClaimer()}
+		w := newAdmissionWorld(t, admissionOptions{claimer: claimer, definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
+		atClaim := -1
+		claimer.onClaim = func() { atClaim = len(w.admissionFiles(t)) }
+		if _, err := w.submit(t, "deploy", "order-1"); err != nil {
+			t.Fatal(err)
+		}
+		if atClaim != 1 {
+			t.Fatalf("%d admission records when the key was claimed; want 1", atClaim)
+		}
+	})
+	t.Run("loser", func(t *testing.T) {
+		claimer := &observedClaimer{sharedClaimer: newSharedClaimer()}
+		w := newAdmissionWorld(t, admissionOptions{claimer: claimer, definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
+		winner := &orkstackv1.Run{Id: "ork-winner", OrkflowName: "deploy", OrkflowVersion: "1", Status: orkstackv1.Status_STATUS_PENDING}
+		atClaim := -1
+		claimer.onClaim = func() {
+			atClaim = len(w.admissionFiles(t))
+			claimer.bind(claimKeyIn(artifacts.DefaultNamespace, "order-2"), winner)
+		}
+		_, _ = w.submit(t, "deploy", "order-2")
+		if atClaim != 1 {
+			t.Fatalf("%d admission records when the key was claimed; want 1", atClaim)
+		}
+		if files := w.admissionFiles(t); len(files) != 0 {
+			t.Fatalf("the loser left %v", files)
+		}
+		if started := w.starter.startedRuns(); len(started) != 0 {
+			t.Fatalf("the loser started %v", started)
+		}
+	})
+}
+
+// failingAdmissions is the real record store whose admission writes fail
+// after failAfter of them: a store outage at one write, which a real store
+// cannot be made to have on demand. Its deletes are the real store's,
+// counted.
+type failingAdmissions struct {
+	*artifacts.RecordStore
+	failAfter int
+	deletes   int
+}
+
+func (f *failingAdmissions) WriteAdmission(ctx context.Context, a artifacts.Admission) (string, bool, error) {
+	if f.failAfter == 0 {
+		return "", false, errors.New("the store did not answer")
+	}
+	f.failAfter--
+	return f.RecordStore.WriteAdmission(ctx, a)
+}
+
+func (f *failingAdmissions) DeleteAdmission(ctx context.Context, ns, runID, sha string) error {
+	f.deletes++
+	return f.RecordStore.DeleteAdmission(ctx, ns, runID, sha)
+}
+
+// TestSubmitRun_AFailedAdmissionWriteRefusesBeforeTheClaim: unavailable,
+// with no key claimed, nothing started, and nothing left: the child's
+// record, written before the run's own failed, is deleted, and so is the
+// run's own, whose failed write may have landed.
+func TestSubmitRun_AFailedAdmissionWriteRefusesBeforeTheClaim(t *testing.T) {
+	dir := t.TempDir()
+	real, err := artifacts.NewRecordStore(context.Background(), artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, child := composingOrkflows()
+	faulty := &failingAdmissions{RecordStore: real, failAfter: 1}
+	claimer := newSharedClaimer()
+	w := newAdmissionWorld(t, admissionOptions{claimer: claimer, records: faulty, dir: dir, definitions: []*orkstackv1.Orkflow{child, parent}})
+	_, err = w.submit(t, "release", "order-3")
+	if connect.CodeOf(err) != connect.CodeUnavailable || !strings.Contains(err.Error(), "admission record") {
+		t.Fatalf("submit = %v; want unavailable naming the admission record", err)
+	}
+	if proposed, _ := claimer.counts(); proposed != 0 {
+		t.Fatalf("%d claims were made; a failed admission claims nothing", proposed)
+	}
+	if started := w.starter.startedRuns(); len(started) != 0 {
+		t.Fatalf("started %v", started)
+	}
+	// The child's, which was created, and the run's own, whose failed write
+	// may have landed all the same.
+	if faulty.deletes != 2 {
+		t.Fatalf("%d deletes; want the child's and the run's own", faulty.deletes)
+	}
+	if files := w.admissionFiles(t); len(files) != 0 {
+		t.Fatalf("left %v", files)
+	}
+}
+
+// TestSubmitRun_AdmitsEveryRunOfATree: a parent that holds no identity is
+// admitted when its child holds one, and names the child run its composing
+// task starts; the child's record names its parent's
+// run, record and composing task and the root, and the child's plan names
+// the child's record.
+func TestSubmitRun_AdmitsEveryRunOfATree(t *testing.T) {
+	ctx := context.Background()
+	parent, child := composingOrkflows()
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{child, parent}})
+	run, err := w.submit(t, "release", "")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	plan := w.starter.startedPlans()[0]
+	if plan.Identity == nil {
+		t.Fatal("the parent's plan names no admission")
+	}
+	root, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, run.GetId(), plan.Identity.AdmissionSHA256)
+	if err != nil || root.Answer != artifacts.RecordFound || len(root.Value.Sets) != 0 || len(root.Value.Tasks) != 1 {
+		t.Fatalf("the parent's admission reads %+v, %v; want build alone, with no set", root, err)
+	}
+	entry := plan.Children["ship"]
+	if entry == nil || len(root.Value.Children) != 1 || root.Value.Children["ship"] != entry.RunID {
+		t.Fatalf("the parent's admission names children %v; want ship's run", root.Value.Children)
+	}
+	if entry == nil || entry.RunID == "" || entry.Plan.Identity == nil {
+		t.Fatalf("the child's plan entry = %+v", entry)
+	}
+	got, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, entry.RunID, entry.Plan.Identity.AdmissionSHA256)
+	if err != nil || got.Answer != artifacts.RecordFound {
+		t.Fatalf("the child's admission reads %+v, %v", got, err)
+	}
+	want := artifacts.Starter{Kind: artifacts.StarterParentRun, RunID: run.GetId(), AdmissionSHA256: plan.Identity.AdmissionSHA256, TaskID: "ship"}
+	if got.Value.Starter != want || got.Value.RootRunID != run.GetId() || got.Value.SetOf("push") == nil {
+		t.Fatalf("the child's admission = %+v; want starter %+v and root %s", got.Value, want, run.GetId())
+	}
+	if chain, _ := w.records.ReadChain(ctx, artifacts.DefaultNamespace, entry.RunID); chain.Answer != artifacts.RecordNone {
+		t.Fatalf("a child has a chain record: %+v", chain)
+	}
+}
+
+// TestSubmitRun_RefusesATaskOverTheAttemptCap: IDENTITY_ATTEMPTS_OVER_LIMIT,
+// naming the task, before anything is written.
+func TestSubmitRun_RefusesATaskOverTheAttemptCap(t *testing.T) {
+	w := newAdmissionWorld(t, admissionOptions{attemptsMax: 2, definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
+	_, err := w.submit(t, "deploy", "")
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "IDENTITY_ATTEMPTS_OVER_LIMIT") || !strings.Contains(err.Error(), `"apply"`) {
+		t.Fatalf("submit = %v", err)
+	}
+	if files := w.admissionFiles(t); len(files) != 0 || len(w.starter.startedRuns()) != 0 {
+		t.Fatalf("wrote %v, started %v", files, w.starter.startedRuns())
+	}
+}
+
+// TestPlanRun_NamesWhatEachTaskFollows: a plan of a run whose tree holds an
+// identity names, for each task, the tasks whose record it needs before it
+// starts; a plain run's plan names none.
+func TestPlanRun_NamesWhatEachTaskFollows(t *testing.T) {
+	plain := identityOrkflow()
+	plain.Name = "plain"
+	plain.Tasks[0].Identities = nil
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{identityOrkflow(), plain}})
+	follows := func(name string) map[string][]string {
+		resp, err := w.svc.PlanRun(context.Background(), connect.NewRequest(&orkstackv1.PlanRunRequest{OrkflowName: name}))
+		if err != nil {
+			t.Fatalf("plan %s: %v", name, err)
+		}
+		out := map[string][]string{}
+		for _, task := range resp.Msg.GetTasks() {
+			if len(task.GetFollows()) > 0 {
+				out[task.GetTaskId()] = task.GetFollows()
+			}
+		}
+		return out
+	}
+	got := follows("deploy")
+	if len(got) != 2 || strings.Join(got["report"], ",") != "apply" || strings.Join(got["approve"], ",") != "report" {
+		t.Fatalf("deploy's plan follows %v; want report on apply, approve on report", got)
+	}
+	if got := follows("plain"); len(got) != 0 {
+		t.Fatalf("a plain run's plan follows %v", got)
+	}
+}
+
+// TestSubmitRun_AnAdmittedRunWritesItsRunContext: an identity run is
+// admitted before it starts, and its run-context object is written with its
+// admission, under the id it starts with, so its tasks can read it.
+func TestSubmitRun_AnAdmittedRunWritesItsRunContext(t *testing.T) {
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
+	run, err := w.submit(t, "deploy", "")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	w.starter.mu.Lock()
+	plans := append([]engine.RunPlan(nil), w.starter.plans...)
+	w.starter.mu.Unlock()
+	if len(plans) != 1 || plans[0].Identity == nil || plans[0].RunContextSHA256 == "" {
+		t.Fatalf("started plans %+v; want one admitted and naming its run context", plans)
+	}
+	obj, err := w.runContexts.ReadRunContext(context.Background(), artifacts.DefaultNamespace, run.GetId(), plans[0].RunContextSHA256)
+	if err != nil {
+		t.Fatalf("the admitted run's context: %v", err)
+	}
+	if obj.Root.Orkflow.Name != "deploy" {
+		t.Fatalf("run context root = %+v", obj.Root)
+	}
+}

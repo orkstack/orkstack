@@ -30,6 +30,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 
+	"github.com/orkstack/orkstack/internal/testsupport/dockerport"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -470,15 +471,11 @@ func (k *canContract) historyLimitReason(t *testing.T) {
 		notVerifiable("the image " + image + " is not present")
 		return
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	must.OK(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
 	// timeout(1) bounds the server's life even if this process dies before
 	// its cleanup runs.
 	out, err := exec.CommandContext(k.ctx, "docker", "run", "-d", "--rm", "--pull", "never",
 		"--label", fmt.Sprintf("ork.test=can-contract-%d", os.Getpid()),
-		"-p", fmt.Sprintf("127.0.0.1:%d:7233", port), "--entrypoint", "sh", image, "-c",
+		"-p", dockerport.Publish("7233"), "--entrypoint", "sh", image, "-c",
 		"exec timeout 600 temporal server start-dev --ip 0.0.0.0 --headless --log-level error "+
 			"--dynamic-config-value limit.historyCount.error=60 --dynamic-config-value limit.historyCount.warn=30").Output()
 	if err != nil {
@@ -487,10 +484,13 @@ func (k *canContract) historyLimitReason(t *testing.T) {
 	}
 	container := strings.TrimSpace(string(out))
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", container).Run() })
+	// Docker picked the port and holds it for this container alone.
+	address, err := dockerport.Addr(k.ctx, container, "7233")
+	must.OK(t, err)
 	var c client.Client
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		c, err = client.DialContext(k.ctx, client.Options{HostPort: fmt.Sprintf("127.0.0.1:%d", port), Namespace: client.DefaultNamespace})
+		c, err = client.DialContext(k.ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
 		if err == nil {
 			if _, err = c.CheckHealth(k.ctx, &client.CheckHealthRequest{}); err == nil {
 				break

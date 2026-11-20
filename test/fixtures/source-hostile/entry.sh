@@ -84,9 +84,19 @@ while :; do
   else
     cp "$broker/held/$id" "$ans/tmp/b" && mv "$ans/tmp/b" "$ans/$lane/body"
   fi
-  say "$lane/message.json" "{\"schemaVersion\":1,\"seq\":$seq,\"id\":\"dir:$id\",\"bodyBytes\":$(stat -L -c %s "$ans/$lane/body"),\"deliveryCount\":$n}"
   held_at=$(date +%s) action=''
-  if [ "$mode" = ack-no-verdict ]; then action=ack; fi
+  if [ "$mode" = ack-no-verdict ]; then
+    # Acknowledged on its own, and settled BEFORE the message is handed over,
+    # so the Orker meets the settle before any verdict, at the first message,
+    # every time; settling after the hand-over would race the Orker's own
+    # verdict, and which check met the fault would depend on timing.
+    mv "$broker/held/$id" "$broker/done/$id"
+    say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":true}"
+    say "$lane/message.json" "{\"schemaVersion\":1,\"seq\":$seq,\"id\":\"dir:$id\",\"bodyBytes\":$(stat -L -c %s "$ans/$lane/body"),\"deliveryCount\":$n}"
+    answered=$seq
+    continue
+  fi
+  say "$lane/message.json" "{\"schemaVersion\":1,\"seq\":$seq,\"id\":\"dir:$id\",\"bodyBytes\":$(stat -L -c %s "$ans/$lane/body"),\"deliveryCount\":$n}"
   while [ -z "$action" ]; do
     tick
     v=$(jq -r "select(.seq==$seq) | .action" "$ask/$lane/verdict.json" 2>/dev/null || true)

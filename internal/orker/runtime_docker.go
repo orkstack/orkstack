@@ -639,8 +639,7 @@ func dockerContainerFlags(spec ContainerSpec, name string, spoken dialect) ([]st
 			t.UID < 0 || t.GID < 0 || !plainArgument(t.Path) {
 			return nil, errors.New("create container: a service's answer filesystem has a path, a size, an inode count and an owner")
 		}
-		args = append(args, "--tmpfs", fmt.Sprintf("%s:rw,nosuid,nodev,noexec,size=%d,nr_inodes=%d,mode=0700,uid=%d,gid=%d",
-			t.Path, t.Bytes, t.Inodes, t.UID, t.GID))
+		args = append(args, "--tmpfs", t.Path+":"+spoken.answerTmpfsOptions(*t))
 	}
 	if spec.TmpfsPath != "" {
 		// noexec is spelled rather than left to the runtime: Docker adds it to
@@ -2482,6 +2481,11 @@ func verifyServiceNetwork(x dialect, raw string) error {
 	return nil
 }
 
+// ErrNoContainerAddress is a container on its runtime's default network
+// that has no address another container could dial (rootless Podman's
+// user-mode network): nothing there can be reached, or asked, by address.
+var ErrNoContainerAddress = errors.New("the container has no address on its default network")
+
 // ContainerAddress is a running container's IPv4 address on one network:
 // a service network by its id, or a runtime network by its name ("bridge"
 // for the default one). The reach probe dials its canaries at it.
@@ -2503,7 +2507,13 @@ func parseContainerAddress(raw, network string) (string, error) {
 		NetworkID string `json:"NetworkID"`
 		IPAddress string `json:"IPAddress"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &nets); err != nil || nets == nil {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "null" || trimmed == "{}" {
+		// A container on a runtime's user-mode network (rootless Podman's
+		// default) is on no network another container can reach.
+		return "", ErrNoContainerAddress
+	}
+	if err := json.Unmarshal([]byte(trimmed), &nets); err != nil || nets == nil {
 		return "", fmt.Errorf("the runtime's networks of a container did not decode")
 	}
 	for name, n := range nets {
@@ -2514,6 +2524,9 @@ func parseContainerAddress(raw, network string) (string, error) {
 		}
 		if network != "" && name != network && n.NetworkID != network {
 			continue
+		}
+		if network == "" && n.IPAddress == "" {
+			return "", ErrNoContainerAddress
 		}
 		ip := net.ParseIP(n.IPAddress)
 		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsLoopback() {

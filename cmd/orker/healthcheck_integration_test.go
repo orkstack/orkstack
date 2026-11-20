@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +22,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
@@ -31,23 +32,9 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
-// syncBuffer is a log an exec.Cmd writes to while a test reads it.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
+// syncBuffer is a log an exec.Cmd writes to while a test reads it, and that
+// names where the process's listeners are.
+type syncBuffer = listenaddr.Log
 
 // orkerProcess is one real orker binary the test started.
 type orkerProcess struct {
@@ -104,14 +91,6 @@ func requireObjectStore(t *testing.T) {
 	if err != nil {
 		infraAbsent(t, "object store bucket %s at %s is not reachable: %v; run `make infra-up`", cfg.S3Bucket, cfg.S3Endpoint, err)
 	}
-}
-
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	must.OKf(t, err, "reserve port")
-	defer listener.Close()
-	return listener.Addr().String()
 }
 
 // ownWorkRoot is this test's own Orker work root, one the container runtime can
@@ -213,15 +192,17 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	ns := fmt.Sprintf("%s-orkerhc-%s", base, suffix)
 	queue := "ork-orkerhc-" + suffix
-	adminAddr := freeAddress(t)
 	binary := testbin.Path(t, "./cmd/orker")
 
 	// The check runs in the environment a container's health check would: the
-	// daemon's own settings, here only the admin address.
-	checkEnv := append(testbin.StackEnv(os.Environ()),
-		telemetry.AdminAddrVar+"="+adminAddr)
+	// daemon's own settings, here only the admin address. Before the Orker
+	// starts it is an address nothing listens on; once it has started, the one
+	// its admin listener bound, read from its own log.
+	checkAt := func(addr string) []string {
+		return append(testbin.StackEnv(os.Environ()), telemetry.AdminAddrVar+"="+addr)
+	}
 	daemonEnv := append(testbin.StackEnv(os.Environ()),
-		telemetry.AdminAddrVar+"="+adminAddr,
+		telemetry.AdminAddrVar+"="+listenaddr.Loopback,
 		"ORK_TEMPORAL_ADDRESS="+temporal,
 		"ORK_TEMPORAL_NAMESPACE="+ns,
 		"ORK_ORKER_QUEUE="+queue,
@@ -231,7 +212,7 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	)
 
 	transcript := &strings.Builder{}
-	fmt.Fprintf(transcript, "# orker --healthcheck follows the Orker's readiness, admin listener %s, namespace %s\n\n", adminAddr, ns)
+	fmt.Fprintf(transcript, "# orker --healthcheck follows the Orker's readiness, namespace %s\n\n", ns)
 	check := func(label string, environ []string) healthcheckResult {
 		t.Helper()
 		result := runHealthcheck(ctx, t, binary, environ)
@@ -241,7 +222,7 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	oneLine := func(s string) bool { return strings.Count(s, "\n") == 1 }
 
 	// Nothing has started: there is no listener to ask.
-	before := check("before the orker starts", checkEnv)
+	before := check("before the orker starts", checkAt(listenaddr.Closed))
 	if before.code != 1 || before.stdout != "" || !strings.HasPrefix(before.stderr, "orker: not ready: ") || !oneLine(before.stderr) {
 		t.Fatalf("before the orker starts: exit %d, stdout %q, stderr %q; want exit 1 and one line on stderr",
 			before.code, before.stdout, before.stderr)
@@ -258,6 +239,10 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 		process.stop(t)
 		t.Logf("orker log:\n%s", log.String())
 	})
+	adminAddr, err := log.Addr(ctx, "orker", listenaddr.Admin, process.done, bootwait.Deadline)
+	must.OK(t, err)
+	fmt.Fprintf(transcript, "# admin listener %s\n\n", adminAddr)
+	checkEnv := checkAt(adminAddr)
 
 	// Poll with a deadline, not a sleep: the Orker is ready when the check says
 	// so, and every answer on the way there is exit 1 with a one-line reason.

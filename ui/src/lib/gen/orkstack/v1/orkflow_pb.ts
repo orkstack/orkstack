@@ -2,11 +2,11 @@
 // @generated from file orkstack/v1/orkflow.proto (package orkstack.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { CacheScope, EachLineFormat, EachSource, ImageRef, JoinPolicy, NetworkMode, ResourceRequest, SecretRef } from "./activity_pb";
+import type { CacheScope, CredentialRef, EachLineFormat, EachSource, IdentityRef, ImageRef, JoinPolicy, NetworkMode, ResourceRequest, SecretRef } from "./activity_pb";
 import { file_orkstack_v1_activity } from "./activity_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
@@ -14,7 +14,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/orkflow.proto.
  */
 export const file_orkstack_v1_orkflow: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSK+AQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUSHgoRbWF4X2ludGVycnVwdGlvbnMYBSABKAVIAIgBAUIUChJfbWF4X2ludGVycnVwdGlvbnMiLAoDUGluEgwKBG5hbWUYASABKAkSFwoPdGltZW91dF9zZWNvbmRzGAIgASgFIlkKCk9ya2Zsb3dSZWYSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAMgASgJEhEKCW5hbWVzcGFjZRgEIAEoCSIyCgxPcmtmbG93U2hhcmUSEQoJbmFtZXNwYWNlGAEgASgJEg8KB29ya2Zsb3cYAiABKAkilAkKBFRhc2sSCgoCaWQYASABKAkSJQoEd2l0aBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDQoFbmVlZHMYBCADKAkSEQoJY29uZGl0aW9uGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoBRInCgVyZXRyeRgHIAEoCzIYLm9ya3N0YWNrLnYxLlJldHJ5UG9saWN5EgwKBHBvb2wYCSABKAkSDAoEdXNlcxgKIAEoCRIkCgVpbWFnZRgLIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYDCADKAkSJwoDZW52GA0gAygLMhoub3Jrc3RhY2sudjEuVGFzay5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEi8KCXJlc291cmNlcxgPIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBAgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBEgASgFEhkKEXJ1bl9hc19vcmtlcl91c2VyGBIgASgIEgsKA3BpbhgTIAEoCRIlCgVhd2FpdBgUIAEoCzIWLm9ya3N0YWNrLnYxLkF3YWl0U3BlYxIjCgRlYWNoGBUgASgLMhUub3Jrc3RhY2sudjEuRWFjaFNwZWMSKAoHb3JrZmxvdxgWIAEoCzIXLm9ya3N0YWNrLnYxLk9ya2Zsb3dSZWYSJQoFY2FjaGUYFyABKAsyFi5vcmtzdGFjay52MS5DYWNoZVNwZWMSJQoEam9pbhgYIAEoDjIXLm9ya3N0YWNrLnYxLkpvaW5Qb2xpY3kSJQoFc2xlZXAYGSABKAsyFi5vcmtzdGFjay52MS5TbGVlcFNwZWMSDwoHZGV2aWNlcxgaIAMoCRIzCg9jaGlsZF9hcnRpZmFjdHMYHiADKAsyGi5vcmtzdGFjay52MS5DaGlsZEFydGlmYWN0EhcKD2lucHV0X2FydGlmYWN0cxgfIAMoCRIsCgppZGVudGl0aWVzGBwgAygLMhgub3Jrc3RhY2sudjEuSWRlbnRpdHlSZWYSLwoLY3JlZGVudGlhbHMYHSADKAsyGi5vcmtzdGFjay52MS5DcmVkZW50aWFsUmVmEjEKC2NvbmN1cnJlbmN5GCAgASgLMhwub3Jrc3RhY2sudjEuQ29uY3VycmVuY3lTcGVjEkAKEGRldmljZV9jb250cmFjdHMYISADKAsyJi5vcmtzdGFjay52MS5UYXNrLkRldmljZUNvbnRyYWN0c0VudHJ5GioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaNgoURGV2aWNlQ29udHJhY3RzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECAIQA0oECAgQCUoECBsQHFIGcGx1Z2luUgVxdWV1ZSJICglDYWNoZVNwZWMSEwoLdHRsX3NlY29uZHMYASABKAUSJgoFc2NvcGUYAiABKA4yFy5vcmtzdGFjay52MS5DYWNoZVNjb3BlIskBCghFYWNoU3BlYxIMCgRvdmVyGAEgASgJEgoKAmFzGAIgASgJEhEKCW1heF9pdGVtcxgDIAEoBRIUCgxtYXhfcGFyYWxsZWwYBCABKAUSJwoGc291cmNlGAUgASgLMhcub3Jrc3RhY2sudjEuRWFjaFNvdXJjZRIVCg1vdmVyX2FydGlmYWN0GAYgASgJEisKBmZvcm1hdBgHIAEoDjIbLm9ya3N0YWNrLnYxLkVhY2hMaW5lRm9ybWF0Eg0KBWJhdGNoGAggASgFIl8KCUF3YWl0U3BlYxIXCg90aW1lb3V0X3NlY29uZHMYASABKAUSEAoIY2FsbGJhY2sYAiABKAgSJwoGc2NoZW1hGAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCIcCglTbGVlcFNwZWMSDwoHc2Vjb25kcxgBIAEoBSKUBgoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYCSABKAkSGQoRZGVmaW5pdGlvbl9kaWdlc3QYCiABKAkSHgoEcGlucxgLIAMoCzIQLm9ya3N0YWNrLnYxLlBpbhIyCgdvdXRwdXRzGAwgAygLMiEub3Jrc3RhY2sudjEuT3JrZmxvdy5PdXRwdXRzRW50cnkSLgoLc2hhcmVkX3dpdGgYDSADKAsyGS5vcmtzdGFjay52MS5PcmtmbG93U2hhcmUSHAoUZGVmaW5pdGlvbl9uYW1lc3BhY2UYDiABKAkSQwoQb3V0cHV0X2FydGlmYWN0cxgPIAMoCzIpLm9ya3N0YWNrLnYxLk9ya2Zsb3cuT3V0cHV0QXJ0aWZhY3RzRW50cnkSMQoLY29uY3VycmVuY3kYECABKAsyHC5vcmtzdGFjay52MS5Db25jdXJyZW5jeVNwZWMSFwoPdGltZW91dF9zZWNvbmRzGBEgASgDGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaLgoMT3V0cHV0c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaUwoUT3V0cHV0QXJ0aWZhY3RzRW50cnkSCwoDa2V5GAEgASgJEioKBXZhbHVlGAIgASgLMhsub3Jrc3RhY2sudjEuT3V0cHV0QXJ0aWZhY3Q6AjgBIg8KDUNoaWxkQXJ0aWZhY3QiEQoPQ29uY3VycmVuY3lTcGVjIg8KDUNyZWRlbnRpYWxSZWYiDQoLSWRlbnRpdHlSZWYiEAoOT3V0cHV0QXJ0aWZhY3RCqAEKD2NvbS5vcmtzdGFjay52MUIMT3JrZmxvd1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
+  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSK+AQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUSHgoRbWF4X2ludGVycnVwdGlvbnMYBSABKAVIAIgBAUIUChJfbWF4X2ludGVycnVwdGlvbnMiLAoDUGluEgwKBG5hbWUYASABKAkSFwoPdGltZW91dF9zZWNvbmRzGAIgASgFIlkKCk9ya2Zsb3dSZWYSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAMgASgJEhEKCW5hbWVzcGFjZRgEIAEoCSIyCgxPcmtmbG93U2hhcmUSEQoJbmFtZXNwYWNlGAEgASgJEg8KB29ya2Zsb3cYAiABKAkilAkKBFRhc2sSCgoCaWQYASABKAkSJQoEd2l0aBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDQoFbmVlZHMYBCADKAkSEQoJY29uZGl0aW9uGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoBRInCgVyZXRyeRgHIAEoCzIYLm9ya3N0YWNrLnYxLlJldHJ5UG9saWN5EgwKBHBvb2wYCSABKAkSDAoEdXNlcxgKIAEoCRIkCgVpbWFnZRgLIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYDCADKAkSJwoDZW52GA0gAygLMhoub3Jrc3RhY2sudjEuVGFzay5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEi8KCXJlc291cmNlcxgPIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBAgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBEgASgFEhkKEXJ1bl9hc19vcmtlcl91c2VyGBIgASgIEgsKA3BpbhgTIAEoCRIlCgVhd2FpdBgUIAEoCzIWLm9ya3N0YWNrLnYxLkF3YWl0U3BlYxIjCgRlYWNoGBUgASgLMhUub3Jrc3RhY2sudjEuRWFjaFNwZWMSKAoHb3JrZmxvdxgWIAEoCzIXLm9ya3N0YWNrLnYxLk9ya2Zsb3dSZWYSJQoFY2FjaGUYFyABKAsyFi5vcmtzdGFjay52MS5DYWNoZVNwZWMSJQoEam9pbhgYIAEoDjIXLm9ya3N0YWNrLnYxLkpvaW5Qb2xpY3kSJQoFc2xlZXAYGSABKAsyFi5vcmtzdGFjay52MS5TbGVlcFNwZWMSDwoHZGV2aWNlcxgaIAMoCRIzCg9jaGlsZF9hcnRpZmFjdHMYHiADKAsyGi5vcmtzdGFjay52MS5DaGlsZEFydGlmYWN0EhcKD2lucHV0X2FydGlmYWN0cxgfIAMoCRIsCgppZGVudGl0aWVzGBwgAygLMhgub3Jrc3RhY2sudjEuSWRlbnRpdHlSZWYSLwoLY3JlZGVudGlhbHMYHSADKAsyGi5vcmtzdGFjay52MS5DcmVkZW50aWFsUmVmEjEKC2NvbmN1cnJlbmN5GCAgASgLMhwub3Jrc3RhY2sudjEuQ29uY3VycmVuY3lTcGVjEkAKEGRldmljZV9jb250cmFjdHMYISADKAsyJi5vcmtzdGFjay52MS5UYXNrLkRldmljZUNvbnRyYWN0c0VudHJ5GioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaNgoURGV2aWNlQ29udHJhY3RzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECAIQA0oECAgQCUoECBsQHFIGcGx1Z2luUgVxdWV1ZSJICglDYWNoZVNwZWMSEwoLdHRsX3NlY29uZHMYASABKAUSJgoFc2NvcGUYAiABKA4yFy5vcmtzdGFjay52MS5DYWNoZVNjb3BlIpoCCghFYWNoU3BlYxIMCgRvdmVyGAEgASgJEgoKAmFzGAIgASgJEhEKCW1heF9pdGVtcxgDIAEoBRIUCgxtYXhfcGFyYWxsZWwYBCABKAUSJwoGc291cmNlGAUgASgLMhcub3Jrc3RhY2sudjEuRWFjaFNvdXJjZRIVCg1vdmVyX2FydGlmYWN0GAYgASgJEisKBmZvcm1hdBgHIAEoDjIbLm9ya3N0YWNrLnYxLkVhY2hMaW5lRm9ybWF0Eg0KBWJhdGNoGAggASgFEjUKD29uX2l0ZW1fZmFpbHVyZRgJIAEoDjIcLm9ya3N0YWNrLnYxLkVhY2hJdGVtRmFpbHVyZRIYChBtYXhfZmFpbGVkX2l0ZW1zGAogASgFIl8KCUF3YWl0U3BlYxIXCg90aW1lb3V0X3NlY29uZHMYASABKAUSEAoIY2FsbGJhY2sYAiABKAgSJwoGc2NoZW1hGAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCIcCglTbGVlcFNwZWMSDwoHc2Vjb25kcxgBIAEoBSKUBgoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYCSABKAkSGQoRZGVmaW5pdGlvbl9kaWdlc3QYCiABKAkSHgoEcGlucxgLIAMoCzIQLm9ya3N0YWNrLnYxLlBpbhIyCgdvdXRwdXRzGAwgAygLMiEub3Jrc3RhY2sudjEuT3JrZmxvdy5PdXRwdXRzRW50cnkSLgoLc2hhcmVkX3dpdGgYDSADKAsyGS5vcmtzdGFjay52MS5PcmtmbG93U2hhcmUSHAoUZGVmaW5pdGlvbl9uYW1lc3BhY2UYDiABKAkSQwoQb3V0cHV0X2FydGlmYWN0cxgPIAMoCzIpLm9ya3N0YWNrLnYxLk9ya2Zsb3cuT3V0cHV0QXJ0aWZhY3RzRW50cnkSMQoLY29uY3VycmVuY3kYECABKAsyHC5vcmtzdGFjay52MS5Db25jdXJyZW5jeVNwZWMSFwoPdGltZW91dF9zZWNvbmRzGBEgASgDGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaLgoMT3V0cHV0c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaUwoUT3V0cHV0QXJ0aWZhY3RzRW50cnkSCwoDa2V5GAEgASgJEioKBXZhbHVlGAIgASgLMhsub3Jrc3RhY2sudjEuT3V0cHV0QXJ0aWZhY3Q6AjgBIj0KDUNoaWxkQXJ0aWZhY3QSDQoFaW5wdXQYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRuYW1lGAMgASgJIpQBCg9Db25jdXJyZW5jeVNwZWMSDQoFbGltaXQYASABKAUSCwoDa2V5GAIgASgJEjIKCG9uX2xpbWl0GAMgASgOMiAub3Jrc3RhY2sudjEuQ29uY3VycmVuY3lTdHJhdGVneRIdChVxdWV1ZV90aW1lb3V0X3NlY29uZHMYBCABKAMSEgoKbWF4X3F1ZXVlZBgFIAEoBSIvCg5PdXRwdXRBcnRpZmFjdBIPCgd0YXNrX2lkGAEgASgJEgwKBG5hbWUYAiABKAkqdQoPRWFjaEl0ZW1GYWlsdXJlEiEKHUVBQ0hfSVRFTV9GQUlMVVJFX1VOU1BFQ0lGSUVEEAASHwobRUFDSF9JVEVNX0ZBSUxVUkVfRkFJTF9GQVNUEAESHgoaRUFDSF9JVEVNX0ZBSUxVUkVfQ09OVElOVUUQAirlAQoTQ29uY3VycmVuY3lTdHJhdGVneRIkCiBDT05DVVJSRU5DWV9TVFJBVEVHWV9VTlNQRUNJRklFRBAAEh4KGkNPTkNVUlJFTkNZX1NUUkFURUdZX1FVRVVFEAESHwobQ09OQ1VSUkVOQ1lfU1RSQVRFR1lfUkVGVVNFEAISHQoZQ09OQ1VSUkVOQ1lfU1RSQVRFR1lfU0tJUBADEiYKIkNPTkNVUlJFTkNZX1NUUkFURUdZX0NBTkNFTF9PTERFU1QQBBIgChxDT05DVVJSRU5DWV9TVFJBVEVHWV9SRVBMQUNFEAVCqAEKD2NvbS5vcmtzdGFjay52MUIMT3JrZmxvd1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
 
 /**
  * RetryPolicy mirrors Temporal retry semantics for a task.
@@ -379,14 +379,20 @@ export type Task = Message<"orkstack.v1.Task"> & {
   devices: string[];
 
   /**
-   * child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+   * child_artifacts are a composed task's artifacts: bindings, one per
+   * artifact input of the child Orkflow, sorted by input. The engine resolves
+   * each from a recorded result at child start and hands the child a
+   * reference, never the bytes. Part of canonicalOrkflow(Task) ONLY when set.
    *
    * @generated from field: repeated orkstack.v1.ChildArtifact child_artifacts = 30;
    */
   childArtifacts: ChildArtifact[];
 
   /**
-   * input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+   * input_artifacts names, sorted, the artifact inputs of this task's Orkflow
+   * that its fields name literally ({{ artifact "_inputs/<name>" }}); only
+   * those are staged for it, under the reserved producer _inputs. Part of
+   * canonicalOrkflow(Task) ONLY when set.
    *
    * @generated from field: repeated string input_artifacts = 31;
    */
@@ -400,14 +406,16 @@ export type Task = Message<"orkstack.v1.Task"> & {
   identities: IdentityRef[];
 
   /**
-   * credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+   * credentials are the credentials the task holds, issued for each attempt
+   * by the namespace's grants (docs/PROVIDERS.md). In the canonical
+   * definition only when set.
    *
    * @generated from field: repeated orkstack.v1.CredentialRef credentials = 29;
    */
   credentials: CredentialRef[];
 
   /**
-   * concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+   * concurrency is set from E88's task-level limits; unset until they land.
    *
    * @generated from field: orkstack.v1.ConcurrencySpec concurrency = 32;
    */
@@ -547,6 +555,25 @@ export type EachSpec = Message<"orkstack.v1.EachSpec"> & {
    * @generated from field: int32 batch = 8;
    */
   batch: number;
+
+  /**
+   * on_item_failure is what an item that fails for good does to the rest of
+   * the fan-out: FAIL_FAST (the default, which the compiler normalises to
+   * unset) stops it at the first such item; CONTINUE runs every other item,
+   * and the fan-out then fails with its lowest-index failed item's reason.
+   *
+   * @generated from field: orkstack.v1.EachItemFailure on_item_failure = 9;
+   */
+  onItemFailure: EachItemFailure;
+
+  /**
+   * max_failed_items, with CONTINUE only, bounds how many items may fail: at
+   * the next failure past it the fan-out fails fast. 1 .. max_items-1; 0 is
+   * unbounded.
+   *
+   * @generated from field: int32 max_failed_items = 10;
+   */
+  maxFailedItems: number;
 };
 
 /**
@@ -764,14 +791,20 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
   definitionNamespace: string;
 
   /**
-   * output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+   * output_artifacts are the artifacts this Orkflow returns to a composing
+   * run, by output name (outputs: <name>: {artifact: <task>/<name>}). Part of
+   * canonicalOrkflow ONLY when set.
    *
    * @generated from field: map<string, orkstack.v1.OutputArtifact> output_artifacts = 15;
    */
   outputArtifacts: { [key: string]: OutputArtifact };
 
   /**
-   * concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+   * concurrency is the Orkflow's run-level concurrency limit (docs/DSL.md
+   * "Concurrency limits"): its runs share at most limit slots of one key,
+   * and a run past them waits in order. Unset, its runs are not limited. Part
+   * of canonicalOrkflow only when set, so an Orkflow that declares none keeps
+   * its digest.
    *
    * @generated from field: orkstack.v1.ConcurrencySpec concurrency = 16;
    */
@@ -796,12 +829,28 @@ export const OrkflowSchema: GenMessage<Orkflow> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 9);
 
 /**
- * ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
- * batch).
+ * ChildArtifact binds one artifact input of a composed task's child
+ * Orkflow to an artifact of this run: the artifact name of the task task_id
+ * (a producer in the composed task's needs closure), or of _inputs for an
+ * artifact input of this Orkflow.
  *
  * @generated from message orkstack.v1.ChildArtifact
  */
 export type ChildArtifact = Message<"orkstack.v1.ChildArtifact"> & {
+  /**
+   * @generated from field: string input = 1;
+   */
+  input: string;
+
+  /**
+   * @generated from field: string task_id = 2;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: string name = 3;
+   */
+  name: string;
 };
 
 /**
@@ -812,12 +861,52 @@ export const ChildArtifactSchema: GenMessage<ChildArtifact> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 10);
 
 /**
- * ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
- * batch).
+ * ConcurrencySpec is one declared concurrency limit (docs/DSL.md
+ * "Concurrency limits"). Its identity is its namespace and its rendered key:
+ * every declaration in a namespace that renders the same key shares its
+ * slots and its line.
  *
  * @generated from message orkstack.v1.ConcurrencySpec
  */
 export type ConcurrencySpec = Message<"orkstack.v1.ConcurrencySpec"> & {
+  /**
+   * limit is how many runs may hold a slot of the key at once, from 1.
+   *
+   * @generated from field: int32 limit = 1;
+   */
+  limit: number;
+
+  /**
+   * key is the template a run renders its key from, once, at submit. Empty
+   * is the Orkflow's own key, shared by every version of it in the
+   * namespace that runs it.
+   *
+   * @generated from field: string key = 2;
+   */
+  key: string;
+
+  /**
+   * on_limit is what a run does when every slot of its key is held.
+   *
+   * @generated from field: orkstack.v1.ConcurrencyStrategy on_limit = 3;
+   */
+  onLimit: ConcurrencyStrategy;
+
+  /**
+   * queue_timeout_seconds is how long a run waits in line for a slot before
+   * it ends; 0 is the deployment's default.
+   *
+   * @generated from field: int64 queue_timeout_seconds = 4;
+   */
+  queueTimeoutSeconds: bigint;
+
+  /**
+   * max_queued is how many runs may wait in line for the key, checked at
+   * submit, best-effort; 0 sets no bound of its own.
+   *
+   * @generated from field: int32 max_queued = 5;
+   */
+  maxQueued: number;
 };
 
 /**
@@ -828,44 +917,21 @@ export const ConcurrencySpecSchema: GenMessage<ConcurrencySpec> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 11);
 
 /**
- * CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
- * batch).
- *
- * @generated from message orkstack.v1.CredentialRef
- */
-export type CredentialRef = Message<"orkstack.v1.CredentialRef"> & {
-};
-
-/**
- * Describes the message orkstack.v1.CredentialRef.
- * Use `create(CredentialRefSchema)` to create a new message.
- */
-export const CredentialRefSchema: GenMessage<CredentialRef> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 12);
-
-/**
- * IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
- * batch).
- *
- * @generated from message orkstack.v1.IdentityRef
- */
-export type IdentityRef = Message<"orkstack.v1.IdentityRef"> & {
-};
-
-/**
- * Describes the message orkstack.v1.IdentityRef.
- * Use `create(IdentityRefSchema)` to create a new message.
- */
-export const IdentityRefSchema: GenMessage<IdentityRef> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 13);
-
-/**
- * OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
- * batch).
+ * OutputArtifact names the artifact an Orkflow returns under an output's
+ * name: the artifact name of the task task_id.
  *
  * @generated from message orkstack.v1.OutputArtifact
  */
 export type OutputArtifact = Message<"orkstack.v1.OutputArtifact"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
 };
 
 /**
@@ -873,5 +939,86 @@ export type OutputArtifact = Message<"orkstack.v1.OutputArtifact"> & {
  * Use `create(OutputArtifactSchema)` to create a new message.
  */
 export const OutputArtifactSchema: GenMessage<OutputArtifact> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 14);
+  messageDesc(file_orkstack_v1_orkflow, 12);
+
+/**
+ * EachItemFailure is a fan-out's on_item_failure.
+ *
+ * @generated from enum orkstack.v1.EachItemFailure
+ */
+export enum EachItemFailure {
+  /**
+   * @generated from enum value: EACH_ITEM_FAILURE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: EACH_ITEM_FAILURE_FAIL_FAST = 1;
+   */
+  FAIL_FAST = 1,
+
+  /**
+   * @generated from enum value: EACH_ITEM_FAILURE_CONTINUE = 2;
+   */
+  CONTINUE = 2,
+}
+
+/**
+ * Describes the enum orkstack.v1.EachItemFailure.
+ */
+export const EachItemFailureSchema: GenEnum<EachItemFailure> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_orkflow, 0);
+
+/**
+ * ConcurrencyStrategy is what a run does when every slot of its key is held.
+ *
+ * @generated from enum orkstack.v1.ConcurrencyStrategy
+ */
+export enum ConcurrencyStrategy {
+  /**
+   * @generated from enum value: CONCURRENCY_STRATEGY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * QUEUE: wait in line, in order of arrival. The default.
+   *
+   * @generated from enum value: CONCURRENCY_STRATEGY_QUEUE = 1;
+   */
+  QUEUE = 1,
+
+  /**
+   * REFUSE: the run fails at once.
+   *
+   * @generated from enum value: CONCURRENCY_STRATEGY_REFUSE = 2;
+   */
+  REFUSE = 2,
+
+  /**
+   * SKIP: the run is not started.
+   *
+   * @generated from enum value: CONCURRENCY_STRATEGY_SKIP = 3;
+   */
+  SKIP = 3,
+
+  /**
+   * CANCEL_OLDEST: the oldest holder is canceled to make room.
+   *
+   * @generated from enum value: CONCURRENCY_STRATEGY_CANCEL_OLDEST = 4;
+   */
+  CANCEL_OLDEST = 4,
+
+  /**
+   * REPLACE: the runs waiting in line are replaced by this one.
+   *
+   * @generated from enum value: CONCURRENCY_STRATEGY_REPLACE = 5;
+   */
+  REPLACE = 5,
+}
+
+/**
+ * Describes the enum orkstack.v1.ConcurrencyStrategy.
+ */
+export const ConcurrencyStrategySchema: GenEnum<ConcurrencyStrategy> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_orkflow, 1);
 

@@ -849,3 +849,154 @@ func TestDiffRuns_ComposedRowComparesStatusErrorDuration(t *testing.T) {
 		t.Fatalf("a composed row reported %d unavailable fields", res.GetEvidenceUnavailable())
 	}
 }
+
+// artifactChildYAML is a child with one artifact input and one value input.
+const artifactChildYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: train
+version: "1.0.0"
+inputs:
+  dataset:
+    type: artifact
+    required: true
+  epochs:
+    type: number
+    default: 3
+tasks:
+  - id: fit
+    uses: shell
+    with:
+      op: exec
+      command:
+        - fit
+        - '{{ artifact "_inputs/dataset" }}'
+`
+
+func artifactParentYAML(bindings, with string) string {
+	return `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: release-model
+version: "4.1.0"
+tasks:
+  - id: build
+    uses: shell
+    with:
+      op: eval
+      command:
+        - "true"
+  - id: train
+    uses: orkflow:train@1.0.0
+    needs:
+      - build
+` + with + bindings
+}
+
+func TestChildInputIssues_ArtifactBindings(t *testing.T) {
+	f := newComposeFixture(t)
+	f.mustApply(t, artifactChildYAML)
+
+	issues := f.validate(t, artifactParentYAML("    artifacts:\n      dataset: build/dataset.tar\n", ""))
+	for _, issue := range issues {
+		if issue.GetSeverity() == errorIssue {
+			t.Fatalf("a bound artifact input is refused: %v", issues)
+		}
+	}
+
+	issues = f.validate(t, artifactParentYAML("", ""))
+	requireIssue(t, issues, "tasks[1].artifacts.dataset",
+		"artifacts.dataset is required by train@1.0.0 and is not bound; bind it to an artifact: dataset: <task>/<name>", errorIssue)
+
+	issues = f.validate(t, artifactParentYAML("", "    with:\n      dataset: x\n"))
+	requireIssue(t, issues, "tasks[1].with.dataset",
+		"with.dataset is an artifact input of train@1.0.0; bind it under artifacts:, never with:", errorIssue)
+
+	issues = f.validate(t, artifactParentYAML("    artifacts:\n      dataset: build/dataset.tar\n      epochs: build/n.txt\n", ""))
+	requireIssue(t, issues, "tasks[1].artifacts.epochs",
+		"artifacts.epochs binds an artifact, but train@1.0.0 declares input epochs as number; pass it in with:", errorIssue)
+
+	issues = f.validate(t, artifactParentYAML("    artifacts:\n      dataset: build/dataset.tar\n      extra: build/x\n", ""))
+	requireIssue(t, issues, "tasks[1].artifacts.extra",
+		"artifacts.extra is not an input of train@1.0.0 (artifact inputs: dataset)", errorIssue)
+}
+
+func TestChildInputIssues_ComposedProducerMustReturnTheArtifact(t *testing.T) {
+	f := newComposeFixture(t)
+	f.mustApply(t, artifactChildYAML)
+	f.mustApply(t, composeChildYAML)
+	doc := `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: release-model
+version: "4.1.0"
+tasks:
+  - id: build
+    uses: shell
+    with:
+      op: eval
+      command:
+        - "true"
+  - id: release
+    uses: orkflow:release-block@2.1.0
+    needs:
+      - build
+    with:
+      image: x
+  - id: train
+    uses: orkflow:train@1.0.0
+    needs:
+      - release
+    artifacts:
+      dataset: release/bundle.tar
+`
+	issues := f.validate(t, doc)
+	requireIssue(t, issues, "tasks[2].artifacts.dataset",
+		`artifacts.dataset: release-block@2.1.0 returns no artifact "bundle.tar" (artifact outputs: none)`, errorIssue)
+}
+
+func TestValidateOrkflow_ArtifactOutputReadAsValue(t *testing.T) {
+	f := newComposeFixture(t)
+	f.mustApply(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: train
+version: "1.0.0"
+outputs:
+  model:
+    artifact: fit/model.bin
+tasks:
+  - id: fit
+    uses: shell
+    with:
+      op: exec
+      command:
+        - fit
+`)
+	doc := `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: release-model
+version: "4.1.0"
+tasks:
+  - id: train
+    uses: orkflow:train@1.0.0
+  - id: publish
+    uses: shell
+    needs:
+      - train
+    with:
+      op: exec
+      command:
+        - publish
+        - '{{ .tasks.train.output.model }}'
+        - '{{ artifact "train/model" }}'
+`
+	issues := f.validate(t, doc)
+	requireIssue(t, issues, "tasks[1].with.command[1]",
+		`.tasks.train.output.model: train@1.0.0 returns "model" as an artifact, not a value; read it as {{ artifact "train/model" }}`,
+		errorIssue)
+	if findIssue(issues, "tasks[1].with.command[2]", "") != nil {
+		t.Fatalf("reading the artifact output as an artifact was refused: %v", issues)
+	}
+}

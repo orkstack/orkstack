@@ -37,6 +37,21 @@ func awaitStop(t *testing.T, out <-chan StopOutcome) StopOutcome {
 	}
 }
 
+// answerReports settles every result a owes, as the cluster's answer does
+// through ReportInterceptor; the test environment runs an activity with no
+// cluster to answer its report.
+func answerReports(a *Activities) {
+	a.reports.mu.Lock()
+	tokens := make([]string, 0, len(a.reports.owed))
+	for token := range a.reports.owed {
+		tokens = append(tokens, token)
+	}
+	a.reports.mu.Unlock()
+	for _, token := range tokens {
+		a.reports.settle([]byte(token))
+	}
+}
+
 // TestStop_AnIdleOrkerEndsAtOnce: with nothing running and no pin open, a stop
 // with a day's grace sweeps nothing and stops its worker without waiting.
 func TestStop_AnIdleOrkerEndsAtOnce(t *testing.T) {
@@ -139,6 +154,7 @@ func TestStop_ADeliveryDuringTheGraceRunsInFlightAndT1SweepsThenStops(t *testing
 	if ran != 1 {
 		t.Fatalf("a task delivered during the grace ran %d times; want once", ran)
 	}
+	answerReports(a)
 	select {
 	case <-workerStopped:
 		t.Fatal("the worker was stopped during the grace")
@@ -241,6 +257,7 @@ func TestStop_ADeliveryDuringTheGraceKeepsTheStopUntilItFinishes(t *testing.T) {
 	if err := <-delivered; err != nil {
 		t.Fatalf("the delivered task = %v; want it to finish", err)
 	}
+	answerReports(a)
 	got := awaitStop(t, out)
 	if got.Ended != GraceEndedIdle || got.HandedBack != 0 || !stopped.Load() {
 		t.Fatalf("outcome = %+v stopped=%v; want an idle end with nothing handed back", got, stopped.Load())
@@ -263,5 +280,35 @@ func TestStopRegistry_NamesTheAttemptsItWaitsFor(t *testing.T) {
 	got := r.owedLabels(10)
 	if len(got) != 1 || got[0] != "run ork-a task build attempt 1" {
 		t.Fatalf("owedLabels = %v; want only the unpinned attempt (a running pinned member is left to the worker's stop)", got)
+	}
+}
+
+// TestStop_TheWorkerStopsOnlyOnceTheResultsOwedAtT1AreTaken: the SDK sends an
+// attempt's result after the attempt returns, on a context its worker's Stop
+// cancels, and turns a send cut short into the failure "context canceled"
+// (its postprocess), so a task that succeeded would fail. An attempt that
+// returned before the grace ended idle still owes its result then: the worker
+// stops only once the cluster has taken it (proof 44757103560, orkctl-012).
+func TestStop_TheWorkerStopsOnlyOnceTheResultsOwedAtT1AreTaken(t *testing.T) {
+	a := newCordonActivities(t, t.TempDir())
+	a.reports.owe([]byte("token"), "run/work#1", true)
+	var stoppedOwing atomic.Int32
+	stopped := make(chan struct{})
+	out := runStop(a, StopSequence{
+		Grace: 24 * time.Hour,
+		StopWorker: func() {
+			stoppedOwing.Store(int32(len(a.OwedReports())))
+			close(stopped)
+		},
+	})
+	select {
+	case <-stopped:
+		t.Fatalf("the worker stopped while %d result was still owed; the SDK would report it failed", stoppedOwing.Load())
+	case <-time.After(200 * time.Millisecond):
+	}
+	a.reports.settle([]byte("token"))
+	got := awaitStop(t, out)
+	if got.Ended != GraceEndedIdle || stoppedOwing.Load() != 0 {
+		t.Fatalf("outcome = %+v, owed when the worker stopped = %d; want an idle end with nothing owed", got, stoppedOwing.Load())
 	}
 }

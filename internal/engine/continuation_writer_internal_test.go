@@ -405,7 +405,7 @@ func sizedRun(t testing.TB, tasks, items, taskArtifacts, itemArtifacts int, outp
 // size.
 func checkpointSize(t testing.TB, run *orkstackv1.Run) int64 {
 	a := NewSnapshotActivities(newMemSnapshotStore())
-	obj, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<40, ContinuationObservationInput{}, nil)
+	obj, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<40, ContinuationObservationInput{}, nil, "")
 	must.OK(t, err)
 	return obj.GetSizeBytes()
 }
@@ -494,7 +494,7 @@ func cappedRestore(t *testing.T, n int) (*orkstackv1.Orkflow, *memSnapshotStore,
 	}
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
-	checkpoint, err := a.WriteCheckpoint(context.Background(), run, 0, DefaultContinuationBytes, ContinuationObservationInput{}, nil)
+	checkpoint, err := a.WriteCheckpoint(context.Background(), run, 0, DefaultContinuationBytes, ContinuationObservationInput{}, nil, "")
 	must.OK(t, err)
 	snapshot, err := a.WriteSwitchSnapshot(context.Background(), run, "team-a", 0, ContinuationObservationInput{})
 	must.OK(t, err)

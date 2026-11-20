@@ -58,6 +58,8 @@ type gateMemoEntry struct {
 	Seq       int64     `json:"seq"`
 	SeqBase   int64     `json:"seq_base"`
 	WaitUntil time.Time `json:"wait_until,omitzero"`
+	// N is the entry's slot ordinal (§22.14.1), written only above 0.
+	N int64 `json:"n,omitempty"`
 }
 
 // gateRunFinding is what one describe of a run found (§5.1.5).
@@ -103,6 +105,7 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 		run     string
 		seqBase int64
 		taskIx  int
+		n       int64
 	}
 	var drop []ref
 	visit := func(e *gateEntry, held bool) {
@@ -115,7 +118,7 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 			out.Errors++
 			return
 		case f.NotFound || !f.Open, f.MemoSeq > e.SeqBase:
-			drop = append(drop, ref{e.Run, e.SeqBase, e.TaskIx})
+			drop = append(drop, ref{e.Run, e.SeqBase, e.TaskIx, e.N})
 			return
 		}
 		e.Stalled = held && !f.StuckSince.IsZero() && now.Sub(f.StuckSince) >= g.Tunables.StalledAfter
@@ -131,7 +134,7 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 		if !e.MissingSince.IsZero() {
 			if confirmed < g.Tunables.TaskConfirmBatch {
 				confirmed++
-				drop = append(drop, ref{e.Run, e.SeqBase, e.TaskIx})
+				drop = append(drop, ref{e.Run, e.SeqBase, e.TaskIx, e.N})
 			}
 			return
 		}
@@ -151,9 +154,10 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 		visit(&g.Queue[i], false)
 	}
 	for _, r := range drop {
-		g.release(r.run, r.seqBase, r.taskIx, now)
+		if g.release(r.run, r.seqBase, r.taskIx, r.n, now) {
+			out.Released++
+		}
 	}
-	out.Released = len(drop)
 	g.LastPassAt = now
 	return out
 }
@@ -188,6 +192,11 @@ func (g *gateState) restore(records []gateRunRecord, now time.Time) gateRestoreO
 		for _, ix := range slices.Sorted(maps.Keys(r.Entries)) {
 			var m gateMemoEntry
 			decodeErr := decodeGateMemoEntry(r.Entries[ix], &m)
+			if decodeErr == nil && m.N > 0 && m.N >= g.Tunables.OrdinalModulus {
+				// An ordinal this gate's modulus cannot order: adopted,
+				// as any entry the gate cannot read is.
+				decodeErr = fmt.Errorf("entry ordinal %d, modulus %d", m.N, g.Tunables.OrdinalModulus)
+			}
 			if decodeErr != nil || r.SeqUnreadable {
 				seqBase := r.MemoSeq
 				if decodeErr == nil {
@@ -197,7 +206,7 @@ func (g *gateState) restore(records []gateRunRecord, now time.Time) gateRestoreO
 				if seen[id] || g.holderIx(r.Run, seqBase, ix) >= 0 || g.queueIx(r.Run, seqBase, ix) >= 0 {
 					continue
 				}
-				if _, fenced := g.tombFor(r.Run, seqBase, ix, now); fenced {
+				if _, fenced := g.tombFor(r.Run, seqBase, ix, 0, now); fenced {
 					out.Fenced++
 					continue
 				}
@@ -215,12 +224,12 @@ func (g *gateState) restore(records []gateRunRecord, now time.Time) gateRestoreO
 			if seen[id] {
 				continue
 			}
-			if _, fenced := g.tombFor(r.Run, m.SeqBase, ix, now); fenced {
+			if _, fenced := g.tombFor(r.Run, m.SeqBase, ix, m.N, now); fenced {
 				out.Fenced++
 				continue
 			}
 			seen[id] = true
-			e := gateEntry{Run: r.Run, TaskIx: ix, SeqBase: m.SeqBase, Limit: m.Limit, Strategy: m.Strategy,
+			e := gateEntry{Run: r.Run, TaskIx: ix, SeqBase: m.SeqBase, Limit: m.Limit, Strategy: m.Strategy, N: m.N,
 				Proto: m.Proto, LabelIx: g.labelIx(m.Label), ArrivedAt: m.ArrivedAt, Seq: m.Seq}
 			g.Seq = max(g.Seq, m.Seq)
 			// An entry its run re-asserted while the line was read is
@@ -277,8 +286,9 @@ func decodeGateMemoEntry(raw stablejson.RawJSON, m *gateMemoEntry) error {
 	if err := json.Unmarshal(raw, m, json.RejectUnknownMembers(true)); err != nil {
 		return err
 	}
-	if m.Proto < 1 || m.Proto > gateProto || m.Limit < 1 || !gateStrategyDecided(m.Strategy) {
-		return fmt.Errorf("entry protocol %d, limit %d, strategy %q", m.Proto, m.Limit, m.Strategy)
+	if m.Proto < 1 || m.Proto > gateProtoOrdinal || m.Limit < 1 || !gateStrategyDecided(m.Strategy) ||
+		m.N < 0 || m.N >= gateOrdinalWire || (m.N > 0 && m.Proto < gateProtoOrdinal) {
+		return fmt.Errorf("entry protocol %d, limit %d, strategy %q, ordinal %d", m.Proto, m.Limit, m.Strategy, m.N)
 	}
 	return nil
 }

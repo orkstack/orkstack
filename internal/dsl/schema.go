@@ -73,15 +73,23 @@ func orkflowAnnotations() map[string]annotation {
 	requiredSlug := slug
 	requiredSlug.required = true
 	return map[string]annotation{
-		"apiVersion":                    {required: true, constValue: APIVersion},
-		"kind":                          {required: true, constValue: KindOrkflow},
-		"name":                          requiredSlug,
-		"namespace":                     slug,
-		"version":                       {typ: map[string]any{"type": "string"}},
-		"timeout":                       {typ: map[string]any{"type": "string"}},
-		"tasks":                         {required: true, minItems: 1},
-		"pins":                          {keyPattern: slugPattern, keyMax: MaxSlug},
-		"outputs":                       {keyPattern: outputNamePattern, keyMax: maxOutputNameBytes},
+		"apiVersion":                {required: true, constValue: APIVersion},
+		"kind":                      {required: true, constValue: KindOrkflow},
+		"name":                      requiredSlug,
+		"namespace":                 slug,
+		"version":                   {typ: map[string]any{"type": "string"}},
+		"timeout":                   {typ: map[string]any{"type": "string"}},
+		"concurrency.limit":         required,
+		"concurrency.on_limit":      {enum: []string{"queue"}},
+		"concurrency.queue_timeout": {typ: map[string]any{"type": "string"}},
+		"tasks":                     {required: true, minItems: 1},
+		"pins":                      {keyPattern: slugPattern, keyMax: MaxSlug},
+		"outputs":                   {keyPattern: outputNamePattern, keyMax: maxOutputNameBytes},
+		// A template string, or {artifact: <task>/<name>}: the object
+		// keywords constrain only an object (rule 57).
+		"outputs.*": {typ: map[string]any{"type": []any{"string", "object"}, "additionalProperties": false,
+			"required":   []any{"artifact"},
+			"properties": map[string]any{"artifact": map[string]any{"type": "string", "pattern": "^[^/{]+/[^{]+$"}}}},
 		"shared_with[].namespace":       {pattern: shareNamespacePattern},
 		"shared_with[].orkflow":         {pattern: shareOrkflowPattern},
 		"tasks[].id":                    requiredSlug,
@@ -95,9 +103,13 @@ func orkflowAnnotations() map[string]annotation {
 		"tasks[].network":               {enum: networkWords},
 		"tasks[].secrets[].name":        {required: true, pattern: secretNamePattern, notEnum: []string{".", ".."}},
 		"tasks[].secrets[].source":      required,
+		"tasks[].identities[].name":     {required: true, pattern: identityNamePattern},
+		"tasks[].identities[].audience": required,
+		"tasks[].identities[].refresh":  {enum: []string{"best_effort", "required"}},
 		"tasks[].await.timeout_seconds": required,
 		"tasks[].sleep.seconds":         required,
 		"tasks[].each.format":           {enum: []string{"jsonl", "lines"}},
+		"tasks[].each.on_item_failure":  {enum: []string{"continue", "fail_fast"}},
 		"tasks[].each.max_items":        required,
 		"tasks[].each.as":               {pattern: eachAsPattern},
 		"tasks[].cache.enabled":         required,
@@ -130,6 +142,7 @@ var orkflowDescriptions = map[string]string{
 	"pins":        "Declared task pins (see below).",
 	"shared_with": "Other namespaces' Orkflows that may compose this one (see \"Sharing across namespaces\").",
 	"timeout":     "optional: a Go duration, 10s to 8760h, bounding the whole run (see \"Run timeout\").",
+	"concurrency": "optional: how many runs share one key's slots at once; the rest wait in line (see \"Concurrency limits\").",
 	"tasks":       "List of task nodes forming a DAG.",
 
 	"tasks[].id":              "unique within the Orkflow",
@@ -145,6 +158,7 @@ var orkflowDescriptions = map[string]string{
 	"tasks[].env":             "workload environment only; no platform state",
 	"tasks[].secrets":         "resolved to read-only files, never embedded values",
 	"tasks[].secrets[].mask":  "optional: `false` leaves the value unmasked in the task's logs",
+	"tasks[].identities":      "optional: the tokens the task holds, one for each audience (see \"Task identity\")",
 	"tasks[].resources":       "request; Orker policy supplies defaults and caps",
 	"tasks[].resources.gpu":   "units of the task's gpu profile, 1 to 64",
 	"tasks[].network":         "optional: `default` or `none`",
@@ -156,6 +170,7 @@ var orkflowDescriptions = map[string]string{
 	"tasks[].await":                             "An **awaited task** declares `await:` instead of `uses:`.",
 	"tasks[].each":                              "A **fan-out** is one task that runs once per element of an array",
 	"tasks[].sleep":                             "A **sleeping task** declares `sleep:` instead of `uses:`.",
+	"tasks[].artifacts":                         "A composed task binds each artifact input of its child with `artifacts:`,",
 
 	"pins.*.timeout_seconds": "optional: the pin's whole lifetime",
 
@@ -168,13 +183,15 @@ var orkflowDescriptions = map[string]string{
 
 	"tasks[].sleep.seconds": "required, 1 s … 30 days",
 
-	"tasks[].each.over":          "required: one reference to an array",
-	"tasks[].each.over_artifact": "`<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.",
-	"tasks[].each.format":        "required with `over_artifact`: `jsonl` (each line one JSON value) or `lines` (each line a string).",
-	"tasks[].each.batch":         "optional: one item per batch of this many consecutive non-empty lines, 1 to 10,000; absent or `1` is one line per item.",
-	"tasks[].each.as":            "the name an item is bound to under `.each`: `^[a-z][a-z0-9_]*$`, at most 64 bytes, never `index` or `count`. Absent means `item`.",
-	"tasks[].each.max_items":     "required: the most items this task may expand",
-	"tasks[].each.max_parallel":  "at most this many items run at once; absent or `0` means no bound of the task's own (the pool's Orkers are the bound).",
+	"tasks[].each.over":             "required: one reference to an array",
+	"tasks[].each.over_artifact":    "`<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.",
+	"tasks[].each.format":           "required with `over_artifact`: `jsonl` (each line one JSON value) or `lines` (each line a string).",
+	"tasks[].each.batch":            "optional: one item per batch of this many consecutive non-empty lines, 1 to 10,000; absent or `1` is one line per item.",
+	"tasks[].each.as":               "the name an item is bound to under `.each`: `^[a-z][a-z0-9_]*$`, at most 64 bytes, never `index` or `count`. Absent means `item`.",
+	"tasks[].each.max_items":        "required: the most items this task may expand",
+	"tasks[].each.max_parallel":     "at most this many items run at once; absent or `0` means no bound of the task's own (the pool's Orkers are the bound).",
+	"tasks[].each.on_item_failure":  "`fail_fast` (the default) stops the fan-out at its first item that fails for good; `continue` runs every other item and then fails it.",
+	"tasks[].each.max_failed_items": "with `on_item_failure: continue` only, 1 to `max_items` − 1: the fan-out fails fast once more than this many items have failed.",
 
 	"tasks[].cache.enabled":     "required: the opt-in, and the author's assertion of purity",
 	"tasks[].cache.ttl_seconds": "optional: 0/absent = the deployment's cap (ORK_CACHE_MAX_TTL)",
@@ -190,23 +207,25 @@ const orkflowRootDescription = "An Orkflow document (docs/DSL.md). This schema c
 	"image policy. `orkctl orkflow validate` checks every one (docs/DSL.md, \"Validation rules\")."
 
 // orkflowInputDescription says where the inputs definition is stricter.
-const orkflowInputDescription = "One declared input: `type` (string, number, boolean, object, array), `required` and " +
+const orkflowInputDescription = "One declared input: `type` (string, number, boolean, object, array, artifact), `required` and " +
 	"`default`. The engine reads `type`, `required` and `default` and ignores anything else; this schema refuses " +
-	"another key, a `type` outside the five words and a `required` that is not a boolean, so a misspelling is caught " +
+	"another key, a `type` outside the six words and a `required` that is not a boolean, so a misspelling is caught " +
 	"in the editor that `orkctl orkflow validate` would let through."
 
 // documentStructs are the definition each document struct becomes.
 var documentStructs = map[reflect.Type]string{
-	reflect.TypeOf(taskDocument{}):     "orkflow.task",
-	reflect.TypeOf(retryDocument{}):    "orkflow.retry",
-	reflect.TypeOf(resourceDocument{}): "orkflow.resources",
-	reflect.TypeOf(secretDocument{}):   "orkflow.secret",
-	reflect.TypeOf(pinDocument{}):      "orkflow.pin",
-	reflect.TypeOf(awaitDocument{}):    "orkflow.await",
-	reflect.TypeOf(sleepDocument{}):    "orkflow.sleep",
-	reflect.TypeOf(eachDocument{}):     "orkflow.each",
-	reflect.TypeOf(cacheDocument{}):    "orkflow.cache",
-	reflect.TypeOf(shareDocument{}):    "orkflow.share",
+	reflect.TypeOf(taskDocument{}):        "orkflow.task",
+	reflect.TypeOf(retryDocument{}):       "orkflow.retry",
+	reflect.TypeOf(resourceDocument{}):    "orkflow.resources",
+	reflect.TypeOf(secretDocument{}):      "orkflow.secret",
+	reflect.TypeOf(identityDocument{}):    "orkflow.identity",
+	reflect.TypeOf(pinDocument{}):         "orkflow.pin",
+	reflect.TypeOf(awaitDocument{}):       "orkflow.await",
+	reflect.TypeOf(sleepDocument{}):       "orkflow.sleep",
+	reflect.TypeOf(eachDocument{}):        "orkflow.each",
+	reflect.TypeOf(cacheDocument{}):       "orkflow.cache",
+	reflect.TypeOf(shareDocument{}):       "orkflow.share",
+	reflect.TypeOf(concurrencyDocument{}): "orkflow.concurrency",
 }
 
 var yamlNodeType = reflect.TypeOf(yaml.Node{})
@@ -423,7 +442,7 @@ func OrkflowSchema(firstParty map[string]*orkstackv1.ActivityInterface) (map[str
 	b.defs["orkflow.input"] = map[string]any{
 		"type": "object", "additionalProperties": false, "description": orkflowInputDescription,
 		"properties": map[string]any{
-			"type":     map[string]any{"enum": append([]string(nil), typeWords...)},
+			"type":     map[string]any{"enum": append(append([]string(nil), typeWords...), InputTypeArtifact)},
 			"required": map[string]any{"type": "boolean"},
 			"default":  map[string]any{},
 		},

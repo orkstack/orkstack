@@ -192,6 +192,11 @@ type chaosStack struct {
 	attempts   map[string]int // task[/item] -> ExecuteTask invocations
 	canceled   map[string]int // task[/item] -> attempts whose context was canceled
 	ranOn      map[string][]string
+
+	// indexLines, when set before an Orker starts, is the line indexer that
+	// Orker registers beside ExecuteTask: a real Orker's, so every Orker of
+	// the pool answers a fan-out over an artifact's lines.
+	indexLines func(context.Context, *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error)
 }
 
 func newChaosStack(t *testing.T, ctx context.Context, scenario string) *chaosStack {
@@ -515,6 +520,9 @@ func (s *chaosStack) startOrkerSized(name, q string, c client.Client, deployment
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
+	if s.indexLines != nil {
+		w.RegisterActivityWithOptions(s.indexLines, activity.RegisterOptions{Name: task.ActivityIndexEachLines})
+	}
 	must.OKf(s.t, w.Start(), "start orker %s", name)
 	o := &chaosOrker{name: name, worker: w}
 	s.mu.Lock()
@@ -1127,6 +1135,7 @@ type realOrkerStores struct {
 	logs     artifacts.LogStore
 	refs     artifacts.RefPredictor
 	attempts artifacts.AttemptStore
+	indexes  *artifacts.EachIndexStore
 }
 
 func (s *chaosStack) realStores() *realOrkerStores {
@@ -1147,7 +1156,9 @@ func (s *chaosStack) realStores() *realOrkerStores {
 	}
 	attempts, err := artifacts.NewAttemptStore(s.cfg)
 	must.OKf(s.t, err, "open attempt store")
-	return &realOrkerStores{store: store, commits: commits, logs: logs, refs: refs, attempts: attempts}
+	indexes, err := artifacts.NewEachIndexStore(s.ctx, s.cfg)
+	must.OKf(s.t, err, "open line-index store")
+	return &realOrkerStores{store: store, commits: commits, logs: logs, refs: refs, attempts: attempts, indexes: indexes}
 }
 
 // startRealOrker starts a real Orker named name — real Docker runtime, real
@@ -1213,6 +1224,7 @@ func (s *chaosStack) realOrkerActivities(name, pool string, stores *realOrkerSto
 	activities := orker.NewActivitiesWithOptions(stores.store, orker.Options{
 		Logs: stores.logs, Commits: stores.commits, Attempts: stores.attempts, Refs: stores.refs,
 		Pool: pool, OrkerID: orkerID, WorkRoot: chaosWorkRoot(s.t, name), Policy: policy,
+		EachIndexes: stores.indexes,
 	})
 	if err := activities.Boot(s.ctx); err != nil {
 		infraAbsent(s.t, "orker boot checks failed: %v", err)

@@ -46,7 +46,11 @@ func newAutomationApplyCommand(g *globalFlags) *cobra.Command {
 			"objects of the sections a document declares. --expect-plan refuses a plan\n" +
 			"whose digest differs from the one reviewed. A trigger token or a generated\n" +
 			"webhook secret is shown once; --secrets-out writes them to a new 0600 file\n" +
-			"instead.",
+			"instead.\n\n" +
+			"An apply that creates a schedule, trigger or event source, or changes what\n" +
+			"one submits, makes you its binder, and needs --consent KIND/NAME=DIGEST when\n" +
+			"its Orkflow asks for an identity: the plan warns with the digest. An apply\n" +
+			"of an unchanged document changes no binder and no consent.",
 		Example: "  orkctl automation apply automation.ork.yaml --dry-run\n" +
 			"  orkctl automation apply environments/prod/ --check\n" +
 			"  orkctl automation apply automation.ork.yaml --prune --expect-plan sha256:3f9a… --secrets-out secrets.json",
@@ -63,6 +67,8 @@ func newAutomationApplyCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.prune, "prune", false, "also delete named objects of a declared section the document no longer declares")
 	cmd.Flags().StringVar(&opts.expectPlan, "expect-plan", "", "refuse unless the plan digest equals this one (sha256:HEX)")
 	cmd.Flags().StringVar(&opts.secretsOut, "secrets-out", "", "write disclosed one-time secrets to this NEW file (mode 0600) instead of stdout")
+	cmd.Flags().StringArrayVar(&opts.consents, "consent", nil,
+		"KIND/NAME=DIGEST: consent to what the Orkflow of a schedule, trigger or event-source this apply saves asks for (repeatable)")
 	return cmd
 }
 

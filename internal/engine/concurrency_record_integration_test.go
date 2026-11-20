@@ -5,6 +5,8 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +18,8 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -119,6 +123,12 @@ func gateScenarios() []gateScenario {
 			}},
 		{fixture: "concurrency-gate-close-completes-empty-v1.json", run: gateCloseCompletesEmpty},
 		{fixture: "concurrency-gate-close-race-v1.json", run: gateCloseRace, tune: longAcquire},
+		// E88 P3's slot ordinals (§22.14.1, §22.15).
+		{fixture: "concurrency-gate-ordinal-replace-v1.json", run: gateOrdinalReplace},
+		{fixture: "concurrency-gate-ordinal-late-release-v1.json", run: gateOrdinalLateRelease, tune: longFence},
+		{fixture: "concurrency-gate-ordinal-retry-same-n-v1.json", run: gateOrdinalRetrySameN},
+		{fixture: "concurrency-gate-ordinal-legacy-tombstone-v1.json", run: gateOrdinalLegacyTombstone, tune: longFence},
+		{fixture: "concurrency-gate-grant-without-n-matches-zero-v1.json", run: gateGrantWithoutN},
 		{fixture: "concurrency-gate-rebuild-first-v1.json", run: gateRebuildFirst},
 		{fixture: "concurrency-gate-fenced-v1.json", run: gateFenced,
 			// A tombstone lives long enough that the degraded fence
@@ -597,24 +607,37 @@ func TestIntegration_RecordConcurrencyCensusHistories(t *testing.T) {
 		recordConcurrencyFixture(t, "concurrency-census-pass-v1.json", h)
 	})
 	t.Run("activity-failure", func(t *testing.T) {
-		failing := settings
-		failing.Timeout = time.Millisecond
+		// The pass runs on a worker of its own whose census reads the
+		// cluster through a client that cannot list the gates, so its local
+		// activity fails on every runner, however fast.
+		queue := s.gateQueue + "-unlistable"
+		w := worker.New(s.c, queue, worker.Options{})
+		w.RegisterWorkflowWithOptions(engine.ConcurrencyCensusWorkflow, workflow.RegisterOptions{Name: engine.ConcurrencyCensusWorkflowType})
+		engine.RegisterCensusActivities(w, engine.NewCensusActivities(unlistableClient{s.activities}, s.census))
+		must.OKf(t, w.Start(), "start the unlistable census worker")
+		defer w.Stop()
+		committed := gateHistoryShape(loadHistoryFile(t, filepath.Join("testdata", "history", "concurrency-census-activity-failure-v1.json")))
 		var shape []string
 		var h *historypb.History
 		for repeat := range fixtureRepeats {
-			var err error
-			h, err = census(t, "census-failure", failing)
-			// Its deadline ends the local activity, as the SDK's timeout or
-			// as the list call it cut short, which the activity reports as
-			// its own error; either way the activity failed.
-			var failed *temporal.ActivityError
-			var timeout *temporal.TimeoutError
-			var own *temporal.ApplicationError
-			if !errors.As(err, &failed) && !errors.As(err, &timeout) &&
-				!(errors.As(err, &own) && strings.HasPrefix(own.Error(), "list the concurrency gates: ")) {
-				t.Fatalf("a census pass with a millisecond to run ended %v; its local activity must fail", err)
+			run, err := s.c.ExecuteWorkflow(s.ctx, client.StartWorkflowOptions{ID: gateRunID("census-failure"), TaskQueue: queue},
+				engine.ConcurrencyCensusWorkflowType, settings)
+			must.OKf(t, err, "start the census")
+			err = run.Get(s.ctx, nil)
+			h = s.history(t, run.GetID(), run.GetRunID())
+			// The workflow returns its local activity's failure as the
+			// activity's own error.
+			var failed *temporal.ApplicationError
+			if !errors.As(err, &failed) || !strings.HasPrefix(failed.Error(), "list the concurrency gates: "+errUnlistable.Error()) {
+				t.Fatalf("a census pass that cannot list the gates ended %v; its local activity must fail listing them", err)
+			}
+			if snap, ok := s.census.last(); !ok || !snap.Unavailable {
+				t.Fatalf("the failed pass recorded %+v; want the census unavailable", snap)
 			}
 			shape = requireSameShape(t, "concurrency-census-activity-failure-v1.json", repeat, shape, h)
+		}
+		if !slices.Equal(shape, committed) {
+			t.Fatalf("the failed pass took %q; the committed fixture has %q", shape, committed)
 		}
 		recordConcurrencyFixture(t, "concurrency-census-activity-failure-v1.json", h)
 	})
@@ -711,6 +734,218 @@ func lingerFiresAt(t *testing.T, h *historypb.History) time.Time {
 	return time.Time{}
 }
 
+// gateAcqN is gateAcq at slot ordinal n: protocol 2 above 0, as a run sends
+// after it gave the slot back.
+func gateAcqN(run string, seqBase int64, limit int, n int64) engine.GateAcquireForTest {
+	req := gateAcq(run, seqBase, gateLevel, limit, "queue")
+	if n > 0 {
+		req.Proto, req.N = engine.GateProtoOrdinalForTest, n
+	}
+	return req
+}
+
+// releaseN is release at slot ordinal n.
+func (s *gateStack) releaseN(t *testing.T, gateID, run string, seqBase, n int64) {
+	t.Helper()
+	s.signal(t, gateID, engine.GateSignalRelease, engine.GateRelease{Run: run, SeqBase: seqBase, TaskIx: gateLevel, N: n})
+}
+
+// entryN is the ordinal of run's one entry, holding or queued, and how many
+// entries it has.
+func entryN(v engine.GateStateView, run string) (n int64, entries int) {
+	for _, e := range append(append([]engine.GateEntryForTest(nil), v.State.Holders...), v.State.Queue...) {
+		if e.Run == run {
+			n, entries = e.N, entries+1
+		}
+	}
+	return n, entries
+}
+
+// ordinal-replace: a holder that gave its slot back asks again at n=1. Its
+// n=0 entry is replaced, the run waiting behind it is granted by signal, and
+// it waits at the tail with one entry, granted in turn.
+func gateOrdinalReplace(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History {
+	a, b := gateRunID("a"), gateRunID("b")
+	s.startStandIn(t, gate, a, 1, nil)
+	s.startStandIn(t, gate, b, 1, nil)
+	first := s.startGate(t, gate, engine.GatePreviousClean, tun)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 0), engine.GateAnswerGrantedForTest)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(b, 1, 1, 0), engine.GateAnswerQueuedForTest)
+	s.waitIdle(t, gate)
+	if ans := s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 1), engine.GateAnswerQueuedForTest); ans.Position != 1 {
+		t.Fatalf("a's re-acquire queued at %+v, want first behind b's grant", ans)
+	}
+	s.waitState(t, gate, "b holding, a waiting at n=1", func(v engine.GateStateView) bool {
+		n, entries := entryN(v, a)
+		return len(v.State.Holders) == 1 && v.State.Holders[0].Run == b && n == 1 && entries == 1
+	})
+	// b's grant is delivered before b releases, so every repeat records the
+	// two in one order.
+	s.waitGrantsDelivered(t, gate, 1)
+	s.waitIdle(t, gate)
+	s.release(t, gate, b, 1, gateLevel)
+	s.waitState(t, gate, "a holding at n=1", holdsOnly(a))
+	s.waitGrantsDelivered(t, gate, 2)
+	if n := s.grants(t, a); n != 1 {
+		t.Fatalf("a received %d grant signals, want 1", n)
+	}
+	s.waitIdle(t, gate)
+	s.releaseN(t, gate, a, 1, 1)
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, first)
+}
+
+// ordinal-late-release: a re-acquire at n=1 replaces the held n=0 entry; a
+// release of n=0 sent after it frees nothing, and the release of n=1 frees
+// the slot and fences n ≤ 1.
+func gateOrdinalLateRelease(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History {
+	a := gateRunID("a")
+	first := s.startGate(t, gate, engine.GatePreviousClean, tun)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 0), engine.GateAnswerGrantedForTest)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 1), engine.GateAnswerGrantedForTest)
+	s.waitIdle(t, gate)
+	s.releaseN(t, gate, a, 1, 0)
+	// The late release is taken in a workflow task of its own before the
+	// next acquire, so every repeat takes the same path; the gate still
+	// holds a at n=1.
+	s.waitSignalTaken(t, gate)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 1), engine.GateAnswerGrantedForTest)
+	if n, entries := entryN(s.state(t, gate), a); n != 1 || entries != 1 {
+		t.Fatalf("after the late release(0) a has %d entries at n=%d, want one at 1", entries, n)
+	}
+	s.waitIdle(t, gate)
+	s.releaseN(t, gate, a, 1, 1)
+	s.waitState(t, gate, "a released", isEmpty)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 1), engine.GateAnswerFencedForTest)
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, first)
+}
+
+// ordinal-retry-same-n: a second attempt of one acquire at n=2 keeps its
+// place and never queues behind itself; an older ordinal is fenced.
+func gateOrdinalRetrySameN(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History {
+	a, b := gateRunID("a"), gateRunID("b")
+	s.startStandIn(t, gate, b, 1, nil)
+	first := s.startGate(t, gate, engine.GatePreviousClean, tun)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 0), engine.GateAnswerGrantedForTest)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(b, 1, 1, 2), engine.GateAnswerQueuedForTest)
+	s.waitIdle(t, gate)
+	if ans := s.wantAnswer(t, gate, gateAcqN(b, 1, 1, 2), engine.GateAnswerQueuedForTest); ans.Position != 1 {
+		t.Fatalf("b's retry queued at %+v, want its own place, first", ans)
+	}
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(b, 1, 1, 1), engine.GateAnswerFencedForTest)
+	s.waitIdle(t, gate)
+	s.release(t, gate, a, 1, gateLevel)
+	s.waitState(t, gate, "b holding at n=2", holdsOnly(b))
+	s.waitGrantsDelivered(t, gate, 1)
+	s.waitIdle(t, gate)
+	s.releaseN(t, gate, b, 1, 2)
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, first)
+}
+
+// ordinal-legacy-tombstone: a gate carrying a tombstone written before
+// ordinals fences that slot's n=0 only, and grants its n=1.
+func gateOrdinalLegacyTombstone(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History {
+	a := gateRunID("a")
+	run, err := s.c.ExecuteWorkflow(s.ctx, client.StartWorkflowOptions{ID: gate, TaskQueue: s.gateQueue},
+		engine.ConcurrencyGateWorkflowType, engine.GateStart{
+			GateID: gate, Namespace: gateNamespace, Key: "deploy", Tunables: tun, Previous: engine.GatePreviousClean,
+			Carry: engine.GateLegacyTombCarryForTest(tun, a, 1, time.Now().Add(tun.TombstoneMargin)),
+		})
+	must.OKf(t, err, "start gate %s with a legacy carry", gate)
+	first := run.GetRunID()
+	// Its first workflow task completes before any acquire, as startGate
+	// waits, so every repeat starts down the same path.
+	s.poll(t, gate+"'s first workflow task", func() (bool, error) {
+		return s.historyHas(t, gate, first, enums.EVENT_TYPE_WORKFLOW_TASK_COMPLETED), nil
+	})
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 0), engine.GateAnswerFencedForTest)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 1), engine.GateAnswerGrantedForTest)
+	s.waitIdle(t, gate)
+	s.releaseN(t, gate, a, 1, 1)
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, first)
+}
+
+// grant-without-n-matches-zero: a run waiting at n=0 is granted by a signal
+// that carries no ordinal, which a run reads as n=0.
+func gateGrantWithoutN(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History {
+	a, b := gateRunID("a"), gateRunID("b")
+	s.startStandIn(t, gate, b, 1, nil)
+	first := s.startGate(t, gate, engine.GatePreviousClean, tun)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(a, 1, 1, 0), engine.GateAnswerGrantedForTest)
+	s.waitIdle(t, gate)
+	s.wantAnswer(t, gate, gateAcqN(b, 1, 1, 0), engine.GateAnswerQueuedForTest)
+	s.waitIdle(t, gate)
+	s.release(t, gate, a, 1, gateLevel)
+	s.waitState(t, gate, "b holding", holdsOnly(b))
+	s.waitGrantsDelivered(t, gate, 1)
+	for _, e := range s.history(t, b, "").GetEvents() {
+		a := e.GetWorkflowExecutionSignaledEventAttributes()
+		if a == nil || a.GetSignalName() != engine.ConcurrencyGrantSignal {
+			continue
+		}
+		for _, p := range a.GetInput().GetPayloads() {
+			if strings.Contains(string(p.GetData()), `"n"`) {
+				t.Fatalf("b's grant carries an ordinal: %s", p.GetData())
+			}
+		}
+	}
+	if n := s.grants(t, b); n != 1 {
+		t.Fatalf("b received %d grant signals, want 1", n)
+	}
+	s.waitIdle(t, gate)
+	s.release(t, gate, b, 1, gateLevel)
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, first)
+}
+
+// waitSignalTaken waits until the gate's last signal has been decided by a
+// workflow task that completed after it.
+func (s *gateStack) waitSignalTaken(t *testing.T, gate string) {
+	t.Helper()
+	s.poll(t, gate+"'s last signal taken", func() (bool, error) {
+		signaled, completed := int64(-1), int64(-1)
+		for _, e := range s.history(t, gate, "").GetEvents() {
+			switch e.GetEventType() {
+			case enums.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED:
+				signaled = e.GetEventId()
+			case enums.EVENT_TYPE_WORKFLOW_TASK_COMPLETED:
+				completed = e.GetEventId()
+			}
+		}
+		return signaled > 0 && completed > signaled, nil
+	})
+}
+
+// waitGrantsDelivered waits until the gate has recorded n grant signals
+// delivered.
+func (s *gateStack) waitGrantsDelivered(t *testing.T, gate string, n int) {
+	t.Helper()
+	s.poll(t, fmt.Sprintf("%s's %d grants delivered", gate, n), func() (bool, error) {
+		got := 0
+		for _, e := range s.history(t, gate, "").GetEvents() {
+			if e.GetEventType() == enums.EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED {
+				got++
+			}
+		}
+		return got >= n, nil
+	})
+}
+
 // rebuild-first: a gate started by an acquire (Update-with-Start, as a run
 // starts one) beside a holder its rebuild restores is rebuilding from its
 // first instant, so the acquire queues behind that holder and is granted by
@@ -720,7 +955,7 @@ func gateRebuildFirst(t *testing.T, s *gateStack, gate string, tun engine.GateTu
 	s.startStandIn(t, gate, h, 1, map[int]engine.GateMemoEntryForTest{gateLevel: memoEntry(true, 1, time.Now().Add(-time.Minute), 7, 1)})
 	s.startStandIn(t, gate, b, 1, nil)
 	s.waitListed(t, gate, 1)
-	req := gateAcq(b, 1, gateLevel, 1, "queue")
+	req := gateAcqN(b, 1, 1, 0)
 	op := s.c.NewWithStartWorkflowOperation(client.StartWorkflowOptions{
 		ID: gate, TaskQueue: s.gateQueue,
 		WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING,
@@ -752,4 +987,17 @@ func gateRebuildFirst(t *testing.T, s *gateStack, gate string, tun engine.GateTu
 	s.release(t, gate, b, 1, gateLevel)
 	s.closeEmpty(t, gate)
 	return s.history(t, gate, first)
+}
+
+// errUnlistable is the listing failure unlistableClient injects.
+var errUnlistable = errors.New("injected: the gates cannot be listed")
+
+// unlistableClient is a cluster client whose workflow listing always fails.
+// It is a fault a real cluster cannot produce on demand for one census pass
+// and not another (AGENTS.md §11.1): the census's failure path is otherwise
+// reached only by a deadline too short to run, which a fast host meets.
+type unlistableClient struct{ client.Client }
+
+func (unlistableClient) ListWorkflow(context.Context, *workflowservice.ListWorkflowExecutionsRequest) (*workflowservice.ListWorkflowExecutionsResponse, error) {
+	return nil, errUnlistable
 }

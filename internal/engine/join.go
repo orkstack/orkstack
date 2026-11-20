@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -476,6 +477,8 @@ func (s *runState) failWithHandlers(
 			reason = s.pauseStopNotStartedReason()
 		case s.hardEnded() && status == orkstackv1.Status_STATUS_PENDING:
 			reason = s.hardEndNotStartedReason()
+		case s.slotStop != "" && ctx.Err() == nil && status == orkstackv1.Status_STATUS_PENDING:
+			reason = s.slotStop
 		case ctx.Err() != nil:
 			reason = cancelReasonHandlerStopped
 		case status == orkstackv1.Status_STATUS_PENDING:
@@ -510,10 +513,14 @@ func (s *runState) failWithHandlers(
 		s.runError.Message = boundEscaped(s.runError.GetMessage()+s.pauseStopNote(), needErrorMessageBytes)
 	} else if s.hardEnded() {
 		s.runError.Message = boundEscaped(s.runError.GetMessage()+s.hardEndNote(), needErrorMessageBytes)
+	} else if s.slotStop != "" && ctx.Err() == nil {
+		// The run's own failure first, bounded so the note always fits.
+		note := "; " + s.slotStop
+		s.runError.Message = boundEscaped(s.runError.GetMessage(), max(needErrorMessageBytes-escapedLen(note), 0)) + note
 	}
 	if timedOut {
 		cause = runLevelError(RunTimedOutCode, s.runError.GetMessage())
-	} else if s.hardEnded() || (s.pauseStop != nil && ctx.Err() == nil) {
+	} else if s.hardEnded() || ((s.pauseStop != nil || s.slotStop != "") && ctx.Err() == nil) {
 		// The closing event says what the terminal snapshot says, with the
 		// cause's own type kept.
 		if failure := categoryOf(cause); failure.isApplication() {
@@ -600,6 +607,13 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		s.pauseHandlerPass(ctx, inFlight)
 		ectx := s.eventContext(ctx)
 		stopping := ctx.Err() != nil || s.hardEnded() || s.pauseStop != nil
+		// A run that gave its concurrency slot back while paused asks for it
+		// again, once unpaused, before any handler starts: its handlers run
+		// inside the limit, or not at all, and its error says why (D22).
+		if !stopping && s.slotStop == "" && s.pendingHandlers > 0 && !s.paused() && s.concSlotGivenBack() {
+			s.slotStop = s.failingRegain(ctx)
+		}
+		stopping = ctx.Err() != nil || s.hardEnded() || s.pauseStop != nil || s.slotStop != ""
 		if stopping {
 			// A handler waiting to run again is stopped as a pending one is.
 			s.dropHandlerWaits()
@@ -619,6 +633,8 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 					reason = s.pauseStopNotStartedReason()
 				case s.hardEnded():
 					reason = s.hardEndNotStartedReason()
+				case s.slotStop != "":
+					reason = s.slotStop
 				}
 				if err := s.markCanceled(ectx, id, reason); err != nil {
 					workflow.GetLogger(ctx).Error("mark canceled failed",
@@ -703,12 +719,13 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 			}
 		}
 		var resolution *orkstackv1.AwaitSignal
-		resolved := false
+		var resolutionRaw converter.RawValue
+		resolved, received := false, false
 		expired := ""
 		if s.resolutions != nil {
 			selector.AddReceive(s.resolutions, func(c workflow.ReceiveChannel, _ bool) {
-				c.Receive(ctx, &resolution)
-				resolved = true
+				c.Receive(ctx, &resolutionRaw)
+				received = true
 			})
 			for _, id := range s.order {
 				if a := s.awaits[id]; a != nil && a.open {
@@ -765,6 +782,11 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		}
 		selector.Select(ctx)
 		ectx = s.eventContext(ctx)
+		if received {
+			// Opened out of the selector's callback: one that does not read is
+			// an event of the run, and no awaited task changes.
+			resolution, resolved = s.openResolution(ectx, resolutionRaw)
+		}
 		switch {
 		case pauseWoke:
 			continue // the pass top applies the request or takes the expiry; a cancel stops

@@ -371,8 +371,9 @@ func (a *EventActivities) mergedSnapshot(runID string, fallback *orkstackv1.Run)
 }
 
 // IsSubscribableEvent reports whether an event is one an external subscriber
-// may ask for: a run transition, or a task outcome (TASK_SCHEDULED,
-// TASK_STARTED, TASK_SUCCEEDED, and TASK_FAILED with status FAILED).
+// may ask for: a run transition, a task outcome (TASK_SCHEDULED,
+// TASK_STARTED, TASK_SUCCEEDED, and TASK_FAILED with status FAILED), or a
+// wait for a concurrency slot (RUN_QUEUED, TASK_QUEUED).
 //
 // Two things the interpreter emits are excluded on purpose. TASK_LOG is never
 // one, whatever status it carries: a skipped task and a task that never
@@ -398,7 +399,13 @@ func IsSubscribableEvent(event *orkstackv1.Event) bool {
 		orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING,
 		orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED,
 		// A sleep's start; its wake is the TASK_SUCCEEDED above.
-		orkstackv1.EventType_EVENT_TYPE_TASK_SLEEPING:
+		orkstackv1.EventType_EVENT_TYPE_TASK_SLEEPING,
+		// A run or a task that waits for a concurrency slot: opt-in, never
+		// in an empty subscription, and never a transition of the run, which
+		// is why they are named here rather than in IsRunTransitionEvent
+		// (that one also decides archiving and the terminal path).
+		orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_QUEUED:
 		return true
 	case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 		return event.GetStatus() == orkstackv1.Status_STATUS_FAILED

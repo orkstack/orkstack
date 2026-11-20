@@ -148,6 +148,18 @@ func (e *eachE2E) startRunWorker() {
 		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
 	w.RegisterActivityWithOptions(compose.StoreComposedValues,
 		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
+	// The claims of artifacts a tree passes, over this deployment's own run
+	// archive, as `ork` registers them.
+	archive, err := artifacts.NewRunArchive(e.cfg)
+	must.OKf(e.t, err, "open the run archive")
+	claimer, _ := archive.(engine.ObjectClaimer)
+	claims := engine.NewArtifactClaimActivities(e.store, claimer)
+	w.RegisterActivityWithOptions(claims.StatAndClaimChildInputs,
+		activity.RegisterOptions{Name: engine.ActivityStatAndClaimChildInputs})
+	w.RegisterActivityWithOptions(claims.ClaimReceivedArtifacts,
+		activity.RegisterOptions{Name: engine.ActivityClaimReceivedArtifacts})
+	w.RegisterActivityWithOptions(claims.ClaimReturnedArtifacts,
+		activity.RegisterOptions{Name: engine.ActivityClaimReturnedArtifacts})
 	must.OKf(e.t, w.Start(), "start run worker")
 	e.mu.Lock()
 	e.runWorker = w

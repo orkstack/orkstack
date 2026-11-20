@@ -133,6 +133,11 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 	listenerAddr, err1 := r.sn.ContainerAddress(ctx, listener, probeNet)
 	serviceAddr, err2 := r.sn.ContainerAddress(ctx, serviceCanary, canaryNet)
 	defaultAddr, err3 := r.sn.ContainerAddress(ctx, defaultCanary, "")
+	if errors.Is(err3, ErrNoContainerAddress) {
+		// The default network gives a container no address another can dial:
+		// there is no canary there to ask, only the way back from it.
+		defaultAddr, err3 = "", nil
+	}
 	gateway, err4 := r.sn.NetworkGateway(ctx, probeNet)
 	if err := errors.Join(err1, err2, err3, err4); err != nil {
 		return notRun("an address", err)
@@ -140,8 +145,10 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 	// The positive control: every listener answers the Orker itself, before
 	// the probe asks and after it, so a canary that never listened, or one
 	// that died, is never read as a path that is closed.
-	listeners := []string{net.JoinHostPort(listenerAddr, reachProbePort), net.JoinHostPort(serviceAddr, reachProbePort),
-		net.JoinHostPort(defaultAddr, reachProbePort)}
+	listeners := []string{net.JoinHostPort(listenerAddr, reachProbePort), net.JoinHostPort(serviceAddr, reachProbePort)}
+	if defaultAddr != "" {
+		listeners = append(listeners, net.JoinHostPort(defaultAddr, reachProbePort))
+	}
 	inside := false
 	if rr, ok := r.d.Runtime.(interface {
 		ReachControlFromInside(context.Context) (bool, error)
@@ -156,11 +163,14 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 			// The runtime leaves the host no route to a container's address
 			// (ReachControlFromInside): each listener is asked from its own
 			// network.
-			err = r.controlInside(ctx, []dialRun{
+			runs := []dialRun{
 				{"control-p", NetworkService, probeNet, []string{"4,address,tcp," + listeners[0]}},
 				{"control-s", NetworkService, canaryNet, []string{"4,address,tcp," + listeners[1]}},
-				{"control-d", NetworkDefault, "", []string{"4,address,tcp," + listeners[2]}},
-			})
+			}
+			if len(listeners) > 2 {
+				runs = append(runs, dialRun{"control-d", NetworkDefault, "", []string{"4,address,tcp," + listeners[2]}})
+			}
+			err = r.controlInside(ctx, runs)
 		} else {
 			err = awaitListening(ctx, listeners)
 		}
@@ -183,7 +193,7 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 		LoopbackCanaryPort: loop.Addr().(*net.TCPAddr).Port,
 		HostAddresses:      append([]string{gateway}, hosts...),
 		Cluster:            r.cfg.Cluster,
-		Canaries:           []string{net.JoinHostPort(serviceAddr, reachProbePort), net.JoinHostPort(defaultAddr, reachProbePort)},
+		Canaries:           listeners[1:],
 	}
 	back := "4,address,tcp," + net.JoinHostPort(listenerAddr, reachProbePort)
 	var dials []dialRun

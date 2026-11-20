@@ -25,6 +25,107 @@ service IdentityService {
   // instant than it was is FAILED_PRECONDITION. Needs identity.keys.retire
   // at the deployment.
   rpc RetireSigningKey(RetireSigningKeyRequest) returns (RetireSigningKeyResponse);
+  // MintAttemptTokens signs the tokens one attempt of an admitted run's
+  // task holds, for the Orker that holds the attempt. Served only when
+  // callers are authenticated (auth.mode enforce). Needs
+  // identity.token.mint and task.result.commit at the task's pool, asked
+  // once the run's admission names the pool.
+  rpc MintAttemptTokens(MintAttemptTokensRequest) returns (MintAttemptTokensResponse);
+  // ListIssuedTokens lists what was issued for a run's attempts, in key
+  // order: who asked, and each token's claims, never a token. Needs
+  // run.read on the run's Orkflow.
+  rpc ListIssuedTokens(ListIssuedTokensRequest) returns (ListIssuedTokensResponse);
+}
+
+message MintAttemptTokensRequest {
+  string namespace = 1;
+  string run_id = 2;
+  string task_id = 3;
+  // item is a fan-out item's index; unset for a task that is not one.
+  optional int32 item = 4;
+  int32 attempt = 5;
+  // task_spec_sha256 is the digest of the task as the Orker was given it.
+  string task_spec_sha256 = 6;
+  // tokens are what the attempt asks for: at most 16.
+  repeated TokenRequest tokens = 7;
+  // admission_sha256 names which admission of the run, as the task's input
+  // named it.
+  string admission_sha256 = 8;
+  // spec_members maps each member of the task's digest to its own digest,
+  // used only to say what differs.
+  map<string, string> spec_members = 9;
+  // resume_scope is the resume the attempt runs under; 0 for none.
+  uint64 resume_scope = 10;
+  // root_scope is the root run's resume scope, for a run below a root.
+  uint64 root_scope = 11;
+  reserved 12, 13;
+}
+
+message TokenRequest {
+  // name is an identity's name, or "grant:<name>".
+  string name = 1;
+  string audience = 2;
+}
+
+message MintAttemptTokensResponse {
+  repeated IssuedToken tokens = 1;
+}
+
+message IssuedToken {
+  string name = 1;
+  string audience = 2;
+  // token is the signed token. Never logged and never stored.
+  string token = 3;
+  // expires_in_seconds is the token's life, counted on the Orker's own
+  // clock.
+  int32 expires_in_seconds = 4;
+  // issued_at is when it was signed, for the Orker's clock check only.
+  google.protobuf.Timestamp issued_at = 5;
+  string jti = 6;
+  string kid = 7;
+}
+
+message ListIssuedTokensRequest {
+  string namespace = 1;
+  string run_id = 2;
+  // task_id narrows the list to one task.
+  string task_id = 3;
+  // item narrows it to one item of task_id.
+  optional int32 item = 4;
+  // page_size is at most 100; 0 is 50.
+  int32 page_size = 5;
+  string page_token = 6;
+  reserved 7, 8;
+}
+
+message ListIssuedTokensResponse {
+  repeated IssuedTokenRecord records = 1;
+  // next_page_token continues the list; empty at its end.
+  string next_page_token = 2;
+}
+
+// IssuedTokenRecord is what one granted mint issued.
+message IssuedTokenRecord {
+  string task_id = 1;
+  optional int32 item = 2;
+  int32 attempt = 3;
+  // principal is the caller's verified principal.
+  string principal = 4;
+  // orker_id is the Orker its credential names.
+  string orker_id = 5;
+  google.protobuf.Timestamp issued_at = 6;
+  repeated IssuedTokenEntry tokens = 7;
+}
+
+// IssuedTokenEntry is one issued token's claims.
+message IssuedTokenEntry {
+  string name = 1;
+  string audience = 2;
+  string subject = 3;
+  string jti = 4;
+  string kid = 5;
+  google.protobuf.Timestamp issued_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
 }
 
 message GetIssuerRequest {}

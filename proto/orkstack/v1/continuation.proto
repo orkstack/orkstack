@@ -2,7 +2,9 @@ syntax = "proto3";
 
 package orkstack.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -101,7 +103,8 @@ message RunContinuation {
   // request is still refused after the switch.
   int64 last_cascade_seq = 15;
 
-  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  // concurrency is the run's concurrency slots carried forward: only held
+  // run-level slots cross, since a waiting run never carries on.
   RunConcurrencyCarry concurrency = 16;
 
   // deferred_pause_requests are the pause requests the run received but
@@ -167,9 +170,31 @@ message RunSnapshotOverlay {
   string base_sha256 = 5;
 }
 
-// RunConcurrencyCarry is E88's; it is empty until E88 lands (v0.4.0 proto
-// batch).
-message RunConcurrencyCarry {}
+// RunConcurrencyCarry is a run's concurrency slots as it carries on.
+message RunConcurrencyCarry {
+  // attempted is every gate the run asked for a slot.
+  repeated string attempted = 1;
+  // held is every run-level slot it holds.
+  repeated HeldSlot held = 2;
+  // ordinals is each slot's current ordinal, for those given back and
+  // asked for again (n above 0).
+  repeated SlotOrdinal ordinals = 3;
+}
+
+// HeldSlot is one run-level slot a run holds: its gate and the line's seq
+// it was granted at.
+message HeldSlot {
+  string gate_id = 1;
+  int64 seq = 2;
+}
+
+// SlotOrdinal is one slot's ordinal: how many times the run gave it back
+// and asked for it again.
+message SlotOrdinal {
+  string gate_id = 1;
+  int32 task_ix = 2;
+  int64 n = 3;
+}
 
 // RunLossEvents is a run's lost-Orker events so far, carried forward with
 // its saved state: the run's cap on how many lost Orkers re-run its tasks.
@@ -189,3 +214,89 @@ message OpenLossEvent {
 // RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
 // batch).
 message RunResumeCarry {}
+
+// ResumeBlock is one resume's plan as the reset run executes it (E85 §4.1,
+// engine-internal): written into the resume's record before the reset and
+// loaded at R (LoadResumePlan). It is the pin: nothing of it is re-read.
+message ResumeBlock {
+  // seq_base is the sequence RUN_RESUMED takes; the rerun commits under it.
+  uint64 seq_base = 1;
+  // scope is the first seq_base of the resume's scope (§28.22 E85-16).
+  uint64 scope = 2;
+  // rerun is S, the units run again, as ranges in task order.
+  repeated ResumeUnitRange rerun = 3;
+  // dispositions is every unit's disposition outside S.
+  repeated ResumeUnitDisposition dispositions = 4;
+  ResumeAction action = 5;
+  string from_task_id = 6;
+  ResumeReadback readback = 7;
+  // resumes_before is how many resumes of the run got going before this one.
+  int32 resumes_before = 8;
+  uint64 previous_seq_base = 9;
+  repeated string reopened_awaits = 10;
+}
+
+// ResumeUnitRange is count consecutive items of a task from first_item, or
+// the task itself when first_item is -1.
+message ResumeUnitRange {
+  string task_id = 1;
+  int32 first_item = 2;
+  int32 count = 3;
+}
+
+// ResumeUnitDisposition is one unit outside S.
+message ResumeUnitDisposition {
+  string task_id = 1;
+  // item is the item's index, or -1 for the task itself.
+  int32 item = 2;
+  ResumeDisposition disposition = 3;
+  // values_ref is a SETTLE unit's recorded values.
+  ArtifactRef values_ref = 4;
+  // wake_at is a SLEEP_UNTIL unit's recorded wake-up time.
+  google.protobuf.Timestamp wake_at = 5;
+  // result_epoch is the scope a kept result's commit lives under.
+  int64 result_epoch = 6;
+  // encoded_size is a read-back entry's encoded result, as ResumeRun measured it.
+  int64 encoded_size = 7;
+}
+
+// ResumeReadback is the read-back's pinned bounds (E85 §4.1).
+message ResumeReadback {
+  google.protobuf.Duration deadline = 1;
+  int64 budget = 2;
+  int32 max_entries = 3;
+  int32 concurrency = 4;
+  google.protobuf.Duration get_timeout = 5;
+  int32 get_tries = 6;
+  google.protobuf.Duration call_timeout = 7;
+  google.protobuf.Duration retry_initial = 8;
+  double retry_coefficient = 9;
+  int32 calls_per_task = 10;
+}
+
+// ResumePlanRecord is one resume plan's immutable record (E85 §11, §30.3,
+// engine-internal), written create-only before the reset at
+// metadata/run-resumes/{namespace}/{encoded-run-id}/{scope:020}.{n:03}.resume.json.
+// The reset's reason names it by the SHA-256 of its stored bytes.
+message ResumePlanRecord {
+  int32 format = 1;
+  string namespace = 2;
+  string run_id = 3;
+  uint64 scope = 4;
+  int32 n = 5;
+  // base_execution_run_id is the execution the reset resets.
+  string base_execution_run_id = 6;
+  // r_scheduled_event_id and r_started_event_id are R's workflow task in that base.
+  int64 r_scheduled_event_id = 7;
+  int64 r_started_event_id = 8;
+  int64 base_terminal_sequence = 9;
+  google.protobuf.Timestamp at = 10;
+  google.protobuf.Timestamp expires_at = 11;
+  ResumeBlock block = 12;
+  string principal = 13;
+  bool principal_verified = 14;
+  string reason = 15;
+  string superseded_reason = 16;
+  uint64 previous_scope = 17;
+  string request_id = 18;
+}

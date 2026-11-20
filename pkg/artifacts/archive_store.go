@@ -317,8 +317,14 @@ func (a *BlobRunArchive) RetireRunArtifacts(ctx context.Context, namespace, runI
 	if err != nil {
 		return CleanupResult{}, err
 	}
-	// The four prefixes are independent: delete them concurrently.
-	prefixes := []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix}
+	// What the engine recorded for the run's tasks is reclaimed with its
+	// commits (docs/TASK_IDENTITY.md, "Results the engine records").
+	attestedPrefix, err := AttestedRunPrefix(namespace, runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	// The five prefixes are independent: delete them concurrently.
+	prefixes := []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix, attestedPrefix}
 	results := make([]CleanupResult, len(prefixes))
 	errs := make([]error, len(prefixes))
 	var wg sync.WaitGroup
@@ -640,4 +646,27 @@ func (a *BlobRunArchive) exists(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("head %q: %w", key, err)
 	}
 	return true, nil
+}
+
+// ClaimObjects writes runID's marker on every object in objectIDs before any
+// archive of runID exists: the claim a run holds on objects it was passed or
+// handed out while it is open (docs/STORAGE.md, "Reclaiming space"). Writing
+// a claim again is the same zero-byte marker. Every object claimed must also
+// be one the run's archived record references, so the run's retirement
+// releases it. Every key is computed before the first write, so an invalid
+// run id writes nothing; a failed write fails the whole call.
+func (a *BlobRunArchive) ClaimObjects(ctx context.Context, runID string, objectIDs []string) error {
+	ids := dedupeObjectIDs(objectIDs)
+	refKeys := make([]string, 0, len(ids))
+	for _, objectID := range ids {
+		refKey, err := RunObjectRefKey(objectID, runID)
+		if err != nil {
+			return fmt.Errorf("artifacts: claim objects for run %q: %w", runID, err)
+		}
+		refKeys = append(refKeys, refKey)
+	}
+	if err := a.putObjectRefs(ctx, refKeys); err != nil {
+		return fmt.Errorf("artifacts: claim objects for run %q: %w", runID, err)
+	}
+	return nil
 }

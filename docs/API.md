@@ -79,6 +79,18 @@ Defined in `proto/orkstack/v1/activity_service.proto`.
 | `CordonOrker` | [`CordonOrkerRequest`](#cordonorkerrequest) | [`CordonOrkerResponse`](#cordonorkerresponse) | CordonOrker sets or clears ONE Orker's cordon: a process-local flag delivered to that Orker alone, lost when the process exits. A cordoned Orker takes no new task and opens no new pin; everything already in flight on it is untouched. The response is the Orker's state AFTER the change, as the Orker itself reported it. This is the operator's cordon: it neither sets nor clears the cordon an Orker holds on itself during a store outage (Orker.store_outage), so an Orker cleared here can still answer cordoned. |
 | `InspectActivity` | [`InspectActivityRequest`](#inspectactivityrequest) | [`InspectActivityResponse`](#inspectactivityresponse) | InspectActivity resolves ONE reference on demand — a catalog name or any registry reference `uses:` would accept — and reports it as ListActivities would: the pinned digest, platforms, and the interface, icon and docs the image declares. It resolves afresh on every call, unless the request sets allow_cached for a reference that pins a digest. It reads engine configuration and the registry only, never asks an Orker, and writes nothing. |
 
+### AttemptService
+
+AttemptService is the calls an Orker makes for an attempt it holds
+(docs/TASK_IDENTITY.md). Served only when callers are authenticated
+(auth.mode enforce).
+
+Defined in `proto/orkstack/v1/attempt_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `CommitResult` | [`CommitResultRequest`](#commitresultrequest) | [`CommitResultResponse`](#commitresultresponse) | CommitResult records an attempt's result for a run whose results the engine records: the engine writes the manifest the Orker hands it, create-only, where no Orker may write, for an attempt the caller holds, at the pool the run was admitted with for the task, dispatched as it was admitted. With preflight set it only asks, and writes nothing. A result already recorded is answered as it is. Needs task.result.commit at the task's pool, asked once the run's admission names the pool. |
+
 ### AuditService
 
 AuditService reads back the control-plane audit trail: one immutable record
@@ -193,6 +205,8 @@ Defined in `proto/orkstack/v1/identity_service.proto`.
 | `GetIssuer` | [`GetIssuerRequest`](#getissuerrequest) | [`GetIssuerResponse`](#getissuerresponse) | GetIssuer answers the issuer, its documents as this engine serves and exports them, and what this engine last read of the published keys and of the issuer URL. Needs identity.read at the deployment. |
 | `ListSigningKeys` | [`ListSigningKeysRequest`](#listsigningkeysrequest) | [`ListSigningKeysResponse`](#listsigningkeysresponse) | ListSigningKeys answers every published key and every key this engine holds. Needs identity.read at the deployment. |
 | `RetireSigningKey` | [`RetireSigningKeyRequest`](#retiresigningkeyrequest) | [`RetireSigningKeyResponse`](#retiresigningkeyresponse) | RetireSigningKey retires a key: no engine signs with it again, and it is no longer served. The key stays in the published keys. Retiring a retired key answers it as it is; marking it compromised from another instant than it was is FAILED_PRECONDITION. Needs identity.keys.retire at the deployment. |
+| `MintAttemptTokens` | [`MintAttemptTokensRequest`](#mintattempttokensrequest) | [`MintAttemptTokensResponse`](#mintattempttokensresponse) | MintAttemptTokens signs the tokens one attempt of an admitted run's task holds, for the Orker that holds the attempt. Served only when callers are authenticated (auth.mode enforce). Needs identity.token.mint and task.result.commit at the task's pool, asked once the run's admission names the pool. |
+| `ListIssuedTokens` | [`ListIssuedTokensRequest`](#listissuedtokensrequest) | [`ListIssuedTokensResponse`](#listissuedtokensresponse) | ListIssuedTokens lists what was issued for a run's attempts, in key order: who asked, and each token's claims, never a token. Needs run.read on the run's Orkflow. |
 
 ### NamespaceService
 
@@ -489,6 +503,35 @@ AccessStep is one write a plan asks the client to send.
 
 No fields.
 
+### ActivityCommit
+
+ActivityCommit is the immutable completion manifest (AGENTS.md §4.1). It is
+serialized with protojson and stored as commit.json. Serialized size MUST
+NOT exceed WorkspaceLimits.commit_max_bytes (default 4 MiB, §5.3).
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | `int32` | schema_version is 1. A reader that does not know the value refuses the commit with ContractViolation/COMMIT_SCHEMA_UNSUPPORTED rather than guessing (§5.4). |
+| `namespace` | `string` |  |
+| `run_id` | `string` |  |
+| `task_id` | `string` |  |
+| `orkflow_name` | `string` |  |
+| `orkflow_version` | `string` |  |
+| `orkflow_definition_digest` | `string` |  |
+| `idempotency_key` | `string` |  |
+| `image` | [`ImageRef`](#imageref) | with platform_digest and delivery set |
+| `exit_code` | `int32` | always 0 in schema_version 1 |
+| `values` | [`ArtifactRef`](#artifactref) |  |
+| `artifacts` | repeated [`ArtifactRef`](#artifactref) |  |
+| `system_artifacts` | repeated [`ArtifactRef`](#artifactref) |  |
+| `started_at` | `google.protobuf.Timestamp` |  |
+| `finished_at` | `google.protobuf.Timestamp` |  |
+| `attempt` | `int32` | the attempt that committed |
+| `orker_id` | `string` |  |
+| `build_id` | `string` | ORK_BUILD_ID of the committer |
+| `cache` | [`CacheResult`](#cacheresult) | cache is the memo decision of the attempt that committed, for a cached task only; unset otherwise, so every existing commit is unchanged. A HIT commit names its source: its values, artifacts, system_artifacts and image are the source's references, and its identity fields (namespace … idempotency_key, image.index_digest) are THIS activity's, so §5.4 adoption of it on a retry is the ordinary one. memo_written, memo_write_error and key_components are never set here. |
+| `recorded` | [`CommitRecording`](#commitrecording) | recorded is set by the engine on a result it records for a run whose results the engine records (docs/TASK_IDENTITY.md, "Results the engine records"): the pool, the Orker id the caller's credential names, the admission's digest, the engine's build and the time. Never set by an Orker; unset on every other commit. |
+
 ### ActivityDocs
 
 ActivityDocs holds the descriptions an image gives, in plain text, of
@@ -628,6 +671,8 @@ In this release no Orkflow asks for an identity, so it is the empty table's.
 | Field | Type | Description |
 |---|---|---|
 | `digest` | `string` | digest is the consent digest of what the Orkflow asks for: "c1:" and 64 hexadecimal digits. |
+| `audiences` | repeated `string` | audiences are the distinct token audiences it asks for. |
+| `grants` | repeated `string` | grants are the distinct grants it asks for, by name. |
 
 ### AttemptCredential
 
@@ -638,10 +683,20 @@ No fields.
 
 ### AttemptIdentity
 
-AttemptIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-batch).
+AttemptIdentity is what one identity of an attempt was issued, as its
+Orker reported at the attempt's end: never a token. It is best-effort, as
+the record is: an Orker that is killed writes none, and the engine's own
+records of what it issued are the trail that does not depend on the Orker.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the identity's name in its task. |
+| `audience` | `string` | audience is its tokens' audience. |
+| `tokens_issued` | `int32` | tokens_issued is how many tokens the attempt was given, the first and each refresh. |
+| `first_jti` | `string` | first_jti and last_jti are the jti of the first and the last of them. |
+| `last_jti` | `string` |  |
+| `last_kid` | `string` | last_kid is the key that signed the last. |
+| `last_expires_at` | `google.protobuf.Timestamp` | last_expires_at is when the last expires. |
 
 ### AttemptTiming
 
@@ -921,10 +976,30 @@ reading of the inventory at most five seconds old, never a record.
 
 ### ChildArtifact
 
-ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-batch).
+ChildArtifact binds one artifact input of a composed task's child
+Orkflow to an artifact of this run: the artifact name of the task task_id
+(a producer in the composed task's needs closure), or of _inputs for an
+artifact input of this Orkflow.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `input` | `string` |  |
+| `task_id` | `string` |  |
+| `name` | `string` |  |
+
+### CommitRecording
+
+CommitRecording is who recorded a result and when: the build of the engine
+or Orker that wrote it and the time it was written. A record the engine
+writes names no pool and no Orker.
+
+| Field | Type | Description |
+|---|---|---|
+| `pool` | `string` |  |
+| `orker_id` | `string` |  |
+| `admission_sha256` | `string` |  |
+| `engine_build` | `string` |  |
+| `time` | `google.protobuf.Timestamp` |  |
 
 ### CommitRef
 
@@ -936,6 +1011,32 @@ CommitRef points at a written ActivityCommit object.
 | `sha256` | `string` | sha256 is the hex sha256 of the exact bytes written to, or read from, the store. It MUST NEVER be recomputed by re-marshalling a decoded ActivityCommit: protojson deliberately varies its output across builds (§14.10), so a rebuilt Orker would compute a different digest for an unchanged commit. |
 | `etag` | `string` | store etag observed at write or read |
 | `created_at` | `google.protobuf.Timestamp` |  |
+
+### CommitResultRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `run_id` | `string` |  |
+| `task_id` | `string` |  |
+| `item` | optional `int32` | item is a fan-out item's index; unset for a task that is not one. |
+| `attempt` | `int32` |  |
+| `resume_scope` | `uint64` | resume_scope is the resume the attempt runs under; 0 for none. |
+| `root_scope` | `uint64` | root_scope is the root run's resume scope, for a run below a root. |
+| `task_spec_sha256` | `string` | task_spec_sha256 is the digest of the task as the Orker was given it. |
+| `admission_sha256` | `string` | admission_sha256 names which admission of the run, as the task's input named it. |
+| `spec_members` | map&lt;`string`, `string`&gt; | spec_members maps each member of the task's digest to its own digest, used only to say what differs. |
+| `commit_key` | `string` | commit_key is the commit key the task's input named, under metadata/commits/. |
+| `commit` | [`ActivityCommit`](#activitycommit) | commit is the attempt's manifest, at most the commit's own bound. Absent in a preflight. |
+| `preflight` | `bool` | preflight asks whether this attempt may commit, before its container starts; nothing is written. |
+
+### CommitResultResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `commit` | [`CommitRef`](#commitref) | commit names the record now at the key. Unset for a preflight. |
+| `created` | `bool` | created is false when a record was already there: this attempt's repeat, or another attempt's that came first. |
+| `existing` | [`ActivityCommit`](#activitycommit) | existing is that record, set when created is false. |
 
 ### CompareInterfacesRequest
 
@@ -960,17 +1061,40 @@ sibling read, field for field.
 
 ### ConcurrencyQueued
 
-ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
-batch).
+ConcurrencyQueued is a run waiting in line for a slot of a concurrency
+limit's key.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `key` | `string` | key is the rendered key the run waits for. |
+| `limit` | `int32` | limit is how many runs may hold its slots at once. |
+| `strategy` | [`ConcurrencyStrategy`](#concurrencystrategy) | strategy is the declaration's on_limit. |
+| `position_at_arrival` | `int32` | position_at_arrival is the run's place in line when it arrived, from 1. |
+| `position` | `int32` | position is its place in its key's line now, from 1, where a task waiting for one of the key's slots counts as a place too. It is read live by GetRun only, and only when position_known says it could be read; note_code says why it could not. |
+| `position_known` | `bool` |  |
+| `holders_ahead` | repeated `string` | holders_ahead names runs holding the key's slots, at most ten; holders_count is how many there are. holders_as_of_arrival says both are as the run found them when it arrived, not live. |
+| `holders_count` | `int32` |  |
+| `holders_as_of_arrival` | `bool` |  |
+| `queued_since` | `google.protobuf.Timestamp` | queued_since is when the run began waiting; times_out_at is when it stops. |
+| `times_out_at` | `google.protobuf.Timestamp` |  |
+| `note_code` | `string` | note_code says why the wait may take longer than the line explains: NOT_ANSWERING, REBUILD_FAILING, REBUILDING, HOLDER_STALLED or LINE_FULL, empty when nothing does. note says it in words. |
+| `note` | `string` |  |
+| `cause` | [`ConcurrencyQueueCause`](#concurrencyqueuecause) | cause is why the run waits: it arrived, or it waits again after an unpause or a resume. |
 
 ### ConcurrencySpec
 
-ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
-batch).
+ConcurrencySpec is one declared concurrency limit (docs/DSL.md
+"Concurrency limits"). Its identity is its namespace and its rendered key:
+every declaration in a namespace that renders the same key shares its
+slots and its line.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `limit` | `int32` | limit is how many runs may hold a slot of the key at once, from 1. |
+| `key` | `string` | key is the template a run renders its key from, once, at submit. Empty is the Orkflow's own key, shared by every version of it in the namespace that runs it. |
+| `on_limit` | [`ConcurrencyStrategy`](#concurrencystrategy) | on_limit is what a run does when every slot of its key is held. |
+| `queue_timeout_seconds` | `int64` | queue_timeout_seconds is how long a run waits in line for a slot before it ends; 0 is the deployment's default. |
+| `max_queued` | `int32` | max_queued is how many runs may wait in line for the key, checked at submit, best-effort; 0 sets no bound of its own. |
 
 ### ConsentView
 
@@ -981,6 +1105,8 @@ binder: the digest of what its Orkflow asked for when it was bound.
 |---|---|---|
 | `digest` | `string` | digest is the consent digest recorded: "c1:" and 64 hexadecimal digits. |
 | `at` | `google.protobuf.Timestamp` | at is when it was recorded. |
+| `audiences` | repeated `string` | audiences are the distinct token audiences it covers. |
+| `grants` | repeated `string` | grants are the distinct grants it covers, by name. |
 
 ### CordonOrkerRequest
 
@@ -1105,10 +1231,18 @@ binder: the digest of what its Orkflow asked for when it was bound.
 
 ### CredentialRef
 
-CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
-batch).
+CredentialRef is one credential a task holds: a bundle of files a
+provider issues for each attempt, as the namespace's grant, and the Orker
+keeps fresh while the container runs (docs/PROVIDERS.md). It never holds a
+value.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name names the credential within its task: the directory it is written to, /orkstack/credentials/&lt;name>/. ^[a-z][a-z0-9-]{0,62}$, unique in the task. |
+| `grant` | `string` | grant is a grant of the namespace's identity policy that admits this Orkflow: which provider, and as whom. |
+| `path` | `string` | path is where the provider issues from, for a provider type that issues from a path; empty for a credential that is the login itself. A locator, validated and never normalized. |
+| `refresh` | [`RefreshPolicy`](#refreshpolicy) | refresh says what a refresh that keeps failing does to the attempt. |
+| `params` | map&lt;`string`, `string`&gt; | params are the literal parameters of a path the provider writes rather than reads: never templated, at most 16 keys and 4 KiB. |
 
 ### DeleteBindingRequest
 
@@ -1307,8 +1441,10 @@ is alive by answering DescribeOrker (§6.5).
 | `profile_kinds_supported` | repeated [`ProfileKind`](#profilekind) | profile_kinds_supported are the profile kinds this Orker's build implements. Submit sends a profiled task only to a pool whose answering Orkers all list its kinds. |
 | `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles are the profiles this Orker offers. |
 | `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons are the profile causes that hold this Orker's cordon; cordoned is true while any is set. |
-| `identity_supported` | `bool` | identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
-| `providers` | repeated [`ProviderInfo`](#providerinfo) | providers is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
+| `identity_supported` | `bool` | identity_supported is whether this Orker serves task identity now: its engine confirmed, within the last ten minutes, that its credential names it and holds identity.token.mint and task.result.commit at its pool, and its storage credential is confirmed scoped. It alone decides. |
+| `identity_unsupported_reason` | `string` | identity_unsupported_reason says why this Orker does not serve task identity, for display and for naming the cause in a refusal; empty while identity_supported. It decides nothing. |
+| `identity_storage` | [`IdentityStorage`](#identitystorage) | identity_storage is where this Orker keeps identity token and credential files: memory-backed storage, or the work root's disk. |
+| `providers` | repeated [`ProviderInfo`](#providerinfo) | providers are the providers this Orker declares (ORK_PROVIDERS), which submit asks every Orker of a pool a task that names one would run on. |
 | `masks_secrets` | `bool` | masks_secrets is whether this Orker masks a task's secrets in its logs (orker.log.mask_secrets). It reads secrets[].unmasked either way. |
 | `metadata_reachable` | repeated `string` | metadata_reachable is every address in metadata_probes that answered. Empty when none did, or when no probe ran (orker.metadata_probe off). |
 | `run_context_supported` | `bool` | run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch). |
@@ -1416,6 +1552,8 @@ Task.pin).
 | `over_artifact` | `string` | over_artifact names an artifact of a task in this task's own needs:, "&lt;task>/&lt;name>", and makes the fan-out run one item per non-empty line of it (or per batch of lines). Exactly one of over and over_artifact is set. Part of canonicalOrkflow only when set, so a definition without it keeps its digest. |
 | `format` | [`EachLineFormat`](#eachlineformat) | format is how the lines of over_artifact are read: JSONL (each line one JSON value) or LINES (each line a string). Required with over_artifact, refused with over. |
 | `batch` | `int32` | batch makes one item of every batch consecutive non-empty lines of over_artifact, 2..10000; the last item may hold fewer. Unset (or 1, which the compiler normalises to unset) is one line per item. Refused with over. max_items counts items, so the line ceiling is max_items x batch. |
+| `on_item_failure` | [`EachItemFailure`](#eachitemfailure) | on_item_failure is what an item that fails for good does to the rest of the fan-out: FAIL_FAST (the default, which the compiler normalises to unset) stops it at the first such item; CONTINUE runs every other item, and the fan-out then fails with its lowest-index failed item's reason. |
+| `max_failed_items` | `int32` | max_failed_items, with CONTINUE only, bounds how many items may fail: at the next failure past it the fan-out fails fast. 1 .. max_items-1; 0 is unbounded. |
 
 ### EffectiveProfile
 
@@ -2104,8 +2242,8 @@ No fields.
 | `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width and timezone are the series actually drawn, resolved: an empty timezone answers "UTC". Unset when no series was asked for. |
 | `timezone` | `string` |  |
 | `paused` | `int64` | paused is how many runs executing now are paused (orkctl run pause): not in runs_by_status["running"], and in the running list. 0 where the cluster does not index paused runs, which then count as running. A series bucket counts a paused run it created as running. |
-| `queued` | `int64` | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
-| `executing` | `int64` | executing is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `queued` | `int64` | queued is how many of the running runs wait for a concurrency slot. |
+| `executing` | `int64` | executing is how many of the running runs do not: running minus queued. |
 
 ### GetSystemInfoRequest
 
@@ -2158,6 +2296,19 @@ No fields.
 | `window_until` | `google.protobuf.Timestamp` |  |
 | `computed_at` | `google.protobuf.Timestamp` |  |
 
+### Grant
+
+Grant is a principal a namespace's tasks may act as, through a provider,
+and which of its Orkflows may use it.
+
+| Field | Type | Description |
+|---|---|---|
+| `provider` | `string` | provider names where the principal is. |
+| `principal` | `string` | principal is whom the provider gives the task, such as a role. |
+| `orkflows` | repeated `string` | orkflows may use the grant: a name of this namespace, `*` for every Orkflow of it, or `<owner>/<name>` for one another namespace shares. |
+| `current_only` | `bool` | current_only, true, lets only a run of its Orkflow's current version use the grant. |
+| `origins` | repeated `string` | origins are the kinds of start the grant serves: submit, schedule, trigger, event-source, parent-run, run-again. Empty serves every kind. A child run is judged by its root's. |
+
 ### IconAttribute
 
 IconAttribute is one attribute of an icon element: an allowlisted name and
@@ -2180,10 +2331,16 @@ IconElement is one element of an ActivityIcon.
 
 ### IdentityRef
 
-IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-batch).
+IdentityRef is one identity a task holds: a token for one audience,
+minted for each attempt and refreshed while it runs
+(docs/TASK_IDENTITY.md).
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name names the identity within its task: the file it is written to. |
+| `audience` | `string` | audience is the token's aud: one the namespace's identity policy allows. |
+| `ttl_seconds` | `int32` | ttl_seconds is the token's life, held between the deployment's identity.token.min_ttl and max_ttl; 0 is identity.token.ttl. |
+| `refresh` | [`RefreshPolicy`](#refreshpolicy) | refresh says what a refresh that keeps failing does to the attempt. |
 
 ### ImagePolicy
 
@@ -2292,6 +2449,46 @@ output, or the outputs: block as a whole.
 | `to` | `string` |  |
 | `message` | `string` | message is the one sentence every client prints for this finding, verbatim. |
 
+### IssuedToken
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `audience` | `string` |  |
+| `token` | `string` | token is the signed token. Never logged and never stored. |
+| `expires_in_seconds` | `int32` | expires_in_seconds is the token's life, counted on the Orker's own clock. |
+| `issued_at` | `google.protobuf.Timestamp` | issued_at is when it was signed, for the Orker's clock check only. |
+| `jti` | `string` |  |
+| `kid` | `string` |  |
+
+### IssuedTokenEntry
+
+IssuedTokenEntry is one issued token's claims.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `audience` | `string` |  |
+| `subject` | `string` |  |
+| `jti` | `string` |  |
+| `kid` | `string` |  |
+| `issued_at` | `google.protobuf.Timestamp` |  |
+| `expires_at` | `google.protobuf.Timestamp` |  |
+
+### IssuedTokenRecord
+
+IssuedTokenRecord is what one granted mint issued.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `item` | optional `int32` |  |
+| `attempt` | `int32` |  |
+| `principal` | `string` | principal is the caller's verified principal. |
+| `orker_id` | `string` | orker_id is the Orker its credential names. |
+| `issued_at` | `google.protobuf.Timestamp` |  |
+| `tokens` | repeated [`IssuedTokenEntry`](#issuedtokenentry) |  |
+
 ### ListAccessRevisionsRequest
 
 | Field | Type | Description |
@@ -2388,6 +2585,24 @@ end). A window whose end is not after its start is INVALID_ARGUMENT.
 | Field | Type | Description |
 |---|---|---|
 | `event_sources` | repeated [`EventSource`](#eventsource) |  |
+
+### ListIssuedTokensRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `run_id` | `string` |  |
+| `task_id` | `string` | task_id narrows the list to one task. |
+| `item` | optional `int32` | item narrows it to one item of task_id. |
+| `page_size` | `int32` | page_size is at most 100; 0 is 50. |
+| `page_token` | `string` |  |
+
+### ListIssuedTokensResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `records` | repeated [`IssuedTokenRecord`](#issuedtokenrecord) |  |
+| `next_page_token` | `string` | next_page_token continues the list; empty at its end. |
 
 ### ListNamespacesRequest
 
@@ -2554,7 +2769,11 @@ origin.kind filter; origin.id is meaningful only within a kind, so it
 needs an equals filter on origin.kind. An id is matched whole, never by
 part. origin.root_run_id takes only equals and keeps every run below that
 root in its composed chain, however deep: the root run itself holds no root
-and is not one of them.
+and is not one of them. queued, queued_on and holding are a concurrency
+limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
+waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
+a run still going matches them, and a deployment that cannot index
+concurrency limits refuses them.
 
 | Field | Type | Description |
 |---|---|---|
@@ -2678,7 +2897,7 @@ answer is the TaskAttempt record the Orker writes.
 | `last_heartbeat_at` | `google.protobuf.Timestamp` | last_heartbeat_at is the cluster's time of the last beat from this attempt (last_heartbeat_time). |
 | `heartbeat_stale` | `bool` | heartbeat_stale is computed_at - last_heartbeat_at > task.HeartbeatStaleAfter (two ceiling ticks, 20 s): a healthy Orker beats at least every task.MaxHeartbeatInterval, so an older beat means the Orker is gone, partitioned, or cannot reach the frontend. Temporal has not yet acted: it times the attempt out at heartbeat_deadline_at, after which the attempt is retried or the task fails, and this attempt becomes an UNREPORTED row in ListTaskAttempts if the Orker never files a record. |
 | `heartbeat_deadline_at` | `google.protobuf.Timestamp` | heartbeat_deadline_at is last_heartbeat_at + the heartbeat timeout (task.HeartbeatTimeout, 30 s): the instant Temporal times this attempt out unless another beat arrives first. Computed here so no client needs to know the constant. |
-| `phase` | `string` | phase is the phase the attempt is in, in the Orker's own vocabulary: "start", "commit-check", "workspace", "stage-inputs", "image", "render", "create", "run", "exit", "validate", "commit", "timeout", "cancel"; "image-policy" is entered only when the task carries an image policy (ExecuteTaskInput.image_policy), between "commit-check" and "workspace". Not an enum, for the reason TaskAttempt.phase is a string. |
+| `phase` | `string` | phase is the phase the attempt is in, in the Orker's own vocabulary: "start", "commit-check", "workspace", "stage-inputs", "image", "render", "create", "run", "exit", "validate", "commit", "timeout", "cancel"; "image-policy" is entered only when the task carries an image policy (ExecuteTaskInput.image_policy), between "commit-check" and "workspace"; "identity" only by a task that declares an identity, between "image" and "render". Not an enum, for the reason TaskAttempt.phase is a string. |
 | `container_id` | `string` | container_id is the runtime's id for the container, once one exists. |
 | `bytes_logged` | `int64` | bytes_logged is every byte the workload has written to stdout AND stderr, counted before the per-stream retention cap drops any — so it keeps growing after retention stops. Zero with heartbeat_available true means the workload has written nothing. |
 | `orker_id` | `string` | orker_id is the Orker that sent the heartbeat, as it names itself (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id carry. Empty when the beat came from an Orker built before the detail carried it. |
@@ -2691,10 +2910,16 @@ answer is the TaskAttempt record the Orker writes.
 
 ### LiveIdentity
 
-LiveIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-batch).
+LiveIdentity is one identity or credential a running attempt holds, as
+its Orker last reported it: never a value, a token id or a path.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the identity's or credential's name in its task. |
+| `kind` | `string` | kind is `identity` or `credential`. |
+| `last_refresh` | `google.protobuf.Timestamp` | last_refresh is when it was last minted or refreshed. |
+| `expires_at` | `google.protobuf.Timestamp` | expires_at is when what it holds expires. |
+| `state` | [`LiveIdentityState`](#liveidentitystate) | state is whether its last refresh succeeded. |
 
 ### LiveUsage
 
@@ -2811,11 +3036,32 @@ it.
 | `outcome` | [`MetadataProbeOutcome`](#metadataprobeoutcome) |  |
 | `detail` | `string` | detail is the request answered and its HTTP status ("HTTP 200 to PUT /latest/api/token"), or why the probe could not tell. It never holds what the endpoint sent beyond its status. |
 
+### MintAttemptTokensRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `run_id` | `string` |  |
+| `task_id` | `string` |  |
+| `item` | optional `int32` | item is a fan-out item's index; unset for a task that is not one. |
+| `attempt` | `int32` |  |
+| `task_spec_sha256` | `string` | task_spec_sha256 is the digest of the task as the Orker was given it. |
+| `tokens` | repeated [`TokenRequest`](#tokenrequest) | tokens are what the attempt asks for: at most 16. |
+| `admission_sha256` | `string` | admission_sha256 names which admission of the run, as the task's input named it. |
+| `spec_members` | map&lt;`string`, `string`&gt; | spec_members maps each member of the task's digest to its own digest, used only to say what differs. |
+| `resume_scope` | `uint64` | resume_scope is the resume the attempt runs under; 0 for none. |
+| `root_scope` | `uint64` | root_scope is the root run's resume scope, for a run below a root. |
+
+### MintAttemptTokensResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `tokens` | repeated [`IssuedToken`](#issuedtoken) |  |
+
 ### NamedArtifact
 
 NamedArtifact is one artifact a run takes in or hands out, by the name
-the Orkflow gives it (E87, composed-artifacts/01-design.md §5). Declared
-whole by the v0.4.0 proto batch; nothing sets it until E87 lands.
+the Orkflow gives it, with the run and task that recorded it.
 
 | Field | Type | Description |
 |---|---|---|
@@ -2876,12 +3122,19 @@ presence check (hold != nil) and a hold can never be half-set.
 
 ### NamespaceIdentity
 
-NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
-registered for the policy itself (audiences, grants and their bounds),
-which a later change adds.
+NamespaceIdentity is the namespace's identity policy: the audiences its
+tasks may ask for, the principals they may act as, and its id. It is
+written with its own etag, and an UpdateNamespace that changes it changes
+nothing else (docs/TASK_IDENTITY.md).
 
 | Field | Type | Description |
 |---|---|---|
+| `audiences` | repeated `string` | audiences are the token audiences the namespace's tasks may ask for. A trailing `*` matches any rest. |
+| `grants` | map&lt;`string`, [`Grant`](#grant)&gt; | grants are the principals the namespace's tasks may act as, by name. |
+| `identities_current_only` | `bool` | identities_current_only, true, gives an identity only to a run of its Orkflow's current version. |
+| `etag` | `string` | etag is the policy's own: an update that names another is FAILED_PRECONDITION. Output only. |
+| `revision` | `int64` | revision counts the policy's changes: each change writes an immutable revision. Output only. |
+| `attempts_extra` | optional `int32` | attempts_extra is how many attempts past a task's own retries may hold its identity, inside the deployment's identity.attempts.max_extra. Unset takes the deployment's identity.attempts.extra. |
 | `namespace_id` | `string` | namespace_id is the namespace's immutable id: a namespace deleted and created again under its name has another one, and a binding pinned to this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default` is always `ns_default`. Empty when none was made yet: one is made on first need, never by a read. Opaque: nothing parses it, and no request takes it where it takes a name. Output only. |
 
 ### OpDocs
@@ -3007,8 +3260,8 @@ Orkflow is the compiled, validated form of a DSL document.
 | `outputs` | map&lt;`string`, `string`&gt; | outputs is this Orkflow's declared return contract: output name to a template over .inputs and .tasks.&lt;id>.output, rendered ONCE, by the engine, when a run succeeds; every value renders to a string. When non-empty the rendered map IS Run.output, and is what a composing parent's task receives as its values. When empty, Run.output is the values of the tasks no other task needs, and a composing parent's task receives {}. Part of canonicalOrkflow only when non-empty (see pins). |
 | `shared_with` | repeated [`OrkflowShare`](#orkflowshare) | shared_with is who in other namespaces may compose this version through `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing across namespaces"). Empty means nobody: an Orkflow is closed to every other namespace unless its definition says otherwise. Composition is the only door — a submit, a schedule or a trigger runs only its own namespace's Orkflows. It is part of the definition, so a new version changes who may call it, and part of canonicalOrkflow only when non-empty (see pins). |
 | `definition_namespace` | `string` | definition_namespace is set ONLY on a run's planned copy of an Orkflow that another namespace's Orkflow composed: the namespace that owns the stored definition, while namespace names the namespace the child run executes in and whose rules it follows. Never stored, never applied and not part of canonicalOrkflow: definition_digest is the owner's. |
-| `output_artifacts` | map&lt;`string`, [`OutputArtifact`](#outputartifact)&gt; | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `output_artifacts` | map&lt;`string`, [`OutputArtifact`](#outputartifact)&gt; | output_artifacts are the artifacts this Orkflow returns to a composing run, by output name (outputs: &lt;name>: {artifact: &lt;task>/&lt;name>}). Part of canonicalOrkflow ONLY when set. |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is the Orkflow's run-level concurrency limit (docs/DSL.md "Concurrency limits"): its runs share at most limit slots of one key, and a run past them waits in order. Unset, its runs are not limited. Part of canonicalOrkflow only when set, so an Orkflow that declares none keeps its digest. |
 | `timeout_seconds` | `int64` | timeout_seconds is the run's own time limit from its start, from the DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of canonicalOrkflow, in its short form, only when non-zero, so an Orkflow that declares none keeps its digest. |
 
 ### OrkflowCaller
@@ -3087,10 +3340,13 @@ coordinates, not the document.
 
 ### OutputArtifact
 
-OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-batch).
+OutputArtifact names the artifact an Orkflow returns under an output's
+name: the artifact name of the task task_id.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `name` | `string` |  |
 
 ### PauseEventSourceRequest
 
@@ -3195,7 +3451,9 @@ TaskAttempt.finished_at. The names are the dispatcher's own — "start",
 "timeout" and "cancel"; "image-policy" is entered only when the task
 carries an image policy (ExecuteTaskInput.image_policy), between
 "commit-check" and "workspace"; "memo" and "stage-artifacts" are entered
-only by an attempt of a cached task, after "stage-inputs" — and are not an enum, for the reason
+only by an attempt of a cached task, after "stage-inputs"; "identity" is
+entered only by an attempt of a task that declares an identity, between
+"image" and "render" — and are not an enum, for the reason
 TaskAttempt.phase is a string: a reader of an older build must be able to
 read a phase it has never heard of.
 
@@ -3323,7 +3581,7 @@ order, the order readyTasks scans them in.
 | `join` | [`JoinPolicy`](#joinpolicy) | join is the task's join policy, set whatever its outcome when the definition declares one other than all_succeeded. |
 | `unreached_by` | `string` | unreached_by is, for UNREACHED, the task whose failure leaves this one unreached: the first decision-time failure (a FAILS) decided before it, or else the first ASSUMED_FAILED task of its needs closure in declaration order. Empty for every other outcome. |
 | `sleep` | [`SleepSpec`](#sleepspec) | sleep is the task's SleepSpec, set for a sleeping task whatever its outcome, so a reader sees how long it would sleep. |
-| `follows` | repeated `string` | follows is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `follows` | repeated `string` | follows is, for a run whose tree holds a task identity, the tasks of the run whose record of success this task needs before it starts, in the order its needs name them (docs/TASK_IDENTITY.md, "What a task follows"); empty for any other run, and for a task that follows only what the run's start follows. |
 
 ### PlanWave
 
@@ -3417,10 +3675,16 @@ since; detail travels only on the Orker's own answer.
 
 ### ProviderInfo
 
-ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
-batch).
+ProviderInfo is one provider an Orker declares (ORK_PROVIDERS): what
+submit compares across a pool's Orkers. It never holds a secret: the
+providers document holds none.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the declared name: the scheme of the provider's sources. |
+| `type` | `string` | type is the provider's compiled-in type ("aws", "vault", "image"). |
+| `image_digest` | `string` | image_digest is a provider image's digest; empty for any other type. |
+| `contracts` | repeated `int32` | contracts are the provider profile versions this Orker runs a provider image under; empty for any other type. |
 
 ### PurgeCacheRequest
 
@@ -3823,12 +4087,12 @@ Run is one execution of an Orkflow.
 | `canceled_by` | `string` | canceled_by is who asked for the CancelRun request that canceled this run. With auth.mode observe or enforce it is the principal OrkStack authenticated, and canceled_by_verified is set. With asserted it is what the deployment's gateway asserted in the Ork-Principal request header — recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8 replaced, as RunOrigin.principal is, and never authenticated. Every rendering says which (canceled_by_verified).<br><br>It is set only on a run whose status is CANCELED with error code RUN_CANCELED, when a CancelRun carrying the header was accepted before the run recorded its own end. That is the request that canceled it, or — if the run was already ending canceled for another cause, such as a composed task's child run canceled from outside — the request that arrived while it ended, which is named too. It is empty for every other run: a CancelRun with no header; a run canceled with its parent run, or by any other cause; a run that succeeded, failed or was terminated (RUN_TERMINATED); a run canceled before this field existed. A client then shows nothing rather than a blank that could be mistaken for a name.<br><br>It is on GetRun, on the archived run, on ListRuns rows answered from the archive and in the embedded run of a RUN_CANCELED webhook delivery. |
 | `orkflow_namespace` | `string` | orkflow_namespace is set only on a child run of an Orkflow another namespace shared through composition: the namespace that owns the definition it ran. Empty means the orkflow is namespace's own. A run whose orkflow belongs to another namespace is always a child run: nothing else starts one. |
 | `timing` | [`RunTiming`](#runtiming) | timing is the run's half of the task-timing derivation (RunTiming), set by GetRun and never stored; each TaskRun carries its own half. |
-| `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts are the artifacts a child run received from the task that composed it, by the name of the artifact input each binds. |
 | `output_artifacts` | repeated [`NamedArtifact`](#namedartifact) | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `trace_id` | `string` | trace_id is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `run_context` | [`RunContextState`](#runcontextstate) | run_context is set from E86; unset until it lands (v0.4.0 proto batch). |
+| `run_context` | [`RunContextState`](#runcontextstate) | run_context says whether the run's tasks can read its run context (their task.json and the .run and .task template roots). |
 | `canceled_by_verified` | `bool` | canceled_by_verified says canceled_by is a principal OrkStack authenticated (auth.mode observe or enforce). Unset, canceled_by is what the deployment's gateway asserted in Ork-Principal, unauthenticated. |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while the run waits in line for a slot of its concurrency limit's key (docs/DSL.md "Concurrency limits"): status PENDING, or RUNNING when an unpaused or resumed run waits again. |
 | `superseded_by` | `string` | superseded_by is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `resumes` | repeated [`RunResume`](#runresume) | resumes is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_hint` | [`ResumeHint`](#resumehint) | resume_hint is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -3854,10 +4118,11 @@ Run is one execution of an Orkflow.
 
 ### RunContextState
 
-RunContextState is E86's; it is empty until E86 lands (v0.4.0 proto
-batch).
+RunContextState is whether a run's tasks are given its run context.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `status` | [`RunContextStatus`](#runcontextstatus) |  |
 
 ### RunFieldDiff
 
@@ -4162,7 +4427,8 @@ ServiceProfileVersions is one profile an Orker hosts and its versions.
 | `updated_at` | `google.protobuf.Timestamp` |  |
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is the promoted version's declared interface compared with compared_version — what ran when no version was named, until now. UNSPECIFIED, with compared_version empty, when the promotion did not change what runs. BREAKING here means the request acknowledged it. |
 | `compared_version` | `string` |  |
-| `stale_consent` | repeated [`StaleConsent`](#staleconsent) | stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `stale_consent` | repeated [`StaleConsent`](#staleconsent) | stale_consent lists the schedules, triggers and event sources that follow the current pointer and whose consent does not cover what the version now current asks for: their runs are refused an identity until someone consents. Empty when that version asks for nothing. |
+| `stale_consent_unchecked` | `string` | stale_consent_unchecked says why stale_consent may be incomplete: what could not be read or listed. Empty when every object was checked. |
 
 ### SetPrincipalDisabledRequest
 
@@ -4275,10 +4541,16 @@ it.
 
 ### StaleConsent
 
-StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-batch).
+StaleConsent is a schedule, trigger or event source bound to the Orkflow
+whose consent no longer covers what the version now current asks for. Its
+runs are refused an identity until it is consented to again.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `kind` | `string` | kind is `schedule`, `trigger` or `event-source`. |
+| `name` | `string` | name is the object's name. |
+| `digest` | `string` | digest is the consent digest to consent to: "c1:" and 64 hexadecimal digits. |
+| `older_projection` | `bool` | older_projection is true when the object's consent was given under an earlier consent projection, so it is stale whatever changed. |
 
 ### StatsBucket
 
@@ -4393,11 +4665,11 @@ execution on an Orker, and an activity is an OCI image.
 | `join` | [`JoinPolicy`](#joinpolicy) | join is when this task may start, decided from how its needs ended (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no join keeps its digest. A task whose join is ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry each or carry cache (docs/DSL.md rule 39). |
 | `sleep` | [`SleepSpec`](#sleepspec) | sleep makes this a sleeping task: it starts no container, reaches no Orker, and succeeds once its fixed time has passed. Mutually exclusive with uses, await and every field that shapes a container (docs/DSL.md rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no sleep keeps its digest. |
 | `devices` | repeated `string` | devices names the operator-defined profiles the task's container gets (devices:), never a device path. |
-| `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `input_artifacts` | repeated `string` | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts are a composed task's artifacts: bindings, one per artifact input of the child Orkflow, sorted by input. The engine resolves each from a recorded result at child start and hands the child a reference, never the bytes. Part of canonicalOrkflow(Task) ONLY when set. |
+| `input_artifacts` | repeated `string` | input_artifacts names, sorted, the artifact inputs of this task's Orkflow that its fields name literally ({{ artifact "_inputs/&lt;name>" }}); only those are staged for it, under the reserved producer _inputs. Part of canonicalOrkflow(Task) ONLY when set. |
 | `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
-| `credentials` | repeated [`CredentialRef`](#credentialref) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
-| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `credentials` | repeated [`CredentialRef`](#credentialref) | credentials are the credentials the task holds, issued for each attempt by the namespace's grants (docs/PROVIDERS.md). In the canonical definition only when set. |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88's task-level limits; unset until they land. |
 | `device_contracts` | map&lt;`string`, `string`&gt; | device_contracts maps a profile the task names in devices to the contract label the task needs of it: the image's declaration, or the author's `name@label`. Written at create, only when non-empty. |
 
 ### TaskAttempt
@@ -4487,6 +4759,7 @@ was before this message existed.
 | `orkflow_definition_digest` | `string` |  |
 | `run_id` | `string` | run_id is the child run, set once its start is CONFIRMED and never before: an id whose start was refused names no run. The child run's own Run.origin is {PARENT_RUN, &lt;this run's id>}. |
 | `orkflow_namespace` | `string` | orkflow_namespace is the namespace that owns the child Orkflow when it is not the namespace the run executes in: a child composed from another namespace through shared_with. Empty for a child of the run's own namespace. |
+| `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts are the artifacts this task passed its child, by the name of the child's artifact input each binds (artifacts:): set once they are resolved and claimed, before the child is started, so a start refused afterwards still records what this run claimed. |
 
 ### TaskEach
 
@@ -4585,7 +4858,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `timing` | [`TaskTiming`](#tasktiming) | timing is where this task's time went, derived from scheduled_at, started_at and finished_at above (TaskTiming). It is DERIVED ON READ: GetRun sets it on every row, a fan-out's items included, and nothing stores it — the engine never writes it, and a copy read back from anywhere else is not one GetRun answered. |
 | `sleep` | [`TaskSleep`](#tasksleep) | sleep is this task's sleep state, set for a task whose definition declares `sleep:` and unset otherwise (see TaskSleep). |
 | `interruptions` | [`TaskInterruptions`](#taskinterruptions) | interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88's task-level limits; unset until they land. |
 | `pending_reason` | `string` | pending_reason says why a task, or a fan-out item, of a live run is not running yet. GetRun derives it on read and nothing stores it. It is one of: the instant the task waits for to run again after an interruption; that no Orker of its pool (on a versioned fleet, of its run's release) takes work, for a task the run dispatched that no Orker has started; or that its pin waits for a pin host. It is empty when none applies, and when the reason cannot be known: the Orker inventory or the run's release could not be read, or a live Orker did not answer. |
 | `result_epoch` | `int64` | result_epoch is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_disposition` | [`ResumeDisposition`](#resumedisposition) | resume_disposition is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -4679,6 +4952,13 @@ A zero duration is only ever a value somebody measured.
 |---|---|---|
 | `duration` | `google.protobuf.Duration` |  |
 | `reason` | [`TimingReason`](#timingreason) |  |
+
+### TokenRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is an identity's name, or "grant:&lt;name>". |
+| `audience` | `string` |  |
 
 ### Trigger
 
@@ -5098,6 +5378,31 @@ CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
 | `CACHE_SCOPE_ORKFLOW` | 1 | Runs of the same Orkflow, in the same namespace. |
 | `CACHE_SCOPE_NAMESPACE` | 2 | Runs of any Orkflow of the same namespace whose task of the same id computes the same key. The Orkflow's name is then not part of the key. |
 
+### ConcurrencyQueueCause
+
+ConcurrencyQueueCause is why a run waits in line.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_QUEUE_CAUSE_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_QUEUE_CAUSE_ARRIVAL` | 1 | ARRIVAL: the run arrived to a key whose slots were all held. |
+| `CONCURRENCY_QUEUE_CAUSE_RESUME` | 2 | RESUME: the resumed run waits for its slot again. |
+| `CONCURRENCY_QUEUE_CAUSE_UNPAUSE` | 3 | UNPAUSE: the run gave its slot back while paused and waits for it again. |
+| `CONCURRENCY_QUEUE_CAUSE_FAILING` | 4 | FAILING: the failing run gave its slot back while paused and waits for it again so its failure handlers run inside the limit. |
+
+### ConcurrencyStrategy
+
+ConcurrencyStrategy is what a run does when every slot of its key is held.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_STRATEGY_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_STRATEGY_QUEUE` | 1 | QUEUE: wait in line, in order of arrival. The default. |
+| `CONCURRENCY_STRATEGY_REFUSE` | 2 | REFUSE: the run fails at once. |
+| `CONCURRENCY_STRATEGY_SKIP` | 3 | SKIP: the run is not started. |
+| `CONCURRENCY_STRATEGY_CANCEL_OLDEST` | 4 | CANCEL_OLDEST: the oldest holder is canceled to make room. |
+| `CONCURRENCY_STRATEGY_REPLACE` | 5 | REPLACE: the runs waiting in line are replaced by this one. |
+
 ### DeliveryClass
 
 DeliveryClass is what a source's image promises about a message that
@@ -5108,6 +5413,16 @@ starts no run.
 | `DELIVERY_CLASS_UNSPECIFIED` | 0 |  |
 | `DELIVERY_CLASS_AT_LEAST_ONCE` | 1 | AT_LEAST_ONCE: a message that is not accepted is delivered again by its broker. |
 | `DELIVERY_CLASS_AT_MOST_ONCE` | 2 | AT_MOST_ONCE: a message that is not accepted is lost. |
+
+### EachItemFailure
+
+EachItemFailure is a fan-out's on_item_failure.
+
+| Value | Number | Description |
+|---|---|---|
+| `EACH_ITEM_FAILURE_UNSPECIFIED` | 0 |  |
+| `EACH_ITEM_FAILURE_FAIL_FAST` | 1 |  |
+| `EACH_ITEM_FAILURE_CONTINUE` | 2 |  |
 
 ### EachLineFormat
 
@@ -5169,6 +5484,8 @@ EventType classifies a run event on the realtime stream.
 | `EVENT_TYPE_TASK_RESOLVED` | 12 | TASK_RESOLVED: an awaited task was resolved from outside the run. Status is the outcome it decided — SUCCEEDED for a completion, FAILED for a rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same status, so a reader that only knows the older task events still sees the task end. |
 | `EVENT_TYPE_STREAM_GAP` | 13 | STREAM_GAP: numbers of the run's event sequence hold no event, because the run used them without publishing one (an event whose record object storage refused). Its sequence is the last of those numbers and its message names them all; no run or task changed state. Only a live read of the stream serves it, and the read goes on to the run's terminal event. It is part of the read, not of the run's events: the run's archive records the same numbers as a gap in its stream instead, and a read over that gap ends DataLoss. |
 | `EVENT_TYPE_TASK_SLEEPING` | 14 | TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING; the message names the wake-up time. TASK_SUCCEEDED follows when it wakes; a run that ends first records the task CANCELED. |
+| `EVENT_TYPE_RUN_QUEUED` | 15 | RUN_QUEUED: the run waits in line for a slot of its concurrency limit's key. Status PENDING, or RUNNING for a run that waits again; the message names the key and its place in line. Not in a webhook's default events. |
+| `EVENT_TYPE_TASK_QUEUED` | 16 | TASK_QUEUED: a task waits in line for a slot of its concurrency limit's key. Not in a webhook's default events. |
 | `EVENT_TYPE_RUN_PAUSED` | 19 | RUN_PAUSED: the run became paused, or is still paused with its causes changed (pause_transition says which). Status PAUSED. |
 | `EVENT_TYPE_RUN_UNPAUSED` | 20 | RUN_UNPAUSED: no pause cause remains, or the run was not paused (pause_transition NOT_PAUSED). Status RUNNING. |
 
@@ -5235,6 +5552,17 @@ sentence per value and a new value is a proto change, not a string drift.
 | `HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED` | 1 | NOT_STARTED: state is SCHEDULED (or UNSPECIFIED); no Orker has the attempt, so there is nothing to beat. |
 | `HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET` | 2 | NO_HEARTBEAT_YET: an Orker has the attempt and no beat from THIS attempt has arrived — including the case where the cluster still holds a previous attempt's detail. On a healthy Orker this lasts one tick at most, because the loop beats immediately on start. |
 | `HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE` | 3 | UNDECODABLE: a beat from this attempt arrived whose detail is not the Orker's shape (no "phase"). Reported, never guessed at. |
+
+### IdentityStorage
+
+IdentityStorage is where an Orker keeps identity token and credential
+files.
+
+| Value | Number | Description |
+|---|---|---|
+| `IDENTITY_STORAGE_UNSPECIFIED` | 0 |  |
+| `IDENTITY_STORAGE_MEMORY` | 1 | IDENTITY_STORAGE_MEMORY is tmpfs or ramfs: the files do not outlive the host's boot. |
+| `IDENTITY_STORAGE_DISK` | 2 | IDENTITY_STORAGE_DISK is the work root. |
 
 ### InterfaceChange
 
@@ -5311,6 +5639,17 @@ handed a state it cannot name — they map to UNSPECIFIED.
 | `LIVE_ATTEMPT_STATE_SCHEDULED` | 1 | SCHEDULED: Temporal holds the activity and no Orker has it — the pool has no free Orker, or a retry is waiting out its backoff (next_attempt_at is then set). |
 | `LIVE_ATTEMPT_STATE_STARTED` | 2 | STARTED: an Orker picked the attempt up. Only STARTED and CANCEL_REQUESTED can carry a heartbeat. |
 | `LIVE_ATTEMPT_STATE_CANCEL_REQUESTED` | 3 | CANCEL_REQUESTED: the run was cancelled and the Orker has been (or is about to be) told through a heartbeat response; the §3.3 SIGTERM → grace → SIGKILL sequence runs on the Orker while this state holds. |
+
+### LiveIdentityState
+
+LiveIdentityState is whether an attempt's identity is current.
+
+| Value | Number | Description |
+|---|---|---|
+| `LIVE_IDENTITY_STATE_UNSPECIFIED` | 0 |  |
+| `LIVE_IDENTITY_STATE_FRESH` | 1 | LIVE_IDENTITY_STATE_FRESH: its last refresh succeeded. |
+| `LIVE_IDENTITY_STATE_RETRYING` | 2 | LIVE_IDENTITY_STATE_RETRYING: a refresh failed and is being asked again; what it holds has not expired. |
+| `LIVE_IDENTITY_STATE_EXPIRED` | 3 | LIVE_IDENTITY_STATE_EXPIRED: what it holds expired unrefreshed. |
 
 ### LiveUsageUnavailableReason
 
@@ -5546,6 +5885,16 @@ It exists so an empty `references` list can be read: "released" and
 | `REFERENCE_STATE_RELEASED` | 2 | RELEASED: no marker, and the run's cleanup record exists — the cleanup worker released its object claims (docs/STORAGE.md, "Reclaiming space"). released_at carries the record's timestamp. |
 | `REFERENCE_STATE_ABSENT` | 3 | ABSENT: no marker and no cleanup record. The run has not reached its terminal event, its archive write has not completed, it was archived before the object index existed, or cleanup released its markers and had not yet written its record. The server does not guess which; a client renders "no reference recorded", never "released" and never "held". |
 
+### RefreshPolicy
+
+RefreshPolicy is what a refresh that keeps failing does to the attempt.
+
+| Value | Number | Description |
+|---|---|---|
+| `REFRESH_POLICY_UNSPECIFIED` | 0 | REFRESH_POLICY_UNSPECIFIED is REFRESH_POLICY_REQUIRED. |
+| `REFRESH_POLICY_REQUIRED` | 1 | REFRESH_POLICY_REQUIRED ends the attempt when its token expires unrefreshed. |
+| `REFRESH_POLICY_BEST_EFFORT` | 2 | REFRESH_POLICY_BEST_EFFORT lets the attempt run on with an expired token. |
+
 ### ReleaseBlockerKind
 
 ReleaseBlockerKind names why a release may not take new runs right now.
@@ -5558,6 +5907,7 @@ ReleaseBlockerKind names why a release may not take new runs right now.
 | `RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED` | 3 | PINS_NOT_HOSTED: `pool` has a pin host of another release and no uncordoned Orker of this release in it hosts pins. |
 | `RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS` | 4 | UNVERSIONED_RUNS: no release is current yet and runs started before any was are still executing; making this release take new runs would move them onto it mid-run. |
 | `RELEASE_BLOCKER_KIND_UNVERIFIED` | 5 | UNVERIFIED: part of the evidence could not be read, so the release cannot be shown to pass. Never treated as passing. |
+| `RELEASE_BLOCKER_KIND_CAPABILITY_MISSING` | 6 | CAPABILITY_MISSING: an engine process of the release lacks a capability that runs still open need, such as concurrency limits while a run with a limit is open, so sending new runs to it could leave those limits held by no one. |
 
 ### ReleaseDrainState
 
@@ -5595,12 +5945,17 @@ results: every namespace's, or only named namespaces'.
 
 ### ResumeDisposition
 
-ResumeDisposition is E85's; it holds only its zero value until E85 lands
-(v0.4.0 proto batch).
+ResumeDisposition is how a resume treats one task or item (E85 §3.4).
 
 | Value | Number | Description |
 |---|---|---|
 | `RESUME_DISPOSITION_UNSPECIFIED` | 0 |  |
+| `RESUME_DISPOSITION_RERUN` | 1 | RERUN runs it again, under the resume's scope. |
+| `RESUME_DISPOSITION_ADOPT` | 2 | ADOPT keeps its result, read back from its commit. |
+| `RESUME_DISPOSITION_SETTLE` | 3 | SETTLE keeps an awaited or composed task's recorded result. |
+| `RESUME_DISPOSITION_KEEP_SKIPPED` | 4 | KEEP_SKIPPED keeps it skipped. |
+| `RESUME_DISPOSITION_WAIT` | 5 | WAIT waits again, from the resume, with a fresh deadline. |
+| `RESUME_DISPOSITION_SLEEP_UNTIL` | 6 | SLEEP_UNTIL sleeps until its recorded wake-up time. |
 
 ### RetryState
 
@@ -5622,6 +5977,15 @@ of a task that already reached a terminal outcome; it maps to UNSPECIFIED.
 | `RETRY_STATE_RETRY_POLICY_NOT_SET` | 4 |  |
 | `RETRY_STATE_CANCEL_REQUESTED` | 5 |  |
 | `RETRY_STATE_INTERNAL_SERVER_ERROR` | 6 |  |
+
+### RunContextStatus
+
+RunContextStatus is whether a run carries a run context.
+
+| Value | Number | Description |
+|---|---|---|
+| `RUN_CONTEXT_STATUS_UNSPECIFIED` | 0 |  |
+| `RUN_CONTEXT_STATUS_AVAILABLE` | 1 | AVAILABLE: every task of the run is given the run's context. |
 
 ### RunDispatchHold
 

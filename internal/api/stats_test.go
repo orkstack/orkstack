@@ -419,6 +419,32 @@ func TestGetStats_ARunTheArchiveHoldsIsNotAlsoRunning(t *testing.T) {
 	}
 }
 
+// TestGetStats_CountsTheRunsWaitingForASlot is the queued and executing
+// buckets (concurrency design §22.5, "Stats buckets"): queued is the running
+// runs the cluster indexes as waiting for a concurrency slot, executing the
+// rest of them. A queued id the archive already holds as finished is not
+// running, so it is in neither.
+func TestGetStats_CountsTheRunsWaitingForASlot(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	fixture := newStatsFixture(t, now, "payments")
+	created := now.Add(-time.Hour)
+	ended := fixture.archiveRun(t, "payments", "charge", orkstackv1.Status_STATUS_SUCCEEDED, created)
+	fixture.reader.executions["payments"] = engine.Executions{
+		Running: []*orkstackv1.Run{
+			liveRun(ended, "payments", "charge", created),
+			liveRun("ork-waiting", "payments", "charge", created),
+			liveRun("ork-working", "payments", "charge", created),
+			liveRun("ork-working-too", "payments", "charge", created),
+		},
+		Queued: map[string]struct{}{ended: {}, "ork-waiting": {}},
+	}
+	got := getStats(t, api.NewStatsHandler(fixture.svc, 0), &orkstackv1.GetStatsRequest{Namespace: "payments"})
+	if got.GetRunsByStatus()["running"] != 3 || got.GetQueued() != 1 || got.GetExecuting() != 2 {
+		t.Errorf("running %d, queued %d, executing %d; want 3, 1 and 2",
+			got.GetRunsByStatus()["running"], got.GetQueued(), got.GetExecuting())
+	}
+}
+
 // TestGetStats_ACachedAnswerEqualsTheUncachedOne holds the cache to the only
 // promise that makes one acceptable here: it is an optimisation, so it cannot
 // change an answer.

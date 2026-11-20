@@ -156,6 +156,15 @@ func wholeValue(op orkstackv1.FilterOperator) bool {
 // canonicalValue checks one value against what its field declares it must
 // spell, and returns its canonical spelling.
 func (s *Spec) canonicalValue(i int, field *Field, op orkstackv1.FilterOperator, v string) (string, error) {
+	if field.Indexed {
+		switch {
+		case field.Kind == KindBool && v != "true":
+			return "", refuse(i, "%s takes only true, not %q", field.Path, v)
+		case v == "":
+			return "", refuse(i, "%s needs a non-empty value", field.Path)
+		}
+		return v, nil
+	}
 	switch field.Kind {
 	case KindEnum:
 		value := field.enum.Values().ByName(protoreflect.Name(enumname.Proto(field.enum, v)))

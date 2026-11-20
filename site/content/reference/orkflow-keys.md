@@ -96,6 +96,8 @@ Read an input as `{{ .inputs.<name> }}`.
 | `as` | no | The element's name under `.each`. Default `item`; refused with `batch`. |
 | `max_items` | yes | 1 to 10,000. |
 | `max_parallel` | no | Items at once. Default: no limit of the task's own. |
+| `on_item_failure` | no | `fail_fast` (default) or `continue`: run every item, then fail. |
+| `max_failed_items` | no | With `continue`: 1 to `max_items` − 1; stop once more have failed. |
 
 ## Await
 

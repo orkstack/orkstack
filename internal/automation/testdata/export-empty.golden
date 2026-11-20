@@ -14,6 +14,7 @@ settings:
   allowed_secrets: []
   require_signed_by: ""
   budget: {}
+  identity: {}
 
 schedules: {}
 

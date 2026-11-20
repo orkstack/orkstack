@@ -162,6 +162,7 @@ func composeExecutionKeys(td taskDocument) []struct {
 		{"command", td.Command != nil},
 		{"env", td.Env != nil},
 		{"secrets", td.Secrets != nil},
+		{"identities", td.Identities != nil},
 		{"resources", td.Resources != nil},
 		{"network", td.Network != ""},
 		{"devices", td.Devices != nil},
@@ -221,6 +222,11 @@ func compileComposedTask(taskIndex int, td taskDocument, namespace string) (*ork
 		return nil, err
 	}
 	task.With = with
+	bindings, err := compileChildArtifacts(taskIndex, td)
+	if err != nil {
+		return nil, err
+	}
+	task.ChildArtifacts = bindings
 	return task, nil
 }
 
@@ -261,6 +267,8 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 		{"command", len(task.GetCommand()) > 0},
 		{"env", len(task.GetEnv()) > 0},
 		{"secrets", len(task.GetSecrets()) > 0},
+		// Rule 60: no identity on a task that runs no container of its own.
+		{"identities", len(task.GetIdentities()) > 0},
 		{"resources", task.GetResources() != nil},
 		{"network", task.GetNetwork() != orkstackv1.NetworkMode_NETWORK_MODE_UNSPECIFIED},
 		{"devices", len(task.GetDevices()) > 0},
@@ -274,6 +282,7 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 		{"await", task.GetAwait() != nil},
 		{"sleep", task.GetSleep() != nil},
 		{"cache", task.GetCache() != nil},
+		{"input_artifacts", len(task.GetInputArtifacts()) > 0},
 	}
 	for _, c := range checks {
 		if c.set {

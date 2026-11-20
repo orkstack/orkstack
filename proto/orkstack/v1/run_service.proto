@@ -307,7 +307,11 @@ message GetRunResponse { Run run = 1; }
 // needs an equals filter on origin.kind. An id is matched whole, never by
 // part. origin.root_run_id takes only equals and keeps every run below that
 // root in its composed chain, however deep: the root run itself holds no root
-// and is not one of them.
+// and is not one of them. queued, queued_on and holding are a concurrency
+// limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
+// waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
+// a run still going matches them, and a deployment that cannot index
+// concurrency limits refuses them.
 message ListRunsRequest {
   option (orkstack.v1.filterable) = {
     resource: "orkstack.v1.Run"
@@ -345,6 +349,25 @@ message ListRunsRequest {
         path: "origin.root_run_id"
         label: "Root run"
         operators: [FILTER_OPERATOR_EQUALS]
+      },
+      {
+        path: "queued"
+        label: "Queued for a concurrency slot"
+        operators: [FILTER_OPERATOR_EQUALS]
+        indexed: true
+        flag: true
+      },
+      {
+        path: "queued_on"
+        label: "Queued for key"
+        operators: [FILTER_OPERATOR_EQUALS]
+        indexed: true
+      },
+      {
+        path: "holding"
+        label: "Holding key"
+        operators: [FILTER_OPERATOR_EQUALS]
+        indexed: true
       }
     ]
   };
@@ -644,8 +667,9 @@ message LiveAttempt {
   // "start", "commit-check", "workspace", "stage-inputs", "image", "render",
   // "create", "run", "exit", "validate", "commit", "timeout", "cancel";
   // "image-policy" is entered only when the task carries an image policy
-  // (ExecuteTaskInput.image_policy), between "commit-check" and "workspace".
-  // Not an enum, for the reason TaskAttempt.phase is a string.
+  // (ExecuteTaskInput.image_policy), between "commit-check" and "workspace";
+  // "identity" only by a task that declares an identity, between "image"
+  // and "render". Not an enum, for the reason TaskAttempt.phase is a string.
   string phase = 15;
   // container_id is the runtime's id for the container, once one exists.
   string container_id = 16;
@@ -1005,9 +1029,32 @@ message TaskLogChunk {
   optional int32 item = 8;
 }
 
-// LiveIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message LiveIdentity {}
+// LiveIdentity is one identity or credential a running attempt holds, as
+// its Orker last reported it: never a value, a token id or a path.
+message LiveIdentity {
+  // name is the identity's or credential's name in its task.
+  string name = 1;
+  // kind is `identity` or `credential`.
+  string kind = 2;
+  // last_refresh is when it was last minted or refreshed.
+  google.protobuf.Timestamp last_refresh = 3;
+  // expires_at is when what it holds expires.
+  google.protobuf.Timestamp expires_at = 4;
+  // state is whether its last refresh succeeded.
+  LiveIdentityState state = 5;
+}
+
+// LiveIdentityState is whether an attempt's identity is current.
+enum LiveIdentityState {
+  LIVE_IDENTITY_STATE_UNSPECIFIED = 0;
+  // LIVE_IDENTITY_STATE_FRESH: its last refresh succeeded.
+  LIVE_IDENTITY_STATE_FRESH = 1;
+  // LIVE_IDENTITY_STATE_RETRYING: a refresh failed and is being asked
+  // again; what it holds has not expired.
+  LIVE_IDENTITY_STATE_RETRYING = 2;
+  // LIVE_IDENTITY_STATE_EXPIRED: what it holds expired unrefreshed.
+  LIVE_IDENTITY_STATE_EXPIRED = 3;
+}
 
 // LiveUsageUnavailableReason is why a running attempt shows no live CPU and
 // memory.

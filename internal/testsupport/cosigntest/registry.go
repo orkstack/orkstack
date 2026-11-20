@@ -3,7 +3,6 @@ package cosigntest
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,6 +13,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/orkstack/orkstack/internal/testsupport/dockerport"
 )
 
 // composeFile is the development stack's compose file, relative to the
@@ -184,31 +185,34 @@ func StartRegistry(t testing.TB, skip func(format string, args ...any)) *Private
 			image, err, strings.TrimSpace(string(out)))
 		return nil
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("pick a registry port: %v", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	out, err := exec.CommandContext(ctx, "docker", registryRunArgs(image, port)...).CombinedOutput()
+	// The port is chosen here, not left to Docker: Stop and Start must bring
+	// the registry back on the address its images are named by, and Docker
+	// gives a restarted container a new port of its own choosing. A port
+	// another process took first is refused by Docker and tried again on
+	// another (dockerport.RunPinned); once the run starts, Docker holds it.
+	addr, out, err := dockerport.RunPinned(ctx, 5, func(addr string) ([]byte, error) {
+		return exec.CommandContext(ctx, "docker", registryRunArgs(image, addr)...).CombinedOutput()
+	})
 	if err != nil {
 		skip("cannot start a private registry from %s: %v: %s", image, err, out)
 		return nil
 	}
-	r := &PrivateRegistry{Host: fmt.Sprintf("localhost:%d", port), id: strings.TrimSpace(string(out))}
+	id := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
-		_ = exec.Command("docker", "rm", "-f", r.id).Run()
+		_ = exec.Command("docker", "rm", "-f", id).Run()
 	})
+	_, port, _ := strings.Cut(addr, ":")
+	r := &PrivateRegistry{Host: "localhost:" + port, id: id}
 	r.WaitReady(t)
 	return r
 }
 
 // registryRunArgs is the `docker` command line that starts the registry: from
-// the pinned image, never pulling it, published on loopback only, with
-// deletion enabled.
-func registryRunArgs(image string, port int) []string {
+// the pinned image, never pulling it, published on loopback only at addr,
+// with deletion enabled.
+func registryRunArgs(image, addr string) []string {
 	return []string{"run", "-d", "--pull", "never",
-		"-p", fmt.Sprintf("127.0.0.1:%d:5000", port),
+		"-p", addr + ":5000",
 		"-e", "REGISTRY_STORAGE_DELETE_ENABLED=true",
 		"--label", "orkstack.test=image-policy",
 		image}
