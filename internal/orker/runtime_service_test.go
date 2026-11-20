@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -87,9 +88,6 @@ func TestServiceNetworkArgs(t *testing.T) {
 		{name: "podman", x: dialect{cli: CLIPodman, engine: CLIPodman},
 			want:    []string{"network create", "--driver bridge", "-o isolate=strict", "--label ork.service=1"},
 			refused: []string{"--internal", "enable_icc", "host"}},
-		{name: "the docker CLI against the podman engine", x: dialect{cli: CLIDocker, engine: CLIPodman},
-			want:    []string{"-o isolate=strict"},
-			refused: []string{"--internal", "enable_icc"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -249,5 +247,27 @@ func TestContainerAddress_TheOnlyNetwork(t *testing.T) {
 	if !strings.Contains(networkGatewayFormat(dialect{cli: CLIPodman, engine: CLIPodman}), ".Subnets") ||
 		!strings.Contains(networkGatewayFormat(dockerDialect), ".IPAM.Config") {
 		t.Fatal("the gateway format does not follow the CLI")
+	}
+}
+
+// TestServiceNetworkArgs_DockerCLIAgainstPodmanIsRefused: the Podman engine's
+// Docker-compatible API does not apply Podman's isolate option, so a network
+// it made would not be cut off; such a runtime hosts no service, and says so
+// by name rather than failing its probe without a reason.
+func TestServiceNetworkArgs_DockerCLIAgainstPodmanIsRefused(t *testing.T) {
+	if _, err := serviceNetworkArgs(dialect{cli: CLIDocker, engine: CLIPodman}, "n", nil); !errors.Is(err, ErrServiceNetworkUnsupported) {
+		t.Fatalf("the docker CLI against Podman: %v", err)
+	}
+	for _, x := range []dialect{dockerDialect, {cli: CLIPodman, engine: CLIPodman}, {cli: CLIPodman, engine: CLIPodman, rootless: true}} {
+		if _, err := serviceNetworkArgs(x, "n", nil); err != nil {
+			t.Errorf("%+v: %v", x, err)
+		}
+	}
+}
+
+// The podman CLI names a network it made by its name; its id is read back.
+func TestServiceNetworkIDArgs(t *testing.T) {
+	if got := strings.Join(serviceNetworkIDArgs("n"), " "); got != "network inspect --format {{.Id}} n" {
+		t.Fatalf("%q", got)
 	}
 }

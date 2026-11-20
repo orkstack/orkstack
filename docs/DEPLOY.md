@@ -4673,7 +4673,9 @@ reaches its broker wherever the host can route. It is cut off from the
 runtime's other networks: Docker keeps its bridges apart by itself and is
 told to keep containers on one network apart too
 (`com.docker.network.bridge.enable_icc=false`), and Podman is told
-`isolate=strict`. The Orker reads each network back after making it and
+`isolate=strict`. The docker CLI against the Podman engine hosts no service:
+that engine's Docker-compatible API does not keep a network apart, so such
+an Orker reports itself unfit and says to set `orker.docker.cli: podman`. The Orker reads each network back after making it and
 refuses one the runtime did not make so. A broker on the same host is
 reached at the port it publishes on the host's address, never at its
 container's own. The Orker names its networks with the
