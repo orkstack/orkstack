@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 
@@ -54,13 +55,13 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 		"ORK_ORKER_QUEUE="+taskQueue,
 		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 	)
-	engineAddr := freeAddress(t)
-	engineExited := startProcess(ctx, t, "ork", enginePath,
-		"ORK_HTTP_ADDR="+engineAddr,
+	engine := launch(ctx, t, "ork", enginePath,
+		"ORK_HTTP_ADDR="+listenaddr.Loopback,
 		"ORK_TEMPORAL_ADDRESS="+address,
 		"ORK_TEMPORAL_NAMESPACE="+namespace,
 		"ORK_ORKER_QUEUE="+taskQueue,
 	)
+	engineAddr, engineExited := engine.api(ctx, t), engine.exited
 
 	session := &sessionRecorder{}
 	// A per-run config file, so this test never reads or writes the

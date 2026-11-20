@@ -21,6 +21,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 
@@ -48,7 +49,7 @@ type relProc struct {
 	cmd  *exec.Cmd
 	done chan struct{}
 	mu   sync.Mutex
-	log  strings.Builder
+	log  listenaddr.Log
 }
 
 func (p *relProc) Write(b []byte) (int, error) {
@@ -162,6 +163,17 @@ func (s *relStack) start(name, path string, env ...string) {
 	s.procs[name] = p
 }
 
+// boundAPI is the address engine name's API listener bound, from its own
+// log: it was started on a port of 0, so the address reaches it and no other
+// process.
+func (s *relStack) boundAPI(name string) string {
+	s.t.Helper()
+	p := s.procs[name]
+	addr, err := p.log.Addr(s.ctx, name, listenaddr.API, p.done, bootwait.Deadline)
+	must.OK(s.t, err)
+	return addr
+}
+
 // stopProc stops one process this test started, by its own PID.
 func (s *relStack) stopProc(name string) {
 	s.t.Helper()
@@ -192,8 +204,8 @@ func (s *relStack) common(build string) []string {
 // startEngine starts one `ork` of release build ("" = unversioned).
 func (s *relStack) startEngine(name, build string) {
 	s.t.Helper()
-	addr := freeAddress(s.t)
-	s.start(name, s.ork, append(s.common(build), "ORK_HTTP_ADDR="+addr)...)
+	s.start(name, s.ork, append(s.common(build), "ORK_HTTP_ADDR="+listenaddr.Loopback)...)
+	addr := s.boundAPI(name)
 	s.engines[name] = addr
 	if s.first == "" {
 		s.first = name

@@ -932,9 +932,13 @@ func bindAndServe(server *http.Server, logger *slog.Logger, serverErr chan<- err
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", server.Addr, err)
 	}
+	// The address the listener holds, which a port of 0 leaves to the kernel:
+	// whoever started this process reads where it listens from its own log.
+	bound := ln.Addr().String()
+	logger.Info("api listener ready", "addr", bound)
 	go func() {
 		logger.Info("serving connect api (h2c), websocket bridge, webhooks and triggers",
-			"addr", server.Addr, "webhooks", api.WebhookCollectionPath,
+			"addr", bound, "webhooks", api.WebhookCollectionPath,
 			"triggers", api.TriggerInvokePath)
 		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err

@@ -90,7 +90,7 @@ func TestIntegration_EngineBootsAtTheRaisedTaskCeiling(t *testing.T) {
 	}
 	stopEngine(t, "engine-ceiling-raised")
 
-	_, refused := startEngine(ctx, t, binary, temporal, "engine-ceiling-refused", "ORK_TEMPORAL_NAMESPACE="+ns,
+	refused := startEngine(ctx, t, binary, temporal, "engine-ceiling-refused", "ORK_TEMPORAL_NAMESPACE="+ns,
 		"ORK_CONTINUATION_ENABLED=false", "ORK_ORKFLOW_MAX_TASKS=5000")
 	select {
 	case <-refused.done:

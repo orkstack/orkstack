@@ -25,6 +25,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 
@@ -415,9 +416,8 @@ func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, temp
 // that closes when the process exits, which waitForEngine ends its wait on.
 func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, temporalNamespace, orkerQueue string) (string, <-chan struct{}) {
 	t.Helper()
-	addr := freeAddress(t)
-	exited := startProcess(ctx, t, "ork", enginePath, engineEnv(t, addr, temporalAddr, temporalNamespace, orkerQueue)...)
-	return addr, exited
+	p := launch(ctx, t, "ork", enginePath, engineEnv(t, listenaddr.Loopback, temporalAddr, temporalNamespace, orkerQueue)...)
+	return p.api(ctx, t), p.exited
 }
 
 // engineEnv is the environment of an engine startEngine boots.
@@ -452,6 +452,42 @@ func startProcess(ctx context.Context, t *testing.T, name, path string, env ...s
 // itself.
 func startProcessHandle(ctx context.Context, t *testing.T, name, path string, env ...string) (*os.Process, <-chan struct{}) {
 	t.Helper()
+	p := launch(ctx, t, name, path, env...)
+	return p.process, p.exited
+}
+
+// launched is a started process and its own log, which names where its
+// listeners are when they were started on a port of 0 (listenaddr.Loopback).
+type launched struct {
+	name    string
+	process *os.Process
+	exited  <-chan struct{}
+	log     *listenaddr.Log
+}
+
+// api is the address the process's API listener bound, read from the
+// process's own log: an engine started on listenaddr.Loopback took a port no
+// other process holds, so this address reaches this process and no other. It
+// fails the test when the process exits first.
+func (p launched) api(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	addr, err := p.log.Addr(ctx, p.name, listenaddr.API, p.exited, bootwait.Deadline)
+	must.OK(t, err)
+	return addr
+}
+
+// admin is the address the process's admin listener bound, read the same way.
+func (p launched) admin(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	addr, err := p.log.Addr(ctx, p.name, listenaddr.Admin, p.exited, bootwait.Deadline)
+	must.OK(t, err)
+	return addr
+}
+
+// launch starts a built binary and guarantees it is stopped when the test
+// ends; see startProcess.
+func launch(ctx context.Context, t *testing.T, name, path string, env ...string) launched {
+	t.Helper()
 	// The BINARY decides, not the label: replicas are started as "ork-A",
 	// "ork-history" and so on, and an engine that missed the catalog would fail
 	// its apply with IMAGE_RESOLVE_UNAUTHORIZED rather than compile-error.
@@ -460,9 +496,9 @@ func startProcessHandle(ctx context.Context, t *testing.T, name, path string, en
 	}
 	cmd := exec.CommandContext(ctx, path)
 	cmd.Env = testbin.OrkerEnv(append(testbin.StackEnv(os.Environ()), env...))
-	var log strings.Builder
-	cmd.Stdout = &log
-	cmd.Stderr = &log
+	log := &listenaddr.Log{}
+	cmd.Stdout = log
+	cmd.Stderr = log
 	must.OKf(t, cmd.Start(), "start %s", name)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
@@ -476,7 +512,7 @@ func startProcessHandle(ctx context.Context, t *testing.T, name, path string, en
 		}
 		t.Logf("%s log:\n%s", name, log.String())
 	})
-	return cmd.Process, done
+	return launched{name: name, process: cmd.Process, exited: done, log: log}
 }
 
 // waitForEngine polls the engine through the CLI until it answers. A slow boot
@@ -614,14 +650,4 @@ func repoRoot(t *testing.T) string {
 	path, err := filepath.Abs(filepath.Join("..", ".."))
 	must.OKf(t, err, "resolve repo root")
 	return path
-}
-
-// freeAddress returns a loopback address that is free right now.
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	must.OKf(t, err, "listen")
-	address := listener.Addr().String()
-	must.OKf(t, listener.Close(), "close listener")
-	return address
 }

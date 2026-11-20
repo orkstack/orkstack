@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +23,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -44,7 +45,7 @@ type admissionStack struct {
 	temporal  client.Client
 	a, b      *engineReplica
 	bAdmin    string
-	bLog      *lockedBuffer
+	bLog      *listenaddr.Log
 	namespace string
 	orkflow   string
 	// slow is in flight for a while and then succeeds; crawl stays in flight
@@ -53,24 +54,6 @@ type admissionStack struct {
 	crawl string
 	// transcript collects what each step said, in the CLI's own words.
 	transcript strings.Builder
-}
-
-// lockedBuffer is a process log readable while the process still writes it.
-type lockedBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *lockedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *lockedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 func newAdmissionStack(ctx context.Context, t *testing.T, label string) *admissionStack {
@@ -91,8 +74,7 @@ func newAdmissionStack(ctx context.Context, t *testing.T, label string) *admissi
 	channel := idempotencyTaskQueue()
 	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, partition, channel)
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, partition, channel)
-	bAdmin := freeAddress(t)
-	replicaB, bLog := startObservedReplica(ctx, t, "ork-B", enginePath, address, partition, channel, bAdmin)
+	replicaB, bLog, bAdmin := startObservedReplica(ctx, t, "ork-B", enginePath, address, partition, channel)
 	replicaA.awaitReady(ctx, t)
 	replicaB.awaitReady(ctx, t)
 
@@ -126,28 +108,29 @@ func newAdmissionStack(ctx context.Context, t *testing.T, label string) *admissi
 }
 
 // startObservedReplica is startReplica with the prometheus metrics exporter
-// on an admin listener, and a log the test can read while it runs.
+// on an admin listener, and a log the test can read while it runs. Both
+// listeners bind ports of their own, and the addresses (the API's in the
+// replica, the admin listener's returned) are read from the replica's own log.
 func startObservedReplica(
 	ctx context.Context,
 	t *testing.T,
-	name, enginePath, temporalAddr, namespace, queue, adminAddr string,
+	name, enginePath, temporalAddr, namespace, queue string,
 	extraEnv ...string,
-) (*engineReplica, *lockedBuffer) {
+) (*engineReplica, *listenaddr.Log, string) {
 	t.Helper()
-	addr := freeAddress(t)
 	cmd := exec.CommandContext(ctx, enginePath)
 	cmd.Env = append(testbin.StackEnv(os.Environ()),
-		"ORK_HTTP_ADDR="+addr,
+		"ORK_HTTP_ADDR="+listenaddr.Loopback,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+namespace,
 		"ORK_ORKER_QUEUE="+queue,
 		"ORK_ARTIFACT_BACKEND=s3",
-		"ORK_ADMIN_ADDR="+adminAddr,
+		"ORK_ADMIN_ADDR="+listenaddr.Loopback,
 		"OTEL_METRICS_EXPORTER=prometheus",
 		localActivityCatalogEnv(t),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
-	log := &lockedBuffer{}
+	log := &listenaddr.Log{}
 	cmd.Stdout = log
 	cmd.Stderr = log
 	must.OKf(t, cmd.Start(), "start %s", name)
@@ -163,6 +146,10 @@ func startObservedReplica(
 		}
 		t.Logf("%s log:\n%s", name, log.String())
 	})
+	addr, err := log.Addr(ctx, name, listenaddr.API, done, bootwait.Deadline)
+	must.OK(t, err)
+	adminAddr, err := log.Addr(ctx, name, listenaddr.Admin, done, bootwait.Deadline)
+	must.OK(t, err)
 	httpClient := h2cClient(t)
 	baseURL := "http://" + addr
 	return &engineReplica{
@@ -171,7 +158,7 @@ func startObservedReplica(
 		runs:   orkstackv1connect.NewRunServiceClient(httpClient, baseURL),
 		flows:  orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
 		exited: done,
-	}, log
+	}, log, adminAddr
 }
 
 // cli runs the real orkctl against one replica, records the command and what

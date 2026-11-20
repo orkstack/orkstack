@@ -211,8 +211,11 @@ fan-out's functional tests are `each-fan-out.spec.ts`, which runs with the
 others. The run page at the task ceiling runs on the host's Chromium
 (`ui/playwright.config.ts`); its two spec files share their steps in
 `ui/e2e/runPageCeiling.ts`. `network-change.spec.ts` launches a host-namespace
-Chromium of its own as its positive control; every other spec drives the
-container. A CI `ui-e2e` part installs the host's Chromium only when its
+Chromium of its own as its positive control, so it runs alone too, in the same
+solo pass (`--project chromium-solo-network-change`): beside it, another
+spec's activity containers add and remove veths on the host, which that
+control sees as network changes of its own (proof 44677556224). Every other
+spec drives the container. A CI `ui-e2e` part installs the host's Chromium only when its
 shard holds one of those three files, decided from the UI plan by the same
 rule `scripts/proof-part.sh` applies as a prerequisite of the part:
 `playwright install chromium`, the browser from Playwright's own store and
@@ -1976,7 +1979,6 @@ listing with no bucket at all.
 | `costs` | `-from DIR`, `-costs-out FILE`, `-ui-costs-out FILE` |
 | `push-layout` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
 | `layout-digests` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
-| `free-port` | none |
 | `touches` | `-base REF`, `-gate-files` |
 | `clean` | `-remove`, `-proof-containers` |
 | `job-log` | none: the job log on standard input, the bounded log on standard output (§7) |

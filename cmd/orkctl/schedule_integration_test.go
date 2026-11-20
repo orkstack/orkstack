@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -55,26 +57,33 @@ type managedEngine struct {
 	*engineReplica
 	cmd  *exec.Cmd
 	done chan struct{}
-	log  *lockedBuffer
+	log  *listenaddr.Log
 }
 
-func (s *scheduleStack) startEngine(ctx context.Context, t *testing.T, name, addr string) *managedEngine {
+// startEngine starts one replica on ports of its own, read from its own log.
+func (s *scheduleStack) startEngine(ctx context.Context, t *testing.T, name string) *managedEngine {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, s.enginePath)
 	cmd.Env = append(testbin.StackEnv(os.Environ()),
-		"ORK_HTTP_ADDR="+addr,
+		"ORK_HTTP_ADDR="+listenaddr.Loopback,
 		"ORK_TEMPORAL_ADDRESS="+s.address,
 		"ORK_TEMPORAL_NAMESPACE="+s.partition,
 		"ORK_ORKER_QUEUE="+s.channel,
 		"ORK_ARTIFACT_BACKEND=s3",
-		"ORK_ADMIN_ADDR="+freeAddress(t),
+		"ORK_ADMIN_ADDR="+listenaddr.Loopback,
 		localActivityCatalogEnv(t),
 	)
-	log := &lockedBuffer{}
+	log := &listenaddr.Log{}
 	cmd.Stdout, cmd.Stderr = log, log
 	must.OKf(t, cmd.Start(), "start %s", name)
 	e := &managedEngine{cmd: cmd, done: make(chan struct{}), log: log}
 	go func() { _ = cmd.Wait(); close(e.done) }()
+	t.Cleanup(func() {
+		e.stop()
+		t.Logf("%s log:\n%s", name, log.String())
+	})
+	addr, err := log.Addr(ctx, name, listenaddr.API, e.done, bootwait.Deadline)
+	must.OK(t, err)
 	httpClient := h2cClient(t)
 	baseURL := "http://" + addr
 	e.engineReplica = &engineReplica{
@@ -84,10 +93,6 @@ func (s *scheduleStack) startEngine(ctx context.Context, t *testing.T, name, add
 		flows:  orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL),
 		exited: e.done,
 	}
-	t.Cleanup(func() {
-		e.stop()
-		t.Logf("%s log:\n%s", name, log.String())
-	})
 	e.awaitReady(ctx, t)
 	return e
 }
@@ -135,9 +140,9 @@ func newScheduleStack(ctx context.Context, t *testing.T, label string, replicas 
 		namespace:   fmt.Sprintf("sch-%s-%d", label, stamp),
 	}
 	startIdempotencyOrker(ctx, t, temporalClient, s.orkerPath, address, partition, s.channel)
-	s.a = s.startEngine(ctx, t, "ork-A", freeAddress(t))
+	s.a = s.startEngine(ctx, t, "ork-A")
 	if replicas > 1 {
-		s.b = s.startEngine(ctx, t, "ork-B", freeAddress(t))
+		s.b = s.startEngine(ctx, t, "ork-B")
 	}
 	fmt.Fprintf(&s.transcript, "# orkflow schedules: %s (%s)\n", label, time.Now().UTC().Format(time.RFC3339))
 	fmt.Fprintf(&s.transcript, "temporal namespace  %s\nnamespace           %s\nreplica A           %s\n\n",
@@ -1067,11 +1072,10 @@ func TestIntegration_ScheduleSurvivesReplicaAndRestart(t *testing.T) {
 	}
 	t.Logf("EVIDENCE schedule list filters answer alike on A and B: orkflow_name=hello, paused=true list nightly; paused=false lists nothing")
 
-	addrA, addrB := s.a.addr, s.b.addr
 	s.a.stop()
 	s.b.stop()
-	s.a = s.startEngine(ctx, t, "ork-A-restarted", addrA)
-	s.b = s.startEngine(ctx, t, "ork-B-restarted", addrB)
+	s.a = s.startEngine(ctx, t, "ork-A-restarted")
+	s.b = s.startEngine(ctx, t, "ork-B-restarted")
 	fmt.Fprintf(&s.transcript, "# restarted both engines\n\n")
 	after := s.get(t, s.a, "nightly")
 	if after.Schedule.ID != id || !after.Schedule.Paused || after.Schedule.Note != "Q3 close" {

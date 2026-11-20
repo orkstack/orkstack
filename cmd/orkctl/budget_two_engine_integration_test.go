@@ -63,8 +63,7 @@ func newBudgetStack(ctx context.Context, t *testing.T, label string) *budgetStac
 	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, partition, channel)
 	noCache := "ORK_USAGE_CACHE_TTL=0"
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, partition, channel, noCache)
-	bAdmin := freeAddress(t)
-	replicaB, bLog := startObservedReplica(ctx, t, "ork-B", enginePath, address, partition, channel, bAdmin, noCache)
+	replicaB, bLog, bAdmin := startObservedReplica(ctx, t, "ork-B", enginePath, address, partition, channel, noCache)
 	replicaA.awaitReady(ctx, t)
 	replicaB.awaitReady(ctx, t)
 
