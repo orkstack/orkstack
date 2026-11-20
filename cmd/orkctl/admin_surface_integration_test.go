@@ -17,6 +17,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -134,9 +135,11 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 			"ORK_DEPLOYMENT_NAME=" + deployment,
 		}
 	}
-	addrA, addrB := freeAddress(t), freeAddress(t)
-	exitedA := startProcess(ctx, t, "ork-A", enginePath, engineEnv(addrA)...)
-	exitedB := startProcess(ctx, t, "ork-B", enginePath, engineEnv(addrB)...)
+	// Each replica binds a port of its own, and its address is read from its own log.
+	launchedA := launch(ctx, t, "ork-A", enginePath, engineEnv(listenaddr.Loopback)...)
+	launchedB := launch(ctx, t, "ork-B", enginePath, engineEnv(listenaddr.Loopback)...)
+	addrA, addrB := launchedA.api(ctx, t), launchedB.api(ctx, t)
+	exitedA, exitedB := launchedA.exited, launchedB.exited
 
 	session := &sessionRecorder{}
 	configPath := filepath.Join(t.TempDir(), "orkctl.json")

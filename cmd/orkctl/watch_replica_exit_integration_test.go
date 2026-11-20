@@ -463,7 +463,7 @@ func TestIntegration_RunLogsFollowKeepsATryThatEndedDuringAnOutage(t *testing.T)
 	retry := "    retry:\n      maximum_attempts: 2\n      initial_interval_seconds: 1\n"
 	runID, forwarder, logs := submitTalking(t, c, talkingOrkflow(c.pool, lines, 1, retry), doomed.addr)
 
-	nobody := freeAddress(t)
+	nobody := closedAddress(t)
 	forwarder.sendTo(nobody)
 	if err := doomed.process.Kill(); err != nil {
 		t.Fatalf("kill the replica: %v", err)

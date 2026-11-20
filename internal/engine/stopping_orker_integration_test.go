@@ -48,10 +48,15 @@ tasks:
         printf '{"ok":true}' > /orkstack/output/values.json
 `
 
-// stoppingOrker is one unpinned Orker of the deployment, its log kept.
+// stoppingOrker is one unpinned Orker of the deployment, its log kept,
+// returned once the fleet lists it and it answers: submit's admission reads
+// the same fleet, and refuses a pool whose only Orker's first poll has not yet
+// reached the cluster.
 func stoppingOrker(d *cordonDeployment, id, pool string) (*pinOrker, *syncBuffer) {
 	logs := &syncBuffer{}
-	return d.orker(id, pool, pinOrkerConfig{hostsNoPins: true, logger: slog.New(slog.NewTextHandler(logs, nil))}), logs
+	o := d.orker(id, pool, pinOrkerConfig{hostsNoPins: true, logger: slog.New(slog.NewTextHandler(logs, nil))})
+	d.awaitAnswering(id)
+	return o, logs
 }
 
 // awaitRunningOn waits until o is running the one task of runID, in the phase
@@ -187,7 +192,6 @@ func TestIntegration_StoppingOrkerHeartbeatsAcrossALongGrace(t *testing.T) {
 	long := d.submit("long-" + d.token)
 	awaitRunningOn(d, a, long)
 	b, _ := stoppingOrker(d, "orker-sb-b-"+d.token, pool)
-	d.awaitAnswering(b.id)
 
 	stopped := time.Now()
 	stop := a.activities.BeginStop(orker.StopSequence{Grace: grace})

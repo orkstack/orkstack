@@ -28,6 +28,7 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
@@ -90,17 +91,20 @@ func startInterfaceStack(ctx context.Context, t *testing.T, engines int, withOrk
 	}
 	stack := &interfaceStack{session: &sessionRecorder{}, pool: pool}
 	var exits []<-chan struct{}
+	var started []launched
 	for i := range engines {
-		addr := freeAddress(t)
-		exited := startProcess(ctx, t, fmt.Sprintf("ork-%d", i), enginePath,
-			"ORK_HTTP_ADDR="+addr,
-			"ORK_ADMIN_ADDR="+freeAddress(t),
+		started = append(started, launch(ctx, t, fmt.Sprintf("ork-%d", i), enginePath,
+			"ORK_HTTP_ADDR="+listenaddr.Loopback,
+			"ORK_ADMIN_ADDR="+listenaddr.Loopback,
 			"ORK_TEMPORAL_ADDRESS="+address,
 			"ORK_TEMPORAL_NAMESPACE="+namespace,
 			"ORK_ORKER_QUEUE="+taskQueue,
-		)
-		stack.engines = append(stack.engines, "http://"+addr)
-		exits = append(exits, exited)
+		))
+	}
+	// Each engine's address is the one it bound, from its own log.
+	for _, p := range started {
+		stack.engines = append(stack.engines, "http://"+p.api(ctx, t))
+		exits = append(exits, p.exited)
 	}
 	configPath := filepath.Join(t.TempDir(), "orkctl.json")
 	run := func(server string, args ...string) (string, string, int) {

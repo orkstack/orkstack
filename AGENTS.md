@@ -1858,7 +1858,9 @@ the positive control, and the navigation guard's ceiling is zero repeats. The
 run page at the task ceiling (its two spec files, at the default and at the
 reduced ceiling) is still driven on the host's Chromium
 (`ui/playwright.config.ts`, `projects`): alone, after every other file, with
-tasks that open no network interface. Every spec file creates a bucket of its own (`ownBucket` in
+tasks that open no network interface. `network-change.spec.ts` runs alone
+after every other file too, because its host-namespace control sees every
+host network change, another spec's activity containers included. Every spec file creates a bucket of its own (`ownBucket` in
 `ui/e2e/harness.ts`, the same name shape as `s3bucket`, removed when the file
 is done), so the deployment-wide documents (retention, image policy, audit,
 webhooks, the namespace registry) are its alone, and a proof runs spec files

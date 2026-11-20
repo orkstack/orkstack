@@ -18,7 +18,6 @@
 //	proofrun push-layout  push OCI layouts byte for byte and check the digests
 //	proofrun layout-digests  the images.tsv a layout push would produce
 //	proofrun touches      the gate files a change edits, and the list rows it adds or removes
-//	proofrun free-port    a port nothing listens on
 //	proofrun clean        list, or remove, what test processes that are gone left
 //	proofrun job-log      bound a GitHub job log to what the merger reads
 //	proofrun pr-title     refuse a pull request title that is not a Conventional Commit
@@ -55,7 +54,6 @@ var subcommands = []subcommand{
 	{"costs", "regenerate the cost ledgers and the slow list", cmdCosts},
 	{"push-layout", "push OCI layouts byte for byte and check their digests", cmdPushLayout},
 	{"layout-digests", "the images.tsv a layout push would produce", cmdLayoutDigests},
-	{"free-port", "a port nothing listens on", cmdFreePort},
 	{"touches", "the gate files a change edits, and the list rows it adds or removes", cmdTouches},
 	{"clean", "list, or remove, what test processes that are gone left behind", cmdClean},
 	{"job-log", "bound a GitHub job log to what the merger reads from it", cmdJobLog},

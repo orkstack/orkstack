@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/listenaddr"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
@@ -100,8 +101,8 @@ type signalledEngine struct {
 // answer, whose process the test can signal.
 func (c *awaitCLI) startSignalledEngine() (signalledEngine, <-chan struct{}) {
 	c.t.Helper()
-	addr := freeAddress(c.t)
-	process, exited := startProcessHandle(c.ctx, c.t, "ork", c.enginePath, engineEnv(c.t, addr, c.temporalAddress, c.temporalNamespace, c.taskQueue)...)
+	p := launch(c.ctx, c.t, "ork", c.enginePath, engineEnv(c.t, listenaddr.Loopback, c.temporalAddress, c.temporalNamespace, c.taskQueue)...)
+	addr, process, exited := p.api(c.ctx, c.t), p.process, p.exited
 	waitForEngine(c.t, exited, func(args ...string) (string, string, int) {
 		return runBinary(c.ctx, c.t, c.orkctl, c.repoRoot, append(args, "--server", "http://"+addr, "-n", c.namespace)...)
 	})
