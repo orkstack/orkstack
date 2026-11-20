@@ -53,6 +53,11 @@ type TemporalStarter struct {
 	// two origin attributes now, and stamping one it does not have fails
 	// every submit.
 	originIndexed bool
+	// concurrencyIndexed reports that this cluster indexes the concurrency
+	// limit's attributes and OrkflowNamespace
+	// (task.EnsureConcurrencySearchAttributes): a gate is rebuilt from them,
+	// so without them submit refuses a limit (ConcurrencyIndexAnswer).
+	concurrencyIndexed bool
 
 	// clusterNamespace and clusterIdentity are what a cancellation that
 	// records its principal names on the cluster (CancelRun): the client's
@@ -112,6 +117,18 @@ func (s *TemporalStarter) WithOriginIndex(indexed bool) *TemporalStarter {
 	s.originIndexed = indexed
 	return s
 }
+
+// WithConcurrencyIndex records whether the cluster indexes what a
+// concurrency limit needs (task.EnsureConcurrencySearchAttributes, with the
+// namespace attribute), on the terms WithNamespaceIndex records its answer.
+func (s *TemporalStarter) WithConcurrencyIndex(indexed bool) *TemporalStarter {
+	s.concurrencyIndexed = indexed
+	return s
+}
+
+// ConcurrencyIndexAnswer reports the boot answer submit decides a limit's
+// support from.
+func (s *TemporalStarter) ConcurrencyIndexAnswer() bool { return s.concurrencyIndexed }
 
 // WithClusterIdentity records the Temporal namespace this starter's client is
 // bound to and the identity it reports, which CancelRun names when it asks the

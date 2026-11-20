@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 )
@@ -41,6 +42,18 @@ func TestTriggerSubmitStatus_ACallerThatGaveUpIsUnavailable(t *testing.T) {
 		status, name := triggerSubmitStatus(connect.NewError(code, errors.New("x")))
 		if status != http.StatusServiceUnavailable || name != connect.CodeUnavailable.String() {
 			t.Errorf("triggerSubmitStatus(%s) = %d %q, want 503 unavailable", code, status, name)
+		}
+	}
+}
+
+// Retry-After is whole seconds, rounded up, and never 0.
+func TestRetryAfterSeconds(t *testing.T) {
+	for _, tc := range []struct {
+		d    time.Duration
+		want int64
+	}{{0, 1}, {300 * time.Millisecond, 1}, {time.Second, 1}, {1500 * time.Millisecond, 2}, {time.Minute, 60}} {
+		if got := retryAfterSeconds(tc.d); got != tc.want {
+			t.Errorf("retryAfterSeconds(%s) = %d, want %d", tc.d, got, tc.want)
 		}
 	}
 }

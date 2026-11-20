@@ -189,6 +189,33 @@ func ItemCommitKey(namespace, runID, taskID string, index int32) (string, error)
 	return path.Join(path.Dir(key), seg, CommitObjectName), nil
 }
 
+// ScopedCommitKey renders a task's commit key under a resume scope (E85
+// §4.1, docs/STORAGE.md): metadata/commits/{namespace}/{encoded-run-id}/{task-id}/r{scope:020}/commit.json.
+// A task a resume runs again commits there, so the result it had before is
+// never altered. Scope 0, the run before any resume, renders CommitKey's
+// key. Like CommitKey it is the single renderer: the engine composes the uri
+// and sends it, and the Orker uses what it was sent.
+func ScopedCommitKey(namespace, runID, taskID string, scope uint64) (string, error) {
+	key, err := CommitKey(namespace, runID, taskID)
+	if err != nil || scope == 0 {
+		return key, err
+	}
+	return path.Join(path.Dir(key), scopeSegment(scope), CommitObjectName), nil
+}
+
+// ScopedItemCommitKey renders one item's commit key under a resume scope:
+// metadata/commits/{namespace}/{encoded-run-id}/{task-id}/r{scope:020}/{item:05}/commit.json.
+// Scope 0 renders ItemCommitKey's key.
+func ScopedItemCommitKey(namespace, runID, taskID string, index int32, scope uint64) (string, error) {
+	key, err := ItemCommitKey(namespace, runID, taskID, index)
+	if err != nil || scope == 0 {
+		return key, err
+	}
+	item := path.Base(path.Dir(key))
+	task := path.Dir(path.Dir(key))
+	return path.Join(task, scopeSegment(scope), item, CommitObjectName), nil
+}
+
 // validCommitTaskID holds a task id to the DSL's slug rule. A task id reaches
 // this package already validated by internal/dsl, so this is a second gate
 // rather than the first — but a key builder that trusted its caller would be

@@ -507,6 +507,9 @@ func TestMemoKey_EveryComponentChangesTheKey(t *testing.T) {
 		"a zero-item fan-in count": func(_ *orkstackv1.ExecuteTaskInput, staged *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
 			staged.eachUpstream[0].Count = 1
 		},
+		"a continue fan-out's failed items": func(_ *orkstackv1.ExecuteTaskInput, staged *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
+			staged.eachUpstream[0].Count, staged.eachUpstream[0].Failed = 1, []int32{0}
+		},
 		"the item value": func(_ *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, it *resolvedEachItem) {
 			it.Bytes = stablejson.RawJSON(`{"name":"b"}`)
 		},

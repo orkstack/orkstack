@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -124,8 +125,8 @@ func TestParseEvent_AcceptsTaskOutcomesAndRefusesTaskLog(t *testing.T) {
 
 func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.T) {
 	want := []webhooks.Event{
-		webhooks.EventRunStarted,
-		webhooks.EventTaskScheduled, webhooks.EventTaskStarted,
+		webhooks.EventRunQueued, webhooks.EventRunStarted,
+		webhooks.EventTaskQueued, webhooks.EventTaskScheduled, webhooks.EventTaskStarted,
 		webhooks.EventTaskAwaiting, webhooks.EventTaskResolved, webhooks.EventTaskSleeping,
 		webhooks.EventTaskSucceeded, webhooks.EventTaskFailed,
 		webhooks.EventRunPaused, webhooks.EventRunUnpaused,
@@ -134,10 +135,11 @@ func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.
 	if got := webhooks.KnownEvents(); !equalEvents(got, want) {
 		t.Fatalf("KnownEvents() = %v, want %v", got, want)
 	}
+	// The run's own transitions, the ones an empty subscription means, keep
+	// their order; an opt-in run event (RUN_QUEUED) is not one of them.
 	var runs []webhooks.Event
 	for _, event := range webhooks.KnownEvents() {
-		// The opt-in run events (a pause's two) are not transitions.
-		if strings.HasPrefix(string(event), "RUN_") && event != webhooks.EventRunPaused && event != webhooks.EventRunUnpaused {
+		if slices.Contains(webhooks.RunEvents(), event) {
 			runs = append(runs, event)
 		}
 	}

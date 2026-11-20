@@ -694,7 +694,9 @@
           "description": "list of event names — absent means every run transition",
           "items": {
             "enum": [
+              "RUN_QUEUED",
               "RUN_STARTED",
+              "TASK_QUEUED",
               "TASK_SCHEDULED",
               "TASK_STARTED",
               "TASK_AWAITING",
@@ -933,6 +935,14 @@
           "const": "orkstack/v1",
           "description": "The document format's version: exactly `orkstack/v1` (see \"The document header\")."
         },
+        "concurrency": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/orkflow.concurrency"
+            }
+          ],
+          "description": "optional: how many runs share one key's slots at once; the rest wait in line (see \"Concurrency limits\")."
+        },
         "description": {
           "description": "Human description.",
           "type": [
@@ -985,10 +995,19 @@
         },
         "outputs": {
           "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact": {
+                "pattern": "^[^/{]+/[^{]+$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact"
+            ],
             "type": [
               "string",
-              "number",
-              "boolean"
+              "object"
             ]
           },
           "description": "Declared return contract: name to template (see below).",
@@ -1114,6 +1133,36 @@
       ],
       "type": "object"
     },
+    "orkflow.concurrency": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "max_queued": {
+          "type": "integer"
+        },
+        "on_limit": {
+          "enum": [
+            "queue"
+          ]
+        },
+        "queue_timeout": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "limit"
+      ],
+      "type": "object"
+    },
     "orkflow.each": {
       "additionalProperties": false,
       "properties": {
@@ -1137,6 +1186,10 @@
             "lines"
           ]
         },
+        "max_failed_items": {
+          "description": "with `on_item_failure: continue` only, 1 to `max_items` − 1: the fan-out fails fast once more than this many items have failed.",
+          "type": "integer"
+        },
         "max_items": {
           "description": "required: the most items this task may expand",
           "type": "integer"
@@ -1144,6 +1197,13 @@
         "max_parallel": {
           "description": "at most this many items run at once; absent or `0` means no bound of the task's own (the pool's Orkers are the bound).",
           "type": "integer"
+        },
+        "on_item_failure": {
+          "description": "`fail_fast` (the default) stops the fan-out at its first item that fails for good; `continue` runs every other item and then fails it.",
+          "enum": [
+            "continue",
+            "fail_fast"
+          ]
         },
         "over": {
           "description": "required: one reference to an array",
@@ -1169,7 +1229,7 @@
     },
     "orkflow.input": {
       "additionalProperties": false,
-      "description": "One declared input: `type` (string, number, boolean, object, array), `required` and `default`. The engine reads `type`, `required` and `default` and ignores anything else; this schema refuses another key, a `type` outside the five words and a `required` that is not a boolean, so a misspelling is caught in the editor that `orkctl orkflow validate` would let through.",
+      "description": "One declared input: `type` (string, number, boolean, object, array, artifact), `required` and `default`. The engine reads `type`, `required` and `default` and ignores anything else; this schema refuses another key, a `type` outside the six words and a `required` that is not a boolean, so a misspelling is caught in the editor that `orkctl orkflow validate` would let through.",
       "properties": {
         "default": {},
         "required": {
@@ -1181,7 +1241,8 @@
             "number",
             "boolean",
             "object",
-            "array"
+            "array",
+            "artifact"
           ]
         }
       },
@@ -1530,6 +1591,17 @@
         ]
       },
       "properties": {
+        "artifacts": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "A composed task binds each artifact input of its child with `artifacts:`,",
+          "type": "object"
+        },
         "await": {
           "allOf": [
             {

@@ -61,6 +61,11 @@ type Field struct {
 	KeptWhenUnavailable bool
 	Requires            string
 	ValueRule           orkstackv1.FilterValueRule
+	// Indexed: the path names no field of the resource, and a row's own
+	// fields never satisfy it; only the server's index of open rows does
+	// (Set.MatchIndexed). It takes equals only. Its kind is KindBool for a
+	// flag, which takes the single value "true", and KindText otherwise.
+	Indexed bool
 
 	chain []protoreflect.FieldDescriptor
 	enum  protoreflect.EnumDescriptor
@@ -195,6 +200,12 @@ func resolveField(spec *Spec, decl *orkstackv1.FilterableField) (*Field, error) 
 	if field.Path == "" || field.Label == "" {
 		return nil, fmt.Errorf("a field needs a path and a label")
 	}
+	if decl.GetIndexed() {
+		return resolveIndexed(spec, field, decl)
+	}
+	if decl.GetFlag() {
+		return nil, fmt.Errorf("flag applies to an indexed field only")
+	}
 	md := spec.Resource
 	parts := splitPath(field.Path)
 	for i, part := range parts {
@@ -265,6 +276,36 @@ func resolveField(spec *Spec, decl *orkstackv1.FilterableField) (*Field, error) 
 		field.AllowedValues = allowed
 	} else if len(decl.GetAllowedValues()) > 0 {
 		return nil, fmt.Errorf("allowed_values applies to an enum field only")
+	}
+	return field, nil
+}
+
+// resolveIndexed resolves a field the server answers from its index of open
+// rows rather than from a row: one name, equals only, text or a flag, and
+// none of the extras a resource field may carry.
+func resolveIndexed(spec *Spec, field *Field, decl *orkstackv1.FilterableField) (*Field, error) {
+	if len(splitPath(field.Path)) != 1 {
+		return nil, fmt.Errorf("an indexed path is one name, with no dot")
+	}
+	// A field of the resource a filter could read is never shadowed: the
+	// index would answer what the row already says, and every row would fail
+	// it under Match. A message field may share the name (ListRuns' queued is
+	// the run's queued message, which a filter never reads).
+	if fd := spec.Resource.Fields().ByName(protoreflect.Name(field.Path)); fd != nil &&
+		(fd.Kind() != protoreflect.MessageKind || fd.IsMap() || fd.Message().FullName() == "google.protobuf.Timestamp") {
+		return nil, fmt.Errorf("an indexed path cannot name a filterable field of %s", spec.Resource.FullName())
+	}
+	if !slices.Equal(field.Operators, []orkstackv1.FilterOperator{orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS}) {
+		return nil, fmt.Errorf("an indexed field takes equals only")
+	}
+	if field.Requires != "" || field.KeptWhenUnavailable || len(decl.GetAllowedValues()) > 0 ||
+		field.ValueRule != orkstackv1.FilterValueRule_FILTER_VALUE_RULE_UNSPECIFIED {
+		return nil, fmt.Errorf("an indexed field cannot declare requires, kept_when_unavailable, allowed_values or value_rule")
+	}
+	field.Indexed = true
+	field.Kind = KindText
+	if decl.GetFlag() {
+		field.Kind = KindBool
 	}
 	return field, nil
 }

@@ -39,6 +39,12 @@ export interface FilterField {
 	keptWhenUnavailable: boolean;
 	requires: string;
 	valueRule: FilterValueRule;
+	/**
+	 * The path names no field of the resource: the server answers it from its
+	 * index of open rows, so a row that has ended never matches it. Equals only;
+	 * a bool one (a flag) takes only "true".
+	 */
+	indexed: boolean;
 }
 
 export interface FilterSpec {
@@ -144,6 +150,19 @@ export function specFor(request: DescMessage): FilterSpec {
 	const spec: FilterSpec = {
 		resource: resource.name,
 		fields: declared.fields.map((f) => {
+			if (f.indexed) {
+				return {
+					path: f.path,
+					label: f.label,
+					kind: f.flag ? 'bool' : 'text',
+					operators: [...f.operators],
+					values: [],
+					keptWhenUnavailable: false,
+					requires: '',
+					valueRule: f.valueRule,
+					indexed: true
+				};
+			}
 			const { kind, leaf } = resolveField(resource, f.path);
 			let values: string[] = [];
 			if (kind === 'enum' && leaf.fieldKind === 'enum') {
@@ -159,7 +178,8 @@ export function specFor(request: DescMessage): FilterSpec {
 				values,
 				keptWhenUnavailable: f.keptWhenUnavailable,
 				requires: f.requires,
-				valueRule: f.valueRule
+				valueRule: f.valueRule,
+				indexed: false
 			};
 		})
 	};

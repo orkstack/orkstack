@@ -70,7 +70,15 @@ func reclaimObjects(run *orkstackv1.Run) []archive.BodyObject {
 		}
 		add(taskRun.GetValuesRef(), archive.ClassValues)
 	}
+	// What the run received and what its composed tasks passed: objects it
+	// claimed, listed as runObjectIDs lists them (composed_artifacts.go).
+	for _, received := range run.GetInputArtifacts() {
+		add(received.GetArtifact(), archive.ClassArtifact)
+	}
 	for _, taskRun := range run.GetTaskRuns() {
+		for _, passed := range taskRun.GetChild().GetInputArtifacts() {
+			add(passed.GetArtifact(), archive.ClassArtifact)
+		}
 		row(taskRun)
 		for _, item := range taskRun.GetItems() {
 			row(item)

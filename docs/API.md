@@ -921,10 +921,16 @@ reading of the inventory at most five seconds old, never a record.
 
 ### ChildArtifact
 
-ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-batch).
+ChildArtifact binds one artifact input of a composed task's child
+Orkflow to an artifact of this run: the artifact name of the task task_id
+(a producer in the composed task's needs closure), or of _inputs for an
+artifact input of this Orkflow.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `input` | `string` |  |
+| `task_id` | `string` |  |
+| `name` | `string` |  |
 
 ### CommitRef
 
@@ -960,17 +966,40 @@ sibling read, field for field.
 
 ### ConcurrencyQueued
 
-ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
-batch).
+ConcurrencyQueued is a run waiting in line for a slot of a concurrency
+limit's key.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `key` | `string` | key is the rendered key the run waits for. |
+| `limit` | `int32` | limit is how many runs may hold its slots at once. |
+| `strategy` | [`ConcurrencyStrategy`](#concurrencystrategy) | strategy is the declaration's on_limit. |
+| `position_at_arrival` | `int32` | position_at_arrival is the run's place in line when it arrived, from 1. |
+| `position` | `int32` | position is its place in its key's line now, from 1, where a task waiting for one of the key's slots counts as a place too. It is read live by GetRun only, and only when position_known says it could be read; note_code says why it could not. |
+| `position_known` | `bool` |  |
+| `holders_ahead` | repeated `string` | holders_ahead names runs holding the key's slots, at most ten; holders_count is how many there are. holders_as_of_arrival says both are as the run found them when it arrived, not live. |
+| `holders_count` | `int32` |  |
+| `holders_as_of_arrival` | `bool` |  |
+| `queued_since` | `google.protobuf.Timestamp` | queued_since is when the run began waiting; times_out_at is when it stops. |
+| `times_out_at` | `google.protobuf.Timestamp` |  |
+| `note_code` | `string` | note_code says why the wait may take longer than the line explains: NOT_ANSWERING, REBUILD_FAILING, REBUILDING, HOLDER_STALLED or LINE_FULL, empty when nothing does. note says it in words. |
+| `note` | `string` |  |
+| `cause` | [`ConcurrencyQueueCause`](#concurrencyqueuecause) | cause is why the run waits: it arrived, or it waits again after an unpause or a resume. |
 
 ### ConcurrencySpec
 
-ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
-batch).
+ConcurrencySpec is one declared concurrency limit (docs/DSL.md
+"Concurrency limits"). Its identity is its namespace and its rendered key:
+every declaration in a namespace that renders the same key shares its
+slots and its line.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `limit` | `int32` | limit is how many runs may hold a slot of the key at once, from 1. |
+| `key` | `string` | key is the template a run renders its key from, once, at submit. Empty is the Orkflow's own key, shared by every version of it in the namespace that runs it. |
+| `on_limit` | [`ConcurrencyStrategy`](#concurrencystrategy) | on_limit is what a run does when every slot of its key is held. |
+| `queue_timeout_seconds` | `int64` | queue_timeout_seconds is how long a run waits in line for a slot before it ends; 0 is the deployment's default. |
+| `max_queued` | `int32` | max_queued is how many runs may wait in line for the key, checked at submit, best-effort; 0 sets no bound of its own. |
 
 ### ConsentView
 
@@ -1416,6 +1445,8 @@ Task.pin).
 | `over_artifact` | `string` | over_artifact names an artifact of a task in this task's own needs:, "&lt;task>/&lt;name>", and makes the fan-out run one item per non-empty line of it (or per batch of lines). Exactly one of over and over_artifact is set. Part of canonicalOrkflow only when set, so a definition without it keeps its digest. |
 | `format` | [`EachLineFormat`](#eachlineformat) | format is how the lines of over_artifact are read: JSONL (each line one JSON value) or LINES (each line a string). Required with over_artifact, refused with over. |
 | `batch` | `int32` | batch makes one item of every batch consecutive non-empty lines of over_artifact, 2..10000; the last item may hold fewer. Unset (or 1, which the compiler normalises to unset) is one line per item. Refused with over. max_items counts items, so the line ceiling is max_items x batch. |
+| `on_item_failure` | [`EachItemFailure`](#eachitemfailure) | on_item_failure is what an item that fails for good does to the rest of the fan-out: FAIL_FAST (the default, which the compiler normalises to unset) stops it at the first such item; CONTINUE runs every other item, and the fan-out then fails with its lowest-index failed item's reason. |
+| `max_failed_items` | `int32` | max_failed_items, with CONTINUE only, bounds how many items may fail: at the next failure past it the fan-out fails fast. 1 .. max_items-1; 0 is unbounded. |
 
 ### EffectiveProfile
 
@@ -2104,8 +2135,8 @@ No fields.
 | `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width and timezone are the series actually drawn, resolved: an empty timezone answers "UTC". Unset when no series was asked for. |
 | `timezone` | `string` |  |
 | `paused` | `int64` | paused is how many runs executing now are paused (orkctl run pause): not in runs_by_status["running"], and in the running list. 0 where the cluster does not index paused runs, which then count as running. A series bucket counts a paused run it created as running. |
-| `queued` | `int64` | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
-| `executing` | `int64` | executing is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `queued` | `int64` | queued is how many of the running runs wait for a concurrency slot. |
+| `executing` | `int64` | executing is how many of the running runs do not: running minus queued. |
 
 ### GetSystemInfoRequest
 
@@ -2554,7 +2585,11 @@ origin.kind filter; origin.id is meaningful only within a kind, so it
 needs an equals filter on origin.kind. An id is matched whole, never by
 part. origin.root_run_id takes only equals and keeps every run below that
 root in its composed chain, however deep: the root run itself holds no root
-and is not one of them.
+and is not one of them. queued, queued_on and holding are a concurrency
+limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
+waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
+a run still going matches them, and a deployment that cannot index
+concurrency limits refuses them.
 
 | Field | Type | Description |
 |---|---|---|
@@ -2814,8 +2849,7 @@ it.
 ### NamedArtifact
 
 NamedArtifact is one artifact a run takes in or hands out, by the name
-the Orkflow gives it (E87, composed-artifacts/01-design.md §5). Declared
-whole by the v0.4.0 proto batch; nothing sets it until E87 lands.
+the Orkflow gives it, with the run and task that recorded it.
 
 | Field | Type | Description |
 |---|---|---|
@@ -3007,8 +3041,8 @@ Orkflow is the compiled, validated form of a DSL document.
 | `outputs` | map&lt;`string`, `string`&gt; | outputs is this Orkflow's declared return contract: output name to a template over .inputs and .tasks.&lt;id>.output, rendered ONCE, by the engine, when a run succeeds; every value renders to a string. When non-empty the rendered map IS Run.output, and is what a composing parent's task receives as its values. When empty, Run.output is the values of the tasks no other task needs, and a composing parent's task receives {}. Part of canonicalOrkflow only when non-empty (see pins). |
 | `shared_with` | repeated [`OrkflowShare`](#orkflowshare) | shared_with is who in other namespaces may compose this version through `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing across namespaces"). Empty means nobody: an Orkflow is closed to every other namespace unless its definition says otherwise. Composition is the only door — a submit, a schedule or a trigger runs only its own namespace's Orkflows. It is part of the definition, so a new version changes who may call it, and part of canonicalOrkflow only when non-empty (see pins). |
 | `definition_namespace` | `string` | definition_namespace is set ONLY on a run's planned copy of an Orkflow that another namespace's Orkflow composed: the namespace that owns the stored definition, while namespace names the namespace the child run executes in and whose rules it follows. Never stored, never applied and not part of canonicalOrkflow: definition_digest is the owner's. |
-| `output_artifacts` | map&lt;`string`, [`OutputArtifact`](#outputartifact)&gt; | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `output_artifacts` | map&lt;`string`, [`OutputArtifact`](#outputartifact)&gt; | output_artifacts are the artifacts this Orkflow returns to a composing run, by output name (outputs: &lt;name>: {artifact: &lt;task>/&lt;name>}). Part of canonicalOrkflow ONLY when set. |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is the Orkflow's run-level concurrency limit (docs/DSL.md "Concurrency limits"): its runs share at most limit slots of one key, and a run past them waits in order. Unset, its runs are not limited. Part of canonicalOrkflow only when set, so an Orkflow that declares none keeps its digest. |
 | `timeout_seconds` | `int64` | timeout_seconds is the run's own time limit from its start, from the DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of canonicalOrkflow, in its short form, only when non-zero, so an Orkflow that declares none keeps its digest. |
 
 ### OrkflowCaller
@@ -3087,10 +3121,13 @@ coordinates, not the document.
 
 ### OutputArtifact
 
-OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
-batch).
+OutputArtifact names the artifact an Orkflow returns under an output's
+name: the artifact name of the task task_id.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `name` | `string` |  |
 
 ### PauseEventSourceRequest
 
@@ -3823,12 +3860,12 @@ Run is one execution of an Orkflow.
 | `canceled_by` | `string` | canceled_by is who asked for the CancelRun request that canceled this run. With auth.mode observe or enforce it is the principal OrkStack authenticated, and canceled_by_verified is set. With asserted it is what the deployment's gateway asserted in the Ork-Principal request header — recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8 replaced, as RunOrigin.principal is, and never authenticated. Every rendering says which (canceled_by_verified).<br><br>It is set only on a run whose status is CANCELED with error code RUN_CANCELED, when a CancelRun carrying the header was accepted before the run recorded its own end. That is the request that canceled it, or — if the run was already ending canceled for another cause, such as a composed task's child run canceled from outside — the request that arrived while it ended, which is named too. It is empty for every other run: a CancelRun with no header; a run canceled with its parent run, or by any other cause; a run that succeeded, failed or was terminated (RUN_TERMINATED); a run canceled before this field existed. A client then shows nothing rather than a blank that could be mistaken for a name.<br><br>It is on GetRun, on the archived run, on ListRuns rows answered from the archive and in the embedded run of a RUN_CANCELED webhook delivery. |
 | `orkflow_namespace` | `string` | orkflow_namespace is set only on a child run of an Orkflow another namespace shared through composition: the namespace that owns the definition it ran. Empty means the orkflow is namespace's own. A run whose orkflow belongs to another namespace is always a child run: nothing else starts one. |
 | `timing` | [`RunTiming`](#runtiming) | timing is the run's half of the task-timing derivation (RunTiming), set by GetRun and never stored; each TaskRun carries its own half. |
-| `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts are the artifacts a child run received from the task that composed it, by the name of the artifact input each binds. |
 | `output_artifacts` | repeated [`NamedArtifact`](#namedartifact) | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `trace_id` | `string` | trace_id is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `run_context` | [`RunContextState`](#runcontextstate) | run_context is set from E86; unset until it lands (v0.4.0 proto batch). |
+| `run_context` | [`RunContextState`](#runcontextstate) | run_context says whether the run's tasks can read its run context (their task.json and the .run and .task template roots). |
 | `canceled_by_verified` | `bool` | canceled_by_verified says canceled_by is a principal OrkStack authenticated (auth.mode observe or enforce). Unset, canceled_by is what the deployment's gateway asserted in Ork-Principal, unauthenticated. |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while the run waits in line for a slot of its concurrency limit's key (docs/DSL.md "Concurrency limits"): status PENDING, or RUNNING when an unpaused or resumed run waits again. |
 | `superseded_by` | `string` | superseded_by is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `resumes` | repeated [`RunResume`](#runresume) | resumes is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_hint` | [`ResumeHint`](#resumehint) | resume_hint is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -3854,10 +3891,11 @@ Run is one execution of an Orkflow.
 
 ### RunContextState
 
-RunContextState is E86's; it is empty until E86 lands (v0.4.0 proto
-batch).
+RunContextState is whether a run's tasks are given its run context.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `status` | [`RunContextStatus`](#runcontextstatus) |  |
 
 ### RunFieldDiff
 
@@ -4393,11 +4431,11 @@ execution on an Orker, and an activity is an OCI image.
 | `join` | [`JoinPolicy`](#joinpolicy) | join is when this task may start, decided from how its needs ended (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no join keeps its digest. A task whose join is ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry each or carry cache (docs/DSL.md rule 39). |
 | `sleep` | [`SleepSpec`](#sleepspec) | sleep makes this a sleeping task: it starts no container, reaches no Orker, and succeeds once its fixed time has passed. Mutually exclusive with uses, await and every field that shapes a container (docs/DSL.md rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no sleep keeps its digest. |
 | `devices` | repeated `string` | devices names the operator-defined profiles the task's container gets (devices:), never a device path. |
-| `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `input_artifacts` | repeated `string` | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts are a composed task's artifacts: bindings, one per artifact input of the child Orkflow, sorted by input. The engine resolves each from a recorded result at child start and hands the child a reference, never the bytes. Part of canonicalOrkflow(Task) ONLY when set. |
+| `input_artifacts` | repeated `string` | input_artifacts names, sorted, the artifact inputs of this task's Orkflow that its fields name literally ({{ artifact "_inputs/&lt;name>" }}); only those are staged for it, under the reserved producer _inputs. Part of canonicalOrkflow(Task) ONLY when set. |
 | `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `credentials` | repeated [`CredentialRef`](#credentialref) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
-| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88's task-level limits; unset until they land. |
 | `device_contracts` | map&lt;`string`, `string`&gt; | device_contracts maps a profile the task names in devices to the contract label the task needs of it: the image's declaration, or the author's `name@label`. Written at create, only when non-empty. |
 
 ### TaskAttempt
@@ -4487,6 +4525,7 @@ was before this message existed.
 | `orkflow_definition_digest` | `string` |  |
 | `run_id` | `string` | run_id is the child run, set once its start is CONFIRMED and never before: an id whose start was refused names no run. The child run's own Run.origin is {PARENT_RUN, &lt;this run's id>}. |
 | `orkflow_namespace` | `string` | orkflow_namespace is the namespace that owns the child Orkflow when it is not the namespace the run executes in: a child composed from another namespace through shared_with. Empty for a child of the run's own namespace. |
+| `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts are the artifacts this task passed its child, by the name of the child's artifact input each binds (artifacts:): set once they are resolved and claimed, before the child is started, so a start refused afterwards still records what this run claimed. |
 
 ### TaskEach
 
@@ -4585,7 +4624,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `timing` | [`TaskTiming`](#tasktiming) | timing is where this task's time went, derived from scheduled_at, started_at and finished_at above (TaskTiming). It is DERIVED ON READ: GetRun sets it on every row, a fan-out's items included, and nothing stores it — the engine never writes it, and a copy read back from anywhere else is not one GetRun answered. |
 | `sleep` | [`TaskSleep`](#tasksleep) | sleep is this task's sleep state, set for a task whose definition declares `sleep:` and unset otherwise (see TaskSleep). |
 | `interruptions` | [`TaskInterruptions`](#taskinterruptions) | interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88's task-level limits; unset until they land. |
 | `pending_reason` | `string` | pending_reason says why a task, or a fan-out item, of a live run is not running yet. GetRun derives it on read and nothing stores it. It is one of: the instant the task waits for to run again after an interruption; that no Orker of its pool (on a versioned fleet, of its run's release) takes work, for a task the run dispatched that no Orker has started; or that its pin waits for a pin host. It is empty when none applies, and when the reason cannot be known: the Orker inventory or the run's release could not be read, or a live Orker did not answer. |
 | `result_epoch` | `int64` | result_epoch is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_disposition` | [`ResumeDisposition`](#resumedisposition) | resume_disposition is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -5098,6 +5137,31 @@ CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
 | `CACHE_SCOPE_ORKFLOW` | 1 | Runs of the same Orkflow, in the same namespace. |
 | `CACHE_SCOPE_NAMESPACE` | 2 | Runs of any Orkflow of the same namespace whose task of the same id computes the same key. The Orkflow's name is then not part of the key. |
 
+### ConcurrencyQueueCause
+
+ConcurrencyQueueCause is why a run waits in line.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_QUEUE_CAUSE_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_QUEUE_CAUSE_ARRIVAL` | 1 | ARRIVAL: the run arrived to a key whose slots were all held. |
+| `CONCURRENCY_QUEUE_CAUSE_RESUME` | 2 | RESUME: the resumed run waits for its slot again. |
+| `CONCURRENCY_QUEUE_CAUSE_UNPAUSE` | 3 | UNPAUSE: the run gave its slot back while paused and waits for it again. |
+| `CONCURRENCY_QUEUE_CAUSE_FAILING` | 4 | FAILING: the failing run gave its slot back while paused and waits for it again so its failure handlers run inside the limit. |
+
+### ConcurrencyStrategy
+
+ConcurrencyStrategy is what a run does when every slot of its key is held.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_STRATEGY_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_STRATEGY_QUEUE` | 1 | QUEUE: wait in line, in order of arrival. The default. |
+| `CONCURRENCY_STRATEGY_REFUSE` | 2 | REFUSE: the run fails at once. |
+| `CONCURRENCY_STRATEGY_SKIP` | 3 | SKIP: the run is not started. |
+| `CONCURRENCY_STRATEGY_CANCEL_OLDEST` | 4 | CANCEL_OLDEST: the oldest holder is canceled to make room. |
+| `CONCURRENCY_STRATEGY_REPLACE` | 5 | REPLACE: the runs waiting in line are replaced by this one. |
+
 ### DeliveryClass
 
 DeliveryClass is what a source's image promises about a message that
@@ -5108,6 +5172,16 @@ starts no run.
 | `DELIVERY_CLASS_UNSPECIFIED` | 0 |  |
 | `DELIVERY_CLASS_AT_LEAST_ONCE` | 1 | AT_LEAST_ONCE: a message that is not accepted is delivered again by its broker. |
 | `DELIVERY_CLASS_AT_MOST_ONCE` | 2 | AT_MOST_ONCE: a message that is not accepted is lost. |
+
+### EachItemFailure
+
+EachItemFailure is a fan-out's on_item_failure.
+
+| Value | Number | Description |
+|---|---|---|
+| `EACH_ITEM_FAILURE_UNSPECIFIED` | 0 |  |
+| `EACH_ITEM_FAILURE_FAIL_FAST` | 1 |  |
+| `EACH_ITEM_FAILURE_CONTINUE` | 2 |  |
 
 ### EachLineFormat
 
@@ -5169,6 +5243,8 @@ EventType classifies a run event on the realtime stream.
 | `EVENT_TYPE_TASK_RESOLVED` | 12 | TASK_RESOLVED: an awaited task was resolved from outside the run. Status is the outcome it decided — SUCCEEDED for a completion, FAILED for a rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same status, so a reader that only knows the older task events still sees the task end. |
 | `EVENT_TYPE_STREAM_GAP` | 13 | STREAM_GAP: numbers of the run's event sequence hold no event, because the run used them without publishing one (an event whose record object storage refused). Its sequence is the last of those numbers and its message names them all; no run or task changed state. Only a live read of the stream serves it, and the read goes on to the run's terminal event. It is part of the read, not of the run's events: the run's archive records the same numbers as a gap in its stream instead, and a read over that gap ends DataLoss. |
 | `EVENT_TYPE_TASK_SLEEPING` | 14 | TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING; the message names the wake-up time. TASK_SUCCEEDED follows when it wakes; a run that ends first records the task CANCELED. |
+| `EVENT_TYPE_RUN_QUEUED` | 15 | RUN_QUEUED: the run waits in line for a slot of its concurrency limit's key. Status PENDING, or RUNNING for a run that waits again; the message names the key and its place in line. Not in a webhook's default events. |
+| `EVENT_TYPE_TASK_QUEUED` | 16 | TASK_QUEUED: a task waits in line for a slot of its concurrency limit's key. Not in a webhook's default events. |
 | `EVENT_TYPE_RUN_PAUSED` | 19 | RUN_PAUSED: the run became paused, or is still paused with its causes changed (pause_transition says which). Status PAUSED. |
 | `EVENT_TYPE_RUN_UNPAUSED` | 20 | RUN_UNPAUSED: no pause cause remains, or the run was not paused (pause_transition NOT_PAUSED). Status RUNNING. |
 
@@ -5558,6 +5634,7 @@ ReleaseBlockerKind names why a release may not take new runs right now.
 | `RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED` | 3 | PINS_NOT_HOSTED: `pool` has a pin host of another release and no uncordoned Orker of this release in it hosts pins. |
 | `RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS` | 4 | UNVERSIONED_RUNS: no release is current yet and runs started before any was are still executing; making this release take new runs would move them onto it mid-run. |
 | `RELEASE_BLOCKER_KIND_UNVERIFIED` | 5 | UNVERIFIED: part of the evidence could not be read, so the release cannot be shown to pass. Never treated as passing. |
+| `RELEASE_BLOCKER_KIND_CAPABILITY_MISSING` | 6 | CAPABILITY_MISSING: an engine process of the release lacks a capability that runs still open need, such as concurrency limits while a run with a limit is open, so sending new runs to it could leave those limits held by no one. |
 
 ### ReleaseDrainState
 
@@ -5595,12 +5672,17 @@ results: every namespace's, or only named namespaces'.
 
 ### ResumeDisposition
 
-ResumeDisposition is E85's; it holds only its zero value until E85 lands
-(v0.4.0 proto batch).
+ResumeDisposition is how a resume treats one task or item (E85 §3.4).
 
 | Value | Number | Description |
 |---|---|---|
 | `RESUME_DISPOSITION_UNSPECIFIED` | 0 |  |
+| `RESUME_DISPOSITION_RERUN` | 1 | RERUN runs it again, under the resume's scope. |
+| `RESUME_DISPOSITION_ADOPT` | 2 | ADOPT keeps its result, read back from its commit. |
+| `RESUME_DISPOSITION_SETTLE` | 3 | SETTLE keeps an awaited or composed task's recorded result. |
+| `RESUME_DISPOSITION_KEEP_SKIPPED` | 4 | KEEP_SKIPPED keeps it skipped. |
+| `RESUME_DISPOSITION_WAIT` | 5 | WAIT waits again, from the resume, with a fresh deadline. |
+| `RESUME_DISPOSITION_SLEEP_UNTIL` | 6 | SLEEP_UNTIL sleeps until its recorded wake-up time. |
 
 ### RetryState
 
@@ -5622,6 +5704,15 @@ of a task that already reached a terminal outcome; it maps to UNSPECIFIED.
 | `RETRY_STATE_RETRY_POLICY_NOT_SET` | 4 |  |
 | `RETRY_STATE_CANCEL_REQUESTED` | 5 |  |
 | `RETRY_STATE_INTERNAL_SERVER_ERROR` | 6 |  |
+
+### RunContextStatus
+
+RunContextStatus is whether a run carries a run context.
+
+| Value | Number | Description |
+|---|---|---|
+| `RUN_CONTEXT_STATUS_UNSPECIFIED` | 0 |  |
+| `RUN_CONTEXT_STATUS_AVAILABLE` | 1 | AVAILABLE: every task of the run is given the run's context. |
 
 ### RunDispatchHold
 

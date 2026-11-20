@@ -69,6 +69,28 @@ func (f *fixture) invoke(t *testing.T, id string, token *string, body string, he
 	return resp.StatusCode, payload
 }
 
+// invokeWithHeaders is invoke, with the response's headers.
+func (f *fixture) invokeWithHeaders(t *testing.T, id string, token *string, body string) (int, []byte, http.Header) {
+	t.Helper()
+	path := strings.Replace(api.TriggerInvokePath, "{id}", id, 1)
+	var reader io.Reader
+	if body != "" {
+		reader = bytes.NewReader([]byte(body))
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.baseURL+path, reader)
+	must.OKf(t, err, "build request")
+	req.Header.Set("Content-Type", "application/json")
+	if token != nil {
+		req.Header.Set("Authorization", *token)
+	}
+	resp, err := f.client.Do(req)
+	must.OKf(t, err, "POST %s", path)
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(resp.Body)
+	must.OKf(t, err, "read response")
+	return resp.StatusCode, payload, resp.Header
+}
+
 func bearer(token string) *string {
 	header := "Bearer " + token
 	return &header

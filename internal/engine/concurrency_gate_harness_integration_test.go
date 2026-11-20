@@ -511,8 +511,8 @@ func recordConcurrencyFixture(t *testing.T, name string, h *historypb.History) {
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") != "" {
 		path := filepath.Join("testdata", "history", name)
 		// A committed fixture is never re-recorded by a run that records a
-		// new one: removing it first is how one is re-recorded, on purpose
-		// (testdata/history/README.md).
+		// later phase's: removing it first is how one is re-recorded, on
+		// purpose (testdata/history/README.md).
 		if _, err := os.Stat(path); err == nil {
 			written = "the proof directory only (" + path + " is committed and kept)"
 		} else {
@@ -605,20 +605,5 @@ func (s *gateStack) waitIdle(t *testing.T, gateID string) {
 			return false, err
 		}
 		return d.RawResponse.GetPendingWorkflowTask() == nil, nil
-	})
-}
-
-// waitGrantsDelivered waits until the gate has recorded n grant signals
-// delivered.
-func (s *gateStack) waitGrantsDelivered(t *testing.T, gate string, n int) {
-	t.Helper()
-	s.poll(t, fmt.Sprintf("%s's %d grants delivered", gate, n), func() (bool, error) {
-		got := 0
-		for _, e := range s.history(t, gate, "").GetEvents() {
-			if e.GetEventType() == enums.EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED {
-				got++
-			}
-		}
-		return got >= n, nil
 	})
 }

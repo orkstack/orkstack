@@ -13,6 +13,7 @@ import (
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -22,6 +23,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/typeid"
@@ -41,17 +43,30 @@ const (
 	ChildInputRenderFailedCode = "CHILD_INPUT_RENDER_FAILED" // ContractViolation
 	ChildInputTooLargeCode     = "CHILD_INPUT_TOO_LARGE"     // ContractViolation
 	ChildInputUnavailableCode  = "CHILD_INPUT_UNAVAILABLE"   // InfrastructureError
-	ChildStartFailedCode       = "CHILD_START_FAILED"        // InfrastructureError
-	ChildRunFailedCode         = "CHILD_RUN_FAILED"          // the child's own category
-	ChildRunCanceledCode       = "CHILD_RUN_CANCELED"        // Cancelled; status CANCELED
-	ChildRunTerminatedCode     = "CHILD_RUN_TERMINATED"      // InfrastructureError
-	ChildValuesUnstoredCode    = "CHILD_VALUES_UNSTORED"     // InfrastructureError
-	InvalidCompositionCode     = "INVALID_COMPOSITION"       // ContractViolation; hand-built only
+	// ChildInputArtifactMissingCode: an artifacts: binding names an artifact
+	// its producer did not record, or whose object has left object storage;
+	// no child is started (ContractViolation).
+	ChildInputArtifactMissingCode = "CHILD_INPUT_ARTIFACT_MISSING"
+	// ArtifactInputUnsupportedCode refuses a start of an Orkflow with an
+	// artifact input by anything but a composing task (FAILED_PRECONDITION).
+	ArtifactInputUnsupportedCode = "ARTIFACT_INPUT_UNSUPPORTED"
+	ChildStartFailedCode         = "CHILD_START_FAILED"    // InfrastructureError
+	ChildRunFailedCode           = "CHILD_RUN_FAILED"      // the child's own category
+	ChildRunCanceledCode         = "CHILD_RUN_CANCELED"    // Cancelled; status CANCELED
+	ChildRunTerminatedCode       = "CHILD_RUN_TERMINATED"  // InfrastructureError
+	ChildValuesUnstoredCode      = "CHILD_VALUES_UNSTORED" // InfrastructureError
+	InvalidCompositionCode       = "INVALID_COMPOSITION"   // ContractViolation; hand-built only
 
 	// Reason codes on Run.error when declared outputs cannot be produced.
 	OutputsRenderFailedCode = "OUTPUTS_RENDER_FAILED" // ContractViolation
 	OutputsTooLargeCode     = "OUTPUTS_TOO_LARGE"     // ContractViolation
-	OutputsUnavailableCode  = "OUTPUTS_UNAVAILABLE"   // InfrastructureError
+	// OutputsArtifactMissingCode: an artifact output's producer did not
+	// record the artifact it names (ContractViolation).
+	OutputsArtifactMissingCode = "OUTPUTS_ARTIFACT_MISSING"
+	// ChildOutputsUnclaimedCode: the parent could not write its claim
+	// markers on the objects its child returned (InfrastructureError).
+	ChildOutputsUnclaimedCode = "CHILD_OUTPUTS_UNCLAIMED"
+	OutputsUnavailableCode    = "OUTPUTS_UNAVAILABLE" // InfrastructureError
 
 	// Local activities on the run worker. Internal: no user-facing surface
 	// names them.
@@ -394,12 +409,17 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	childPlan.SnapshotOverlay = s.plan.SnapshotOverlay
 	childPlan.PinCreationTimeoutSeconds = s.plan.PinCreationTimeoutSeconds
 	childPlan.RetryMaxIntervalSeconds = s.plan.RetryMaxIntervalSeconds
+	childPlan.ArtifactClaims = s.plan.ArtifactClaims
 	// A child's tasks are interrupted by the same Orkers as its parent's,
 	// so it spends the parent's budgets, copied as the other bounds are.
 	childPlan.Interruptions = s.plan.Interruptions
 	// A child runs in its parent's namespace, so its fairness is the
 	// parent's, copied here rather than carried by every nested plan.
 	childPlan.Fairness = s.plan.Fairness
+	// The tree has one run-context object; its index stays on the nested
+	// plan, set at submit.
+	childPlan.RunContextSHA256 = s.plan.RunContextSHA256
+	childPlan.RunContextMaxBytes = s.plan.RunContextMaxBytes
 	return childPlan
 }
 
@@ -477,7 +497,12 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 
 	// 4. The child's plan: the planned one, with exactly its origin set and
 	// the run-tree limits copied (childStartPlan).
+	received, err := s.passChildArtifacts(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	childPlan := s.childStartPlan(c.plan)
+	childPlan.InputArtifacts = received
 
 	// 5. Start it, and wait for the start to be confirmed.
 	options := childWorkflowOptions(workflow.GetInfo(ctx).TaskQueueName, c.plan, c.wf, childPlan)
@@ -486,34 +511,23 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	// part of what a replay compares, so a recorded child start replays as
 	// it was (docs/STORAGE.md, "Reclaiming space").
 	options.Memo = RunStartMemoAt(c.wf, childPlan, workflow.Now(ctx))
+	// A child of a sealed tree carries the tree's key field as it is, and is
+	// started sealed for its own id (payload-encryption.md §4.1 rule 1).
+	if field, ok := workflow.GetInfo(ctx).Memo.GetFields()[payloadcrypt.MemoField]; ok {
+		options.Memo[payloadcrypt.MemoField] = converter.NewRawValue(field)
+	}
+	childScope := s.scope.For(payloadcrypt.RunContext(c.plan.RunID))
 	if limit := s.historyLimit(); limit != nil {
 		s.noteCommand(ctx, 1, limit.Reserve.ChildStartBytes)
 		s.chargeTaskDispatch()
 	}
 	future := workflow.ExecuteChildWorkflow(workflow.WithChildOptions(runCtx, options),
-		RunWorkflowType, c.plan.RunID, c.wf, childInput, childPlan)
+		RunWorkflowType, payloadcrypt.Seal(childScope, c.plan.RunID), payloadcrypt.Seal(childScope, c.wf),
+		payloadcrypt.Seal(childScope, childInput), payloadcrypt.Seal(childScope, childPlan))
 	if err := future.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
 		// 6. Refused. child.run_id stays empty: a refused id names no run.
 		if categoryOf(err).canceled {
-			message := fmt.Sprintf("run ended before child run %s started", c.plan.RunID)
-			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
-			taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
-			taskRun.Error = &orkstackv1.Error{
-				Code:     ChildRunCanceledCode,
-				Message:  message,
-				Details:  fmt.Sprintf("task %q", id),
-				Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED,
-			}
-			if s.interrupting() {
-				s.recordInterrupted(ctx, taskRun, fmt.Sprintf("task %q", id))
-				message = taskRun.GetError().GetMessage()
-			}
-			if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
-				taskRun.GetStatus(), message); emitErr != nil {
-				workflow.GetLogger(ctx).Error("emit task failure failed",
-					"run_id", s.runID, "task_id", id, "error", emitErr)
-			}
-			return nil, &childCanceledError{message: message, cause: err}
+			return nil, s.canceledBeforeChildStart(ctx, id, err)
 		}
 		return nil, s.failComposed(ctx, id, ChildStartFailedCode,
 			orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
@@ -576,9 +590,19 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 	s.cascadeChildEnded(id)
 	c := s.children[id]
 	taskRun := s.taskRuns[id]
+	// The child's result is sealed for the child's own id: read raw and
+	// opened with the tree's key for it (payload-encryption.md §4.1 rule 2).
 	result := &orkstackv1.Run{}
-	if err := future.Get(ctx, result); err != nil {
+	childScope := s.scope.For(payloadcrypt.RunContext(c.plan.RunID))
+	var sealedResult converter.RawValue
+	if err := openFailureWith(childScope, future.Get(ctx, &sealedResult)); err != nil {
 		return s.recordChildFailure(ctx, id, err)
+	}
+	if _, err := payloadcrypt.OpenRaw(childScope, DataConverter(), sealedResult, &result); err != nil {
+		return s.recordChildFailure(ctx, id, payloadUnreadable("the child run's result could not be read"))
+	}
+	if result == nil {
+		result = &orkstackv1.Run{}
 	}
 
 	// The child's declared outputs, or {}: its end tasks' values never
@@ -621,12 +645,18 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 			fmt.Sprintf("child run %s succeeded, but its outputs could not be recorded as task %q's values: %v",
 				c.plan.RunID, id, err), "")
 	}
+	// The child's artifact outputs become this task's artifacts, claimed
+	// for this run first (composed_artifacts.go).
+	returned, err := s.receiveChildArtifacts(ctx, id, result)
+	if err != nil {
+		return err
+	}
 	taskRun.Status = orkstackv1.Status_STATUS_SUCCEEDED
 	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 	taskRun.Output = output
 	taskRun.ValuesRef = ref
 	inlined := len(raw) <= composeInlineValuesLimit
-	stored := &orkstackv1.ExecuteTaskResult{TaskId: id, ValuesRef: ref, ValuesInlined: inlined}
+	stored := &orkstackv1.ExecuteTaskResult{TaskId: id, ValuesRef: ref, ValuesInlined: inlined, Artifacts: returned}
 	if inlined {
 		stored.ValuesJson = raw
 	}
@@ -640,6 +670,11 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 // and category (docs/DSL.md "Composition").
 func childFailure(err error) (status orkstackv1.Status, code string, category orkstackv1.FailureCategory) {
 	failure := categoryOf(err)
+	if failure.superseded {
+		// A newer run replaced the child on its key: the composed task
+		// fails, because nobody canceled the parent.
+		return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
+	}
 	switch {
 	case failure.canceled:
 		return orkstackv1.Status_STATUS_CANCELED, ChildRunCanceledCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
@@ -689,6 +724,10 @@ func childInnerMessage(err error) string {
 	failure := categoryOf(err)
 	if message := failure.appMessage(); message != "" {
 		return message
+	}
+	if failure.superseded && failure.supersededSentence != "" {
+		// A child a newer run replaced: its own sentence, not "canceled".
+		return failure.supersededSentence
 	}
 	if failure.viaChild {
 		return failure.childInner
@@ -857,6 +896,7 @@ func compactChildResult(run *orkstackv1.Run) *orkstackv1.Run {
 		Status:                  run.GetStatus(),
 		Output:                  run.GetOutput(),
 		Origin:                  run.GetOrigin(),
+		OutputArtifacts:         run.GetOutputArtifacts(),
 	}
 }
 
@@ -1052,4 +1092,31 @@ func (a *ComposeActivities) StoreComposedValues(ctx context.Context, req Compose
 		SizeBytes:   ref.SizeBytes,
 		Sha256:      ref.SHA256,
 	}, nil
+}
+
+// canceledBeforeChildStart records a composed task the run ended before its
+// child started: CANCELED with ChildRunCanceledCode, or the interruption
+// that ended it. cause is the cancellation.
+func (s *runState) canceledBeforeChildStart(ctx workflow.Context, id string, cause error) error {
+	c := s.children[id]
+	taskRun := s.taskRuns[id]
+	message := fmt.Sprintf("run ended before child run %s started", c.plan.RunID)
+	taskRun.Status = orkstackv1.Status_STATUS_CANCELED
+	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
+	taskRun.Error = &orkstackv1.Error{
+		Code:     ChildRunCanceledCode,
+		Message:  message,
+		Details:  fmt.Sprintf("task %q", id),
+		Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED,
+	}
+	if s.interrupting() {
+		s.recordInterrupted(ctx, taskRun, fmt.Sprintf("task %q", id))
+		message = taskRun.GetError().GetMessage()
+	}
+	if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
+		taskRun.GetStatus(), message); emitErr != nil {
+		workflow.GetLogger(ctx).Error("emit task failure failed",
+			"run_id", s.runID, "task_id", id, "error", emitErr)
+	}
+	return &childCanceledError{message: message, cause: cause}
 }

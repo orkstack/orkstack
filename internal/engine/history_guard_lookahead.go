@@ -93,7 +93,7 @@ func (s *runState) nextItemBytes() int64 {
 	if limit == nil {
 		return 0
 	}
-	return s.itemInputLimit + limit.Reserve.CommandBytes
+	return s.itemInputLimit + s.runContextBound() + limit.Reserve.CommandBytes
 }
 
 // pauseApplyCrossing measures, before one pause request applies (pause.go,

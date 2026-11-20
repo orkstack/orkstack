@@ -287,10 +287,10 @@ message GetStatsResponse {
   // series bucket counts a paused run it created as running.
   int64 paused = 18;
 
-  // queued is set from E88; unset until it lands (v0.4.0 proto batch).
+  // queued is how many of the running runs wait for a concurrency slot.
   int64 queued = 19;
 
-  // executing is set from E103; unset until it lands (v0.4.0 proto batch).
+  // executing is how many of the running runs do not: running minus queued.
   int64 executing = 20;
 }
 

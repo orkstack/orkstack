@@ -132,7 +132,7 @@ func (a *ScheduleActivities) prepareScheduledRun(
 	// finds it. A failed write is retried by the local activity's policy; a
 	// retry mints a new id, leaving at most one object no run reads
 	// (docs/DEPLOY.md §5).
-	if err := a.svc.writeDefinitionObject(ctx, run.GetId(), sub); err != nil {
+	if err := a.svc.writeRunObjects(ctx, run.GetId(), sub); err != nil {
 		return nil, "", err
 	}
 	return prep, "", nil

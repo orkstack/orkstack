@@ -29,10 +29,12 @@ X-Ork-Signature: sha256=…
 
 | Event | Sent when |
 |---|---|
+| `RUN_QUEUED` | A run waits for a concurrency slot before it starts, or before it continues after a resume or an unpause. |
 | `RUN_STARTED` | A run starts running. |
 | `RUN_SUCCEEDED` | A run succeeds. |
 | `RUN_FAILED` | A run fails. |
 | `RUN_CANCELED` | A run is canceled. |
+| `TASK_QUEUED` | A task waits for a task-level concurrency slot. |
 | `TASK_SCHEDULED` | A task is handed to the scheduler. |
 | `TASK_STARTED` | A task is dispatched to an Orker. |
 | `TASK_AWAITING` | An awaited task starts waiting for a resolution. |
@@ -43,7 +45,7 @@ X-Ork-Signature: sha256=…
 | `RUN_PAUSED` | A run is paused, by a person or by its parent run. |
 | `RUN_UNPAUSED` | A paused run continues. |
 
-The four run events are the default. Task events and the two pause events are opt-in: name each one with `--event`. A task event adds `taskId`, and `attempt` when the engine has numbered the attempt. Task events are hints with a short retry budget. A receiver that must not miss one reads the run again through the API (`GetRun`).
+The four run events are the default. `RUN_QUEUED`, the task events and the two pause events are opt-in: name each one with `--event`. A task event adds `taskId`, and `attempt` when the engine has numbered the attempt. Task events are hints with a short retry budget. A receiver that must not miss one reads the run again through the API (`GetRun`).
 
 ## Limit the scope
 

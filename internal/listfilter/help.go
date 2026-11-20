@@ -58,6 +58,12 @@ var operatorHelp = map[orkstackv1.FilterOperator]string{
 }
 
 func valuesHelp(f *Field) string {
+	if f.Indexed {
+		if f.Kind == KindBool {
+			return "true; a row that has ended never matches"
+		}
+		return "text; a row that has ended never matches"
+	}
 	switch f.Kind {
 	case KindEnum:
 		return strings.Join(f.AllowedValues, " ")

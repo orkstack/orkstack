@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,10 +170,15 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 		running    int64
 		runningErr error
 	)
-	wg.Add(2)
+	var caps releaseCapabilities
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		inventory, invErr = s.orkerInventory(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		caps = s.readReleaseCapabilities(ctx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -271,7 +277,7 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 			release.RunsUnavailableReason = releaseMsgRunsUnknown
 		}
 		if release.Role != orkstackv1.ReleaseRole_RELEASE_ROLE_CURRENT {
-			release.Blockers = judgeRelease(observed.BuildID, obs, inventory, invErr, runs, running, runningErr)
+			release.Blockers = judgeRelease(observed.BuildID, obs, inventory, invErr, runs, running, runningErr, caps)
 		}
 		release.Drained = releaseDrained(release, incomplete)
 		release.UnservedPools = unservedPools(release, observed, incomplete)
@@ -406,7 +412,8 @@ func sortReleases(releases []*orkstackv1.Release) {
 // same inputs, same blockers, same order. It is the ONLY place the check
 // lives; PromoteRelease and RampRelease refuse on exactly its output.
 func judgeRelease(target string, obs engine.ReleaseObservation, inventory []*orkstackv1.Orker,
-	invErr error, runs map[string]releaseRunCount, running int64, runningErr error) []*orkstackv1.ReleaseBlocker {
+	invErr error, runs map[string]releaseRunCount, running int64, runningErr error,
+	caps releaseCapabilities) []*orkstackv1.ReleaseBlocker {
 	if obs.Routing.Current != "" && target == obs.Routing.Current {
 		return nil
 	}
@@ -596,7 +603,89 @@ func judgeRelease(target string, obs engine.ReleaseObservation, inventory []*ork
 					"stops new ones meanwhile (docs/DEPLOY.md §3.5).", unversioned, target))
 		}
 	}
+
+	// 5. Capabilities runs still open need (E88 §7.1, "Mixed fleet"): while a
+	// concurrency limit has runs holding or waiting, every engine of the
+	// release must hold limits, or a run sent to it starts without its slot.
+	if caps.asked {
+		switch {
+		case caps.gatesErr != nil:
+			add(orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_UNVERIFIED, "", fmt.Sprintf(
+				"whether runs with concurrency limits are open could not be read, so whether release %s can hold "+
+					"them cannot be established; ask again.", target))
+		case caps.openGates == 0:
+		case caps.enginesErr != nil:
+			add(orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_UNVERIFIED, "", fmt.Sprintf(
+				"the engine processes could not be listed, so whether release %s can hold the concurrency limits "+
+					"runs hold now cannot be established; ask again.", target))
+		default:
+			// An engine of the target says its build; one that names none is
+			// unversioned and runs no run the target is routed (an engine
+			// with no engine of the target is NO_ENGINE above).
+			lacking := 0
+			for _, e := range caps.engines {
+				if e.Description.BuildID == target && !slices.Contains(engine.IdentityCapabilities(e.Identity), engine.CapabilityConcurrency) {
+					lacking++
+				}
+			}
+			if lacking > 0 {
+				add(orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_CAPABILITY_MISSING, "", fmt.Sprintf(
+					"%s of release %s cannot hold concurrency limits, and %d concurrency limits are open, so a "+
+						"run sent to it could start without its limit. Run the release's engines at a build with "+
+						"concurrency limits, or let the limited runs finish first.",
+					engineProcessCount(lacking), target, caps.openGates))
+			}
+		}
+	}
 	return blockers
+}
+
+// releaseCapabilities is what judgeRelease reads of the capabilities open
+// runs need: how many concurrency limits are held or waited on, and the
+// engine processes with what each advertises. asked is false where the
+// engine reads no limit (no concurrency reader wired), and the check is
+// then not made.
+type releaseCapabilities struct {
+	asked      bool
+	openGates  int64
+	gatesErr   error
+	engines    []engine.EnginePresence
+	enginesErr error
+}
+
+// engineProcessCount is "1 engine process" or "N engine processes".
+func engineProcessCount(n int) string {
+	if n == 1 {
+		return "1 engine process"
+	}
+	return fmt.Sprintf("%d engine processes", n)
+}
+
+// readReleaseCapabilities reads releaseCapabilities: the open limits, and
+// only when some are open the engines. Fails closed: a read that fails is
+// an UNVERIFIED blocker, never a pass.
+func (s *Service) readReleaseCapabilities(ctx context.Context) releaseCapabilities {
+	if s.concurrencyReader == nil {
+		return releaseCapabilities{}
+	}
+	caps := releaseCapabilities{asked: true}
+	caps.openGates, caps.gatesErr = s.concurrencyReader.OpenGates(ctx)
+	if caps.gatesErr != nil {
+		s.logger.Warn("list releases: the open concurrency limits could not be counted", "error", caps.gatesErr)
+		return caps
+	}
+	if caps.openGates == 0 {
+		return caps
+	}
+	if s.enginePresence == nil {
+		caps.enginesErr = errors.New("this engine is not wired to read the engine processes")
+		return caps
+	}
+	caps.engines, caps.enginesErr = s.enginePresence.ObserveEngines(ctx)
+	if caps.enginesErr != nil {
+		s.logger.Warn("list releases: the engine processes could not be listed", "error", caps.enginesErr)
+	}
+	return caps
 }
 
 // unmeasured marks a pool whose use could not be read: already reported as

@@ -53,6 +53,7 @@ var rawMachineOverride = map[string]string{
 	"ORK_ORKER_LOG_FLUSH_BYTES":          strconv.Itoa(orker.DefaultLogFlushBytes),
 	"ORK_ORKER_LOG_MAX_BYTES":            strconv.Itoa(orker.DefaultLogMaxBytes),
 	"ORK_ORKER_TMPFS_BYTES":              strconv.FormatInt(orker.DefaultTmpfsBytes, 10),
+	"ORK_CONCURRENCY_PER_SLOT_BYTES":     strconv.FormatInt(engine.DefaultConcurrencySettings().PerSlotBytes, 10),
 }
 
 // alwaysCommentedEnv marks a Schema entry that must be written commented
