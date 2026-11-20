@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { Run } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import '../app.css';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
@@ -20,6 +20,8 @@
 	import { shortRunId } from '#lib/runDetail.ts';
 	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { statsClient } from '#lib/clients/stats.ts';
+	import { endedRuns, noLongerListed, sidebarCounts } from '#lib/sidebarCounts.ts';
+	import { timestampMs } from '#lib/stats.ts';
 	import { systemClient } from '#lib/clients/system.ts';
 	import { OVERLAY_SELECTOR, currentPlatform, isApplePlatform, paletteKey, shortcutAria, shortcutHint } from '#lib/palette/keys.ts';
 	import { appearance } from '#lib/theme.svelte.ts';
@@ -214,15 +216,19 @@
 	// while the tab is visible, or every 5 s (the stats cache's own TTL) while
 	// it counts a run, so a finished run does not linger in it. The build is
 	// read once.
-	let running = $state<number | null>(null);
-	// paused is how many of those are paused: their rows read PAUSED where the
-	// cluster indexes paused runs, and RUNNING (so none here) where it does not.
-	let paused = $state(0);
+	// The answer's runs, less those a page saw end since (sidebarCounts.ts):
+	// the answer may be up to twice the poll old, and an ended run never runs
+	// again. paused is how many of those are paused: their rows read PAUSED
+	// where the cluster indexes paused runs, and RUNNING (so none here) where it
+	// does not.
+	let listed = $state.raw<Run[] | null>(null);
+	const counted = $derived(listed ? sidebarCounts(listed, endedRuns) : null);
+	const running = $derived(counted ? counted.running : null);
+	const paused = $derived(counted ? counted.paused : 0);
 	let version = $state('');
 	$effect(() => {
 		void data.namespace;
-		running = null;
-		paused = 0;
+		listed = null;
 	});
 	const counting = $derived((running ?? 0) > 0);
 	$effect(() => {
@@ -235,11 +241,14 @@
 					.getStats({ namespace: ns, lookback: { seconds: 3600n, nanos: 0 } })
 					.then((res) => {
 						if (!live) return;
-						running = res.running.length;
-						paused = res.running.filter((r) => r.status === Status.PAUSED).length;
+						// An answer that does not say when it was measured forgets
+						// nothing: a cached one could predate an end.
+						const at = timestampMs(res.computedAt);
+						if (at !== null) for (const id of noLongerListed(res.running, endedRuns, at)) endedRuns.delete(id);
+						listed = res.running;
 					})
 					.catch(() => {
-						if (live) running = null;
+						if (live) listed = null;
 					});
 			},
 			every,

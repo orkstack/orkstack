@@ -57,6 +57,7 @@
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import RunPauseControls from '#lib/components/RunPauseControls.svelte';
 	import { cancelControl } from '#lib/cancel.ts';
+	import { runEnded, runGoing } from '#lib/sidebarCounts.ts';
 	import { tipWhenTruncated } from '#lib/tipWhenTruncated.ts';
 	import RunPausedCard from '#lib/components/RunPausedCard.svelte';
 	import { can, runTarget } from '#lib/permissions.ts';
@@ -2004,6 +2005,15 @@
 	const progress = $derived(runProgress(tasks));
 	// ---- Pausing (E103): who may, what still runs, the children held with it ----
 	const pauseAllowed = $derived(can(data.grants, 'run.pause', runTarget(data.namespace, run)));
+	// A run this page sees end leaves the sidebar's count at once, not at the
+	// stats answer after next (sidebarCounts.ts); one it sees going again (a
+	// resumed run keeps its id) is counted again. Only the run's id and status
+	// are this effect's: the map it writes is the layout's to read.
+	$effect(() => {
+		const id = run?.id;
+		const ended = isTerminal(runStatus);
+		if (id) untrack(() => (ended ? runEnded(id) : runGoing(id)));
+	});
 	// ---- Canceling: offered, as pausing is, only to a caller the server would let cancel ----
 	const cancelOffer = $derived(
 		cancelControl(runStatus, {
