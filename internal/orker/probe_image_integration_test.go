@@ -74,6 +74,19 @@ func TestIntegration_ProbeImageDefaultVerifiesTheSignature(t *testing.T) {
 	}
 	must.OKf(t, client.Unsign(ctx, registry.Host, repo, digest), "remove the other key's signature")
 	must.OKf(t, client.Sign(ctx, key, registry.Host, repo, digest), "sign with the release key")
+	// The private registry is plain HTTP on a port chosen at run time. Docker
+	// trusts a loopback registry by itself; Podman trusts one only by name in
+	// registries.conf, which cannot name a port not yet chosen, so on the
+	// podman CLI the signed image is fetched here, telling it that this one
+	// registry needs no TLS, and the runtime's pull finds it held. What this
+	// test proves is the signature and build checks around the pull, which a
+	// release's own registry serves over TLS.
+	if onPodman(t) && strings.HasSuffix(containerCLI(t), "podman") {
+		pinned := registry.Host + "/" + repo + "@" + digest
+		if out, err := exec.CommandContext(ctx, containerCLI(t), "pull", "--quiet", "--tls-verify=false", pinned).CombinedOutput(); err != nil {
+			t.Fatalf("fetch %s from the private registry: %v: %s", pinned, err, out)
+		}
+	}
 	image, reason, detail := check(build)
 	if reason != 0 || image != registry.Host+"/"+repo+"@"+digest {
 		t.Fatalf("a signed image of this build = %q, %v (%s); want its digest", image, reason, detail)
