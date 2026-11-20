@@ -34,6 +34,12 @@ var deviceClasses = []deviceClass{
 	{name: "usb-serial", drivers: []string{"ttyUSB", "ttyACM"}, node: regexp.MustCompile(`^tty(USB|ACM)[0-9]+$`)},
 	{name: "drm-render", drivers: []string{"drm"}, node: regexp.MustCompile(`^renderD[0-9]+$`), gpu: true, minMinor: 128},
 	{name: "kfd", drivers: []string{"kfd"}, node: regexp.MustCompile(`^kfd$`), gpu: true},
+	// NVIDIA (experimental): the GPU nodes and the control node under the
+	// nvidia driver (nvidia-frontend before driver 550.40), and the UVM
+	// nodes under nvidia-uvm. nvidia-modeset, the same major's display node,
+	// is not passed: compute does not need it.
+	{name: "nvidia", drivers: []string{"nvidia", "nvidia-frontend"}, node: regexp.MustCompile(`^nvidia([0-9]+|ctl)$`), gpu: true},
+	{name: "nvidia-uvm", drivers: []string{"nvidia-uvm"}, node: regexp.MustCompile(`^nvidia-uvm(-tools)?$`), gpu: true},
 }
 
 // hostDevice is what the host says one device path is.

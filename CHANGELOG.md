@@ -23,11 +23,13 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - Drain-first Orker stops.
 - Secrets masked in task logs.
 - A whole-run `timeout:`.
+- GPU profiles through CDI.
 
 **Upgrading:** upgrade every engine before any Orker, and read the **BREAKING** entries first ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#3-rolling-a-release-forward)).
 
 ### Added
 
+- Added GPU profiles: a host-native Orker can give tasks exclusive GPU units through CDI with `devices:` and `resources.gpu`; tested on AMD and Intel GPUs. ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-gpu-orker))
 - `orkctl admin principal list` and Access → People list who signed in over a window (30 days by default), newest first, with their name and when they last signed in ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#in-the-web-ui)).
 - The audit trail filters on `decision` (`allowed`, `denied`, `would-deny`) and `principal_verified`, and Admin → Audit has one-click Denied, Would deny (observed) and Principal not verified filters ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#filtering-lists)).
 - `orkctl admin restore reconcile` removes, after a restore of Temporal, the runs cleanup had retired that the restore brought back; it needs the new `system.restore` permission ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#backup-and-disaster-recovery)).

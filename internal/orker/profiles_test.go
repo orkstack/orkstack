@@ -148,12 +148,16 @@ func TestCheckProfileKindsSupported_RefusesWhatThisBuildLacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This build implements devices and not gpu, so a gpu profile refuses
-	// the boot, naming it, rather than being silently ignored.
-	if !slices.Equal(SupportedProfileKinds(), []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}) {
-		t.Fatalf("SupportedProfileKinds = %v; this build implements devices", SupportedProfileKinds())
+	// This build implements both kinds and advertises both.
+	if !slices.Equal(SupportedProfileKinds(), []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES, orkstackv1.ProfileKind_PROFILE_KIND_GPU}) {
+		t.Fatalf("SupportedProfileKinds = %v; this build implements devices and gpu", SupportedProfileKinds())
 	}
-	err = got.CheckSupported(SupportedProfileKinds())
+	if err := got.CheckSupported(SupportedProfileKinds()); err != nil {
+		t.Fatalf("CheckSupported of this build's own kinds = %v", err)
+	}
+	// A build that lacked gpu would refuse a gpu profile, naming it, rather
+	// than ignore it silently.
+	err = got.CheckSupported([]orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES})
 	if err == nil || !strings.Contains(err.Error(), "amd") || !strings.Contains(err.Error(), "gpu") || strings.Contains(err.Error(), "sensor") {
 		t.Fatalf("CheckSupported = %v; want a refusal naming profile amd and kind gpu, and not sensor", err)
 	}

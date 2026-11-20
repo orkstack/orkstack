@@ -697,7 +697,7 @@ func checkOnePerKind(list []Profile) error {
 // advertises on DescribeOrker. A kind joins this list only in the change that
 // implements it end to end.
 func SupportedProfileKinds() []orkstackv1.ProfileKind {
-	return []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}
+	return []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES, orkstackv1.ProfileKind_PROFILE_KIND_GPU}
 }
 
 // CheckSupported refuses a profile whose kind this build does not implement:

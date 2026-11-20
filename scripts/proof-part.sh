@@ -330,6 +330,7 @@ part_main() { # <part>
 		git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-gpu-tests.txt" >"$DIR/gpu-base.txt" 2>/dev/null || : >"$DIR/gpu-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-gpu-specs.txt" >"$DIR/gpu-specs-base.txt" 2>/dev/null || : >"$DIR/gpu-specs-base.txt"
 		local mode=defer
 		[ "$TIER" = release ] && mode=include
 		[ "$TIER" = nightly ] && mode=only
@@ -354,10 +355,13 @@ part_main() { # <part>
 			if [ -s "$DIR/ui-list.json" ]; then
 				# The full tier's UI shards never hold a spec file both nightly
 				# spec lists carry; the nightly tier's hold the listed ones alone.
+				# No UI shard holds a spec file the GPU spec list names: a CI
+				# proof is never on the GPU host, so each is recorded host-deferred.
 				part_run ui-plan ui-plan.log "$PR" ui-plan -list "$DIR/ui-list.json" -costs scripts/proof-ui-costs.tsv \
 					-shards "$UI_SHARDS" -out "$DIR/ui-plan.json" -matrix-out "$DIR/ui-matrix.json" \
 					-nightly-mode "$mode" -nightly-specs scripts/proof-nightly-specs.txt \
-					-nightly-specs-base "$DIR/nightly-specs-base.txt" || true
+					-nightly-specs-base "$DIR/nightly-specs-base.txt" \
+					-gpu-specs scripts/proof-gpu-specs.txt -gpu-specs-base "$DIR/gpu-specs-base.txt" || true
 				UI_PLAN="$DIR/ui-plan.json"
 			fi
 		fi

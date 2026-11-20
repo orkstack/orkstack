@@ -574,8 +574,8 @@ directory the floor lists.
 `resources` uses `cpu` and `memory` request strings in the Kubernetes spelling
 (`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and create when they do
 not read as a limit (rule 6d). `gpu` is a count of units of the task's gpu
-profile (rule 6d); it needs an Orker that offers a gpu profile, and this
-release's Orkers offer none, so submit refuses such a task. A request is reserved for the task's lifetime and
+profile (rule 6d); it needs an Orker that offers a gpu profile, and submit
+refuses a task whose pool does not (`PROFILE_UNAVAILABLE`). A request is reserved for the task's lifetime and
 is also its limit. Orker policy may refuse a request above its cap but never
 silently raises or clamps it; a submit refuses a task whose request is above
 the cap of every Orker of its pool (`RESOURCES_UNSATISFIABLE`). `network` accepts
@@ -982,6 +982,14 @@ tasks:
   `retry:` with more than one attempt.
 - `devices:` is refused on awaited, sleeping and composed tasks, which run no
   container.
+- **GPU units.** A `gpu` profile is the one kind whose entries are counted:
+  the task names it in `devices:` and sets `resources.gpu` to the number of
+  units it needs. Each unit is exclusive to its task while the task runs, and
+  an Orker takes such a task only when it can bind the whole count
+  ([DEPLOY.md](./DEPLOY.md#running-a-gpu-orker), "Running a GPU Orker"). A task
+  that names the profile without `resources.gpu` fails
+  `GPU_COUNT_REQUIRED` on the Orker before any container, and is not
+  retried.
 
 **Contracts.** A profile can have several definitions, each a **contract**
 with a label, so an operator can roll a change across a pool (docs/DEPLOY.md,
@@ -2085,8 +2093,11 @@ How each node reads:
    `"4Gi"`, `"1000000"`; `Gi`, not `GB`), refused with the path otherwise
    (6d). `resources.gpu`, when present, is units of the task's gpu profile, 1 to 64:
    the task must name that profile in `devices:`, and a pinned task holds
-   none (6d). Gpu profiles are not offered by this release, so submit refuses
-   a task that names one (`PROFILE_UNAVAILABLE`). Whether a request fits is Orker policy, checked at dispatch.
+   none (6d). Submit admits such a task when every Orker of its pool offers
+   the profile (`PROFILE_UNAVAILABLE` otherwise) and the pool's largest GPU
+   cap holds the count (`RESOURCES_UNSATISFIABLE` otherwise). Whether a request
+   fits one Orker is Orker policy, checked at dispatch against that Orker's
+   `orker.resources.max_gpu` (`RESOURCE_REQUEST_REFUSED`).
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks, and
    `.each` under rule 25.

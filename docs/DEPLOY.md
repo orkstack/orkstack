@@ -643,7 +643,7 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container, which the Orker then removes. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 230 seconds for removing what it gave up on and the first container, and for that cancellation (17 minutes 50 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.metadata_probe` | `ORK_ORKER_METADATA_PROBE` | `off` | `orker` | whether boot asks the host's instance metadata endpoints from a container on the `default` network: `off` runs no extra container, `warn` logs an endpoint that answered, `refuse` refuses boot when one answered or the probe failed, `METADATA_ENDPOINT_REACHABLE`. Set `refuse` on a cloud host ([Keeping tasks away from the host's identity](#keeping-tasks-away-from-the-hosts-identity)) |
-| `orker.profiles:` | `ORK_ORKER_PROFILES` | *(empty)* | `orker` | the profiles this Orker offers tasks by name: `probe_image` (optional: by default this release's own `ghcr.io/orkstack/orker:<version>`, resolved to a digest and signature- and build-checked at boot; set it to a mirror's or an air-gapped copy's digest to override; required on an Orker built from source), `audit_interval` (`60s`), `recovery_interval` (`5s`), and each named profile of `kind` `gpu` or `devices`, with one contract (its keys, labelled by `contract:`, `"1"` when absent, and optional `accepts:`) or, for `devices`, up to 8 under `contracts:` with a `default:` ("Changing a profile"). This release implements `devices` ("Running a device Orker"); a `gpu` profile refuses boot, `ORKER_PROFILE_INVALID` |
+| `orker.profiles:` | `ORK_ORKER_PROFILES` | *(empty)* | `orker` | the profiles this Orker offers tasks by name: `probe_image` (optional: by default this release's own `ghcr.io/orkstack/orker:<version>`, resolved to a digest and signature- and build-checked at boot; set it to a mirror's or an air-gapped copy's digest to override; required on an Orker built from source), `audit_interval` (`60s`), `recovery_interval` (`5s`), and each named profile of `kind` `gpu` or `devices`, with one contract (its keys, labelled by `contract:`, `"1"` when absent, and optional `accepts:`) or, for `devices`, up to 8 under `contracts:` with a `default:` ("Changing a profile"). This release implements `devices` ("Running a device Orker") and `gpu` ("Running a GPU Orker") |
 | `orker.log.mask_secrets` | `ORK_ORKER_LOG_MASK_SECRETS` | `true` | `orker` | whether a task's secrets are replaced by `***` in its logs, live and stored, and in failure messages; `false` keeps them byte-exact. A secret's `mask: false` does the same for one secret. The same on every Orker of a pool ([SECURITY_MODEL.md](./SECURITY_MODEL.md#masking-and-its-limits)) |
 | `orker.values.refuse_secrets` | `ORK_ORKER_VALUES_REFUSE_SECRETS` | `true` | `orker` | whether a `values.json` holding one of the task's own secrets fails the attempt, `VALUES_CONTAIN_SECRET`, before anything is uploaded; independent of `orker.log.mask_secrets`. The same on every Orker of a pool ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#94-secrets)) |
 | `orker.refuse_readable_engine_keys` | `ORK_ORKER_REFUSE_READABLE_ENGINE_KEYS` | `false` | `orker` | refuse to start when this Orker can open a file one of the engine's key settings names (`identity.signing.key_files`, `identity.keys_copy_file`, `auth.break_glass_key_file`, an issuer's `jwks_file`); by default each is an error in its log — see "An engine's key files and an Orker on one host" |
@@ -1486,9 +1486,11 @@ orker:
   always given.
 - `path` resolves on the host and must stay under `/dev`. The node it leads to
   must be a character device of a class this Orker passes, by its driver in
-  `/proc/devices` and its node name. This release has one class, `usb-serial`:
-  drivers `ttyUSB` and `ttyACM`, nodes `ttyUSB<n>` and `ttyACM<n>`. Any other
-  device refuses the boot (`ORKER_PROFILE_INVALID`, `DEVICE_CLASS_REFUSED`).
+  `/proc/devices` and its node name. For `devices` profiles this release has
+  one class, `usb-serial`: drivers `ttyUSB` and `ttyACM`, nodes `ttyUSB<n>` and
+  `ttyACM<n>`. A `gpu` profile's units have their own classes
+  ("Running a GPU Orker"). Any other device refuses the boot
+  (`ORKER_PROFILE_INVALID`, `DEVICE_CLASS_REFUSED`).
 - `container_path` is a path under `/dev` that is not one of the nodes every
   container has (`/dev/null`, `/dev/tty` and the rest) and not under
   `/dev/shm`, `/dev/pts` or `/dev/mqueue`.
@@ -1621,10 +1623,8 @@ the definition of the contract it ran under, so a structural change misses
 the cache and a host-only change keeps it.
 
 **Admin → Pools shows each Orker's profiles.** Every profile it offers, by
-name and kind. The page can show a `gpu` profile's unit cells and a **gpu
-reserved** column and meter, but none appears in this release: gpu profiles
-are not offered by this release, which refuses an Orker that declares one
-(`ORKER_PROFILE_INVALID`). A profile that holds the
+name and kind. A `gpu` profile's units show as a bar (bound, free and
+unusable), and the pool shows a **gpu reserved** meter. A profile that holds the
 Orker's cordon carries its cause, and
 the row says why, with the reason's code and how it ends: a drift
 (**profile drifted**) only with a restart; an unavailable profile
@@ -1648,6 +1648,244 @@ line of its own, with a `gpu` profile's units, and each cause in full.
 `--json` carries `profiles` and `profileCordons` as the inventory has them.
 A profile's revision, identity digest and a cause's detail stay on the
 Orker's own answer to the engine.
+
+### Running a GPU Orker
+
+A `gpu` profile gives tasks exclusive GPU units of this host, through the
+Container Device Interface (CDI): a spec file that names devices, which the
+container runtime reads. An Orkflow asks for a number of units with
+`resources.gpu` and names the profile in `devices:`
+([DSL.md](./DSL.md#device-profiles), "Device profiles"), never a device path.
+This release is tested on AMD and Intel GPUs.
+
+```yaml
+orker:
+  profiles:
+    amd:
+      kind: gpu
+      cdi:
+        kind: amd.com/gpu
+        units:
+          - gpu0
+```
+
+- `units` names the devices of one CDI kind in the spec. Unit 0 is the first
+  name listed. `all` is refused: name each unit. An Orker offers at most one
+  `gpu` profile.
+- `probe_image` is not set here. A release Orker probes its units with its own
+  release image, `ghcr.io/orkstack/orker:<version>`: it resolves the tag to a
+  digest, verifies the digest with the release key and checks the image's
+  build label at boot ("Running a device Orker"). Set `probe_image` only for a
+  mirror, an air-gapped host, or an Orker built from source, where it must name
+  that build's orker image, pinned by digest.
+
+**The host lock.** Every gpu Orker of a host takes one lock: an exclusive
+`flock` on the directory `/run/orkstack/gpu-orker`, whose path is fixed. The
+directory belongs to root, its group is `orkstack-gpu`, and its mode is 0750,
+so only root and members of that group can take it. Set it up once, as root:
+
+```bash
+sudo groupadd --system orkstack-gpu
+sudo usermod -aG orkstack-gpu orker
+echo 'd /run/orkstack/gpu-orker 0750 root orkstack-gpu -' | sudo tee /etc/tmpfiles.d/orkstack-gpu.conf
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/orkstack-gpu.conf
+```
+
+The drop-in recreates the directory at every boot, since `/run` is a tmpfs.
+`usermod` takes effect at the user's next login, so restart the Orker's
+service after it. The repository's `scripts/gpu-host-setup.sh` prints these
+steps for a host, checks what is already in place, and never runs them.
+
+An Orker that finds the lock held by another process does not refuse to
+boot. It reports `GPU_HOST_LOCK_HELD`, naming the holder's pid and command,
+keeps its pool live, and takes the lock when the holder exits. An Orker that
+cannot open the directory refuses to boot (`ORKER_PROFILE_INVALID`).
+
+**Trusted CDI specs.** The Orker reads each directory in
+`orker.cdi.spec_dirs`, which defaults to `/etc/cdi` and `/var/run/cdi`, the
+directories Docker reads. Each of them, and every directory above it, must be
+owned by root and must not be writable by its group or by others. A symlink is
+accepted where the link and its chain belong to root, as `/var/run` linking to
+`/run` does. Write each spec as root:
+
+```bash
+sudo install -o root -g root -m 0644 amd.yaml /etc/cdi/
+```
+
+Docker 29.9.2, the version measured for this release, reads a spec written to
+an `/etc/cdi` that existed when dockerd started, with no reload. A directory
+created after dockerd started needs one `sudo systemctl reload docker`, never
+a restart. Specs are described in "CDI trust" in
+[SECURITY_MODEL.md](./SECURITY_MODEL.md#cdi-trust).
+
+**Templates.** Each unit is one device of the spec, with its device nodes and
+the group a task needs to open them. `path` is the path the container sees.
+`hostPath` is the host's node itself: a link, such as one under
+`/dev/dri/by-path`, is refused, because the runtime refuses a link when it
+starts the container. `additionalGids` takes the render node's group, so a
+task that runs as another user can open it. Write `cdiVersion: 0.7.0`, the
+lowest version that carries `additionalGids`; Docker refuses a spec that sets
+it under that version.
+
+Find the host's render nodes and their drivers with:
+
+```bash
+for d in /sys/class/drm/renderD*; do
+  echo "$(basename "$d") $(grep -E '^(DRIVER|PCI_SLOT_NAME)=' "$d/device/uevent" | tr '\n' ' ')"
+done
+```
+
+Each line gives a node (`renderD128`), its driver (`DRIVER=amdgpu` for AMD,
+`DRIVER=i915` for Intel) and its PCI address. Use the node of your GPU as
+`hostPath`, and take the group for `additionalGids` from it with
+`stat -c %g /dev/dri/renderD128`. A render node's number can change after a
+hardware change, so check this list again then.
+
+AMD spec, `/etc/cdi/amd.yaml`:
+
+```yaml
+cdiVersion: 0.7.0
+kind: amd.com/gpu
+devices:
+  - name: gpu0
+    containerEdits:
+      deviceNodes:
+        - path: /dev/dri/renderD128
+          hostPath: /dev/dri/renderD128   # the host's node for this GPU
+          type: c
+          permissions: rw
+        - path: /dev/kfd
+          hostPath: /dev/kfd
+          type: c
+          permissions: rw
+      additionalGids:
+        - 110                             # the render node's group
+```
+
+Intel spec, `/etc/cdi/intel.yaml`:
+
+```yaml
+cdiVersion: 0.7.0
+kind: intel.com/gpu
+devices:
+  - name: gpu0
+    containerEdits:
+      deviceNodes:
+        - path: /dev/dri/renderD129
+          hostPath: /dev/dri/renderD129   # the host's node for this GPU
+          type: c
+          permissions: rw
+      additionalGids:
+        - 110                             # the render node's group
+```
+
+The AMD unit also names `/dev/kfd`, the compute node that every AMD GPU on a
+host shares. Two AMD units would name the same node, and the boot refuses
+units that share one (`ORKER_PROFILE_INVALID`, `UNITS_OVERLAP`), so an AMD
+profile holds one unit per host.
+
+**One GPU host, one Orker, one vendor.** Every gpu Orker of a host takes the
+same lock, so only one of them holds its profile at a time. Serve each GPU host
+from one pool, with one gpu Orker on it. A profile takes its units from one CDI
+kind, so an Orker offers one vendor, and a host with AMD and Intel GPUs serves
+one of them at a time.
+
+**Capacity.** The units are the capacity; a gpu profile needs no
+`orker.capacity`.
+
+- `orker.resources.max_gpu` (`ORK_ORKER_MAX_GPU`, default `1`) caps the units
+  one task may hold, from 0 to 64. A request above it is refused, never
+  clamped. `max_gpu: 0` with a gpu profile refuses boot.
+- The Orker's cap is the lower of `max_gpu` and its unit count. It is fixed at
+  boot, so a unit that fails does not change what submit sees. Submit refuses
+  a request above the pool's GPU cap (`RESOURCES_UNSATISFIABLE`).
+- A task holds its units whole, each held by no other task, for its life. The
+  Orker never waits for units: a poll is granted only while enough units are
+  free, and a task that cannot get its units is not polled. Each poll holds the
+  cap until its task arrives, then shrinks to the task's request. With
+  `max_gpu: 1` on two units, two one-unit tasks run at once. With `max_gpu: 2`
+  on two units, a poll needs both free, so one task runs at a time.
+- While fewer units are usable than the cap, the Orker polls for no task, a
+  `gpu: 1` task included. The profile then holds `UNITS_BELOW_CEILING`, its
+  pool stays live, and runs wait with that reason; submit still accepts them,
+  and they wait until their own `timeout:`. So set `max_gpu` below the unit
+  count when one unit's fault should not stop GPU work: with `max_gpu: 1` on
+  two units, the Orker keeps serving on the other. An Orker of two or more
+  units whose `max_gpu` is more than half its unit count logs one warning at
+  boot naming both; a single-unit host never warns.
+- Usage reports `gpu_seconds`, the units times the time they were held. It is
+  reserved time, not measured use, and budgets have no GPU dimension.
+
+**NVIDIA.** `nvidia.com/*` kinds are not yet accepted in this build and are
+coming as experimental.
+
+**Changing the profile** (its units or its CDI kind) is read at boot, so it
+takes the recipe below: drain the Orker, stop it, edit its configuration, and
+start it. A spec changed under a running Orker is drift, not a change to
+read: restart the Orker, and it audits the spec again.
+
+```bash
+orkctl orker drain orker-7f3a --timeout 4h -w
+# on the Orker's host, as root, once drain exits 0:
+sudo systemctl stop orkstack-orker
+# edit /etc/orkstack/orker.yaml, then:
+sudo systemctl start orkstack-orker
+```
+
+Use the name of your Orker's unit in place of `orkstack-orker`.
+
+**Ordering after a CDI refresh.** If a unit on this host writes CDI specs at
+boot, put it in the Orker's `After=` line beside `docker.service`, so the
+Orker audits the spec the host keeps. The Orker's unit also lists the lock's
+group, `SupplementaryGroups=docker orkstack-gpu`, and otherwise follows the
+device Orker's unit above. A refresh that runs after the Orker has started and
+changes a spec's bytes is drift: drain the Orker, then restart it, so it audits
+the new spec.
+
+**Unavailable and drifted profiles.** The Orker audits the profile at boot,
+at every `audit_interval`, and again at dispatch, just before its container is
+created and just before it starts. A profile holds one of two states:
+
+- **Unavailable** clears itself when its cause does, and the pool stays live:
+  runs sent there wait, with the cause as their pending reason. An attempt
+  that meets an absent spec or device fails `PROFILE_NOT_OFFERED` and spends one
+  of the task's own attempts.
+- **Drift** latches until the Orker restarts, and is never adopted. An attempt
+  that meets it fails `PROFILE_DRIFTED` before its container starts, and runs
+  again on another Orker of the pool without spending an attempt, within the
+  never-started budget described for a device profile ("Running a device
+  Orker").
+
+| Reason | State | Meaning | Clears when |
+|---|---|---|---|
+| `GPU_HOST_LOCK_HELD` | unavailable | another process holds the GPU host lock; the detail names it | that process exits |
+| `FOREIGN_UNITS_HELD` | unavailable | containers this Orker did not start under its lock still run with its units | those containers are gone |
+| `SPEC_ABSENT` | unavailable | a spec the profile was audited from is missing | it is back as audited |
+| `DEVICE_ABSENT` | unavailable | a unit's node is missing | it is back as the same node, after three good checks |
+| `ALL_UNITS_UNHEALTHY` | unavailable | no unit has passed its probe | a unit has passed three probes |
+| `UNITS_BELOW_CEILING` | unavailable | fewer units are usable than the cap | enough units are usable again |
+| `PROBE_IMAGE_UNAVAILABLE`, `PROBE_IMAGE_MISMATCH` | unavailable | the probe image cannot be pulled, or is another build | the probe image checks pass again |
+| `SPEC_CHANGED` | drift | a spec's bytes differ from the audit | restart |
+| `DEVICE_CHANGED` | drift | a unit's node now leads elsewhere, or changed its numbers or group | restart |
+| `HOST_LOCK_MISMATCH` | drift | the lock directory was replaced | restart |
+
+`orkctl orker list` shows a gpu profile's units and its cause, as in
+`amd (gpu; drifted)`, and `orkctl orker get` gives each cause in full. Admin →
+Pools shows the same causes in words.
+
+A container under another GPU host lock is never removed or adopted by this
+Orker. Containers left by an earlier boot's lock are not removed either.
+While a running one still holds units of the profile, the profile reports
+`FOREIGN_UNITS_HELD` and names the containers. After confirming that their
+Orker has exited, remove them yourself, with `docker rm -f <ids>`. To list
+exited unit containers of earlier boots, run
+`docker ps -a --filter label=ork.units.lock`.
+
+**Limits.** A gpu profile is Linux-only and runs on the container daemon's own
+host, as a device profile does. Its units are exclusive, but nothing clears a
+unit's memory between the tasks that hold it ([SECURITY_MODEL.md](./SECURITY_MODEL.md#what-a-unit-does-not-guarantee)).
+A pinned task cannot hold units, and a task that names the profile without
+`resources.gpu` fails `GPU_COUNT_REQUIRED` before it starts: write the count.
 
 ### Changing a profile
 

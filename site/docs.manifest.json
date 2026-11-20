@@ -450,6 +450,16 @@
 					]
 				},
 				{
+					"route": "docs/operate/gpu-profiles",
+					"title": "Give a task GPU units",
+					"description": "Define a GPU profile on an Orker and ask for units in a task with devices: and resources.gpu.",
+					"parts": [
+						{
+							"source": "site/content/how-to/gpu-profiles.md"
+						}
+					]
+				},
+				{
 					"route": "docs/operate/roll-out-a-release",
 					"title": "Roll out a release",
 					"description": "Move a deployment to a new OrkStack release without disturbing running runs.",

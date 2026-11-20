@@ -478,12 +478,50 @@ host.
   verdict is `proofrun merge -gpu-tier`'s, from its local part. It is never
   merge evidence on its own.
 
-`proof.json` records `gpu_host` (the flag was set) and `gpu_gate_ran`. A
-GPU-host-tier proof is a passing full or release proof with both, or a
+`proof.json` records `gpu_host` (the flag was set), `gpu_gate_ran` and
+`gpu_specs_gate_ran`. A
+GPU-host-tier proof is a passing full or release proof with all three, or a
 passing gpu-tier proof, of a clean tree. The plan records the SHA-256 of the
 tree's list and of `gpu-base.txt`, and the merger judges the `gpu` ledger only
 on those bytes, with `gpu-base.txt` byte for byte the list at the plan's base
 commit, so a swapped base copy cannot host-defer an entry the change adds.
+
+**The spec twin.** `scripts/proof-gpu-specs.txt` lists Playwright spec files
+that need the GPU host, in the nightly spec list's format (spec, covering
+merge-gate specs, approved, reason) and parsed as strictly: a spec is a file
+under `ui/e2e/`, a stale row fails the gate, every covering spec is a listed
+spec file on neither this list nor the nightly spec list, and a spec on both
+lists is refused. A list with no row is valid, and the list has no `paths:`
+header: its rows are the covered paths. It follows the test list's rules:
+
+- **The Playwright phase never holds a listed spec**, in any tier
+  (`proofrun ui-plan -gpu-specs FILE -gpu-specs-base FILE`, `-gpu-host` on the
+  GPU host). Without `ORK_PROOF_GPU_HOST=1` each test of a listed spec that
+  both the tree's list and the base's copy (`gpu-specs-base.txt`, beside the UI
+  plan) carry is recorded `host-deferred` in the Playwright ledger, with the
+  row. A spec only the tree's list carries stays planned with no outcome and
+  fails the proof: its change lands through a GPU-host-tier proof. The nightly
+  tier lists the nightly specs alone, so it records none. The merger re-derives
+  the deferral from the two hashed files, with the base's copy byte for byte
+  the list at the plan's base commit.
+- **On the GPU host** the `gpu` gate runs the listed specs after the gpuhost Go
+  tests, still under the GPU lock and under the host-wide Playwright lock, one
+  file at a time on one worker, and `proofrun gpu-specs` judges the reports
+  into `gpu-specs-tests.json`: every listed test passed, and nothing
+  `host-deferred` (it fails there, as in the test list). With no row the ledger
+  is empty. `proofrun record` carries the ledger into the part, and the merger
+  checks it against the tree's list and records `gpu_specs_gate_ran`.
+  `proofrun gpu-specs -log FILE -config FILE` holds the runs to the
+  network-change guard's ceiling, as the Playwright gate is. The shell never
+  filters the list silently: an absent file or a row without four tab-separated
+  columns stops the gate, and a spec that leaves no report is named and has no
+  outcome. A `--tier gpu` proof whose list has rows probes and starts what the
+  Playwright gate needs (its own Temporal, the store and registry, this tree's
+  images, bun and the UI's dependencies) and exits 77 without it.
+- **Merging.** The covered paths of the rule below also include the spec list,
+  `test/tools/proofrun/gpu*.go` (so `gpuspecs.go`) and every spec the tree's or
+  `main`'s spec list names; a deleted spec list is refused. A spec's helpers
+  are not covered.
 
 **Merging.** A change whose diff against `main` (`git diff --no-renames`, so a
 file moved away counts) touches a covered path merges only with a passing
@@ -778,11 +816,12 @@ Orker bases ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"):
 |---|---|
 | `kind-orker.yml` › `kind-orker` | on a push or pull request that touches `deploy/kubernetes/`, either script, `internal/orker/`, `cmd/orker/`, the source build (`deploy/source/`), the release `deploy/Dockerfile`, the shell or file activity, or the workflow, at 06:29 UTC every day, and by dispatch. It first lifts the runner's AppArmor restriction on unprivileged user namespaces, which the rootless engine the script measures needs, and records the kernel and that setting in its summary. The script pins every tool: kind's and kubectl's release binaries by SHA-256, the node image and crane's image by digest. The check refuses a missing prerequisite with exit 77 before it deploys anything, so on kind a refusal fails the lane like a failed check. Both shapes run artifacts, both network modes, a cancel, the Orker's declared capacity, the per-task cap (a task above it refused at submit, one at it run with it as its limit), an out-of-memory task and a pod deletion; the Orker must refuse a mismatched work root, the user-namespaced engine must refuse to start without its RuntimeClass, and Docker's rootless engine must be seen to drop a container's limits. Its summary names the check that failed and the last of the namespace's and the cluster's state then; the artifact `kind-orker-<run>-a<attempt>` holds both scripts' logs, the check's evidence and that state in full, without the throwaway cluster's kubeconfig or the registry's keys |
 
-`nightly.yml` holds eight jobs, scheduled at 05:17 UTC on the default branch:
+`nightly.yml` holds nine jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
 `make vuln`, `nightly.yml` › `vuln-js` runs `make vuln-js`,
 `nightly.yml` › `vuln-images` runs `make vuln-images`,
 `nightly.yml` › `release-notes` runs `make release-notes-check`,
+`nightly.yml` › `cdi-hook-table` runs `go run ./internal/orker/cmd/gencdihooks -check`,
 `nightly.yml` › `quickstart` runs `scripts/quickstart-smoke.sh`,
 and `nightly.yml` › `examples` runs `scripts/quickstart-smoke.sh --examples`.
 `vuln` is independent of the proof: it reports only the known vulnerabilities
@@ -842,6 +881,13 @@ over the network, so it is in no proof. A red `release-notes` is a regression
 on `main` like any red nightly: the fix is `make release-notes-publish
 VERSION=vX.Y.Z` (§10, "Write the release notes"), never an edit of the release
 on GitHub.
+`cdi-hook-table` holds the table of NVIDIA's `nvidia-cdi-hook` builds an
+Orker accepts (`internal/orker/cdi_hook_table.go`) to NVIDIA's signed package
+repository: the generator verifies the repository's key by its pinned
+fingerprint, the signed metadata and every package's digest, and fails when
+the table differs from what that derives. It reads the repository over the
+network, so it is in no proof. Its GitHub-runner time is unmeasured until its
+first run.
 `quickstart` is independent of the proof too: it runs the README's Quickstart
 as written on a clone of the commit, where the root `compose.yaml` builds the
 stack from source, and checks that a run of `each-fan-out` succeeds and that
@@ -914,9 +960,11 @@ completes. It downloads the completed run's newest unexpired
 -nightly DIR -nightly-jobs FILE`: the rule `make merge-check NIGHTLY=`
 applies (a passing nightly proof, eligible but for its tier, clean, of this
 commit's tree), plus the conclusions of the run's `vuln`, `vuln-js`,
-`vuln-images`, `release-notes` and `quickstart` jobs, which the proof does
-not hold, so a release is refused while any published release's notes differ
-from its `CHANGELOG.md` section. No
+`vuln-images`, `release-notes`, `cdi-hook-table` and `quickstart` jobs, which
+the proof does not hold, so a release is refused while any published release's
+notes differ from its `CHANGELOG.md` section, or while the table of NVIDIA's
+CDI hook builds (`internal/orker/cdi_hook_table.go`) no longer matches NVIDIA's
+signed repository. No
 nightly run of the commit, or one that kept no proof, is a refusal that says
 to dispatch one; re-running the job after that nightly passes finishes the
 release.
@@ -1572,6 +1620,14 @@ git rev-parse main
   that differs. If the section is right, run `make release-notes-publish
   VERSION=vX.Y.Z`; if the release is, edit the section to match and merge that
   change. `make release-notes-check` reproduces it.
+- Only `nightly.yml` › `cdi-hook-table` failed: NVIDIA published a Container
+  Toolkit release at or above the floor that `internal/orker/cdi_hook_table.go`
+  lacks, or a row no longer derives (a package withdrawn, a signature that
+  does not verify), and no release is tagged until it passes. The job's log
+  names the file it could not verify, or says the table differs. Regenerate it
+  with `go run ./internal/orker/cmd/gencdihooks`, review the new rows with
+  their hook-grammar fixtures re-captured from that release (design E91
+  §4.10), and merge that change on its own proof; `-check` reproduces it.
 - Only `nightly.yml` › `quickstart` failed: the README's Quickstart no longer
   works on a clone of `headSha`, which is a regression on `main` too. The
   job's log names the Quickstart command that failed, or the check, and on a
@@ -1953,6 +2009,7 @@ listing with no bucket at all.
 | `scripts/proof-nightly-tests.txt` | package, test, covering tests, approved, reason | a stale name or a missing covering test fails the plan |
 | `scripts/proof-gpu-tests.txt` | package, test, covering tests, approved, reason; a `# paths:` header | a stale name or a missing covering test fails the GPU gate; an entry the base's copy does not carry has no outcome without the GPU host (§2.4) |
 | `scripts/proof-nightly-specs.txt` | spec, covering specs, approved, reason | a stale spec or a missing covering spec fails the UI plan; a full proof defers the rows its base also carries |
+| `scripts/proof-gpu-specs.txt` | spec, covering specs, approved, reason | the same checks, and a spec on the nightly list too is refused; a proof off the GPU host records the rows its base also carries `host-deferred` (§2.4) |
 | `scripts/proof-quarantine.txt` | suite, package, test, owner, since, review-by, reason | structure, budget, a stale name, or an allowed-skip overlap fails; an expired entry stops excusing |
 | `scripts/proof-test-costs.tsv` | package, test, seconds | an unmeasured test gets the conservative default |
 | `scripts/proof-ui-costs.tsv` | spec file, wall seconds | an unmeasured spec gets 160 s |
@@ -1967,7 +2024,8 @@ listing with no bucket at all.
 | `compile` | `-out DIR` |
 | `gpu` | `-out DIR`, `-list FILE`, `-base FILE`, `-host`, `-tier TIER`, `-bin DIR`, `-print-progress` (§2.4) |
 | `ui-ledger` | `-report FILE`, `-list FILE`, `-plan FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME` |
-| `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE`, `-nightly-mode MODE`, `-nightly-specs FILE`, `-nightly-specs-base FILE`, `-run-files-out FILE` |
+| `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE`, `-nightly-mode MODE`, `-nightly-specs FILE`, `-nightly-specs-base FILE`, `-gpu-specs FILE`, `-gpu-specs-base FILE`, `-gpu-host`, `-run-files-out FILE` |
+| `gpu-specs` | `-out DIR`, `-specs FILE`, `-list FILE`, `-report FILE` (repeatable), `-log FILE`, `-config FILE`, `-tier TIER` (§2.4) |
 | `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-setup-log FILE`, `-status N` |
 | `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped`, `-gpu-tier` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-gpu DIR`, `-release`, `-tag S`; or, for `release.yml`'s nightly check, `-commit SHA` with `-nightly DIR` and `-nightly-jobs FILE` |

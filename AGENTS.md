@@ -1379,7 +1379,8 @@ the merge-gate tests or specs that cover the same behaviour at a smaller size
 or by another route, and the date the user approved it. A test or spec is
 listed only when such coverage exists, and the lists change only with the
 user's approval. Every other test and spec, and every scenario above, except
-as the last bullet states, stays in the merge gate: the run page at the task
+as the last bullet states and except the GPU-host lists
+(`scripts/proof-gpu-tests.txt`, `scripts/proof-gpu-specs.txt`), stays in the merge gate: the run page at the task
 ceiling is proven there by `ui/e2e/run-page-reduced-ceiling.spec.ts`, its
 measurement at a ceiling lowered to 1,000, and at the 4,000-task default by
 the nightly tier. A full proof records each listed test, and each test of a
@@ -1389,7 +1390,8 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
-The tests `scripts/proof-gpu-tests.txt` lists need the GPU host it names: a
+The tests `scripts/proof-gpu-tests.txt` lists, and the Playwright specs of its
+twin `scripts/proof-gpu-specs.txt`, need the GPU host it names: a
 proof without `ORK_PROOF_GPU_HOST=1` records them as `host-deferred`; a proof of
 the **GPU-host tier** (a full proof, or the GPU gate alone, `make proof-gpu`,
 run on that host with the flag) runs them; and a change to a path the list
@@ -1447,7 +1449,13 @@ with no inputs, ending where `examples/README.md` says. Those examples reach
 `httpbin.org` and `github.com`, so no proof runs that job and `release.yml` does
 not require it: the merge gate runs them against stand-ins
 (`TestIntegration_ExamplesRunWithNoInputs`), and a failure of the job is a
-regression on `main` unless its log shows one of those services was down.
+regression on `main` unless its log shows one of those services was down. It
+holds the table of NVIDIA's `nvidia-cdi-hook` builds an Orker accepts
+(`internal/orker/cdi_hook_table.go`) to NVIDIA's signed package repository
+as a job of its own too, `cdi-hook-table`
+(`go run ./internal/orker/cmd/gencdihooks -check`), because it reads that
+repository over the network: a toolkit release at or above the floor that the
+table lacks, or a row that no longer derives, fails that run.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) is a
 regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or
@@ -1463,7 +1471,7 @@ lanes nor its vulnerability scan (`vuln`, `vuln-js` and `vuln-images`), so a
 release is not tagged while either is red, and `release.yml` checks it: before
 it asks for the approval, it refuses a commit whose latest completed nightly on
 `main` did not pass (its proof, each of the scan's three jobs,
-`release-notes` and `quickstart`), or that no nightly measured, waiting a bounded time for one
+`release-notes`, `cdi-hook-table` and `quickstart`), or that no nightly measured, waiting a bounded time for one
 still running. (`make
 release-tag`, which publishes nothing, leaves it a rule.) A nightly's verdict
 is its `proof.json`,
@@ -1851,8 +1859,8 @@ duration. A listed test without an outcome fails the gate. In the full tier,
 test the nightly list names, or a test of a spec file the nightly spec list
 names, and in every other tier it fails the gate.
 `host-deferred` is legal in the full, nightly and pre-release tiers only for
-an entry both the base's and the tree's `scripts/proof-gpu-tests.txt` carry;
-in the GPU-host tier it fails the gate. With `ORK_PROOF_GPU_HOST=1` a missing
+an entry both the base's and the tree's `scripts/proof-gpu-tests.txt`
+(or `proof-gpu-specs.txt`) carry; in the GPU-host tier it fails the gate. With `ORK_PROOF_GPU_HOST=1` a missing
 GPU device, spec or lock group exits 77, never `host-deferred`, and
 `proof.json` records whether the GPU gate ran. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the

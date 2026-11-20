@@ -230,6 +230,7 @@ var reasonCategory = map[string]string{
 	ReasonProfileDrifted:             CategoryInfrastructureError,
 	ReasonProfileContractNotServed:   CategoryInfrastructureError,
 	ReasonProfileDeclarationMismatch: CategoryContractViolation,
+	ReasonGPUCountRequired:           CategoryContractViolation,
 	ReasonGPUUnitsUnavailable:        CategoryInfrastructureError,
 	ReasonSecretUnresolved:           CategoryInfrastructureError,
 	ReasonSecretSchemeForbid:         CategoryContractViolation,

@@ -336,6 +336,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	// The gpu profile's units, all usable until a probe says otherwise
 	// (capacity_units.go); their health holds the profile's unit reasons.
 	if p, ok := gpuProfileOf(opts.Profiles); ok && a.capacity != nil {
+		warnGPUCeiling(opts.Logger, p.Name, int(policy.MaxGPU), len(p.GPU.Units))
 		a.capacity.useUnits(p.Name, len(p.GPU.Units), int(policy.MaxGPU), unitHealthReporter(a.profiles, p.Name, time.Now))
 	}
 	// A profile cause holds this Orker's cordon (profile_state.go).
@@ -1409,4 +1410,20 @@ func claimerOf(store artifacts.AttemptStore) artifacts.AttemptClaimer {
 		return claimer
 	}
 	return nil
+}
+
+// warnGPUCeiling logs, once at boot, a max_gpu above half the gpu profile's
+// units: one unit out of service then leaves fewer usable units than the cap,
+// and the Orker polls for no task until it returns (docs/DEPLOY.md, "Running a
+// GPU Orker"). A host of one unit never warns: one task holding its only
+// GPU is inherent there, not a misconfiguration. It decides nothing. A nil logger is slog.Default.
+func warnGPUCeiling(logger *slog.Logger, profile string, maxGPU, units int) {
+	if units < 2 || maxGPU == 0 || 2*maxGPU <= units {
+		return
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Warn("max_gpu is more than half the gpu profile's units: one unit out of service stops this Orker's gpu work until it returns",
+		"profile", profile, "max_gpu", maxGPU, "units", units, "setting", MaxGPUVar)
 }

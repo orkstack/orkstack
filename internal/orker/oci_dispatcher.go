@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2043,6 +2044,12 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 // created.
 const ReasonProfileDeclarationMismatch = "PROFILE_DECLARATION_MISMATCH"
 
+// ReasonGPUCountRequired: the task names this Orker's gpu profile and asks
+// for no unit (resources.gpu unset). A gpu profile passes a task nothing but
+// its units, so the definition does not hold: a ContractViolation, never
+// retried, found at step 3c before any container.
+const ReasonGPUCountRequired = "GPU_COUNT_REQUIRED"
+
 // profileGate is execute's STEP 3c (profile_gate.go, profile_contracts.go):
 // each profile the task names offered here, its devices as audited, and the
 // contract that serves the run. It returns that contract's devices, and
@@ -2053,6 +2060,17 @@ func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heart
 		return nil, nil
 	}
 	beat.Phase("profiles")
+	// A gpu profile passes a task only its units, so a task naming the
+	// declared one with no count is a definition that cannot hold, whatever
+	// the profile's state on this Orker (offered, waiting for the host lock,
+	// drifted): checked before the drift check and the contract.
+	if d.profiles != nil && in.GetResources().GetGpu() == 0 {
+		if p, ok := gpuProfileOf(d.profiles.declared); ok &&
+			slices.ContainsFunc(in.GetDevices(), func(r *orkstackv1.ProfileRef) bool { return r.GetName() == p.Name }) {
+			return nil, Fail(ReasonGPUCountRequired,
+				"task %q names the gpu profile %q and asks for no unit; set resources.gpu to the units it needs", in.GetTaskId(), p.Name)
+		}
+	}
 	if d.profiles == nil {
 		return nil, Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
 	}

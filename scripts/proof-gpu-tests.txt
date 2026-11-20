@@ -22,7 +22,7 @@
 #   internal/orker/capacity_units.go internal/orker/unit_probe.go internal/orker/unit_probe_linux.go
 #   internal/orker/unit_reap.go internal/orker/dispatch_units.go internal/orker/gpu_boot.go
 #   internal/orker/profile_gate.go internal/orker/profile_audit.go internal/orker/device_mapping.go
-#   internal/orker/*_gpuhost_test.go scripts/gpu-host-setup.sh
+#   internal/orker/*_gpuhost_test.go cmd/orkctl/*_gpuhost_test.go scripts/gpu-host-setup.sh
 github.com/orkstack/orkstack/internal/orker	TestGPUHost_SetupSpecPassesTheAudit	TestAuditGPUSpecs_AcceptsTheHookless	2026-11-18 Daniel Santos	the spec gpu-host-setup.sh installs, read by dockerd's validator and the audit on the real nodes
 github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_UnitsExclusive	TestCapacity_BindTakesLowestFreeUsable,TestBindUnits_NamesTheBoundUnitsAndLabelsThem	2026-11-18 Daniel Santos	two gpu: 1 tasks each see one render node and distinct drivers, with a progress control
 github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_TwoUnitTask	TestCapacity_GPUCeilingFixedAcrossHealth,TestCapacity_BindTakesLowestFreeUsable	2026-11-18 Daniel Santos	gpu: 2 under max_gpu 2 gets both; a concurrent gpu: 1 is not polled until they are freed
@@ -34,3 +34,4 @@ github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_ProbeAndBindOnOne
 github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_UnitHealthExclusion	TestProbeUnitsOnce_FlipsHealthUnderTheLedger,TestProfileState_UnitsBelowCeilingNamed	2026-11-18 Daniel Santos	a unit whose probe fails leaves service and returns after three good probes
 github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_DriftAtStart	TestProfileDrifted_NeverStartedOnlyBeforeStartIsCalled	2026-11-18 Daniel Santos	the spec changed between create and start: never started, PROFILE_DRIFTED (design Q18)
 github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_LockRecreatedWhileForeignUnitsRun	TestReapUnits_ActsOnlyUnderItsLock	2026-11-18 Daniel Santos	the lock directory recreated under a running unit container: the restarted Orker holds FOREIGN_UNITS_HELD until it is gone
+github.com/orkstack/orkstack/cmd/orkctl	TestIntegration_GPUContractRoll	TestIntegration_ProfileContractRollingChange,TestIntegration_ProfileContractBreakingChangeByImage,TestIntegration_ProfileContractSameLabelEdit	2026-11-20 Daniel Santos	a gpu profile's contract rolled across Orkers on the real GPU host, sequentially, since one Orker holds a host's GPU lock

@@ -211,8 +211,9 @@ profile is data an operator writes, never code.
 
 - **Only character devices of a compiled class.** A device passes only when it
   is a character device whose driver (by its major number, in `/proc/devices`)
-  and node name are of a class the Orker's build lists. This release lists
-  one, `usb-serial`. Block devices, `/dev/mem` and the like, sockets, FIFOs and
+  and node name are of a class the Orker's build lists. For devices profiles
+  this release lists `usb-serial`; a gpu profile's units are render nodes
+  (`drm-render`) and `/dev/kfd` (`kfd`). Block devices, `/dev/mem` and the like, sockets, FIFOs and
   regular files are refused at boot, whatever the operator wrote. A `path` is
   resolved on the host and must stay under `/dev`; the Orker stats the node it
   leads to and never opens it, since opening a serial device can toggle its
@@ -242,6 +243,65 @@ profile is data an operator writes, never code.
   its pool offers the profile with one structural identity, and every attempt
   is held to that identity, so a run never meets a device its submit did not
   see. The refusals name Orkers, never the identity.
+
+### CDI trust
+
+A GPU unit reaches a task through a CDI spec, a YAML or JSON file that names
+devices. A spec is operator data, and whoever can write one to a directory the
+Orker reads can give a task any device the spec names. The Orker holds specs to
+these rules, checked at boot and at every audit, and again before a container
+is created and before it starts:
+
+- **Only root-writable directories are read.** The Orker reads the directories
+  in `orker.cdi.spec_dirs`, by default `/etc/cdi` and `/var/run/cdi`. Each one,
+  and every directory above it as written and as resolved, must be owned by
+  root and not writable by its group or by others, so a user other than root
+  cannot add, replace or rename a spec. A symlink is accepted only where its
+  chain is root's.
+- **Specs are parsed as Docker parses them.** Every `.yaml` and `.json` file of
+  a spec directory is read with the CDI library Docker uses. A file it refuses,
+  whether for its version, its kind or a repeated device name within a kind,
+  refuses the boot. Only the files that declare the profile's own kind are
+  fingerprinted for drift.
+- **Only device nodes and groups pass.** A unit may name device nodes and
+  `additionalGids`. A hook, an environment variable, a mount, a network device,
+  an IntelRdt setting, or spec-level edits are refused. A hook would run a
+  program on the host, so this build accepts no spec that has one.
+- **A node is the device itself.** Each node's `hostPath` must be the device,
+  not a link to it. Its type must be `c`, and any `major` or `minor` written must
+  match the host. `uid`, `gid` and `fileMode` are refused, so a spec never
+  changes a node's owner or mode. Its permissions are `r`, `w` or `rw`.
+- **Groups are bounded.** A unit's group must be non-zero, must own one of the
+  unit's own nodes, and must not be named `docker`, `disk`, `kmem`, `shadow`,
+  `sudo` or `wheel`. It must not own the container runtime's socket, a block
+  device, `/dev/mem`, `/dev/kmem`, or a console or terminal device.
+- **Drift is detected and never adopted.** The Orker keeps the bytes of each
+  audited spec and each unit's node: its path, its type, its major and minor
+  numbers and its group. A change to any of them latches a drift until the
+  Orker restarts, and the Orker never adopts a re-read spec. A change to a
+  node's mode, its change time or its ACL is not drift.
+- **The residual window.** A spec is not copied: the Orker keeps no copy of it.
+  Between its last check and the runtime's own read, a spec could change only
+  for someone who can write a trusted directory, which is root.
+
+### What a unit does not guarantee
+
+- **No memory clearing between tasks.** OrkStack does not clear a unit's memory
+  or caches between the tasks that hold it. What one task leaves on a unit is
+  as far as the driver resets it; the Orker does nothing to clear it.
+- **Shared device nodes.** A node that two units name cannot be scoped to one
+  of them. `/dev/kfd` is one such node: every AMD GPU on a host shares it. The
+  boot refuses two units that name one node (`UNITS_OVERLAP`), so an AMD profile
+  holds one unit per host.
+- **Containers the Orker did not start.** A container that OrkStack did not
+  start, and that holds a unit's device, is not detected in this release. The
+  lock keeps two Orkers of one host from binding the same unit, and it does not
+  see a container started outside them.
+- **No compute or power limits.** A unit grants device nodes, not a scheduler.
+  The Orker does not limit or measure the GPU's compute, memory or power use. The
+  usage figure `gpu_seconds` is held units times time held, not measured use.
+- **Health probes run no compute.** A unit's probe asks its driver for a version
+  and runs no kernel. It does not wake a runtime-suspended GPU.
 
 ### Network modes
 
