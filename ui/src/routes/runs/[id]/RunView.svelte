@@ -56,9 +56,10 @@
 	import { timestampMs } from '#lib/stats.ts';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import RunPauseControls from '#lib/components/RunPauseControls.svelte';
+	import { cancelControl } from '#lib/cancel.ts';
 	import { tipWhenTruncated } from '#lib/tipWhenTruncated.ts';
 	import RunPausedCard from '#lib/components/RunPausedCard.svelte';
-	import { can } from '#lib/permissions.ts';
+	import { can, runTarget } from '#lib/permissions.ts';
 	import { howLastPauseEnded, pausedChildCount } from '#lib/pause.ts';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import FactsStrip, { type Fact } from '#lib/components/FactsStrip.svelte';
@@ -1954,7 +1955,7 @@
 				action: { kind: 'page', run: () => selectTask(nextFailed.id) }
 			});
 		out.push({ id: 'run-again', group: 'Actions', label: 'Run again', action: { kind: 'page', run: () => (runAgainDialogOpen = true) } });
-		if (!isTerminal(runStatus) && !cancellationRequested)
+		if (cancelOffer.shown && !cancelOffer.disabled)
 			out.push({
 				id: 'run-cancel',
 				group: 'Actions',
@@ -2002,7 +2003,14 @@
 	// ---- Harbour's header: progress, how long, the screen's commands ----
 	const progress = $derived(runProgress(tasks));
 	// ---- Pausing (E103): who may, what still runs, the children held with it ----
-	const pauseAllowed = $derived(can(data.grants, 'run.pause', { namespace: data.namespace, orkflow: run?.orkflowName }));
+	const pauseAllowed = $derived(can(data.grants, 'run.pause', runTarget(data.namespace, run)));
+	// ---- Canceling: offered, as pausing is, only to a caller the server would let cancel ----
+	const cancelOffer = $derived(
+		cancelControl(runStatus, {
+			allowed: can(data.grants, 'run.cancel', runTarget(data.namespace, run)),
+			requested: cancellationRequested
+		})
+	);
 	const pauseRunning = $derived(tasks.filter((t) => t.status === Status.RUNNING).length);
 	const pauseChildren = $derived(
 		pausedChildCount((run?.taskRuns ?? []).map((t) => ({ childRunId: t.child?.runId, status: findTask(t.taskId)?.status ?? t.status })))
@@ -2459,17 +2467,19 @@
 			{#if !isTerminal(runStatus)}
 				<span class="act-gap act-break" aria-hidden="true"></span>
 				<RunPauseControls {run} status={runStatus} namespace={data.namespace} allowed={pauseAllowed} {runHref} onrecorded={() => setTimeout(() => void invalidateAll(), 3_000)} />
-				<button
-					type="button"
-					data-testid="cancel-run"
-					aria-disabled={cancellationRequested ? 'true' : undefined}
-					onclick={() => {
-						if (cancellationRequested) return;
-						cancelDialog = true;
-						cancelError = '';
-					}}
-					class="btn"><Icon name="ban" />{cancellationRequested ? 'Cancellation requested' : 'Cancel run'}</button
-				>
+				{#if cancelOffer.shown}
+					<button
+						type="button"
+						data-testid="cancel-run"
+						aria-disabled={cancelOffer.disabled ? 'true' : undefined}
+						onclick={() => {
+							if (cancelOffer.disabled) return;
+							cancelDialog = true;
+							cancelError = '';
+						}}
+						class="btn"><Icon name="ban" />{cancelOffer.disabled || 'Cancel run'}</button
+					>
+				{/if}
 			{/if}
 			<button type="button" data-testid="run-again" onclick={() => (runAgainDialogOpen = true)} class="btn btn-primary"><Icon name="play" />Run again</button>
 			<CliPopover testid="run-inspect-cli" title="Command line: this run" commands={[...runCli, ...activeCli]} />
