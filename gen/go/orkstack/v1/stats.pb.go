@@ -557,9 +557,9 @@ type GetStatsResponse struct {
 	// cluster does not index paused runs, which then count as running. A
 	// series bucket counts a paused run it created as running.
 	Paused int64 `protobuf:"varint,18,opt,name=paused,proto3" json:"paused,omitempty"`
-	// queued is set from E88; unset until it lands (v0.4.0 proto batch).
+	// queued is how many of the running runs wait for a concurrency slot.
 	Queued int64 `protobuf:"varint,19,opt,name=queued,proto3" json:"queued,omitempty"`
-	// executing is set from E103; unset until it lands (v0.4.0 proto batch).
+	// executing is how many of the running runs do not: running minus queued.
 	Executing     int64 `protobuf:"varint,20,opt,name=executing,proto3" json:"executing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

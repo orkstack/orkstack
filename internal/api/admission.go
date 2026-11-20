@@ -55,7 +55,7 @@ func (s *Service) admit(
 				name, err))
 		}
 		if refusal := engine.MaxRunningRefusal(ns, running); refusal != nil {
-			return s.refuse(ctx, ns, wf, refusal)
+			return s.refuseCode(ctx, ns, wf, refusal, s.queuedAtMaxRunning(ctx, binding, name, wf, refusal))
 		}
 	}
 	if budget := ns.GetBudget(); budget != nil && budget.GetEnforce() {
@@ -92,6 +92,39 @@ func (s *Service) runningCount(ctx context.Context, binding engine.Binding, name
 	return binding.Reader.RunningCount(ctx, namespace, ceiling)
 }
 
+// queuedAtMaxRunning counts, on a max_running refusal only, how many of the
+// namespace's runs wait in a concurrency limit's line (E88 §7.1 step 1),
+// and says which class the refusal takes: ResourceExhausted when some do,
+// or when the count fails for an Orkflow that declares a limit, so a
+// schedule's fire does not pause and a trigger answers 429; otherwise
+// FailedPrecondition with today's text. A cluster that does not index the
+// attributes is asked nothing.
+func (s *Service) queuedAtMaxRunning(
+	ctx context.Context,
+	binding engine.Binding,
+	namespace string,
+	wf *orkstackv1.Orkflow,
+	refusal *engine.AdmissionRefusedError,
+) connect.Code {
+	if s.concurrencyReader == nil || !concurrencyIndexAnswer(binding.Starter) {
+		return connect.CodeFailedPrecondition
+	}
+	queued, err := s.concurrencyReader.QueuedRuns(ctx, namespace)
+	switch {
+	case err != nil:
+		s.logger.Warn("a max_running refusal could not count the namespace's queued runs",
+			"namespace", namespace, "error", err)
+		if wf.GetConcurrency() != nil {
+			return connect.CodeResourceExhausted
+		}
+		return connect.CodeFailedPrecondition
+	case queued > 0:
+		refusal.Queued = queued
+		return connect.CodeResourceExhausted
+	}
+	return connect.CodeFailedPrecondition
+}
+
 // refuse logs and announces one refusal, then returns it as the Connect
 // error the caller receives. Neither signal is on the path to the refusal:
 // the error is returned whether or not a logger or observer is wired.
@@ -100,6 +133,17 @@ func (s *Service) refuse(
 	ns *orkstackv1.Namespace,
 	wf *orkstackv1.Orkflow,
 	refusal *engine.AdmissionRefusedError,
+) error {
+	return s.refuseCode(ctx, ns, wf, refusal, connect.CodeFailedPrecondition)
+}
+
+// refuseCode is refuse with the class the refusal takes.
+func (s *Service) refuseCode(
+	ctx context.Context,
+	ns *orkstackv1.Namespace,
+	wf *orkstackv1.Orkflow,
+	refusal *engine.AdmissionRefusedError,
+	code connect.Code,
 ) error {
 	attrs := []any{
 		"namespace", refusal.Namespace,
@@ -112,7 +156,7 @@ func (s *Service) refuse(
 			attrs = append(attrs, "hold_since", since.AsTime().UTC().Format(time.RFC3339))
 		}
 	case engine.AdmissionMaxRunning:
-		attrs = append(attrs, "running", refusal.Running, "max_running", refusal.MaxRunning)
+		attrs = append(attrs, "running", refusal.Running, "max_running", refusal.MaxRunning, "queued", refusal.Queued)
 	case engine.AdmissionBudgetExceeded:
 		attrs = append(attrs,
 			"period", refusal.Budget.GetPeriod().AsDuration().String(),
@@ -134,5 +178,8 @@ func (s *Service) refuse(
 		s.admissions.ObserveRefusal(ctx, refusal.Namespace, engine.RefusalTelemetry(ns, wf),
 			wf.GetName(), string(refusal.Reason))
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, refusal)
+	if code == connect.CodeResourceExhausted {
+		return busy(refusal)
+	}
+	return connect.NewError(code, refusal)
 }

@@ -358,6 +358,18 @@ type Config struct {
 	// pins (E92); nil pins DefaultInterruptionBudgets.
 	Interruptions *engine.InterruptionBudgets
 
+	// Concurrency and GateTunables are engine.concurrency.*: what a run's
+	// concurrency limit is checked and planned with at submit, and the
+	// tunables a gate it starts runs on. Zero values are the defaults
+	// (cmd/ork always sets both, validated at boot).
+	Concurrency  engine.ConcurrencySettings
+	GateTunables engine.GateTunables
+	// ConcurrencyReader is what submit reads of the cluster for a limit's
+	// key and line checks, and for the queued runs a max_running refusal
+	// names (engine.TemporalConcurrencyReader). Nil refuses every limited
+	// run CONCURRENCY_CHECK_UNAVAILABLE and counts no queued run.
+	ConcurrencyReader engine.ConcurrencyAdmissionReader
+
 	// RunTimeoutHandlerGrace is engine.run_timeout_handler_grace: how long
 	// after a run's deadline its failure handlers may still run. Zero is a
 	// grace of zero (cmd/ork passes engine.DefaultRunTimeoutHandlerGrace for
@@ -386,6 +398,10 @@ type Config struct {
 	// written: the run snapshot store every reader resolves them from.
 	DefinitionByReference bool
 	DefinitionObjects     DefinitionObjectWriter
+	// RunContexts is where each run tree's run-context object is written
+	// (run_context.go): the run snapshot store. Unset, a run's tasks are
+	// given no run context.
+	RunContexts RunContextWriter
 
 	// SnapshotOverlays is engine.snapshot_overlays: a run tree in which some
 	// run declares more than engine.DefaultOverlayMinRows rows gets the
@@ -629,6 +645,14 @@ type Service struct {
 	// interruptions is Config.Interruptions: the budgets every run this
 	// engine accepts pins (E92); nil is the defaults.
 	interruptions *engine.InterruptionBudgets
+	// concurrency and gateTunables are Config.Concurrency and
+	// Config.GateTunables, the defaults for zero values.
+	concurrency       engine.ConcurrencySettings
+	gateTunables      engine.GateTunables
+	concurrencyReader engine.ConcurrencyAdmissionReader
+	// queuedWarn spaces GetRun's warnings that a queued run's gate could
+	// not be read (applyLiveQueued): a run page polls GetRun.
+	queuedWarn warnLimiter
 	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
 	// seconds, never negative: what runTimeoutPlanFor pins.
 	runTimeoutGraceSeconds int64
@@ -638,6 +662,7 @@ type Service struct {
 	// continuation on; definitionObjects is Config.DefinitionObjects.
 	definitionByReference bool
 	definitionObjects     DefinitionObjectWriter
+	runContexts           RunContextWriter
 	// snapshotOverlays is Config.SnapshotOverlays; overlaysOff rate-limits
 	// the Warn logged while the fleet keeps a run tree off overlays.
 	snapshotOverlays bool
@@ -729,10 +754,14 @@ func NewService(cfg Config) *Service {
 		definitionByReference:  cfg.DefinitionByReference && cfg.ContinuationEnabled,
 		snapshotOverlays:       cfg.SnapshotOverlays,
 		definitionObjects:      cfg.DefinitionObjects,
+		runContexts:            cfg.RunContexts,
 		runMaxInFlight:         int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
 		pinCreationSeconds:     pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
 		interruptions:          cfg.Interruptions,
 		runTimeoutGraceSeconds: max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
+		concurrency:            concurrencySettingsOf(cfg.Concurrency),
+		gateTunables:           gateTunablesOf(cfg.GateTunables),
+		concurrencyReader:      cfg.ConcurrencyReader,
 		pausePlan:              pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
 		historyMaxBytes:        positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:        composeMaxDepthOf(cfg.ComposeMaxDepth),
@@ -763,6 +792,18 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.logger == nil {
 		svc.logger = slog.Default()
+	}
+	// cmd/ork validates engine.concurrency.* at boot; a partly set value
+	// from anywhere else would pin zeros into every limited run's plan, so it
+	// is the defaults instead, and said.
+	if err := svc.concurrency.Check(svc.gateTunables); err != nil {
+		svc.logger.Error("the concurrency settings are not usable; using the defaults", "error", err)
+		svc.concurrency, svc.gateTunables = engine.DefaultConcurrencySettings(), engine.DefaultGateTunables()
+	}
+	if svc.runContexts == nil {
+		// Explicit, never silent: a service with nowhere to write run
+		// contexts starts runs whose tasks are given none.
+		svc.logger.Info("no run-context store is configured: tasks of the runs this service starts are given no run context")
 	}
 	svc.pools = &engine.PoolResolver{
 		Namespaces: cfg.Namespaces,
@@ -938,6 +979,14 @@ func (s *Service) ApplyOrkflow(
 	// it, and holds the stamp above it (artifacts.AppliedStamp) so a slow
 	// replica cannot publish a version that reads as older than the one it
 	// just extended.
+	// A version that will be what the name resolves to (no version is
+	// promoted, so the newest is) is refused while a schedule or trigger
+	// follows current and it declares an artifact input.
+	if versions, verr := s.orkflows.Versions(ctx, ns.GetName(), wf.GetName()); verr != nil || versions.Current == "" {
+		if err := s.refuseArtifactInputsWithFollowers(ctx, ns.GetName(), wf); err != nil {
+			return nil, err
+		}
+	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	stored, created, err := s.orkflows.Put(ctx, wf, expected)
 	// Whatever the outcome — a failed write may still have landed — the
@@ -1172,6 +1221,10 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	if err := s.checkTaskCeiling(wf); err != nil {
 		return nil, nil, nil, err
 	}
+	// A concurrency limit's queue_timeout against the deployment's bounds.
+	if err := s.checkConcurrencyBounds(wf); err != nil {
+		return nil, nil, nil, err
+	}
 	selected, err := applyNamespace(requestedNamespace, wf.GetNamespace())
 	if err != nil {
 		return nil, nil, nil, err
@@ -1239,6 +1292,9 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// join can leave absent. Never an ERROR; rules 37–42 already refused in
 	// Compile.
 	issues = append(issues, dsl.JoinWarnings(wf)...)
+	// A concurrency limit the deployment could not hold now: a warning,
+	// never a refusal of the document.
+	issues = append(issues, s.concurrencyIssues(ctx, ns, wf)...)
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
@@ -1625,6 +1681,10 @@ type submission struct {
 	// (definition_ref.go).
 	start            *orkstackv1.Orkflow
 	definitionObject []byte
+	// runContextObject is the run tree's run-context object, written under
+	// the final run id before each start (run_context.go); nil when the
+	// deployment gives no run context.
+	runContextObject []byte
 }
 
 // startDefinition is the definition the run's start carries.
@@ -1758,6 +1818,11 @@ func (s *Service) prepare(
 	if err := s.checkTaskCeilingAtSubmit(stored); err != nil {
 		return submission{}, err
 	}
+	// An artifact input is passed only by a composing task: no other start
+	// can bind one, so it is refused before any id is minted.
+	if err := refuseArtifactInputs(stored, origin.GetKind(), "a "+originNoun(origin.GetKind())); err != nil {
+		return submission{}, err
+	}
 	binding, err := s.binding(ns.GetName())
 	if err != nil {
 		return submission{}, err
@@ -1827,6 +1892,12 @@ func (s *Service) prepare(
 	if err := s.fleetCheck(ctx, planned, &plan); err != nil {
 		return submission{}, err
 	}
+	// A run-level concurrency limit: its key rendered, the deployment asked
+	// whether it can hold one, and its slot pinned (planConcurrency). A run
+	// with no limit asks nothing.
+	if err := s.planConcurrency(ctx, ns, planned, &plan, msg, origin, binding.Starter); err != nil {
+		return submission{}, err
+	}
 	// The snapshot-overlay policy, a run-tree limit like those
 	// pinRunTreeLimits pins, but decided here, once every child definition
 	// is known: only a tree with a run large enough to use overlays asks the
@@ -1876,6 +1947,14 @@ func (s *Service) prepare(
 		}
 		plan.IdempotencyFingerprint = fingerprint
 	}
+	// The run tree's run context, once its origin and children are final:
+	// the object numbers each child's plan and pins its SHA-256 on this one.
+	var runContextObject []byte
+	if s.runContexts != nil {
+		if runContextObject, err = planRunContext(planned, &plan); err != nil {
+			return submission{}, connect.NewError(connect.CodeInternal, err)
+		}
+	}
 	// The plan is the start's third payload. mintChildren measures it only
 	// when the run composes children; every plan is measured here, after the
 	// callback digests it carries have been minted.
@@ -1893,6 +1972,7 @@ func (s *Service) prepare(
 		origin:           origin,
 		start:            start,
 		definitionObject: definitionObject,
+		runContextObject: runContextObject,
 	}, nil
 }
 
@@ -2742,6 +2822,7 @@ func (s *Service) GetRun(
 	}
 	SetRunTiming(run, time.Now())
 	s.applyCensusPendingReasons(ctx, run)
+	s.applyLiveQueued(ctx, run)
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
@@ -2908,6 +2989,11 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
+	if plan.Index != nil {
+		if err := runIndexGates(plan.Index, ns, binding); err != nil {
+			return nil, err
+		}
+	}
 	if binding.Reader != nil {
 		query := plan
 		query.Namespace = ns.GetName()
@@ -2938,7 +3024,9 @@ func (s *Service) ListRuns(
 		}
 		fromMemory = true
 	}
-	if s.archive != nil {
+	// An archived run has ended, so it waits on and holds nothing: under an
+	// index filter the archive cannot add a row, and is not read.
+	if s.archive != nil && plan.Index == nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
 			Namespace:     ns.GetName(),
 			OrkflowName:   plan.OrkflowName,

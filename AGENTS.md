@@ -85,7 +85,13 @@ to the class without a change to this file. Cron scheduling
 must use Temporal Schedules. Interaction with a running Temporal workflow must
 use Temporal Signals, including approval, external completion, resume, and abort.
 The two exceptions are a cancel request and a force cancel's termination (§7,
-Force cancel); neither carries data into the workflow.
+Force cancel); neither carries data into the workflow. A resume of a finished
+run is not interaction with a running one: it is one reset of the run's closed
+execution, and its plan travels as the reset's reason, a key naming an
+immutable record written before the reset, which the reset run loads and
+verifies at its reset point within its plan's restore timeout, or the fixed
+`resume_plan_load_timeout` of 5 minutes when its plan pins none
+(`docs/STORAGE.md`).
 
 A concurrency limit is held per namespace and key by a Temporal workflow of its
 own (the concurrency gate), which exists only while the key has runs holding or
@@ -102,8 +108,10 @@ reports; it decides nothing.
 ### 2.2 Object storage owns data and artifacts
 
 Temporal history and payloads contain only small structured metadata and
-references. The hard maximum serialized payload size is **256 KiB**. Anything
-larger must be an Artifact. Never put large bytes in Temporal payloads or the
+references. The hard maximum serialized payload size is **256 KiB**; a task's
+activity input may exceed it by exactly its run context, a fixed reference of
+at most `RunContextMaxBytes` (512 B, pinned per run), which no user-controlled
+byte can use. Anything larger must be an Artifact. Never put large bytes in Temporal payloads or the
 event stream. The one exception is a run's own saved state copied into a
 generation's history (§7.3): its checkpoint at a continuation and — for a
 definition too large to travel as a start payload — its planned definition, an
@@ -115,7 +123,9 @@ from recorded bytes; it is never an artifact's bytes, and nothing else may use
 it.
 
 Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
-and immutable activity completion and per-attempt records. It holds each
+immutable activity completion and per-attempt records, each run tree's
+immutable run-context object, what its tasks may read about their runs, and
+a fan-out's immutable line indexes. It holds each
 event source's document, keyed by its namespace and name, and the immutable
 service specs written under the source's id. It also holds what
 decides access and identity, where only an engine's credential should reach:
@@ -142,7 +152,10 @@ lock, and a version stored under its content hash by an earlier release answers
 the same lookup.
 
 Artifacts are references, not bytes. The Orker materializes and uploads them
-through `pkg/artifacts`. The production artifact backend is shared object
+through `pkg/artifacts`. A run may reference an object another run of its
+tree produced or received, and no user surface can supply a reference: the
+engine resolves one from a recorded result, and writes the marker that claims
+the object for a run before any record of that run references it. The production artifact backend is shared object
 storage (S3-compatible storage); local filesystem storage is for local use.
 Production infrastructure should consist primarily of Temporal, S3-compatible
 object storage, OrkStack services, and Orkers. Additional durable systems are
@@ -477,6 +490,9 @@ resolve the activity specification
 check the completion commit
 check the run's image policy
 check a cached task's memo
+index the lines of an artifact a fan-out reads, when the engine asks: while
+  committing the producer's artifacts, or as an internal activity of the
+  fan-out's pool that starts no container
 check the task against this Orker's own policy, once no commit or memo answers it
   (the exact order, cached and not: docs/OCI_ACTIVITY_CONTRACT.md §7.1)
 check the task's profiles against this Orker's and the run's, after the
@@ -528,7 +544,9 @@ task, and a pinned task holds none. One Orker on a host holds its `gpu`
 profile at a time; another waits, paused, until it exits. The ledger is
 process-local, exactly as a cordon is: never stored, never shared, gone
 with the process. It is admission, not placement: Temporal decides which
-polling Orker receives a task, and OrkStack never chooses a host.
+polling Orker receives a task, and OrkStack never chooses a host. A line
+index the Orker builds is admitted like a task, holding one activity slot
+and the fixed reservation `docs/DEPLOY.md` states.
 
 Every Orker of a pool has the same settings — caps, default request,
 capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
@@ -790,13 +808,18 @@ internal never appears on any of those surfaces.
   (`ORK_ORKER_MAX_PINS` above zero). Every Orker still runs ordinary tasks;
   only a pin host runs pinned ones.
 - **Fan-out** means a task declaring `each:`: one DAG node that runs one
-  **item** per element of an array. An item is identified by its 0-based
+  **item** per element of an array, or per non-empty line — or per batch of
+  K consecutive lines (`batch:`) — of an artifact a task it needs produced
+  (`over_artifact:`). An item is identified by its 0-based
   index, never a string; `convert[3]` is a rendering only and nothing parses
   it.
 - **Composed task** means a task whose `uses:` is `orkflow:<name>@<version>`.
   It starts a **child run** of that Orkflow and waits for it; the run that
   started it is the **parent run**. **Outputs** are an Orkflow's declared
-  return contract (`outputs:`).
+  return contract (`outputs:`). A composed task passes files to its child only
+  as `artifacts:` bindings of the child's `type: artifact` inputs: references
+  the engine resolves from recorded results, never bytes, staged only for the
+  child's tasks that name them (`_inputs/<name>`).
 - **Shared Orkflow** means an Orkflow whose definition lists, in
   `shared_with:`, other namespaces or other namespaces' Orkflows that may
   compose it (`uses: orkflow:<namespace>/<name>@<version>`); the namespace
@@ -1212,11 +1235,12 @@ in-flight cap, a retry spacing — is pinned per run, in the plan the submitting
 engine builds or in the carry a generation hands the next, never read from a
 code constant at decision time, so a release that changes a default moves only
 new runs. A code constant may decide a command only when this file fixes it
-(the 256 KiB payload bound, the 128 KiB chunk bound) or it predates this rule
+(the 256 KiB payload bound, the 128 KiB chunk bound, the 5-minute
+`resume_plan_load_timeout` of §2.1) or it predates this rule
 and a recorded history protects it; changing such a constant is a new command
 path with its own gate. Because the activity channel can fall
 through to another release, an activity-input field an older Orker would
-reject or ignore (cache, join, fan-out items) is advertised as a capability on
+reject or ignore (cache, join, fan-out items, fan-out lines) is advertised as a capability on
 `DescribeOrker`. Submit asks every uncordoned Orker of each pool such a task
 would run on, each on its own control channel, and refuses with
 `FailedPrecondition`, naming the Orker and its build, when one lacks the
@@ -1294,7 +1318,10 @@ concurrency census) are created by each engine at boot if absent and are never
 user objects, and are no **schedule** in §7's sense; a
 composed task is a Temporal child workflow of the same `RunWorkflow`
 interpreter; a fan-out's
-items are ordinary activities in the interpreter's own in-flight set; a webhook
+items are ordinary activities in the interpreter's own in-flight set; a
+fan-out over an artifact's lines is counted by one internal activity on an
+Orker of its pool, which writes an immutable, digest-verified line index,
+never the lines into history; a webhook
 delivery is a short workflow of its own whose one-`POST` activity Temporal
 retries under the ladder pinned into it, never a loop in the engine.
 
@@ -2129,6 +2156,7 @@ internal/engine/       Temporal workflows and activities
 internal/api/          Connect services and WebSocket bridge
 internal/webui/        The web UI's build embedded into ork, and the handler that serves it at /
 internal/dsl/          YAML parse, validation, and Orkflow compilation
+internal/eachlines/    The line splitter, batching and line-index format a fan-out over an artifact reads
 internal/orker/        Orker runtime and OCI activity dispatch; the runtime files
                        (runtime_docker.go, runtime_dialect.go) alone name Docker or Podman
 internal/orker/servicehost/  The Orker Service Contract: the two mounts, steps, the status, the beat, stopping
@@ -2147,6 +2175,7 @@ internal/identity/     Task identity: the issuer and its signing keys, what engi
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
 internal/testsupport/  Test-only helpers shared by suites
+internal/payloadcrypt/ Payload encryption: the sealed envelope, a run's key in its memo, the data and failure converters
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker

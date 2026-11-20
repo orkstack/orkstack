@@ -515,7 +515,7 @@ func TestRunningExecutions_ListsAContinuedAsNewOnlyChainOnce(t *testing.T) {
 	created := visibilityNow.Add(-time.Hour)
 	index := indexOf(t, switched("ork-chain", created, 2))
 	index.describeAs("ork-chain", running)
-	runs, err := readerOverIndex(index).runningExecutions(context.Background(),
+	runs, _, err := readerOverIndex(index).runningExecutions(context.Background(),
 		StatsWindow{Namespace: "payments", Since: visibilityNow.Add(-24 * time.Hour), Until: visibilityNow})
 	if err != nil || len(runs) != 1 || runs[0].GetStatus() != orkstackv1.Status_STATUS_RUNNING {
 		t.Fatalf("running = %v, %v; want the chain once", runs, err)

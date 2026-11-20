@@ -221,6 +221,11 @@ func compileComposedTask(taskIndex int, td taskDocument, namespace string) (*ork
 		return nil, err
 	}
 	task.With = with
+	bindings, err := compileChildArtifacts(taskIndex, td)
+	if err != nil {
+		return nil, err
+	}
+	task.ChildArtifacts = bindings
 	return task, nil
 }
 
@@ -274,6 +279,7 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 		{"await", task.GetAwait() != nil},
 		{"sleep", task.GetSleep() != nil},
 		{"cache", task.GetCache() != nil},
+		{"input_artifacts", len(task.GetInputArtifacts()) > 0},
 	}
 	for _, c := range checks {
 		if c.set {

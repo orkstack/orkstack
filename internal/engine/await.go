@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -317,9 +318,13 @@ func (s *runState) drainResolutions(ctx workflow.Context) {
 		return
 	}
 	for {
-		var sig *orkstackv1.AwaitSignal
-		if !s.resolutions.ReceiveAsync(&sig) {
+		var raw converter.RawValue
+		if !s.resolutions.ReceiveAsync(&raw) {
 			return
+		}
+		sig, ok := s.openResolution(ctx, raw)
+		if !ok {
+			continue
 		}
 		id := sig.GetTaskId()
 		if s.awaits[id] == nil {

@@ -33,6 +33,7 @@ func NewGateActivities(c client.Client) *GateActivities { return &GateActivities
 func RegisterGateActivities(w ActivityRegistrar, a *GateActivities) {
 	w.RegisterActivityWithOptions(a.DescribeConcurrencyEntries, activity.RegisterOptions{Name: ActivityDescribeConcurrencyEntries})
 	w.RegisterActivityWithOptions(a.ListConcurrencyEntries, activity.RegisterOptions{Name: ActivityListConcurrencyEntries})
+	w.RegisterActivityWithOptions(a.AcquireConcurrency, activity.RegisterOptions{Name: ActivityAcquireConcurrency})
 }
 
 // gateStuckAttempt is the workflow-task attempt from which a run counts as

@@ -426,7 +426,16 @@ func runObjectIDs(run *orkstackv1.Run) []string {
 		}
 		appendRef(taskRun.GetValuesRef())
 	}
+	// What a child received and what a composed task passed are objects
+	// this run claimed while it was open (composed_artifacts.go): listing
+	// them is what releases those claims when the run retires.
+	for _, received := range run.GetInputArtifacts() {
+		appendRef(received.GetArtifact())
+	}
 	for _, taskRun := range run.GetTaskRuns() {
+		for _, passed := range taskRun.GetChild().GetInputArtifacts() {
+			appendRef(passed.GetArtifact())
+		}
 		appendRow(taskRun)
 		// A fan-out's items hold the references; the node holds none. Every
 		// item's objects get their markers, so provenance and the cleanup

@@ -162,6 +162,11 @@ const (
 	// UNVERIFIED: part of the evidence could not be read, so the release
 	// cannot be shown to pass. Never treated as passing.
 	ReleaseBlockerKind_RELEASE_BLOCKER_KIND_UNVERIFIED ReleaseBlockerKind = 5
+	// CAPABILITY_MISSING: an engine process of the release lacks a capability
+	// that runs still open need, such as concurrency limits while a run with a
+	// limit is open, so sending new runs to it could leave those limits held by
+	// no one.
+	ReleaseBlockerKind_RELEASE_BLOCKER_KIND_CAPABILITY_MISSING ReleaseBlockerKind = 6
 )
 
 // Enum value maps for ReleaseBlockerKind.
@@ -173,14 +178,16 @@ var (
 		3: "RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED",
 		4: "RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS",
 		5: "RELEASE_BLOCKER_KIND_UNVERIFIED",
+		6: "RELEASE_BLOCKER_KIND_CAPABILITY_MISSING",
 	}
 	ReleaseBlockerKind_value = map[string]int32{
-		"RELEASE_BLOCKER_KIND_UNSPECIFIED":      0,
-		"RELEASE_BLOCKER_KIND_NO_ENGINE":        1,
-		"RELEASE_BLOCKER_KIND_POOL_NOT_SERVED":  2,
-		"RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED":  3,
-		"RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS": 4,
-		"RELEASE_BLOCKER_KIND_UNVERIFIED":       5,
+		"RELEASE_BLOCKER_KIND_UNSPECIFIED":        0,
+		"RELEASE_BLOCKER_KIND_NO_ENGINE":          1,
+		"RELEASE_BLOCKER_KIND_POOL_NOT_SERVED":    2,
+		"RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED":    3,
+		"RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS":   4,
+		"RELEASE_BLOCKER_KIND_UNVERIFIED":         5,
+		"RELEASE_BLOCKER_KIND_CAPABILITY_MISSING": 6,
 	}
 )
 
@@ -2570,14 +2577,15 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\x11ReleaseDrainState\x12#\n" +
 	"\x1fRELEASE_DRAIN_STATE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cRELEASE_DRAIN_STATE_DRAINING\x10\x01\x12\x1f\n" +
-	"\x1bRELEASE_DRAIN_STATE_DRAINED\x10\x02*\x82\x02\n" +
+	"\x1bRELEASE_DRAIN_STATE_DRAINED\x10\x02*\xaf\x02\n" +
 	"\x12ReleaseBlockerKind\x12$\n" +
 	" RELEASE_BLOCKER_KIND_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eRELEASE_BLOCKER_KIND_NO_ENGINE\x10\x01\x12(\n" +
 	"$RELEASE_BLOCKER_KIND_POOL_NOT_SERVED\x10\x02\x12(\n" +
 	"$RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED\x10\x03\x12)\n" +
 	"%RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS\x10\x04\x12#\n" +
-	"\x1fRELEASE_BLOCKER_KIND_UNVERIFIED\x10\x052\xba\b\n" +
+	"\x1fRELEASE_BLOCKER_KIND_UNVERIFIED\x10\x05\x12+\n" +
+	"'RELEASE_BLOCKER_KIND_CAPABILITY_MISSING\x10\x062\xba\b\n" +
 	"\rSystemService\x12V\n" +
 	"\rGetSystemInfo\x12!.orkstack.v1.GetSystemInfoRequest\x1a\".orkstack.v1.GetSystemInfoResponse\x12e\n" +
 	"\x12GetRetentionPolicy\x12&.orkstack.v1.GetRetentionPolicyRequest\x1a'.orkstack.v1.GetRetentionPolicyResponse\x12n\n" +

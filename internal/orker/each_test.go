@@ -34,6 +34,9 @@ type eachRuntime struct {
 	taskRaw [][]byte
 	config  []map[string]any
 	staged  [][]string
+	// outputs, when set, are the output artifacts every container writes,
+	// by name.
+	outputs map[string]string
 }
 
 func (r *eachRuntime) Pull(context.Context, string) (PullInfo, error) {
@@ -78,6 +81,15 @@ func (r *eachRuntime) Create(_ context.Context, spec ContainerSpec) (ContainerID
 		case ContainerOutput:
 			if err := os.WriteFile(filepath.Join(m.Source, "values.json"), []byte(`{}`), 0o644); err != nil {
 				return "", err
+			}
+			for name, body := range r.outputs {
+				dir := filepath.Join(m.Source, "artifacts")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return "", err
+				}
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+					return "", err
+				}
 			}
 		}
 	}
@@ -464,5 +476,83 @@ func TestDescribeOrker_ReportsEachSupported(t *testing.T) {
 	must.OKf(t, err, "DescribeOrker")
 	if !result.GetEachSupported() {
 		t.Fatal("this build implements fan-out items and must say so")
+	}
+}
+
+// writeScopedItemCommit writes item index's commit as a resume under scope
+// ran it again: at its scoped key, with its scoped idempotency key, and an
+// artifact named name.
+func (h *eachHarness) writeScopedItemCommit(t *testing.T, root string, index int32, scope uint64, name string) {
+	t.Helper()
+	key, err := artifacts.ScopedItemCommitKey("default", eachRunID, "convert", index, scope)
+	must.OK(t, err)
+	commit := &orkstackv1.ActivityCommit{
+		SchemaVersion:           artifacts.CommitSchemaVersion,
+		Namespace:               "default",
+		RunId:                   eachRunID,
+		TaskId:                  "convert",
+		IdempotencyKey:          task.ScopedItemIdempotencyKeyFor("default", eachRunID, "convert", index, scope),
+		OrkflowDefinitionDigest: "sha256:def",
+		Values:                  h.put(t, "values.json", []byte(`{"part":"rerun"}`)),
+		Artifacts:               []*orkstackv1.ArtifactRef{h.put(t, name, []byte("rerun\n"))},
+	}
+	if _, err := h.commits.Create(context.Background(), root+"/"+key, commit); err != nil {
+		t.Fatalf("create item %d's scoped commit: %v", index, err)
+	}
+}
+
+// After a resume ran item 1 again under scope 7, its dependent stages the
+// rerun's commit, never the one item 1 had before (E85 R2-2): that one is
+// still there, unaltered, and reading it would hand the dependent the old
+// result silently.
+func TestStageInputs_EachUpstreamReadsAReranItemAtItsScope(t *testing.T) {
+	h := newEachHarness(t)
+	const root = "mem://commits"
+	for i := int32(0); i < 3; i++ {
+		h.writeItemCommit(t, root, i, nil)
+	}
+	h.writeScopedItemCommit(t, root, 1, 7, "rerun.txt")
+	in := mergeInput(3, root)
+	in.Upstream[0].Each.Epochs = []*orkstackv1.ItemEpochRun{{First: 1, Count: 1, Epoch: 7}}
+	if _, err := h.dispatcher.Execute(context.Background(), in); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	staged := strings.Join(h.runtime.staged[0], "\n")
+	if !strings.Contains(staged, "artifacts/convert/00001/rerun.txt") {
+		t.Fatalf("item 1 was not staged from its rerun's commit:\n%s", staged)
+	}
+	if strings.Contains(staged, "artifacts/convert/00001/part.txt") {
+		t.Fatalf("item 1 was staged from the commit it had before the resume:\n%s", staged)
+	}
+	for _, want := range []string{"artifacts/convert/00000/part.txt", "artifacts/convert/00002/part.txt"} {
+		if !strings.Contains(staged, want) {
+			t.Fatalf("an item no range covers was not staged from its scope-0 commit (%s):\n%s", want, staged)
+		}
+	}
+}
+
+// Ranges that are not ascending, disjoint and within the items are a fault
+// of the input, refused before any item is read.
+func TestStageInputs_EachUpstreamRefusesRangesOutsideItsItems(t *testing.T) {
+	for name, runs := range map[string][]*orkstackv1.ItemEpochRun{
+		"past the items":   {{First: 2, Count: 2, Epoch: 7}},
+		"overlapping":      {{First: 0, Count: 2, Epoch: 7}, {First: 1, Count: 1, Epoch: 9}},
+		"out of order":     {{First: 2, Count: 1, Epoch: 7}, {First: 0, Count: 1, Epoch: 7}},
+		"empty":            {{First: 0, Count: 0, Epoch: 7}},
+		"at scope 0":       {{First: 0, Count: 1, Epoch: 0}},
+		"a negative first": {{First: -1, Count: 1, Epoch: 7}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newEachHarness(t)
+			const root = "mem://commits"
+			for i := int32(0); i < 3; i++ {
+				h.writeItemCommit(t, root, i, nil)
+			}
+			in := mergeInput(3, root)
+			in.Upstream[0].Each.Epochs = runs
+			if _, err := h.dispatcher.Execute(context.Background(), in); err == nil || !strings.Contains(err.Error(), ReasonInputUnavailable) {
+				t.Fatalf("Execute = %v, want INPUT_UNAVAILABLE naming the ranges", err)
+			}
+		})
 	}
 }

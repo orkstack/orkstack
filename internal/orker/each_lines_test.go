@@ -60,7 +60,7 @@ func (r *linesRig) input(k, maxItems int32) *orkstackv1.IndexEachLinesInput {
 
 func (r *linesRig) index(t *testing.T, in *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error) {
 	t.Helper()
-	return indexEachLines(context.Background(), artifacts.Namespaces{}, r.store, r.indexes, in, slog.New(slog.DiscardHandler))
+	return indexEachLines(context.Background(), artifacts.Namespaces{}, r.store, r.indexes, in, slog.New(slog.DiscardHandler), nil)
 }
 
 // applicationError is err's Temporal application error: its type and
@@ -166,7 +166,7 @@ func TestIndexEachLines_DifferentExistingIndex(t *testing.T) {
 func TestIndexEachLines_StoreErrorIsRetried(t *testing.T) {
 	rig := newLinesRig(t, fiveRows)
 	failing := &rangeFault{Store: rig.store, err: errors.New("store down")}
-	_, err := indexEachLines(context.Background(), artifacts.Namespaces{}, failing, rig.indexes, rig.input(1, 10), slog.New(slog.DiscardHandler))
+	_, err := indexEachLines(context.Background(), artifacts.Namespaces{}, failing, rig.indexes, rig.input(1, 10), slog.New(slog.DiscardHandler), nil)
 	if typ, retry := applicationError(t, err); typ != eachlines.ReasonExpansionFailed || !retry {
 		t.Fatalf("= %s retryable=%v; want EACH_EXPANSION_FAILED, retried", typ, retry)
 	}
@@ -176,7 +176,7 @@ func TestIndexEachLines_StopsOnCancel(t *testing.T) {
 	rig := newLinesRig(t, fiveRows)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := indexEachLines(ctx, artifacts.Namespaces{}, rig.store, rig.indexes, rig.input(1, 10), slog.New(slog.DiscardHandler))
+	_, err := indexEachLines(ctx, artifacts.Namespaces{}, rig.store, rig.indexes, rig.input(1, 10), slog.New(slog.DiscardHandler), nil)
 	// A stop is retried, never read as the run's own cancel.
 	if typ, retry := applicationError(t, err); typ != eachlines.ReasonExpansionFailed || !retry {
 		t.Fatalf("a stopped index = %s retryable=%v; want EACH_EXPANSION_FAILED, retried", typ, retry)
@@ -489,7 +489,7 @@ func (s *shortRange) GetRange(ctx context.Context, uri string, offset, length in
 
 func TestIndexEachLines_ShortRangeIsAnErrorNotALoop(t *testing.T) {
 	rig := newLinesRig(t, fiveRows)
-	_, err := indexEachLines(context.Background(), artifacts.Namespaces{}, &shortRange{rig.store}, rig.indexes, rig.input(1, 10), slog.New(slog.DiscardHandler))
+	_, err := indexEachLines(context.Background(), artifacts.Namespaces{}, &shortRange{rig.store}, rig.indexes, rig.input(1, 10), slog.New(slog.DiscardHandler), nil)
 	if typ, retry := applicationError(t, err); typ != eachlines.ReasonExpansionFailed || !retry {
 		t.Fatalf("a short range = %s retryable=%v; want EACH_EXPANSION_FAILED, retried", typ, retry)
 	}

@@ -297,6 +297,17 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	}
 	closures := transitiveNeeds(byID)
 
+	// Rules 55 and 56: artifact inputs, the bindings that pass them to a
+	// child, and each task's delivery set. Before the template rules, so an
+	// input declared wrong is named before a template that reads it.
+	artifactInputs, err := validateArtifactInputs(wf)
+	if err != nil {
+		return err
+	}
+	if err := validateArtifactBindings(wf, byID, closures, artifactInputs); err != nil {
+		return err
+	}
+
 	// Rules 19–24 (the fan-out's own declaration): before the template
 	// rules, so a malformed `each:` is named before anything that reads it.
 	if err := validateEach(wf, byID, closures); err != nil {
@@ -305,11 +316,12 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 
 	for taskIndex, task := range wf.GetTasks() {
 		checker := &templateChecker{
-			taskID:   task.GetId(),
-			inputs:   inputs,
-			tasks:    byID,
-			upstream: closures[task.GetId()],
-			anchor:   fmt.Sprintf("tasks[%d]", taskIndex),
+			taskID:         task.GetId(),
+			inputs:         inputs,
+			tasks:          byID,
+			upstream:       closures[task.GetId()],
+			anchor:         fmt.Sprintf("tasks[%d]", taskIndex),
+			artifactInputs: artifactInputs,
 		}
 		// Rule 25: `.each` is legal only in the `with:` of a fan-out, so the
 		// condition is checked with no item name bound.
@@ -347,6 +359,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	// that may read any task but a fan-out — they are rendered after every
 	// task is terminal, so no needs closure applies.
 	if err := validateOutputs(wf, inputs, byID); err != nil {
+		return err
+	}
+	// Rule 57: artifact outputs.
+	if err := validateOutputArtifacts(wf, byID, artifactInputs); err != nil {
 		return err
 	}
 

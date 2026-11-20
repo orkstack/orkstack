@@ -937,6 +937,10 @@ type taskJSONEach struct {
 type taskJSONEachUpstream struct {
 	TaskID string `json:"taskId"`
 	Count  int32  `json:"count"`
+	// Failed, for a failure handler of an on_item_failure: continue
+	// fan-out, is the ascending indices of the items that did not succeed:
+	// none of them is staged.
+	Failed []int32 `json:"failed,omitempty"`
 }
 
 // taskJSONTrace is the W3C trace carrier, in the same form `traceparent` and

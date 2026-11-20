@@ -50,15 +50,22 @@ type eachIndexStore interface {
 // attempts.
 func (a *Activities) IndexEachLines(ctx context.Context, in *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error) {
 	beat := NewHeartbeater(ctx)
-	beat.Phase(PhaseIndexing)
 	beat.Start(ctx)
 	defer beat.Stop()
-	return indexEachLines(ctx, a.dispatcher.Namespaces, a.dispatcher.Store, a.eachIndexes, in, a.dispatcher.logger())
+	return a.indexWith(ctx, in, beat)
+}
+
+// indexWith is IndexEachLines under beat: the attempt's heartbeat names the
+// indexing phase and carries how far the read has come.
+func (a *Activities) indexWith(ctx context.Context, in *orkstackv1.IndexEachLinesInput, beat *Heartbeater) (*orkstackv1.IndexEachLinesResult, error) {
+	beat.Phase(PhaseIndexing)
+	return indexEachLines(ctx, a.dispatcher.Namespaces, a.dispatcher.Store, a.eachIndexes, in, a.dispatcher.logger(), beat.Indexed)
 }
 
 // indexEachLines is IndexEachLines without its heartbeat loop: the part a
-// unit test drives with a store of its own.
-func indexEachLines(ctx context.Context, served artifacts.Namespaces, store artifacts.Store, indexes eachIndexStore, in *orkstackv1.IndexEachLinesInput, log *slog.Logger) (*orkstackv1.IndexEachLinesResult, error) {
+// unit test drives with a store of its own. progress, when set, hears how far
+// the read has come after every read, as the heartbeat reports it.
+func indexEachLines(ctx context.Context, served artifacts.Namespaces, store artifacts.Store, indexes eachIndexStore, in *orkstackv1.IndexEachLinesInput, log *slog.Logger, progress func(bytesRead, lines int64)) (*orkstackv1.IndexEachLinesResult, error) {
 	// The namespace guard first: no line index of a namespace this Orker
 	// does not serve is written, and its source is not read (namespace_guard.go).
 	if err := refuseIndexNamespace(served, in); err != nil {
@@ -78,6 +85,9 @@ func indexEachLines(ctx context.Context, served artifacts.Namespaces, store arti
 	opts.Progress = func(bytesRead, nonEmpty int64) {
 		read.Store(bytesRead)
 		lines.Store(nonEmpty)
+		if progress != nil {
+			progress(bytesRead, nonEmpty)
+		}
 	}
 	stopLogging := logProgress(ctx, log, in, label, &read, &lines)
 	r := &rangeReader{ctx: ctx, store: store, uri: in.GetSource().GetUri(), size: opts.SourceSize}

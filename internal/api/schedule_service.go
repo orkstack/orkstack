@@ -79,8 +79,12 @@ func (s *Service) CreateSchedule(
 		return nil, err
 	}
 	version := msg.GetOrkflowVersion()
-	if _, err := s.orkflows.Get(ctx, ns, orkflow, version); err != nil {
+	stored, err := s.orkflows.Get(ctx, ns, orkflow, version)
+	if err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q", orkflow, version, ns)
+	}
+	if err := refuseArtifactInputs(stored, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, "a schedule"); err != nil {
+		return nil, err
 	}
 	if err := ValidateScheduleSpec(msg.GetSpec(), s.now()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -229,10 +233,17 @@ func (s *Service) UpdateSchedule(
 		pinErr, bindErr, added = nil, nil, false
 		// A pinned version must exist at update as at create. It is checked
 		// here, where the record names the orkflow the schedule is bound to.
-		if version != "" {
-			if _, err := s.orkflows.Get(ctx, ns, rec.GetOrkflowName(), version); err != nil {
-				pinErr = orkflowStoreError(err, "orkflow %q version %q in namespace %q",
-					rec.GetOrkflowName(), version, ns)
+		// And it is never one with an artifact input: only a composing task
+		// starts those, so neither a pin nor following current may name one.
+		target, getErr := s.orkflows.Get(ctx, ns, rec.GetOrkflowName(), version)
+		if getErr != nil && (version != "" || !errors.Is(getErr, artifacts.ErrNotFound)) {
+			pinErr = orkflowStoreError(getErr, "orkflow %q version %q in namespace %q",
+				rec.GetOrkflowName(), version, ns)
+			return pinErr
+		}
+		if getErr == nil {
+			if err := refuseArtifactInputs(target, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, "a schedule"); err != nil {
+				pinErr = err
 				return pinErr
 			}
 		}

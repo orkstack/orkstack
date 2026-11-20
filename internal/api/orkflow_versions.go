@@ -136,6 +136,9 @@ func (s *Service) SetCurrentOrkflowVersion(
 				versions.Current == "", findings)
 		}
 	}
+	if err := s.refuseArtifactInputsWithFollowers(ctx, ns.GetName(), target); err != nil {
+		return nil, err
+	}
 	previous, err := s.orkflows.SetCurrentVersion(
 		ctx, ns.GetName(), name, version, artifacts.ExpectCurrent(versions.Current))
 	if err != nil {

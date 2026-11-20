@@ -361,7 +361,11 @@ every row read, so a narrower read can never change an answer.
 `created_at`, else its `started_at`, else its `finished_at`, at microsecond
 precision — so a `created_at` filter selects a run on exactly the instant the
 list sorts it by, and a run with no time at all matches no `created_at`
-filter. `origin.kind` takes only equals, because a run started before origins
+filter. `queued=true`, `queued_on=KEY` and `holding=KEY` name no field of a run: the
+cluster's index of open runs answers them, a key standing for its limit, so
+they take only equals (`queued=` only `true`), only a run still going
+matches, the archive is not read for them, and a deployment that does not
+index concurrency limits refuses them. `origin.kind` takes only equals, because a run started before origins
 were recorded is in no origin index and matches no `origin.kind` filter, and
 `origin.root_run_id` takes only equals and needs nothing beside it, while
 `origin.id` needs an equals filter on `origin.kind` (an id is meaningful only
@@ -1097,6 +1101,16 @@ by item events, an item panel (status, attempt, Orker, exit, times, failure,
 attempts, logs, artifacts), how many items run at a time on the grid's line, an
 `N items retried` mark on the row and
 `?task=&item=&attempt=` deep links; the DAG labels the node `each ≤ N`.
+
+A fan-out over an artifact's lines ([DSL.md](DSL.md#fan-out-over-an-artifacts-lines-over_artifact))
+names its source the same way in both clients: "the lines of list/files.jsonl",
+or "batches of 500 lines of list/urls.jsonl" (`orkflow create`, `run plan`, the
+fan-out card). While its line index is built the node is RUNNING and not
+expanded: `run get` shows it RUNNING with no count, `run watch` shows its
+`TASK_SCHEDULED` event "indexing the lines of …", and the card reads
+"Indexing …". Once it is counted, `TaskRun.each.lines` names the source and the
+index, and its items read as any fan-out's; an item of a batch has no
+`each.item`, and `--item N` addresses it as any item.
 
 ### Composed Orkflows
 

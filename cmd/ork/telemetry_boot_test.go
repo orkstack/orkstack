@@ -100,6 +100,12 @@ func requireEngineDial(t *testing.T, got client.Options, identity string, cfg co
 	if got.DataConverter != engine.DataConverter() {
 		t.Fatalf("client.Options.DataConverter = %v, want engine.DataConverter()", got.DataConverter)
 	}
+	// A failure's details take the engine's converter too, and the payload
+	// encryption guard is installed in both: without the failure converter
+	// the SDK writes details with its own default (payload-encryption.md §2).
+	if got.FailureConverter != engine.FailureConverter() {
+		t.Fatalf("client.Options.FailureConverter = %v, want engine.FailureConverter()", got.FailureConverter)
+	}
 }
 
 // TestBootTelemetryZeroConfig holds the non-negotiable invariant: with no
