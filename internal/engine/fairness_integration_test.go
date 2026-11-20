@@ -5,7 +5,6 @@ package engine_test
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -24,6 +23,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 
+	"github.com/orkstack/orkstack/internal/testsupport/dockerport"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -66,10 +66,6 @@ func startPrivateTemporal(t *testing.T, ctx context.Context, settings ...string)
 	if err := exec.CommandContext(ctx, "docker", "image", "inspect", image).Run(); err != nil {
 		infraAbsent(t, "the image %s is not present", image)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	must.OK(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
 	command := "exec timeout 600 temporal server start-dev --ip 0.0.0.0 --headless --log-level error"
 	for _, setting := range settings {
 		command += " --dynamic-config-value " + setting
@@ -78,11 +74,13 @@ func startPrivateTemporal(t *testing.T, ctx context.Context, settings ...string)
 	// its cleanup runs.
 	out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--pull", "never",
 		"--label", fmt.Sprintf("ork.test=fairness-%d", os.Getpid()),
-		"-p", fmt.Sprintf("127.0.0.1:%d:7233", port), "--entrypoint", "sh", image, "-c", command).Output()
+		"-p", dockerport.Publish("7233"), "--entrypoint", "sh", image, "-c", command).Output()
 	must.OKf(t, err, "start a private dev server")
 	container := strings.TrimSpace(string(out))
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", container).Run() })
-	address := fmt.Sprintf("127.0.0.1:%d", port)
+	// Docker picked the port and holds it for this container alone.
+	address, err := dockerport.Addr(ctx, container, "7233")
+	must.OK(t, err)
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})

@@ -5,7 +5,6 @@ package api
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -110,26 +109,22 @@ func TestIntegration_SigninWithDex_DocumentedSetup(t *testing.T) {
 	engine := httptest.NewUnstartedServer(nil)
 	engineURL := "https://" + engine.Listener.Addr().String()
 	callback := engineURL + "/v1/auth/callback/" + name
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
-	}
-	issuer := "https://" + addr + "/dex"
+	// The documented configuration, naming the issuer of the port this
+	// start publishes Dex on; dextest writes it again for each port it tries.
 	docRedirect := strings.TrimSuffix(orkDoc.Auth.PublicURL, "/") + "/v1/auth/callback/" + name
-	config := replaceOnce(t, string(ex.Dex), docIssuer.Issuer, issuer)
-	config = replaceOnce(t, config, docRedirect, callback)
-	configFile := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(configFile, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
+	configDir, written := t.TempDir(), ""
+	writeConfig := func(issuer string) (string, error) {
+		config := replaceOnce(t, string(ex.Dex), docIssuer.Issuer, issuer)
+		config = replaceOnce(t, config, docRedirect, callback)
+		path := filepath.Join(configDir, "config.yaml")
+		written = issuer
+		return path, os.WriteFile(path, []byte(config), 0o600)
 	}
-	dex := startDexWith(t, dextest.Options{Root: root, Dir: t.TempDir(), Addr: addr, WebRedirect: callback,
-		ConfigFile: configFile, SecretEnv: secretEnv, DataDir: t.TempDir()})
-	if dex.Issuer != issuer {
-		t.Fatalf("Dex serves %s, the configuration names %s", dex.Issuer, issuer)
+	dex := startDexWith(t, dextest.Options{Root: root, Dir: t.TempDir(), Addr: "127.0.0.1:0", WebRedirect: callback,
+		Config: writeConfig, SecretEnv: secretEnv, DataDir: t.TempDir()})
+	issuer := dex.Issuer
+	if issuer != written {
+		t.Fatalf("Dex serves %s, the configuration names %s", issuer, written)
 	}
 	idp, err := dex.Client()
 	if err != nil {

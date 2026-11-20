@@ -150,7 +150,7 @@ func TestRegistryImage_IsTheStacksDigestPin(t *testing.T) {
 // Docker Hub, which the setup's bounded, retried fetch exists to avoid.
 func TestRegistryRunArgs_RunsThePinWithoutPulling(t *testing.T) {
 	const image = "registry:3@" + testDigest
-	args := registryRunArgs(image, 41234)
+	args := registryRunArgs(image, "127.0.0.1:41234")
 	if len(args) == 0 || args[0] != "run" {
 		t.Fatalf("args = %q, want a docker run", args)
 	}
