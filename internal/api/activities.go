@@ -32,7 +32,10 @@ type OrkerDescriber interface {
 // ListActivities reports what this deployment can run.
 //
 // It answers from ENGINE CONFIGURATION and never asks an Orker: there is no
-// worker to be unreachable, so there is no Unavailable on this path.
+// worker to be unreachable, so there is no Unavailable on this path. It does
+// read each catalog image's labels from its registry (CatalogLister), each
+// under its own deadline and the listing under one of its own: an image that
+// cannot be read in time is listed with resolve_error, never a hung call.
 //
 // The order is by name, and that is part of the contract rather than an
 // implementation detail: the Admin page renders this list, and a list that

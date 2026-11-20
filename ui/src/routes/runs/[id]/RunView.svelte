@@ -1780,13 +1780,12 @@
 	$effect(() => {
 		const defs = data.orkflow?.tasks;
 		if (!defs?.length) return;
-		let live = true;
-		void loadActivities(defs, activityClient(fetch)).then((answer) => {
-			if (live) activityByTask = answer;
+		// A page that moves on aborts the reads it alone still waits for.
+		const controller = new AbortController();
+		void loadActivities(defs, activityClient(fetch), controller.signal).then((answer) => {
+			if (!controller.signal.aborted) activityByTask = answer;
 		});
-		return () => {
-			live = false;
-		};
+		return () => controller.abort();
 	});
 
 	// The map reads the tasks only in idle time and once per `mapRevision`

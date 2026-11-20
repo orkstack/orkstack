@@ -163,6 +163,12 @@ message ActivityInfo {
   // config could be read. Empty whenever docs is set. Escaped and bounded
   // as interface_error is.
   string docs_error = 12;
+  // resolve_error is non-empty when the catalog's image could not be read
+  // within its deadline, or at all: it names the reference and why, for a
+  // person to read, never to parse. The entry is still listed, because the
+  // catalog is configuration, with every field read from the image empty.
+  // Escaped and bounded as interface_error is.
+  string resolve_error = 13;
 }
 
 // ActivityIcon is an image's icon: one small single-colour SVG drawing on a

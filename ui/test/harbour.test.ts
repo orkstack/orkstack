@@ -1,5 +1,5 @@
 import { docLong, docParts } from '../src/lib/docText';
-import { forgetActivities, loadActivities, type ActivityReads } from '../src/lib/activityMeta';
+import { ACTIVITY_READ_TIMEOUT_MS, forgetActivities, loadActivities, type ActivityReads } from '../src/lib/activityMeta';
 import type { ActivityInfo } from '../src/lib/gen/orkstack/v1/activity_service_pb';
 import { JoinPolicy } from '../src/lib/gen/orkstack/v1/activity_pb';
 import { taskTimelineBars, timelineAxis } from '../src/lib/taskTimeline';
@@ -248,6 +248,62 @@ test('a read that fails draws the default and is asked again', async () => {
 	expect((await loadActivities(tasks, reads)).size).toBe(0);
 	await loadActivities(tasks, reads);
 	expect(inspects).toBe(2);
+});
+
+// A catalog read the engine does not answer held a browser connection for
+// good, and the cached promise meant no later page asked again (proof
+// 44642268123). Every read now carries its own timeout, is aborted once no
+// page waits for it, and is asked again after it fails.
+test('a held catalog read is aborted when its page goes, and asked again by the next', async () => {
+	forgetActivities();
+	const seen: Array<{ signal?: AbortSignal; timeoutMs?: number }> = [];
+	const reads: ActivityReads = {
+		listActivities: (_req, options) =>
+			new Promise((_, reject) => {
+				seen.push(options ?? {});
+				options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+			}),
+		inspectActivity: async () => ({})
+	};
+	const tasks = [{ id: 'a', uses: 'http' }];
+	const page = new AbortController();
+	const shown = loadActivities(tasks, reads, page.signal);
+	await Promise.resolve();
+	expect(seen).toHaveLength(1);
+	expect(seen[0].timeoutMs).toBe(ACTIVITY_READ_TIMEOUT_MS);
+	page.abort();
+	expect(seen[0].signal?.aborted).toBe(true);
+	expect((await shown).size).toBe(0);
+	void loadActivities(tasks, reads, new AbortController().signal);
+	await Promise.resolve();
+	expect(seen).toHaveLength(2);
+});
+
+test('a read two pages share is aborted only when both have gone', async () => {
+	forgetActivities();
+	const seen: Array<{ signal?: AbortSignal }> = [];
+	let answer: (v: { activities: ActivityInfo[] }) => void = () => {};
+	const reads: ActivityReads = {
+		listActivities: (_req, options) =>
+			new Promise((resolve) => {
+				seen.push(options ?? {});
+				answer = resolve;
+			}),
+		inspectActivity: async () => ({})
+	};
+	const tasks = [{ id: 'a', uses: 'http' }];
+	const one = new AbortController();
+	const two = new AbortController();
+	void loadActivities(tasks, reads, one.signal);
+	const second = loadActivities(tasks, reads, two.signal);
+	await Promise.resolve();
+	expect(seen).toHaveLength(1);
+	one.abort();
+	expect(seen[0].signal?.aborted).toBe(false);
+	answer({ activities: [{ name: 'http', indexDigest: '' } as unknown as ActivityInfo] });
+	expect((await second).get('a')?.name).toBe('http');
+	two.abort();
+	expect(seen[0].signal?.aborted).toBe(false);
 });
 
 test("a task's bars: its wait, its failed attempts, what ran, all on the run's axis", () => {

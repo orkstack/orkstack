@@ -324,12 +324,13 @@ unguarded(
   async () => {
     // One context, so both pages draw on one connection pool: the blocker's
     // held chunks take every connection to the spec's server, and the guarded
-    // page's document waits in the pool. The host's network then changes as
-    // changeHostNetwork changes it, but without blocking this process, so the
-    // guard acts on one loss while the next change is still to come: the
-    // first aborts the waiting document, the next the document of the
-    // navigation the guard made again. The held chunks go at that second
-    // loss, so the guard's third navigation starts at once on free
+    // page's document waits in the pool. Each change of the host's network is
+    // made only once the document it is to abort waits there: adding an
+    // interface aborts the first, and removing it, once the guard's next
+    // navigation is waiting too, aborts that one. (How many flushes one
+    // change makes, and when, is Chromium's and the kernel's, so a change made
+    // before its document is queued may abort nothing.) The held chunks go at
+    // the second loss, so the guard's third navigation starts at once on free
     // connections — and Chromium's error page for the second document lands
     // on it a moment later unless the guard waits for that page.
     const run = promisify(execFile);
@@ -339,9 +340,9 @@ unguarded(
     const page = await context.newPage();
     guardPage(page as Page, note);
     const lostDocuments: string[] = [];
-    let documentQueued = false;
+    let documentsQueued = 0;
     page.on("request", (request) => {
-      if (request.isNavigationRequest()) documentQueued = true;
+      if (request.isNavigationRequest()) documentsQueued++;
     });
     const release = () => {
       holding = false;
@@ -361,14 +362,27 @@ unguarded(
     let navigation: Promise<unknown> | undefined;
     let ran = 0;
     let url = "";
+    let created = false;
     try {
       try {
         await waitFor(`${PER_HOST} chunk requests held open`, async () => held.length >= PER_HOST, 30_000);
         navigation = page.goto(`${origin}/dynamic?who=n7`);
         navigation.catch(() => {}); // awaited below; a rejection is not unhandled meanwhile
-        await waitFor("n7's document to wait in the pool", async () => documentQueued, 30_000);
+        await waitFor("n7's document to wait in the pool", async () => documentsQueued >= 1, 30_000);
         await run("docker", ["network", "create", network]);
+        created = true;
+        await waitFor(
+          `n7's document to abort with ${NETWORK_CHANGED}`,
+          async () => lostDocuments.length >= 1,
+          30_000,
+        );
+        await waitFor(
+          "the document of the navigation made again to wait in the pool",
+          async () => lostDocuments.length >= 2 || documentsQueued >= 2,
+          30_000,
+        );
         await run("docker", ["network", "rm", network]);
+        created = false;
         await waitFor(
           `n7's document and the document of the navigation made again to abort with ${NETWORK_CHANGED}`,
           async () => lostDocuments.length >= 2,
@@ -382,6 +396,7 @@ unguarded(
       ran = await page.evaluate(() => (globalThis as { __chunks?: number }).__chunks ?? 0);
       url = page.url();
     } finally {
+      if (created) await run("docker", ["network", "rm", network]).catch(() => null);
       await context.close();
     }
     note(

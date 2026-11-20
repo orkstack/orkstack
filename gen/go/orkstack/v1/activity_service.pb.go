@@ -236,7 +236,13 @@ type ActivityInfo struct {
 	// or key the interface it was read with does not declare, or when no
 	// config could be read. Empty whenever docs is set. Escaped and bounded
 	// as interface_error is.
-	DocsError     string `protobuf:"bytes,12,opt,name=docs_error,json=docsError,proto3" json:"docs_error,omitempty"`
+	DocsError string `protobuf:"bytes,12,opt,name=docs_error,json=docsError,proto3" json:"docs_error,omitempty"`
+	// resolve_error is non-empty when the catalog's image could not be read
+	// within its deadline, or at all: it names the reference and why, for a
+	// person to read, never to parse. The entry is still listed, because the
+	// catalog is configuration, with every field read from the image empty.
+	// Escaped and bounded as interface_error is.
+	ResolveError  string `protobuf:"bytes,13,opt,name=resolve_error,json=resolveError,proto3" json:"resolve_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -351,6 +357,13 @@ func (x *ActivityInfo) GetDocs() *ActivityDocs {
 func (x *ActivityInfo) GetDocsError() string {
 	if x != nil {
 		return x.DocsError
+	}
+	return ""
+}
+
+func (x *ActivityInfo) GetResolveError() string {
+	if x != nil {
+		return x.ResolveError
 	}
 	return ""
 }
@@ -1253,7 +1266,7 @@ const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	"\x18orkstack.v1.ActivityInfo\x12\x13\n" +
 	"\x04name\x12\x04Name\x1a\x05\x01\x02\x03\x04\x05\x12\x1d\n" +
 	"\treference\x12\tReference\x1a\x05\x01\x02\x03\x04\x05\x12\x1b\n" +
-	"\findex_digest\x12\x06Digest\x1a\x03\x01\x02\x03\"\xe0\x03\n" +
+	"\findex_digest\x12\x06Digest\x1a\x03\x01\x02\x03\"\x85\x04\n" +
 	"\fActivityInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\treference\x18\x02 \x01(\tR\treference\x12!\n" +
@@ -1271,7 +1284,8 @@ const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	" \x01(\tR\ticonError\x12-\n" +
 	"\x04docs\x18\v \x01(\v2\x19.orkstack.v1.ActivityDocsR\x04docs\x12\x1d\n" +
 	"\n" +
-	"docs_error\x18\f \x01(\tR\tdocsError\"\x80\x01\n" +
+	"docs_error\x18\f \x01(\tR\tdocsError\x12#\n" +
+	"\rresolve_error\x18\r \x01(\tR\fresolveError\"\x80\x01\n" +
 	"\fActivityIcon\x12:\n" +
 	"\n" +
 	"attributes\x18\x01 \x03(\v2\x1a.orkstack.v1.IconAttributeR\n" +

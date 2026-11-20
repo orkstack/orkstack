@@ -18,6 +18,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -284,7 +285,11 @@ func TestRunPlan_LeavesNoRunBehind(t *testing.T) {
 		return len(resp.Msg.GetRuns())
 	}
 	beforeA, beforeB := countRuns(cluster.a), countRuns(cluster.b)
-	beforeTemporal := len(listExecutions(ctx, t, temporalClient, cluster.namespace, ""))
+	// Only runs: the engines' own workflows (the concurrency census each
+	// boot ensures fires every interval) start in this namespace too, and
+	// a plan that starts nothing must be told from them.
+	runsQuery := fmt.Sprintf("WorkflowType = %q", engine.RunWorkflowType)
+	beforeTemporal := len(listExecutions(ctx, t, temporalClient, cluster.namespace, runsQuery))
 
 	for i := range 10 {
 		replica := cluster.a
@@ -304,13 +309,13 @@ func TestRunPlan_LeavesNoRunBehind(t *testing.T) {
 	// within this window, so an unchanged count after it is evidence, not luck.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if got := len(listExecutions(ctx, t, temporalClient, cluster.namespace, "")); got != beforeTemporal {
-			t.Fatalf("Temporal lists %d executions after ten plans, %d before", got, beforeTemporal)
+		if got := len(listExecutions(ctx, t, temporalClient, cluster.namespace, runsQuery)); got != beforeTemporal {
+			t.Fatalf("Temporal lists %d runs after ten plans, %d before", got, beforeTemporal)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	afterA, afterB := countRuns(cluster.a), countRuns(cluster.b)
-	afterTemporal := len(listExecutions(ctx, t, temporalClient, cluster.namespace, ""))
+	afterTemporal := len(listExecutions(ctx, t, temporalClient, cluster.namespace, runsQuery))
 	if afterA != beforeA || afterB != beforeB || afterTemporal != beforeTemporal {
 		t.Fatalf("runs before/after: A %d/%d, B %d/%d, Temporal %d/%d",
 			beforeA, afterA, beforeB, afterB, beforeTemporal, afterTemporal)

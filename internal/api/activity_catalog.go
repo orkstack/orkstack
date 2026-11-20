@@ -53,16 +53,38 @@ type CatalogLister struct {
 	Resolver ImageResolver
 	// TTL bounds how long a resolution is reused. Zero means DefaultCatalogTTL.
 	TTL time.Duration
+	// ImageTimeout bounds one image's read, and ListTimeout the whole
+	// listing. Zero means CatalogImageTimeout and CatalogListTimeout.
+	ImageTimeout, ListTimeout time.Duration
 	// Now is injectable for deterministic tests.
 	Now func() time.Time
 
 	mu     sync.Mutex
 	cached []*orkstackv1.ActivityInfo
 	at     time.Time
+	// failed says the cached listing could not read an image, so it is
+	// reused only for CatalogFailureTTL.
+	failed bool
 }
 
 // DefaultCatalogTTL is how long a resolved catalog entry is reused.
 const DefaultCatalogTTL = 5 * time.Minute
+
+// The listing's bounds. A registry that accepts a connection and never
+// answers must cost its own image, not the call: a page that asks for the
+// catalog would otherwise hold a request open for good, and a browser's few
+// connections to the engine with it.
+const (
+	// CatalogImageTimeout bounds one image's read.
+	CatalogImageTimeout = 5 * time.Second
+	// CatalogListTimeout bounds the whole listing; images are read at once,
+	// so it bounds the slowest of them.
+	CatalogListTimeout = 10 * time.Second
+	// CatalogFailureTTL is how long a listing that could not read an image
+	// is reused: long enough that a page's polls do not each ask a registry
+	// that is down, short enough that one back up is seen soon.
+	CatalogFailureTTL = 30 * time.Second
+)
 
 func (l *CatalogLister) now() time.Time {
 	if l.Now != nil {
@@ -76,6 +98,20 @@ func (l *CatalogLister) ttl() time.Duration {
 		return DefaultCatalogTTL
 	}
 	return l.TTL
+}
+
+func (l *CatalogLister) imageTimeout() time.Duration {
+	if l.ImageTimeout <= 0 {
+		return CatalogImageTimeout
+	}
+	return l.ImageTimeout
+}
+
+func (l *CatalogLister) listTimeout() time.Duration {
+	if l.ListTimeout <= 0 {
+		return CatalogListTimeout
+	}
+	return l.ListTimeout
 }
 
 func (l *CatalogLister) catalog() dsl.Catalog {
@@ -95,26 +131,55 @@ func (l *CatalogLister) ListActivities(ctx context.Context) ([]*orkstackv1.Activ
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.cached != nil && l.now().Sub(l.at) < l.ttl() {
+	keep := l.ttl()
+	if l.failed {
+		keep = min(keep, CatalogFailureTTL)
+	}
+	if l.cached != nil && l.now().Sub(l.at) < keep {
 		return l.cached, nil
 	}
 
 	catalog := l.catalog()
-	activities := make([]*orkstackv1.ActivityInfo, 0, len(catalog))
-	for _, name := range catalog.Names() {
-		reference := catalog[name]
-		info := &orkstackv1.ActivityInfo{Name: name, Reference: reference}
-		if l.Resolver != nil {
-			if res, err := l.Resolver.Inspect(ctx, name, reference); err == nil {
-				fillActivityInfo(info, res, l.now())
-			}
-			// A failed resolution leaves the digest empty, on purpose: see
-			// the type comment. The entry is configuration and still exists.
+	names := catalog.Names()
+	activities := make([]*orkstackv1.ActivityInfo, len(names))
+	for i, name := range names {
+		activities[i] = &orkstackv1.ActivityInfo{Name: name, Reference: catalog[name]}
+	}
+	failed := false
+	if l.Resolver != nil {
+		// Every image at once, each under its own deadline and all under the
+		// listing's: one registry that never answers costs its own entry.
+		// The listing is shared by every caller it is cached for, so one
+		// caller going away must not end it: it runs under its own bound,
+		// never the request's cancellation, and a cancelled caller's
+		// listing is never cached as a registry's failure.
+		listCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), l.listTimeout())
+		defer cancel()
+		results := make([]*dsl.Resolution, len(names))
+		errs := make([]error, len(names))
+		var wg sync.WaitGroup
+		for i, name := range names {
+			wg.Go(func() {
+				imageCtx, cancelImage := context.WithTimeout(listCtx, l.imageTimeout())
+				defer cancelImage()
+				results[i], errs[i] = l.Resolver.Inspect(imageCtx, name, catalog[name])
+			})
 		}
-		activities = append(activities, info)
+		wg.Wait()
+		for i, info := range activities {
+			if errs[i] != nil {
+				// No digest, on purpose: see the type comment. The entry is
+				// configuration and still exists; resolve_error says why.
+				info.ResolveError = dsl.SafeReason(fmt.Sprintf("read %s: %v", info.GetReference(), errs[i]))
+				failed = true
+				continue
+			}
+			fillActivityInfo(info, results[i], l.now())
+		}
 	}
 
 	l.cached = activities
+	l.failed = failed
 	l.at = l.now()
 	return activities, nil
 }
