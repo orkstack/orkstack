@@ -34,6 +34,7 @@ var mintReasons = map[string]bool{
 	identity.OutcomeResourceExhausted: true, identity.ReasonUnavailable: true, identity.ReasonEngineRefused: true,
 	identity.ReasonNotAdmitted: true, identity.ReasonAttemptNotHeld: true, identity.ReasonTaskNotAsAdmitted: true,
 	identity.ReasonAttemptsExhausted: true, identity.ReasonAttemptExpired: true, identity.ReasonRevoked: true,
+	identity.ReasonRequiredResultNotRecorded: true,
 }
 
 // commitReasons is the closed set of ork.identity.commits' reason label:

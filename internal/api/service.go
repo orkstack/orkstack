@@ -20,6 +20,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -227,13 +228,28 @@ type Config struct {
 	// IdentityTokenTTL is identity.token.ttl, the life an admission pins for
 	// an identity that names none.
 	IdentityTokenTTL time.Duration
+	// SessionTags are the audiences whose tokens carry session tags: those of
+	// the deployment's providers that ask for them. A submit pins them into
+	// the run's admission.
+	SessionTags map[string]artifacts.SessionTagging
 	// IdentityAdmissions is where a run's admission and chain records are written
 	// (admission_submit.go). nil, with no Issuer, admits nothing: a tree
 	// that holds an identity is refused IDENTITY_NOT_CONFIGURED.
 	IdentityAdmissions AdmissionRecords
+	// AwaitRecords and AwaitChecks are what the await doors read and write
+	// for a run whose results the engine records; without them such a run's
+	// await answers unavailable. AwaitSpacings are the waits of one read, the
+	// reader's own when nil; ClockSkew is auth.clock_skew.
+	AwaitRecords  AwaitRecords
+	AwaitChecks   AwaitChecks
+	AwaitSpacings *artifacts.RecordSpacings
+	ClockSkew     time.Duration
 	// EngineBuild is this engine's build, recorded in every admission it
 	// writes: ORK_BUILD_ID, or the commit the binary was built from.
 	EngineBuild string
+	// Providers are the providers the deployment declares (ORK_PROVIDERS),
+	// which a grant's references are judged against; none refuses them all.
+	Providers provider.Set
 	// OnAdmissionOrphan counts an admission record a submit could not delete
 	// (ork.identity.admission_orphans); nil counts nothing.
 	OnAdmissionOrphan func(context.Context)
@@ -653,7 +669,16 @@ type Service struct {
 	identityAttemptsExtra    int
 	identityAttemptsMax      int
 	identityTokenTTL         time.Duration
+	sessionTags              map[string]artifacts.SessionTagging
 	identityAdmissions       AdmissionRecords
+	providers                provider.Set
+	awaitRecords             AwaitRecords
+	awaitChecks              AwaitChecks
+	awaitSpacings            *artifacts.RecordSpacings
+	awaitTold                awaitTellings
+	awaitLimits              *identity.MintLimits
+	storeOffset              storeOffsetReading
+	clockSkew                time.Duration
 	engineBuild              string
 	onAdmissionOrphan        func(context.Context)
 	// incarnations is cfg.Incarnations; ids caches what it read.
@@ -837,6 +862,11 @@ func NewService(cfg Config) *Service {
 		notifier:                 cfg.Notifier,
 		observer:                 cfg.Observer,
 		identityAdmissions:       cfg.IdentityAdmissions,
+		providers:                cfg.Providers,
+		awaitRecords:             cfg.AwaitRecords,
+		awaitChecks:              cfg.AwaitChecks,
+		awaitSpacings:            cfg.AwaitSpacings,
+		clockSkew:                cfg.ClockSkew,
 		triggerMetrics:           cfg.TriggerMetrics,
 		scheduleMetrics:          cfg.ScheduleMetrics,
 		concurrencyMetrics:       cfg.ConcurrencyMetrics,
@@ -878,12 +908,14 @@ func NewService(cfg Config) *Service {
 		identityCommitWait:       cfg.IdentityCommitWait,
 		commitObserver:           cfg.CommitObserver,
 		commitLimits:             identity.NewCommitLimits(cfg.Now),
+		awaitLimits:              identity.NewResolveLimits(cfg.Now),
 		identityUnscopedOrkers:   cfg.IdentityUnscopedOrkers,
 		issuedRecords:            cfg.IssuedRecords,
 		identityAttemptsMaxExtra: cfg.IdentityAttemptsMaxExtra,
 		identityAttemptsExtra:    cfg.IdentityAttemptsExtra,
 		identityAttemptsMax:      cfg.IdentityAttemptsMax,
 		identityTokenTTL:         cfg.IdentityTokenTTL,
+		sessionTags:              cfg.SessionTags,
 		admissions:               cfg.Admissions,
 		engineBuild:              cfg.EngineBuild,
 		onAdmissionOrphan:        cfg.OnAdmissionOrphan,
@@ -1985,7 +2017,8 @@ func (s *Service) prepare(
 	// policy now, and, for a run whose tree holds one, every live Orker's
 	// storage credential confirmed scoped (identity_submit.go). Each
 	// composed child's definition is held to the same in planChildren.
-	if err := s.checkIdentityAtSubmit(ctx, ns, stored, ns.GetName()); err != nil {
+	needs, err := s.checkIdentityAtSubmit(ctx, ns, stored, ns.GetName(), originWord(origin))
+	if err != nil {
 		return submission{}, err
 	}
 	holds, err := s.treeAsksForIdentity(ctx, ns.GetName(), stored)
@@ -1999,7 +2032,11 @@ func (s *Service) prepare(
 		}
 		// A run a schedule or a trigger starts holds an identity only from
 		// a binder who may still submit, and a consent to what it asks for.
-		if startedByAnObject(origin) {
+		byObject, err := startedByAnObject(origin)
+		if err != nil {
+			return submission{}, err
+		}
+		if byObject {
 			if binder, err = s.checkedBinder(ctx, ns, msg, origin); err != nil {
 				return submission{}, err
 			}
@@ -2029,7 +2066,7 @@ func (s *Service) prepare(
 	// it runs a container on serves task identity; each child it plans is
 	// asked the same in planChildren.
 	if holds {
-		if err := s.resolverFor(binding).CheckIdentitySupport(ctx, ns, planned); err != nil {
+		if err := s.resolverFor(binding).CheckIdentitySupport(ctx, ns, planned, needs); err != nil {
 			return submission{}, poolPlanError(err)
 		}
 	}
@@ -2073,7 +2110,7 @@ func (s *Service) prepare(
 	plan.RootRunIndexed = rootIndexAnswer(binding.Starter)
 	if err := s.planChildren(ctx, composeRequest{
 		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
-		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(), holdsIdentity: holds,
+		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(), holdsIdentity: holds, rootOrigin: originWord(origin),
 	}, planned, &plan, 0, nil); err != nil {
 		return submission{}, err
 	}
@@ -2437,6 +2474,12 @@ func poolPlanError(err error) error {
 	// that holds one (POOL_NO_IDENTITY_SUPPORT).
 	var noIdentity *engine.PoolNoIdentitySupportError
 	if errors.As(err, &noIdentity) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A pool one of whose Orkers does not declare a provider a task of the
+	// run logs in to (POOL_NO_PROVIDER).
+	var noProvider *engine.PoolNoProviderError
+	if errors.As(err, &noProvider) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	// A pool whose Orker predates join policies: it could not decode a

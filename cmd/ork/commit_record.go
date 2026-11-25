@@ -4,6 +4,7 @@ import (
 	"context"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -22,6 +23,25 @@ func newRecorder(minter *identity.Minter, records *artifacts.RecordStore, defini
 		Describe:    minter.Describe,
 		Follows:     minter.Follows,
 		PinnedImage: identity.PinnedImageFrom(definitions),
+		EngineBuild: build,
+		Now:         minter.Now,
+	}
+}
+
+// newValuesRecorder builds what records a child run's outputs and a composed
+// task's values, beside the mint; nil when the engine issues no task identity,
+// so such a run's step answers unanswered.
+func newValuesRecorder(minter *identity.Minter, records *artifacts.RecordStore, definitions identity.DefinitionReader, compose *engine.ComposeActivities, build string) engine.ValuesRecorder {
+	if minter == nil || records == nil {
+		return nil
+	}
+	return &identity.ValuesRecorder{
+		Records:     awaitStore{RecordStore: records, admissions: minter.Stores},
+		Starts:      minter.Starts,
+		Describe:    minter.Describe,
+		Definition:  identity.AdmittedDefinitionFrom(definitions),
+		Render:      compose.RenderOutputs,
+		Store:       compose.StoreOutputs,
 		EngineBuild: build,
 		Now:         minter.Now,
 	}

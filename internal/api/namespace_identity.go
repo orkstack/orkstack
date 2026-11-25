@@ -227,13 +227,21 @@ func (s *Service) mayUpdateNamespacePolicy(ctx context.Context, namespace string
 	return deniedAsConnect(err)
 }
 
-// checkIdentityPolicy refuses a definition asking for an audience namespace
-// ns's identity policy does not allow (IDENTITY_NOT_PERMITTED, anchored to
-// the field). A definition that asks for nothing reads no policy; a policy
+// checkIdentityPolicy refuses a definition whose tokens' subjects do not fit
+// (IDENTITY_SUBJECT_TOO_LONG, which no policy changes) or that asks for an
+// audience namespace ns's identity policy does not allow
+// (IDENTITY_NOT_PERMITTED), anchored to the field. A definition that asks for nothing reads no policy; a policy
 // that cannot be read refuses, never allows.
 func (s *Service) checkIdentityPolicy(ctx context.Context, ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error {
 	if !identity.AsksForIdentity(wf) {
 		return nil
+	}
+	if err := s.checkSubjects(ns, wf, ns.GetName()); err != nil {
+		var long *identity.SubjectTooLongError
+		if errors.As(err, &long) {
+			return connect.NewError(connect.CodeInvalidArgument, &validationFieldError{Field: long.Field(), Err: err})
+		}
+		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	p, err := s.namespacePolicy(ctx, ns)
 	if err != nil {
@@ -246,5 +254,11 @@ func (s *Service) checkIdentityPolicy(ctx context.Context, ns *orkstackv1.Namesp
 		}
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	return nil
+	// No run is, so no start and no current version is judged; submit does.
+	_, err = s.checkGrants(ctx, ns, p, wf, ns.GetName(), "", false)
+	var refused *identity.GrantRefusedError
+	if errors.As(err, &refused) {
+		return connect.NewError(connect.CodeInvalidArgument, &validationFieldError{Field: refused.Field(), Err: err})
+	}
+	return err
 }

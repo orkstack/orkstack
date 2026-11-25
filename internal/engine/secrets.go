@@ -7,6 +7,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/provider"
 )
 
 // SecretNotAllowedError reports a task naming a secret source its namespace
@@ -71,6 +72,10 @@ func (e *SecretNotAllowedError) Field() string {
 // other preparation refusal has. A package function, not a PoolResolver
 // method: unlike a pool name, a secret source has no deployment-specific
 // spelling to resolve first.
+//
+// A secret read through a grant is not judged here: its policy string is
+// its source without the field, and identity.CheckGrants judges that with
+// the grant.
 func CheckAllowedSecrets(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error {
 	allowed := ns.GetAllowedSecrets()
 	if len(allowed) == 0 {
@@ -78,6 +83,9 @@ func CheckAllowedSecrets(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error
 	}
 	for ti, t := range wf.GetTasks() {
 		for si, secret := range t.GetSecrets() {
+			if provider.ReadByGrant(secret.GetSource(), secret.GetGrant()) {
+				continue
+			}
 			err := dsl.CheckSecretSource(allowed, secret.GetSource())
 			if err == nil {
 				continue

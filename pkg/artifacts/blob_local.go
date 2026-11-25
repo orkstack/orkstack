@@ -121,6 +121,7 @@ func (b *localBlobs) getStored(ctx context.Context, key string, max int64) ([]by
 	if err := ctx.Err(); err != nil {
 		return nil, time.Time{}, err
 	}
+	noteAnswerClock(ctx)
 	file, err := b.root.Open(key)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -285,6 +286,7 @@ func (b *localBlobs) create(ctx context.Context, key, _ string, body []byte) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer noteAnswerClock(ctx)
 	tmpKey, err := b.writeTemp(body, true)
 	if err != nil {
 		return err

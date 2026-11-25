@@ -848,6 +848,9 @@ type taskJSON struct {
 	// Identities is present ONLY for a task that declares an identity: each
 	// one's name, audience and the file its token is read from.
 	Identities []taskJSONIdentity `json:"identities,omitzero"`
+	// Credentials is present ONLY for a task that declares a credential:
+	// where each one's files are, never a value.
+	Credentials []taskJSONCredential `json:"credentials,omitzero"`
 	// Join is present ONLY for a failure handler, absent as a key otherwise
 	// — the precedent of task.pin and each: an added optional key keeps
 	// SchemaVersion at 1 and costs a workload that never heard of joins
@@ -1098,6 +1101,9 @@ type taskJSONPaths struct {
 	// Identity is /orkstack/identity, present only for a task that declares
 	// an identity, as the mount is.
 	Identity string `json:"identity,omitempty"`
+	// Credentials is /orkstack/credentials, present only for a task that
+	// declares a credential.
+	Credentials string `json:"credentials,omitempty"`
 }
 
 // taskJSONIdentity is one identity a task holds, as task.json names it:
@@ -1106,6 +1112,15 @@ type taskJSONIdentity struct {
 	Name     string `json:"name"`
 	Audience string `json:"audience"`
 	Path     string `json:"path"`
+}
+
+// taskJSONCredential is one credential a task holds, as task.json names it:
+// never a value.
+type taskJSONCredential struct {
+	Name     string   `json:"name"`
+	Provider string   `json:"provider"`
+	Path     string   `json:"path"`
+	Files    []string `json:"files"`
 }
 
 type taskJSONInputs struct {
@@ -1153,7 +1168,10 @@ type TaskContext struct {
 	TaskContext taskJSONTaskContext
 	// Identities are the identities the attempt holds, whose files are
 	// bound at /orkstack/identity; nil for a task that declares none.
-	Identities     []*orkstackv1.IdentityRef
+	Identities []*orkstackv1.IdentityRef
+	// Credentials are the credentials the attempt holds, whose files are
+	// under /orkstack/credentials.
+	Credentials    []taskJSONCredential
 	Attempt        int32
 	Pool           string
 	Namespace      string
@@ -1286,6 +1304,11 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 			doc.Identities = append(doc.Identities, taskJSONIdentity{Name: id.GetName(), Audience: id.GetAudience(),
 				Path: identityMountPath + "/" + id.GetName() + "/token"})
 		}
+	}
+	// paths.credentials and credentials likewise, for a task that declares a
+	// credential.
+	if len(tc.Credentials) > 0 {
+		doc.Paths.Credentials, doc.Credentials = credentialsMountPath, tc.Credentials
 	}
 	// each exists only for an item of a fan-out (§3.2), as task.pin does.
 	if e := tc.Each; e != nil {

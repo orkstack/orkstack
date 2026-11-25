@@ -190,7 +190,11 @@ ork:namespace:<namespace>:orkflow:<owner>/<orkflow>:task:<task>
 
 The third form is a shared Orkflow, named by its owner. A name holds no `:`
 and no `/`, so a subject parses one way. A subject longer than 255 bytes is
-refused when the Orkflow is created.
+refused, `IDENTITY_SUBJECT_TOO_LONG`, naming the task: when the Orkflow is
+created, when one that composes it is, and at every submit, for every Orkflow
+the run composes. Each login through a grant has a subject of its own. A
+shared Orkflow's subject names the namespace it runs in and its owner, so it
+is judged where it is composed.
 
 ### SPIFFE
 
@@ -203,8 +207,10 @@ spiffe://<trust domain>/ork/ns/<namespace>/shared/<owner>/<orkflow>/task/<task>[
 ```
 
 `identity.spiffe.trust_domain` is lowercase letters, digits, `.`, `-` and
-`_`, from 1 to 255 bytes, with no scheme, port or path. The `spiffe`
-format with no trust domain refuses the boot.
+`_`, from 1 to 220 bytes, with no scheme, port or path: a longer one would
+leave no room for any subject, and refuses the boot. Keep it short, since every
+subject holds it. The `spiffe` format with no trust domain refuses the boot
+too.
 
 The trust domain must be OrkStack's own, such as `ork.acme.dev`. Never use
 one a SPIRE server already serves, and never share one between two
@@ -226,6 +232,84 @@ To change format: move Vault roles to the claim that carries the other form
 first, and have an AWS trust policy list both subjects for the time of the
 change. Then switch the format. A run keeps the format it was submitted
 with.
+
+### AWS session tags
+
+AWS matches a role's trust policy against a token's `sub` and `aud`, and
+against session tags, which it reads from one claim of the token. A token
+whose audience is that of a declared `aws` provider with `session_tags: true`
+(the default, [PROVIDERS.md](./PROVIDERS.md#the-aws-type)) carries it, whether
+a grant's login or an identity a task declares asked for it:
+
+```json
+"https://aws.amazon.com/tags": {
+  "principal_tags": {
+    "ork_namespace": ["payments"],
+    "ork_namespace_id": ["ns_01jc8m4k2x7q9v3b5n6p8r0t2w"],
+    "ork_orkflow": ["deploy"],
+    "ork_orkflow_id": ["of_01jc8n4k2x7q9v3b5n6p8r0t2w"],
+    "ork_orkflow_version": ["1.4.0"],
+    "ork_task": ["apply"],
+    "ork_grant": ["deployer"],
+    "ork_origin": ["submit"],
+    "ork_pool": ["main"],
+    "ork_run_id": ["ork-01jc9k4k2x7q9v3b5n6p8r0t2w"]
+  },
+  "transitive_tag_keys": []
+}
+```
+
+The set is closed: a task adds no tag, renames none and chooses no value. Each
+is the value of the claim of the same name; `ork_grant` is only on a grant's
+login, `ork_orkflow_namespace` (the owner) only on a shared Orkflow's token,
+and `ork_root_run_id` only on a child run's. The submitter is never a tag.
+`ork_origin` is what started the run tree's root.
+
+A run keeps the setting it was admitted with: changing `session_tags` or
+`transitive_tags` moves only new runs.
+
+Write a trust policy like this one:
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": {
+    "Federated": "arn:aws:iam::123456789012:oidc-provider/ork-id.acme.dev"
+  },
+  "Action": [
+    "sts:AssumeRoleWithWebIdentity",
+    "sts:TagSession"
+  ],
+  "Condition": {
+    "StringEquals": {
+      "ork-id.acme.dev:aud": "sts.amazonaws.com",
+      "ork-id.acme.dev:sub": "ork:namespace:payments:orkflow:deploy:task:apply:grant:deployer",
+      "aws:RequestTag/ork_namespace_id": "ns_01jc8m4k2x7q9v3b5n6p8r0t2w",
+      "aws:RequestTag/ork_orkflow_id": "of_01jc8n4k2x7q9v3b5n6p8r0t2w"
+    }
+  }
+}
+```
+
+- **The role must allow `sts:TagSession`**, or every login with it is refused.
+- **Match `sub` exactly** ([Subjects](#subjects)), ending in `:grant:<name>`, or
+  `/grant/<name>` where the subject is a SPIFFE ID. A shared Orkflow's names its
+  owner there (`orkflow:<owner>/<orkflow>`), and the `ork_orkflow` tag does not.
+- **Pin the ids.** A name that is deleted and made again keeps its subject and
+  gets new ids; a shared Orkflow's id is its owner's, so it also tells it from
+  a namesake.
+- **Refuse an origin** where a role is for people only:
+  `"aws:RequestTag/ork_origin": "submit"`.
+- **Write positive conditions only** (`StringEquals`, `StringLike`). A tag that
+  is absent fails a positive condition and passes a negative one.
+- **Transitive tags** follow the session into the roles it assumes next, and
+  each of those must then allow `sts:TagSession` too, so none is transitive
+  unless `transitive_tags` lists it.
+- In a permission policy, `${aws:PrincipalTag/ork_run_id}` gives each run a
+  prefix of its own.
+
+OrkStack's tests prove what the token holds. No stand-in reads the claim as
+AWS does, so try a trust policy with your own account.
 
 ## A namespace's identity policy
 
@@ -331,6 +415,15 @@ pins and a life between `identity.token.min_ttl` and `max_ttl`. With
 written before any token is returned. [REASONS.md](./REASONS.md#the-identity-mint)
 lists every refusal.
 
+A login through a grant is made with a token of its own, named
+`grant:<name>`, whose subject ends in `:grant:<name>` and whose audience is
+the provider's. It is issued only to a task that uses the grant, of a run
+admitted with it, and only while the namespace's policy still holds the
+grant for the same provider and principal, still lists the run's Orkflow and
+still serves the start of its tree; otherwise `IDENTITY_REVOKED`. Whether a
+version is current is judged at submit alone. At setup an Orker asks for the
+tokens of all its attempt's logins in one mint; each is used once.
+
 ## Results the engine records
 
 A run that holds a task identity, or belongs to a run tree in which one
@@ -353,7 +446,8 @@ dispatched as it was admitted, in this order:
    describe made after the request arrived (`ATTEMPT_NOT_HELD`);
 5. the execution is the run the admission was written for;
 6. the task's spec digest is the admitted one (`TASK_NOT_AS_ADMITTED`), and
-   each task the admission says it follows has its record;
+   each task the admission says it follows has its record
+   (`REQUIRED_RESULT_NOT_RECORDED`; "What a task follows", below);
 7. the manifest is the attempt's: schema 1, and its namespace, run, task,
    definition digest, idempotency key, attempt and Orker id are the
    request's, the admission's and the caller's; its image digest is the one
@@ -402,6 +496,96 @@ run received (`_inputs`), fail `UPSTREAM_RESULT_NOT_RECORDED` until their own
 records are read. A failure handler stages a failed need's artifacts, and a
 fan-out its item values and its line index, as the cluster carries them, as
 before.
+
+## Resolutions the engine records
+
+In such a run an await's resolution is a record the engine writes, and the
+first record stands. Either door (`ResolveAwait` and the callback route), in
+this order:
+
+1. holds a caller's requests that make no record to ten a minute from one
+   replica (`resource_exhausted`, `429` at the callback route), before it
+   reads anything, and one that makes a record or could not be asked to none;
+   then reads the run's admission and the await's deadline, and settles the
+   run's resume scope by its resume records. A run's state names no resume in
+   this release, so the doors of a resumed run answer `unavailable` and record
+   nothing;
+2. reads the record there. The same resolution, from the caller on record,
+   from the same callback or from a reader of the run, is a repeat; anything
+   else is refused `AWAIT_ALREADY_RESOLVED`, and only a reader of the run is
+   told who resolved it. Either way the run is told of the one on record;
+3. with none, refuses a new answer at or past the deadline
+   (`AWAIT_DEADLINE_PASSED`), by the time the object store dates its answers,
+   so every replica judges by one clock; a store behind something that adds
+   `Age` or `Via`, or that gives no `Date`, is judged by the engine's own
+   clock while the two have agreed within `auth.clock_skew` in the last hour,
+   and otherwise `unavailable`;
+4. asks that what the await follows is on record
+   (`REQUIRED_RESULT_NOT_RECORDED`);
+5. stores the values and, under the run's snapshot prefix where only engines
+   read, who resolved it and why; then creates
+   `metadata/attested/{ns}/{run-id}/{task-id}/[r{scope}/]resolution.json`,
+   which names both by digest, the run's admission, its input and what the
+   await follows;
+6. reads the record back. One the store finished writing after the deadline
+   is `AWAIT_DEADLINE_PASSED`, stands and is never delivered; a run resumed
+   meanwhile is `AWAIT_REOPENED`;
+7. tells the run, once every ten seconds from one replica whatever asks.
+
+| The answer | Means |
+|---|---|
+| `told_at` | the run was told then; never that it applied it |
+| `delivery_pending` | on record, and the run could not be told: repeat the request, or `orkctl run resolve --redeliver` |
+| `deadline_passed` | on record, and the deadline has passed: the run decides whether it takes it. Repeating changes nothing |
+| `AWAIT_RUN_ENDED` | the run ended meanwhile and did not take it |
+
+At the callback route each is `202` with `Ork-Delivery: told`, `pending`
+(with `Retry-After: 10`) or `deadline-passed` (with
+`Ork-Deadline-Passed: true`): a caller repeats on `pending` only. A record of
+a format this replica does not read, or a run that expects one, is
+`unavailable`, for a newer replica to answer.
+
+## Values the engine records for a composed task
+
+In such a run a composed task's values are a record the engine writes, taken
+from a record of its child's. Nothing in either is believed because the run
+says it.
+
+A child run that succeeded has its outputs recorded, also when it declares
+none. The engine:
+
+1. reads the child's admission and checks that this execution is the run it
+   was written for, by its parent;
+2. asks that what the child's start follows is on record, and every task a
+   successful run always completes: one with no `condition:` under the default
+   join, needing only such tasks. An approval among them is read: a rejection is no success;
+3. renders `outputs:` from the definition the admission pins, over the values
+   the records of the tasks it reads name. A task the run says did not succeed
+   is absent by its word, unless it always runs; an artifact output is the one
+   its producer's record names, or, for `_inputs`, the record of the task that
+   produced what the child received;
+4. stores the values and creates
+   `metadata/attested/{ns}/{run-id}/outputs.json`, which names them, those
+   records and the artifacts.
+
+The parent then records its composed task in
+`metadata/attested/{ns}/{run-id}/{task-id}/[r{scope}/]composed.json`: the
+child's outputs record, its values and its artifacts, and what the task
+follows. The child must be the one the parent's admission names for that task,
+started by it, and the values the ones the child returned. Each is create-only,
+and one already there that says the same is success.
+
+What the engine cannot check is a child's input, which is its parent's word,
+and whether a task that may be skipped was rightly called absent.
+
+| Read | The task or the run |
+|---|---|
+| the child has no outputs record, or it is another's, or of other values; what the task follows is not on record | the composed task fails `CHILD_VALUES_NOT_RECORDED` |
+| a task that always runs, or one whose values the run holds, has no record or another result | the child ends `OUTPUTS_NOT_RECORDED` |
+| the outputs do not render, or are too large | the child ends `OUTPUTS_RENDER_FAILED` or `OUTPUTS_TOO_LARGE`, as any run does |
+| the store or the cluster did not answer in time | `CHILD_VALUES_UNSTORED` or `OUTPUTS_UNAVAILABLE`, with the class of the failure |
+
+The interpreter does not ask for these records yet, so no run holds one.
 
 ## Which Orkers serve it
 
@@ -586,6 +770,49 @@ always run); under `any_failed` or `all_done`, nothing. Through a sleeping
 task or a fan-out, which leave no record of their own, a task follows what
 they follow. A record stands for the chain behind it, so an approval three
 tasks upstream is followed without being named.
+
+The admission holds it: what each task follows and, for a run below the
+root, what the run's start follows (what its composing task follows, named
+with its run) and the tasks every successful run of the definition completes.
+A task that follows nothing of its own run follows what its run's start
+follows.
+
+The engine asks for those records at a mint and at both ends of a commit,
+after the attempt and its spec are checked and before any token is signed, a
+slot of the attempt cap taken or a result written. Each is read by its key
+and held to this run and its admission: a container task's result under
+`metadata/attested/`, an awaited task's resolution that is not a rejection, a
+composed task's record. A task with none is refused
+`REQUIRED_RESULT_NOT_RECORDED`, and only a store that said "no such key"
+twice is a miss: a record that could not be read, or cannot be trusted, is
+`IDENTITY_UNAVAILABLE`, asked again.
+
+An attempt's resume scope is held against the run's resumes and never
+believed: one a later resume replaced, or that no resume opened, is
+`IDENTITY_NOT_ADMITTED`. In a resumed run a followed task's record counts
+under the newest resume that ran the task again or opened it again, and
+nowhere else, so an approval that resume opened again and nobody has given
+since is a miss. An approval or a composed result left standing by a later
+resume must still follow what is current: one given on a result since
+replaced by a different one is a miss too.
+
+The check asks whether a resolution is on record, not whether the run took
+it: an approval someone gave that the store finished writing after the
+await's deadline is one the run leaves, and is still on record here. Only a
+holder of the cluster's write access could dispatch a task behind it, and a
+person did give it.
+
+An artifact a composed run receives at its start is held to its producer's
+record too. The admission of a run below the root names, for each artifact
+input, the task that produced it and its run, through any run that only
+passes it on, and which of its tasks name it. The engine answers a mint and a
+commit's preflight with those artifacts exactly as the producers' records
+name them, and refuses one whose producer has no record
+(`REQUIRED_RESULT_NOT_RECORDED`). One a failure handler passes may come from a
+need that failed, which leaves no record: it is left out of the answer, and
+is staged as the cluster carries it. The artifacts a composed task returns are
+in its record and in its child's outputs record, and count in their results'
+digests.
 
 `orkctl run plan` shows what each task follows. Creating and validating an
 Orkflow warn of a task that holds an identity and does not follow an

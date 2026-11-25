@@ -407,6 +407,9 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 		if err := engine.CheckForeignSecrets(ns, node.Owner, node.Orkflow); err != nil {
 			rule31 = append(rule31, composeIssue(usesField(rootIndex), prefix+err.Error(), errorSeverity))
 		}
+		if err := s.checkChildIdentity(ctx, ns, node.Orkflow, node.Owner); err != nil {
+			rule31 = append(rule31, composeIssue(usesField(rootIndex), prefix+err.Error(), errorSeverity))
+		}
 		// Item 6: the definition as the plan will carry it.
 		if cp, err := engine.NewChildRunPlan(node.Orkflow, engine.RunPlan{}, false, false); err == nil {
 			chainHere := append(append([]string(nil), chain...), label)
@@ -714,6 +717,9 @@ type composeRequest struct {
 	// holdsIdentity is a run whose tree holds an identity: every child's
 	// pools are asked whether they serve task identity.
 	holdsIdentity bool
+	// rootOrigin is the kind of start of the tree's root, which a grant
+	// that names the starts it serves is judged on in every run of it.
+	rootOrigin string
 }
 
 // rootIndexAnswer is the boot answer a plan pins for its child starts (false
@@ -802,7 +808,8 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		if err := foreignSecretsRefusal(r.ns, owner, child); err != nil {
 			return childRefusal(err, ref, t.GetId())
 		}
-		if err := s.checkIdentityAtSubmit(ctx, r.ns, child, owner); err != nil {
+		needs, err := s.checkIdentityAtSubmit(ctx, r.ns, child, owner, r.rootOrigin)
+		if err != nil {
 			return childRefusal(err, ref, t.GetId())
 		}
 		// 3. The ordinary pool plan over the child: secret policy, the
@@ -813,7 +820,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 			return childRefusal(poolPlanError(err), ref, t.GetId())
 		}
 		if r.holdsIdentity {
-			if err := r.resolver.CheckIdentitySupport(ctx, r.ns, childPlanned); err != nil {
+			if err := r.resolver.CheckIdentitySupport(ctx, r.ns, childPlanned, needs); err != nil {
 				return childRefusal(poolPlanError(err), ref, t.GetId())
 			}
 		}

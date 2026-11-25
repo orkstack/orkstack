@@ -36,8 +36,10 @@ const (
 	// MaxSubjectBytes bounds a subject in either form. An
 	// Orkflow whose subject would pass it is refused when it is created.
 	MaxSubjectBytes = 255
-	// MaxTrustDomainBytes bounds identity.spiffe.trust_domain.
-	MaxTrustDomainBytes = 255
+	// MaxTrustDomainBytes bounds identity.spiffe.trust_domain: what leaves room
+	// for the shortest subject there is, so one that no Orkflow could use
+	// refuses the boot instead of every create.
+	MaxTrustDomainBytes = MaxSubjectBytes - len(spiffeScheme) - len("/ork/ns/a/orkflow/a/task/a")
 	// ClaimSubject and ClaimSPIFFEID carry the form sub does not hold, on
 	// every token of a deployment with a trust domain set.
 	ClaimSubject  = "ork_subject"
@@ -174,6 +176,10 @@ func ValidTrustDomain(domain string) error {
 	return nil
 }
 
+// errSubjectTooLong is a subject that does not fit, as against one that is no
+// subject.
+var errSubjectTooLong = errors.New("too long")
+
 // Fits says whether the subject fits MaxSubjectBytes in the form format
 // chooses and, when a trust domain is set, in the other form as well, so
 // that a later change of format refuses no Orkflow that exists.
@@ -186,7 +192,7 @@ func (s Subject) Fits(format Format, trustDomain string) error {
 		return err
 	}
 	if len(ork) > MaxSubjectBytes {
-		return fmt.Errorf("the subject %q is %d bytes; at most %d", ork, len(ork), MaxSubjectBytes)
+		return fmt.Errorf("%w: the subject %q is %d bytes; at most %d", errSubjectTooLong, ork, len(ork), MaxSubjectBytes)
 	}
 	if trustDomain == "" {
 		return nil
@@ -196,7 +202,7 @@ func (s Subject) Fits(format Format, trustDomain string) error {
 		return err
 	}
 	if len(id) > MaxSubjectBytes {
-		return fmt.Errorf("the SPIFFE subject %q is %d bytes; at most %d", id, len(id), MaxSubjectBytes)
+		return fmt.Errorf("%w: the SPIFFE subject %q is %d bytes; at most %d", errSubjectTooLong, id, len(id), MaxSubjectBytes)
 	}
 	return nil
 }

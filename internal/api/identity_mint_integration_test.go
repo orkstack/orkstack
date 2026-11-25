@@ -131,9 +131,11 @@ func newMintRig(t *testing.T, o mintRigOptions) *mintRig {
 		Describe: func(ctx context.Context, runID string) (identity.ExecutionFacts, error) {
 			return r.starts.Describe(ctx, runID, "")
 		},
-		Audiences: func(context.Context, string, string) ([]string, error) { return []string{"sts"}, nil },
-		Signer:    func() (*jwt.Signer, error) { return signer, nil },
-		Issuer:    mintIssuer, Deployment: "mint-test",
+		Policy: func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+			return artifacts.NamespacePolicy{Audiences: []string{"sts"}}, nil
+		},
+		Signer: func() (*jwt.Signer, error) { return signer, nil },
+		Issuer: mintIssuer, Deployment: "mint-test",
 		TTL:            identity.TTLBounds{Default: time.Hour, Min: 10 * time.Minute, Max: 12 * time.Hour},
 		Skew:           time.Minute,
 		RecordIssuance: true,

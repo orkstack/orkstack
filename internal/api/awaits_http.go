@@ -234,6 +234,7 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 		// The callback door verifies nobody: outside asserted mode the
 		// resolution says it came by callback, and no header is read.
 		principal: boundOriginAssertion(authn.Recorded(r.Context(), r.Header).ID),
+		who:       authn.Recorded(r.Context(), r.Header),
 	})
 	if err != nil {
 		status, code := awaitDoorStatus(err)
@@ -250,6 +251,9 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 		writeTriggerError(w, status, "internal", svc.doorMessage(ctx, status, err, "",
 			fmt.Sprintf("the resolution of run %q was recorded; the answer could not be encoded", runID), "run_id", runID, "task_id", taskID))
 		return
+	}
+	if start.Plan.Identity != nil {
+		setAwaitDelivery(w.Header(), response)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -288,6 +292,8 @@ func awaitDoorStatus(err error) (int, string) {
 		return http.StatusConflict, code.String()
 	case connect.CodeUnavailable:
 		return http.StatusServiceUnavailable, code.String()
+	case connect.CodeResourceExhausted:
+		return http.StatusTooManyRequests, code.String()
 	default:
 		return http.StatusInternalServerError, "internal"
 	}

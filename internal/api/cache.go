@@ -101,8 +101,17 @@ func cacheIssues(wf *orkstackv1.Orkflow, capTTL time.Duration) []*orkstackv1.Val
 		}
 		if len(t.GetSecrets()) > 0 {
 			issues = append(issues, composeIssue(fmt.Sprintf("tasks[%d].secrets", i), fmt.Sprintf(
-				"task %q: a cached task's key covers its secrets' names and sources, never their values — "+
+				"task %q: a cached task's key covers its secrets' names, sources, grants and ciphertexts, never their values — "+
 					"rotating a secret does not invalidate its memos; purge them with orkctl cache purge "+
+					"--orkflow %s --task %s", t.GetId(), wf.GetName(), t.GetId()), warning))
+		}
+		// A credential is issued anew for each attempt, and a memo
+		// hit runs no attempt, so what the cached result was made with is
+		// not what the next run would be given.
+		if len(t.GetCredentials()) > 0 {
+			issues = append(issues, composeIssue(fmt.Sprintf("tasks[%d].credentials", i), fmt.Sprintf(
+				"task %q: a cache hit issues no credential, so a memo is reused whatever the role or the provider "+
+					"would give the next run; purge them with orkctl cache purge "+
 					"--orkflow %s --task %s", t.GetId(), wf.GetName(), t.GetId()), warning))
 		}
 	}

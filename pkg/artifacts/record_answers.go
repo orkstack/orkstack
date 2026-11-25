@@ -105,6 +105,19 @@ func unansweredIn(ctx context.Context, err error) error {
 	return unanswered(err)
 }
 
+// UnansweredClass is the class of err, a step that was not answered: the one
+// the records' reader gave it, or the one it has of itself.
+func UnansweredClass(err error) string {
+	var known *RecordStoreUnanswered
+	if errors.As(err, &known) {
+		return known.Class
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return UnansweredTimeout
+	}
+	return storeErrorClass(err)
+}
+
 // storeErrorClass says denied for an answer that refuses the credential
 // or names no bucket, and unavailable otherwise.
 func storeErrorClass(err error) string {

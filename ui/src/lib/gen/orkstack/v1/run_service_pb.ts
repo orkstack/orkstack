@@ -713,7 +713,12 @@ export type ResolveAwaitRequest = Message<"orkstack.v1.ResolveAwaitRequest"> & {
   reason: string;
 
   /**
-   * redeliver is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+   * redeliver tells the run again of the resolution on record for this task,
+   * for a run that holds a task identity. It carries no decision: values_json,
+   * reject and reason must be unset. The run is told the task alone. Inside
+   * ten seconds of a telling it repeats that telling's answer. Refused when
+   * nothing is on record, and AWAIT_DEADLINE_PASSED, telling nothing, when the
+   * record was stored after the deadline.
    *
    * @generated from field: bool redeliver = 7;
    */
@@ -771,21 +776,27 @@ export type ResolveAwaitResponse = Message<"orkstack.v1.ResolveAwaitResponse"> &
   repeat: boolean;
 
   /**
-   * delivery_pending is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+   * delivery_pending: the resolution is on record and the run could not be
+   * told of it. Repeating the request, or redeliver, delivers it. Set only for
+   * a run that holds a task identity, as are told_at and deadline_passed.
    *
    * @generated from field: bool delivery_pending = 7;
    */
   deliveryPending: boolean;
 
   /**
-   * told_at is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+   * told_at is when this replica last had the run told of the resolution on
+   * record: by this request, or by the one it stands on. It never says that
+   * the run applied it.
    *
    * @generated from field: google.protobuf.Timestamp told_at = 9;
    */
   toldAt?: Timestamp | undefined;
 
   /**
-   * deadline_passed is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+   * deadline_passed: the resolution is on record and the await's deadline has
+   * passed by the store's clock. The run decides whether it takes it, and
+   * repeating the request changes nothing.
    *
    * @generated from field: bool deadline_passed = 10;
    */

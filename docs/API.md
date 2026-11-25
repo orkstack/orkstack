@@ -1053,6 +1053,7 @@ CommitRef points at a written ActivityCommit object.
 | `commit` | [`CommitRef`](#commitref) | commit names the record now at the key. Unset for a preflight. |
 | `created` | `bool` | created is false when a record was already there: this attempt's repeat, or another attempt's that came first. |
 | `existing` | [`ActivityCommit`](#activitycommit) | existing is that record, set when created is false. |
+| `input_artifacts` | repeated [`ArtifactRef`](#artifactref) | input_artifacts is set on a preflight's answer, as MintAttemptTokensResponse.input_artifacts is. |
 
 ### CompareInterfacesRequest
 
@@ -3163,6 +3164,7 @@ it.
 | Field | Type | Description |
 |---|---|---|
 | `tokens` | repeated [`IssuedToken`](#issuedtoken) |  |
+| `input_artifacts` | repeated [`ArtifactRef`](#artifactref) | input_artifacts are the artifacts of the run's start the task names, each under its input's name, as the engine read them from the records of the tasks that produced them: the only ones its attempt stages. |
 
 ### NamedArtifact
 
@@ -4019,7 +4021,7 @@ of it the workload used.
 | `values_json` | `string` | values_json is the completion's values.json, as exact JSON text: it is stored byte for byte, never re-encoded. Empty means {}. Must be empty when reject is set. |
 | `reject` | `bool` |  |
 | `reason` | `string` | reason is required with reject and refused without it; at most 1024 bytes, no control character other than tab and newline. |
-| `redeliver` | `bool` | redeliver is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `redeliver` | `bool` | redeliver tells the run again of the resolution on record for this task, for a run that holds a task identity. It carries no decision: values_json, reject and reason must be unset. The run is told the task alone. Inside ten seconds of a telling it repeats that telling's answer. Refused when nothing is on record, and AWAIT_DEADLINE_PASSED, telling nothing, when the record was stored after the deadline. |
 
 ### ResolveAwaitResponse
 
@@ -4031,9 +4033,9 @@ of it the workload used.
 | `reject` | `bool` |  |
 | `values_sha256` | `string` | values_sha256 is the hex sha256 of the stored values.json; empty for a rejection. |
 | `repeat` | `bool` | repeat is true when this request repeated the resolution that had already been applied — same values, or same rejection reason — so nothing was stored or delivered. |
-| `delivery_pending` | `bool` | delivery_pending is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
-| `told_at` | `google.protobuf.Timestamp` | told_at is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
-| `deadline_passed` | `bool` | deadline_passed is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `delivery_pending` | `bool` | delivery_pending: the resolution is on record and the run could not be told of it. Repeating the request, or redeliver, delivers it. Set only for a run that holds a task identity, as are told_at and deadline_passed. |
+| `told_at` | `google.protobuf.Timestamp` | told_at is when this replica last had the run told of the resolution on record: by this request, or by the one it stands on. It never says that the run applied it. |
+| `deadline_passed` | `bool` | deadline_passed: the resolution is on record and the await's deadline has passed by the store's clock. The run decides whether it takes it, and repeating the request changes nothing. |
 
 ### ResourceQuantity
 

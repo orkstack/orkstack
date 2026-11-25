@@ -75,27 +75,35 @@ func (r *Recorder) Admit(ctx context.Context, req CommitRequest) (Admitted, erro
 	return Admitted{Admission: adm, Task: row}, nil
 }
 
+// Recorded is what a commit answers; a preflight's is the artifacts of the
+// run's start the task names, as the engine's records have them.
+type Recorded struct {
+	artifacts.RecordedCommit
+	Received []*orkstackv1.ArtifactRef
+}
+
 // Record is steps 4 to 8 for a request Admit passed and the caller's
 // permission allowed. A preflight stops after 6a and writes nothing; a
 // commit checks the manifest against the attempt (7) and writes it,
 // create-only, with the recording set (8). A record already there is
 // answered, Created false: a repeat of this attempt, or another attempt
 // that committed first.
-func (r *Recorder) Record(ctx context.Context, a Admitted, req CommitRequest, caller Caller) (artifacts.RecordedCommit, error) {
+func (r *Recorder) Record(ctx context.Context, a Admitted, req CommitRequest, caller Caller) (Recorded, error) {
 	c := attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item)
-	if _, err := checkAttempt(ctx, attemptChecks{Describe: r.Describe, Starts: r.Starts, Follows: r.Follows}, a.Admission, c,
-		req.Attempt, req.TaskSpecSHA256, caller); err != nil {
-		return artifacts.RecordedCommit{}, err
+	held, err := checkAttempt(ctx, attemptChecks{Describe: r.Describe, Starts: r.Starts, Follows: r.Follows}, a.Admission, c,
+		req.Attempt, req.TaskSpecSHA256, caller)
+	if err != nil {
+		return Recorded{}, err
 	}
 	if req.Preflight {
-		return artifacts.RecordedCommit{}, nil
+		return Recorded{Received: held.Received}, nil
 	}
 	if r.PinnedImage == nil || r.Now == nil {
-		return artifacts.RecordedCommit{}, refuse(ReasonEngineRefused, false, "this engine cannot check a result's image or time it")
+		return Recorded{}, refuse(ReasonEngineRefused, false, "this engine cannot check a result's image or time it")
 	}
 	// Step 7: the document.
 	if err := r.checkDocument(ctx, a.Admission, req, caller); err != nil {
-		return artifacts.RecordedCommit{}, err
+		return Recorded{}, err
 	}
 	// Step 8: write it, with the recording the engine alone sets.
 	doc := proto.Clone(req.Commit).(*orkstackv1.ActivityCommit)
@@ -106,15 +114,15 @@ func (r *Recorder) Record(ctx context.Context, a Admitted, req CommitRequest, ca
 	case errors.Is(err, artifacts.ErrCommitTooLarge), errors.Is(err, artifacts.ErrInvalidRecordKey), errors.Is(err, artifacts.ErrInvalidCommitKey):
 		// Nothing a later ask changes: refused, never an outage the Orker
 		// would wait out.
-		return artifacts.RecordedCommit{}, mismatch("it cannot be recorded: %v", err)
+		return Recorded{}, mismatch("it cannot be recorded: %v", err)
 	case errors.Is(err, artifacts.ErrCommitUndecodable):
 		// The engine's own record at the key cannot be read: corruption an
 		// operator repairs, which no ask of the Orker's changes.
-		return artifacts.RecordedCommit{}, mismatch("the record already at its key cannot be read, and is not replaced: %v", err)
+		return Recorded{}, mismatch("the record already at its key cannot be read, and is not replaced: %v", err)
 	case err != nil:
-		return artifacts.RecordedCommit{}, unavailableMint("the result of task %q could not be recorded: %v", req.TaskID, err)
+		return Recorded{}, unavailableMint("the result of task %q could not be recorded: %v", req.TaskID, err)
 	}
-	return got, nil
+	return Recorded{RecordedCommit: got}, nil
 }
 
 // checkDocument is step 7: the manifest decodes at schema 1; its
@@ -152,6 +160,8 @@ func (r *Recorder) checkDocument(ctx context.Context, adm artifacts.Admission, r
 		return mismatch("its schema is %d, not %d", d.GetSchemaVersion(), artifacts.CommitSchemaVersion)
 	case d.GetAttempt() != req.Attempt:
 		return mismatch("it is of attempt %d, and the request of attempt %d", d.GetAttempt(), req.Attempt)
+	case d.GetExitCode() != 0:
+		return mismatch("it is of an exit %d, and only a success is recorded", d.GetExitCode())
 	case d.GetImage().GetIndexDigest() == "":
 		return mismatch("it names no image digest")
 	case d.GetRecorded() != nil:
@@ -210,6 +220,35 @@ func PinnedImageFrom(read DefinitionReader) func(ctx context.Context, adm artifa
 	return c.pinned
 }
 
+// AdmittedDefinitionFrom reads the definition a run was admitted with: the
+// stored, immutable version its admission names.
+func AdmittedDefinitionFrom(read DefinitionReader) func(ctx context.Context, adm artifacts.Admission) (*orkstackv1.Orkflow, error) {
+	return func(ctx context.Context, adm artifacts.Admission) (*orkstackv1.Orkflow, error) {
+		return admittedDefinition(ctx, read, definitionNamespace(adm), adm)
+	}
+}
+
+func definitionNamespace(adm artifacts.Admission) string {
+	if adm.OrkflowNamespace != "" {
+		return adm.OrkflowNamespace
+	}
+	return adm.Namespace
+}
+
+func admittedDefinition(ctx context.Context, read DefinitionReader, ns string, adm artifacts.Admission) (*orkstackv1.Orkflow, error) {
+	wf, err := read(ctx, ns, adm.Orkflow, adm.OrkflowVersion)
+	if errors.Is(err, artifacts.ErrNotFound) {
+		return nil, fmt.Errorf("%s/%s@%s is gone: %w", ns, adm.Orkflow, adm.OrkflowVersion, ErrDefinitionNotAdmitted)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s/%s@%s: %w", ns, adm.Orkflow, adm.OrkflowVersion, err)
+	}
+	if got := wf.GetDefinitionDigest(); got != "sha256:"+adm.DefinitionDigest {
+		return nil, fmt.Errorf("%s/%s@%s is definition %q, and the run was admitted with sha256:%s: %w", ns, adm.Orkflow, adm.OrkflowVersion, got, adm.DefinitionDigest, ErrDefinitionNotAdmitted)
+	}
+	return wf, nil
+}
+
 type pinCache struct {
 	read  DefinitionReader
 	mu    sync.Mutex
@@ -223,10 +262,7 @@ type pinEntry struct {
 }
 
 func (c *pinCache) pinned(ctx context.Context, adm artifacts.Admission, taskID string) (string, error) {
-	ns := adm.OrkflowNamespace
-	if ns == "" {
-		ns = adm.Namespace
-	}
+	ns := definitionNamespace(adm)
 	key := ns + "/" + adm.Orkflow + "@" + adm.OrkflowVersion + "#" + adm.DefinitionDigest
 	pins, err := c.pins(ctx, key, ns, adm)
 	if err != nil {
@@ -248,15 +284,9 @@ func (c *pinCache) pins(ctx context.Context, key, ns string, adm artifacts.Admis
 		return pins, nil
 	}
 	c.mu.Unlock()
-	wf, err := c.read(ctx, ns, adm.Orkflow, adm.OrkflowVersion)
-	if errors.Is(err, artifacts.ErrNotFound) {
-		return nil, fmt.Errorf("%s/%s@%s is gone: %w", ns, adm.Orkflow, adm.OrkflowVersion, ErrDefinitionNotAdmitted)
-	}
+	wf, err := admittedDefinition(ctx, c.read, ns, adm)
 	if err != nil {
-		return nil, fmt.Errorf("read %s/%s@%s: %w", ns, adm.Orkflow, adm.OrkflowVersion, err)
-	}
-	if got := wf.GetDefinitionDigest(); got != "sha256:"+adm.DefinitionDigest {
-		return nil, fmt.Errorf("%s/%s@%s is definition %q, and the run was admitted with sha256:%s: %w", ns, adm.Orkflow, adm.OrkflowVersion, got, adm.DefinitionDigest, ErrDefinitionNotAdmitted)
+		return nil, err
 	}
 	pins := make(map[string]string, len(wf.GetTasks()))
 	for _, t := range wf.GetTasks() {

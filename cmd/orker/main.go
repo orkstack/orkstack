@@ -35,6 +35,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/procguard"
+	"github.com/orkstack/orkstack/internal/provider"
+	"github.com/orkstack/orkstack/internal/provider/types"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/temporalconn"
@@ -172,6 +174,10 @@ type config struct {
 	// probe_image is not.
 	releaseProbe    string
 	releaseProbeKey string
+	// providers is the providers document (ORK_PROVIDERS), the same text
+	// the engine is given; providersErr refuses the boot, naming it.
+	providers    provider.Set
+	providersErr error
 	// configFiles is the configuration file this process was started with
 	// and every {file:} it read (config.Document.Files): the Orker's own,
 	// which its secret floor admits as no task's source (orkerPolicy).
@@ -238,6 +244,7 @@ func loadConfig() config {
 	if profilesErr == nil && len(profiles.List) > 0 && profiles.ProbeImage == "" {
 		releaseProbe, releaseProbeKey, profilesErr = orker.DefaultProbeImage(version, commit, releaseKey)
 	}
+	providers, providersErr := provider.FromEnv(os.LookupEnv, types.All())
 	if profilesErr != nil {
 		profilesErr = fmt.Errorf("%s: orker.profiles (%s): %w", orker.ReasonProfileInvalid, orker.ProfilesVar, profilesErr)
 	}
@@ -280,6 +287,8 @@ func loadConfig() config {
 		profilesErr:              profilesErr,
 		releaseProbe:             releaseProbe,
 		releaseProbeKey:          releaseProbeKey,
+		providers:                providers,
+		providersErr:             providersErr,
 		capacityCPU:              env(orker.CapacityCPUVar, ""),
 		capacityMemory:           env(orker.CapacityMemoryVar, ""),
 		deployment:               task.DeploymentFromEnv(),
@@ -837,6 +846,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.profilesErr != nil {
 		return cfg.profilesErr
 	}
+	if cfg.providersErr != nil {
+		return cfg.providersErr
+	}
 	if cfg.stopGraceErr != nil {
 		return cfg.stopGraceErr
 	}
@@ -1031,6 +1043,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activities.Dispatcher().SetIdentityMint(orker.NewIdentityMinter(engine, cfg.identity.MaxConcurrent))
 		activities.Dispatcher().SetResultCommit(orker.NewResultCommitter(engine))
 	}
+	// What a task's grants log in to (docs/PROVIDERS.md).
+	activities.Dispatcher().SetProviders(cfg.providers, cfg.identity.ProviderMaxConcurrent, cfg.identity.ProviderCallTimeout)
 	// The periodic profile audit: every audit_interval, each device of an
 	// audited profile again; a difference is drift (docs/DEPLOY.md,
 	// "Running a device Orker"). With no profile it returns at once.

@@ -1805,7 +1805,12 @@ type ResolveAwaitRequest struct {
 	// reason is required with reject and refused without it; at most 1024
 	// bytes, no control character other than tab and newline.
 	Reason string `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
-	// redeliver is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+	// redeliver tells the run again of the resolution on record for this task,
+	// for a run that holds a task identity. It carries no decision: values_json,
+	// reject and reason must be unset. The run is told the task alone. Inside
+	// ten seconds of a telling it repeats that telling's answer. Refused when
+	// nothing is on record, and AWAIT_DEADLINE_PASSED, telling nothing, when the
+	// record was stored after the deadline.
 	Redeliver     bool `protobuf:"varint,7,opt,name=redeliver,proto3" json:"redeliver,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1903,11 +1908,17 @@ type ResolveAwaitResponse struct {
 	// already been applied — same values, or same rejection reason — so
 	// nothing was stored or delivered.
 	Repeat bool `protobuf:"varint,6,opt,name=repeat,proto3" json:"repeat,omitempty"`
-	// delivery_pending is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+	// delivery_pending: the resolution is on record and the run could not be
+	// told of it. Repeating the request, or redeliver, delivers it. Set only for
+	// a run that holds a task identity, as are told_at and deadline_passed.
 	DeliveryPending bool `protobuf:"varint,7,opt,name=delivery_pending,json=deliveryPending,proto3" json:"delivery_pending,omitempty"`
-	// told_at is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+	// told_at is when this replica last had the run told of the resolution on
+	// record: by this request, or by the one it stands on. It never says that
+	// the run applied it.
 	ToldAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=told_at,json=toldAt,proto3" json:"told_at,omitempty"`
-	// deadline_passed is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+	// deadline_passed: the resolution is on record and the await's deadline has
+	// passed by the store's clock. The run decides whether it takes it, and
+	// repeating the request changes nothing.
 	DeadlinePassed bool `protobuf:"varint,10,opt,name=deadline_passed,json=deadlinePassed,proto3" json:"deadline_passed,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

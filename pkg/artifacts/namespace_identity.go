@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
@@ -38,8 +39,24 @@ const (
 	MaxPolicyBytes = 32 << 10
 )
 
-// The kinds of start a grant may serve (a grant's origins).
-var grantOrigins = []string{"submit", "schedule", "trigger", "event-source", "parent-run", "run-again"}
+// OriginWord is a run origin's kind as a grant's origins and an admission
+// name it.
+func OriginWord(kind orkstackv1.RunOriginKind) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(kind.String(), "RUN_ORIGIN_KIND_")), "_", "-")
+}
+
+// grantOrigin reports whether word is a kind of start a grant may serve: one
+// a run can have. A word no run can have would serve no run, and one named
+// for starts that are recorded as another kind would not bound them.
+func grantOrigin(word string) bool {
+	for n := range orkstackv1.RunOriginKind_name {
+		kind := orkstackv1.RunOriginKind(n)
+		if kind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && OriginWord(kind) == word {
+			return true
+		}
+	}
+	return false
+}
 
 var (
 	// ErrPolicyChanged is a write from a generation that is no longer the
@@ -335,7 +352,7 @@ func checkPolicy(p NamespacePolicy) string {
 		if g.Origins != nil && len(g.Origins) == 0 {
 			return fmt.Sprintf("grant %q's empty origins are written as none", name)
 		}
-		if reason := distinct("grant "+name+"'s origin", g.Origins, func(o string) bool { return containsString(grantOrigins, o) }); reason != "" {
+		if reason := distinct("grant "+name+"'s origin", g.Origins, grantOrigin); reason != "" {
 			return reason
 		}
 	}

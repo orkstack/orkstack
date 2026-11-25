@@ -188,58 +188,101 @@ func (s *RecordStore) createIn(ctx context.Context, key string, body []byte) err
 // does not hash, or one whose previous scope is not the one that linked to
 // it, is RecordInvalid.
 func (s *RecordStore) NewestResume(ctx context.Context, namespace, runID string) (uint64, RecordRead[ResumeRecord], error) {
+	links, walked, err := s.walkResumeLinks(ctx, namespace, runID)
+	if err != nil || walked.Answer != RecordFound {
+		return 0, walked, err
+	}
+	if len(links) == 0 {
+		return 0, RecordRead[ResumeRecord]{Answer: RecordNone}, nil
+	}
+	var previous uint64
+	if len(links) > 1 {
+		previous = links[len(links)-2].Scope
+	}
+	last := links[len(links)-1]
+	read, err := s.linkedResume(ctx, namespace, runID, last, previous)
+	return last.Scope, read, err
+}
+
+// walkResumeLinks is a run's links, walked from scope 0.
+func (s *RecordStore) walkResumeLinks(ctx context.Context, namespace, runID string) ([]resumeLink, RecordRead[ResumeRecord], error) {
 	var (
-		scope, previous uint64
-		last            resumeLink
+		links []resumeLink
+		scope uint64
 	)
-	for walked := 0; ; walked++ {
+	for {
 		key, err := ResumeLinkKey(namespace, runID, scope)
 		if err != nil {
-			return 0, RecordRead[ResumeRecord]{}, err
+			return nil, RecordRead[ResumeRecord]{}, err
 		}
 		body, found, err := s.getIn(ctx, key, maxResumeLinkBytes+1)
 		if err != nil {
-			return 0, RecordRead[ResumeRecord]{}, err
+			return nil, RecordRead[ResumeRecord]{}, err
 		}
 		if !found {
-			break // believed when said once
+			return links, RecordRead[ResumeRecord]{Answer: RecordFound}, nil // believed when said once
 		}
 		next, answer, reason := decodeResumeLink(body)
 		switch {
 		case answer == RecordUnsupported:
-			return 0, RecordRead[ResumeRecord]{Answer: RecordUnsupported, Object: "resume link"}, nil
+			return nil, RecordRead[ResumeRecord]{Answer: RecordUnsupported, Object: "resume link"}, nil
 		case answer != RecordFound:
-			return 0, invalidRead[ResumeRecord]("resume link", "from scope %d: %s", scope, reason), nil
+			return nil, invalidRead[ResumeRecord]("resume link", "from scope %d: %s", scope, reason), nil
 		case next.Scope <= scope:
-			return 0, invalidRead[ResumeRecord]("resume link", "from scope %d leads to scope %d", scope, next.Scope), nil
-		case walked >= maxResumeWalk:
-			return 0, invalidRead[ResumeRecord]("resume link", "more than %d resumes", maxResumeWalk), nil
+			return nil, invalidRead[ResumeRecord]("resume link", "from scope %d leads to scope %d", scope, next.Scope), nil
+		case len(links) >= maxResumeWalk:
+			return nil, invalidRead[ResumeRecord]("resume link", "more than %d resumes", maxResumeWalk), nil
 		}
-		previous, scope, last = scope, next.Scope, next
+		links, scope = append(links, next), next.Scope
 	}
-	if scope == 0 {
-		return 0, RecordRead[ResumeRecord]{Answer: RecordNone}, nil
-	}
-	key, err := ResumeRecordKey(namespace, runID, scope, last.N)
+}
+
+// linkedResume is the record link names, which the scope previous led to.
+func (s *RecordStore) linkedResume(ctx context.Context, namespace, runID string, link resumeLink, previous uint64) (RecordRead[ResumeRecord], error) {
+	key, err := ResumeRecordKey(namespace, runID, link.Scope, link.N)
 	if err != nil {
-		return scope, invalidRead[ResumeRecord]("resume link", "names plan %d, which is no plan", last.N), nil
+		return invalidRead[ResumeRecord]("resume link", "names plan %d, which is no plan", link.N), nil
 	}
 	body, found, err := s.getIn(ctx, key, maxResumeRecordBytes+1)
 	if err != nil {
-		return scope, RecordRead[ResumeRecord]{}, err
+		return RecordRead[ResumeRecord]{}, err
 	}
 	if !found {
-		return scope, invalidRead[ResumeRecord]("resume record", "scope %d plan %d is linked to and has no record", scope, last.N), nil
+		return invalidRead[ResumeRecord]("resume record", "scope %d plan %d is linked to and has no record", link.Scope, link.N), nil
 	}
-	if hexDigest(body) != last.RecordSHA256 {
-		return scope, invalidRead[ResumeRecord]("resume record", "scope %d plan %d does not hash to its link's digest", scope, last.N), nil
+	if hexDigest(body) != link.RecordSHA256 {
+		return invalidRead[ResumeRecord]("resume record", "scope %d plan %d does not hash to its link's digest", link.Scope, link.N), nil
 	}
-	read := DecodeResumeRecord(body, namespace, runID, scope, last.N)
+	read := DecodeResumeRecord(body, namespace, runID, link.Scope, link.N)
 	if read.Answer == RecordFound && read.Value.PreviousScope != previous {
-		return scope, invalidRead[ResumeRecord]("resume record", "scope %d names previous scope %d, and scope %d linked to it",
-			scope, read.Value.PreviousScope, previous), nil
+		return invalidRead[ResumeRecord]("resume record", "scope %d names previous scope %d, and scope %d linked to it",
+			link.Scope, read.Value.PreviousScope, previous), nil
 	}
-	return scope, read, nil
+	return read, nil
+}
+
+// ResumeChain answers a run's resumes from the newest back, each the record
+// the link that leads to its scope names: its plan, and bytes that hash to its
+// digest. A run never resumed has none. What NewestResume refuses of the last,
+// it refuses of each.
+func (s *RecordStore) ResumeChain(ctx context.Context, namespace, runID string) (RecordRead[[]ResumeRecord], error) {
+	links, read, err := s.walkResumeLinks(ctx, namespace, runID)
+	if err != nil || read.Answer != RecordFound {
+		return RecordRead[[]ResumeRecord]{Answer: read.Answer, Object: read.Object, Reason: read.Reason, Version: read.Version}, err
+	}
+	out := make([]ResumeRecord, 0, len(links))
+	for i := len(links) - 1; i >= 0; i-- {
+		var previous uint64
+		if i > 0 {
+			previous = links[i-1].Scope
+		}
+		got, err := s.linkedResume(ctx, namespace, runID, links[i], previous)
+		if err != nil || got.Answer != RecordFound {
+			return RecordRead[[]ResumeRecord]{Answer: got.Answer, Object: got.Object, Reason: got.Reason, Version: got.Version}, err
+		}
+		out = append(out, got.Value)
+	}
+	return RecordRead[[]ResumeRecord]{Answer: RecordFound, Value: out}, nil
 }
 
 // ResumeOf answers a scope's record: the one of its highest plan number,

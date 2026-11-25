@@ -163,6 +163,7 @@ func composeExecutionKeys(td taskDocument) []struct {
 		{"env", td.Env != nil},
 		{"secrets", td.Secrets != nil},
 		{"identities", td.Identities != nil},
+		{"credentials", td.Credentials != nil},
 		{"resources", td.Resources != nil},
 		{"network", td.Network != ""},
 		{"devices", td.Devices != nil},
@@ -269,6 +270,7 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 		{"secrets", len(task.GetSecrets()) > 0},
 		// Rule 60: no identity on a task that runs no container of its own.
 		{"identities", len(task.GetIdentities()) > 0},
+		{"credentials", len(task.GetCredentials()) > 0},
 		{"resources", task.GetResources() != nil},
 		{"network", task.GetNetwork() != orkstackv1.NetworkMode_NETWORK_MODE_UNSPECIFIED},
 		{"devices", len(task.GetDevices()) > 0},

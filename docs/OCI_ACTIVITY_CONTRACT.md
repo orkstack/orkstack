@@ -302,6 +302,16 @@ memory-backed storage where the Orker has any, and is removed with the
 attempt. For a task with no identity the mount, `paths.identity` and
 `identities` are absent.
 
+**`/orkstack/credentials` exists only for a task that declares a credential**
+(`docs/PROVIDERS.md`). It is bound read-only beside `/orkstack/identity`, for
+the same reason and from the same storage: each credential is a directory
+`<name>/` whose files, and `expiration` where the credential expires, are
+links through `current`, which a refresh moves to a whole new set with one
+`rename(2)`. It is removed with the attempt. A secret read through a grant is
+a file under `/orkstack/input/secrets/` like any other, and is not refreshed.
+For a task with no credential the mount, `paths.credentials` and
+`credentials` are absent.
+
 **Permissions.** The host per-attempt directory is `0700`, owned by the
 Orker's user, so no other host user can traverse into a `1777` child. Inside,
 the workload runs as whatever UID its image chooses, so every directory it
@@ -658,6 +668,8 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `paths.shared` | string | optional | absent | `/orkstack/shared`, present only for a pinned task |
 | `paths.identity` | string | optional | absent | `/orkstack/identity`, present only for a task that declares an identity |
 | `identities` | array | optional | absent | present only for a task that declares an identity: each one's `name`, `audience` and `path` (`/orkstack/identity/<name>/token`), never a token |
+| `paths.credentials` | string | optional | absent | `/orkstack/credentials`, present only for a task that declares a credential |
+| `credentials` | array | optional | absent | present only for a task that declares a credential: each one's `name`, `provider`, `path` (`/orkstack/credentials/<name>`) and `files` (their names), never a value |
 | `inputs.artifacts` | array | required | `[]` | never null |
 | `inputs.artifacts[].producer` | string | required | — | upstream task id |
 | `inputs.artifacts[].name` | string | optional | absent | the exact logical name |
@@ -1803,6 +1815,8 @@ heard of.
 | 5c | `stage-artifacts` | **Deferred staging**, a cached task only: the recorded downloads, then secrets |
 | 5d | — | **Run context**, a task that is not cached and whose input carries one: the run tree's run-context object, read and verified against its SHA-256 and kept for the process's life (`RUN_CONTEXT_MISSING`, `RUN_CONTEXT_UNAVAILABLE`, `RUN_CONTEXT_INVALID`). After the commit check and the memo, so neither is ever refused for it, and before the image, so a read that fails pulls nothing; a context that does not account for the run whole is `RUN_CONTEXT_INVALID`, never a guessed key |
 | 6 | `image` | **Image**: `Runtime.Pull(image.pinned)`, or the verified embedded layout (§4.6); record platform digest and delivery. Then, for a task naming a profile, the pulled image's interface label: where it declares a contract of such a profile, it must be the one the run pinned as the image's need, else `PROFILE_DECLARATION_MISMATCH`, a `ContractViolation` with no container made; a label the runtime cannot read never started (`RUNTIME_STATE_UNKNOWN`) |
+| 6a | `identity` | **Identity**, a task that holds one: its tokens are asked of the engine, inside `orker.identity.setup_budget`, masked and written ([TASK_IDENTITY.md](./TASK_IDENTITY.md#on-the-orker), "On the Orker"); a refusal ends the attempt with no container created |
+| 6a′ | `credentials` | **Credentials**, a task that logs in through a grant: in the same budget, each login, the values of its secrets read through one and the files of its credentials ([PROVIDERS.md](./PROVIDERS.md)); a failure ends the attempt with no container created |
 | 7 | `render` | **Render**: resources and network resolved against policy; `with:` → `config.json`; `run.json`; `task.json`, its run-context keys from the run tree's run-context object (read before step 6, below); input tree sealed |
 | 8 | `create` | **Create** from the security profile (§9.2), only if the attempt is still live: a run terminated or cancelled during the pull creates nothing |
 | 9–10 | `run` | **Run and wait**: stream stdout/stderr to the sink and to disk; wait for exit, cancellation (`cancel`) or the task timeout (`timeout`) |
@@ -2226,6 +2240,7 @@ socket.
 --mount type=bind,source=<attempt>/tmp,destination=/orkstack/tmp
 --mount type=bind,source=<pin>/shared,destination=/orkstack/shared   pinned tasks only
 --mount type=bind,source=<identity dir>/identity,destination=/orkstack/identity,readonly   tasks that declare an identity only
+--mount type=bind,source=<identity dir>/credentials,destination=/orkstack/credentials,readonly   tasks that declare a credential only
 --tmpfs /tmp:rw,nosuid,nodev,noexec,size=<policy>   default 64 MiB; noexec spelled, not left to the runtime
 --tmpfs /run:ro,size=1m --tmpfs /var/tmp:ro,size=1m   Podman engine only, below
 --user <orker-uid>:<orker-gid>                only with runAsOrkerUser / ORK_ORKER_FORCE_USER, as the runtime renders "as the Orker"

@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -381,6 +382,25 @@ func checkSharedSeed(dir string) (string, error) {
 	return abs, nil
 }
 
+// credentialRefusal refuses a task that declares a credential, by name. A
+// provider issues a credential as the namespace's grant, logging in with the
+// attempt's identity token, and a local run has neither, so the task is
+// refused rather than run without the files it reads. A provider's secret is
+// not refused: --secret supplies it from a local source, which replaces the
+// provider's source, its grant and its ciphertext together.
+func credentialRefusal(spec *orkstackv1.Task) error {
+	creds := spec.GetCredentials()
+	if len(creds) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(creds))
+	for _, c := range creds {
+		names = append(names, strconv.Quote(c.GetName()))
+	}
+	return fmt.Errorf("task %q declares the credentials %s, which a provider issues as the namespace's grant to a run's attempt; "+
+		"a local run holds no identity to obtain them with, so orkctl task run does not run this task", spec.GetId(), strings.Join(names, ", "))
+}
+
 // localSecrets turns the definition's SecretRefs into the local input's.
 // Under --render-only none is staged: no container starts, so no secret byte
 // is needed. Otherwise, in declaration order, a supplied name keeps its name
@@ -618,6 +638,9 @@ func (r *taskRunner) execute() error {
 	// before anything is fetched or composed.
 	if ref := r.spec.GetOrkflow(); ref != nil {
 		return engine.ComposedTaskRefusal(r.opts.task, ref)
+	}
+	if err := credentialRefusal(r.spec); err != nil {
+		return err
 	}
 	if err := r.checkNeeds(); err != nil {
 		return err

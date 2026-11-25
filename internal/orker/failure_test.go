@@ -10,6 +10,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/eachlines"
 	"github.com/orkstack/orkstack/internal/identity"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/task"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -47,6 +48,10 @@ var allReasonCodes = []string{
 	identity.ReasonNotAdmitted, identity.ReasonTaskNotAsAdmitted, identity.ReasonAttemptsExhausted,
 	identity.ReasonAttemptExpired, identity.ReasonRevoked, ReasonIdentitySpecSkew, ReasonIdentityClockSkew, ReasonIdentityRefreshFailed,
 	ReasonCommitEngineUnavailable, ReasonCommitEngineRefused, ReasonUpstreamNotRecorded, ReasonRequiredResultNotRecorded,
+	provider.ReasonProviderUnavailable, provider.ReasonCredentialRefreshFailed, provider.ReasonCredentialRefused,
+	provider.ReasonSecretAccessDenied, provider.ReasonSecretNotFound, provider.ReasonProviderRequestInvalid,
+	provider.ReasonSecretTooLarge, provider.ReasonProviderNotConfigured, provider.ReasonProviderContractViolation,
+	ReasonProviderSetup,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake
@@ -131,6 +136,16 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"orker.engine is unset on this Orker; the next attempt on it meets the same configuration"},
 		{ReasonIdentityNotServed, CategoryInfrastructureError, true,
 			"the self-check's verdict is the moment's; a retry the task's policy allows may run where the Orker serves task identity"},
+		{provider.ReasonProviderUnavailable, CategoryInfrastructureError, true,
+			"the provider gave no answer about the task; the next attempt may get one"},
+		{provider.ReasonCredentialRefused, CategoryContractViolation, false,
+			"the provider refused the login's role, and would refuse it again"},
+		{provider.ReasonSecretNotFound, CategoryContractViolation, false,
+			"the secret the task names is not there"},
+		{provider.ReasonProviderNotConfigured, CategoryInfrastructureError, false,
+			"this Orker does not declare the provider; the next attempt on it meets the same configuration"},
+		{provider.ReasonProviderContractViolation, CategoryInfrastructureError, false,
+			"the provider type broke its contract, and would again"},
 		{ReasonHeartbeatLost, CategoryInfrastructureError, true,
 			"the cluster did not answer in time; nothing about the workload, and the next attempt may find it answering"},
 		{ReasonOrkerStopped, CategoryInfrastructureError, true,

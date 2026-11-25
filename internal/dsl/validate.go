@@ -201,6 +201,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		if err := validateIdentities(taskIndex, task); err != nil {
 			return err
 		}
+		// Rules 62 to 64: a container task's credentials.
+		if err := validateCredentials(taskIndex, task); err != nil {
+			return err
+		}
 		// Rule 6c: a secret names a file and a source, and the name is
 		// validated rather than sanitized so it can never escape the secrets
 		// directory.
@@ -213,6 +217,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 				return validationError(fmt.Sprintf("tasks[%d].secrets[%d].source", taskIndex, secretIndex),
 					fmt.Errorf("task %q: secret %q needs a `source:` (e.g. \"env:DB_PASSWORD\")", task.GetId(), secret.GetName()))
 			}
+		}
+		// Rule 65: a secret read from a provider, by a grant.
+		if err := validateProviderSecrets(taskIndex, task); err != nil {
+			return err
 		}
 		// Rule 6d: a resource request is a quantity the Orker can read, in
 		// the one grammar both sides share (internal/quantity). Blank is

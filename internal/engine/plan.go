@@ -413,6 +413,9 @@ type IdentityPlan struct {
 	// AttemptsExtra is the attempts past a task's retry policy that may hold
 	// an identity, resolved at submit with the run's namespace in hand.
 	AttemptsExtra int32 `json:"attempts_extra"`
+	// CommitWaitSeconds is identity.results.commit_wait as admitted: how long
+	// an attempt waits at its commit for an engine to record its result.
+	CommitWaitSeconds int32 `json:"commit_wait_seconds"`
 	// Grants are the run's grants as admitted, by name; nil when it names
 	// none.
 	Grants map[string]artifacts.GrantSelection `json:"grants,omitempty"`

@@ -825,6 +825,7 @@ then the variable it becomes.
 | `telemetry.batch.metric_export_interval` | `OTEL_METRIC_EXPORT_INTERVAL` | *(SDK default)* | both | the metric export interval |
 | environment only | `OTEL_BSP_*`, `OTEL_BLRP_*` | *(SDK defaults)* | both | batch/backpressure bounds on the span and log processors; a record that cannot be queued is dropped, never waited for. **Environment only** — no config file key exists for these |
 | `telemetry.sinks:` | `ORK_TELEMETRY_SINKS` | *(empty)* | both | YAML table of named OTLP destinations a namespace may select by name, in place of the deployment's single `OTEL_*` environment — see §7, "Named sinks" |
+| `providers:` | `ORK_PROVIDERS` | *(empty)* | both | YAML table of the deployment's credential and secret providers, by name; set identically on `ork` and `orker`; holds no secret; an unknown type or key refuses boot — see [PROVIDERS.md](./PROVIDERS.md) |
 | `orker.engine.url` | `ORK_ORKER_ENGINE_URL` | *(empty)* | `orker` | the engine's API this Orker reaches as itself, `https` or a loopback `http`; empty, it reaches none and supports no identity — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
 | `orker.engine.ca_file` | `ORK_ORKER_ENGINE_CA_FILE` | *(empty)* | `orker` | PEM roots the engine's certificate is verified against, in place of the system's |
 | `orker.engine.auth.method` | `ORK_ORKER_ENGINE_AUTH_METHOD` | *(empty)* | `orker` | `token_file`, `service_account` or `mtls`: how the Orker authenticates; required with `orker.engine.url` |
@@ -836,6 +837,8 @@ then the variable it becomes.
 | `orker.identity.retry_min` | `ORK_ORKER_IDENTITY_RETRY_MIN` | `5s` | `orker` | the first retry's least delay when a mint could not be asked: the n-th delay is drawn between half of `retry_min` doubled n times and that, capped at a minute (5–10 s, 10–20, 20–40, 30–60); `100ms` to `1m` |
 | `orker.identity.max_concurrent` | `ORK_ORKER_IDENTITY_MAX_CONCURRENT` | `8` | `orker` | how many mints this Orker has in flight at once; `1` to `256` |
 | `orker.identity.max_clock_skew` | `ORK_ORKER_IDENTITY_MAX_CLOCK_SKEW` | `2m` | `orker` | how far the engine's `issued_at` may be from this Orker's clock; above it the attempt fails `IDENTITY_CLOCK_SKEW` and writes no token, and above 30 s it is logged; three such mints in a row clear the Orker's identity support until the engine's answers' `Date` header agrees with its clock again — a proxy in front of the engine that sets its own `Date` must keep its clock in sync, or the engine be reached directly; `1s` to `1h` |
+| `orker.providers.call_timeout` | `ORK_ORKER_PROVIDERS_CALL_TIMEOUT` | `15s` | `orker` | how long one call to a provider may take before it is asked again, within `orker.identity.setup_budget` before the container starts; `1s` to `5m` — see [PROVIDERS.md](./PROVIDERS.md) |
+| `orker.providers.max_concurrent` | `ORK_ORKER_PROVIDERS_MAX_CONCURRENT` | `8` | `orker` | how many calls this Orker has in flight to one provider at once; waiting counts against the setup budget; `1` to `256` |
 | `orker.log.mask_grace` | `ORK_ORKER_LOG_MASK_GRACE` | `5m` | `orker` | how long a refreshed identity token stays masked in the task's logs after it has expired, since a process may hold and print it until then; `0` to `24h` |
 | `auth.mode` | `ORK_AUTH_MODE` | `asserted` | `ork` | `asserted`, `observe` or `enforce`: who a request is from, and whether a permission is required — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
 | `auth.public_url` | `ORK_AUTH_PUBLIC_URL` | *(empty)* | `ork` | the URL callers reach the API at, a scheme and host alone: service-account and break-glass assertions name it as their audience, and sign-in redirects to it; `https` when an issuer offers sign-in, except on a loopback host |
@@ -6937,8 +6940,8 @@ increase.
 `granted`, or why it issued nothing, one of `IDENTITY_UNAVAILABLE`,
 `IDENTITY_ENGINE_REFUSED`, `IDENTITY_NOT_ADMITTED`, `ATTEMPT_NOT_HELD`,
 `TASK_NOT_AS_ADMITTED`, `IDENTITY_ATTEMPTS_EXHAUSTED`,
-`IDENTITY_ATTEMPT_EXPIRED`, `IDENTITY_REVOKED`, `permission_denied`,
-`invalid`, `resource_exhausted` or `other`: a closed set
+`IDENTITY_ATTEMPT_EXPIRED`, `IDENTITY_REVOKED`,
+`REQUIRED_RESULT_NOT_RECORDED`, `permission_denied`, `invalid`, `resource_exhausted` or `other`: a closed set
 ([TASK_IDENTITY.md](./TASK_IDENTITY.md#the-mint)). `ork.identity.engine_refused`
 (engine) counts the mints and commits refused `IDENTITY_ENGINE_REFUSED`,
 which are the engine's fault and never the task's. Alert on any increase.

@@ -273,6 +273,9 @@ orker:
     retry_min: 5s  # orker
     max_concurrent: 8  # orker
     max_clock_skew: 2m  # orker
+  providers:
+    call_timeout: 15s  # orker
+    max_concurrent: 8  # orker
 
 telemetry:
   log_format: text
@@ -313,6 +316,8 @@ telemetry:
   batch: {}
     # batch.metric_export_interval: ""  # SDK default
   # sinks: {}  # no named sinks
+
+# providers: {}  # no providers
 
 auth:
   mode: asserted  # ork

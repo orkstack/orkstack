@@ -41,6 +41,9 @@ type IdentitySpec struct {
 	RunAsOrkerUser bool
 	Identities     []*orkstackv1.IdentityRef
 	Credentials    []*orkstackv1.CredentialRef
+	// Grants are the grants the task's credentials and secrets use, as the
+	// run was admitted with them, in name order.
+	Grants []*orkstackv1.IdentityGrant
 	// Devices are the device profiles the task names, in its order, with
 	// the contract it needs of each.
 	Devices []IdentityDevice
@@ -62,18 +65,19 @@ func IdentitySpecOfInput(in *orkstackv1.ExecuteTaskInput) IdentitySpec {
 		ImagePinned: in.GetImage().GetPinned(), Command: in.GetCommand(), Env: in.GetEnv(), With: in.GetWith(),
 		Secrets: in.GetSecrets(), Network: in.GetNetwork(), RunAsOrkerUser: in.GetRunAsOrkerUser(),
 		Identities: in.GetIdentity().GetIdentities(), Credentials: in.GetIdentity().GetCredentials(),
-		Devices: inputDevices(in.GetDevices()),
+		Grants: in.GetIdentity().GetGrants(), Devices: inputDevices(in.GetDevices()),
 	}
 }
 
 // IdentitySpecOfTask is the projection of a task as its definition holds
-// it: what the engine hashes at submit into the task's admission, and what
+// it, with the grants it uses as its run is admitted with them: what the engine hashes at submit into the task's admission, and what
 // IdentitySpecOfInput reproduces from the input the interpreter builds.
-func IdentitySpecOfTask(t *orkstackv1.Task) IdentitySpec {
+func IdentitySpecOfTask(t *orkstackv1.Task, grants []*orkstackv1.IdentityGrant) IdentitySpec {
 	return IdentitySpec{
 		ImagePinned: t.GetImage().GetPinned(), Command: t.GetCommand(), Env: t.GetEnv(), With: t.GetWith(),
 		Secrets: t.GetSecrets(), Network: t.GetNetwork(), RunAsOrkerUser: t.GetRunAsOrkerUser(),
-		Identities: t.GetIdentities(), Credentials: t.GetCredentials(), Devices: taskDevices(t),
+		Identities: t.GetIdentities(), Credentials: t.GetCredentials(),
+		Grants: grants, Devices: taskDevices(t),
 	}
 }
 
@@ -152,6 +156,11 @@ func identitySpecV1(s IdentitySpec) ([11]any, error) {
 		credentials = append(credentials, map[string]any{"name": c.GetName(), "grant": c.GetGrant(),
 			"path": c.GetPath(), "params": params, "refresh": int32(c.GetRefresh())})
 	}
+	grants := make([]map[string]any, 0, len(s.Grants))
+	for _, g := range s.Grants {
+		grants = append(grants, map[string]any{"name": g.GetName(), "provider": g.GetProvider(), "principal": g.GetPrincipal(),
+			"audience": g.GetAudience()})
+	}
 	command := s.Command
 	if command == nil {
 		command = []string{}
@@ -162,7 +171,7 @@ func identitySpecV1(s IdentitySpec) ([11]any, error) {
 	}
 	return [11]any{
 		map[string]string{"pinned": s.ImagePinned}, command, env, with, secrets, network, s.RunAsOrkerUser,
-		identities, credentials, []any{}, devices,
+		identities, credentials, grants, devices,
 	}, nil
 }
 

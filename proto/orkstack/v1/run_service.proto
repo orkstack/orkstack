@@ -470,7 +470,12 @@ message ResolveAwaitRequest {
   // bytes, no control character other than tab and newline.
   string reason = 6;
 
-  // redeliver is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  // redeliver tells the run again of the resolution on record for this task,
+  // for a run that holds a task identity. It carries no decision: values_json,
+  // reject and reason must be unset. The run is told the task alone. Inside
+  // ten seconds of a telling it repeats that telling's answer. Refused when
+  // nothing is on record, and AWAIT_DEADLINE_PASSED, telling nothing, when the
+  // record was stored after the deadline.
   bool redeliver = 7;
 }
 
@@ -487,13 +492,19 @@ message ResolveAwaitResponse {
   // nothing was stored or delivered.
   bool repeat = 6;
 
-  // delivery_pending is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  // delivery_pending: the resolution is on record and the run could not be
+  // told of it. Repeating the request, or redeliver, delivers it. Set only for
+  // a run that holds a task identity, as are told_at and deadline_passed.
   bool delivery_pending = 7;
 
-  // told_at is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  // told_at is when this replica last had the run told of the resolution on
+  // record: by this request, or by the one it stands on. It never says that
+  // the run applied it.
   google.protobuf.Timestamp told_at = 9;
 
-  // deadline_passed is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  // deadline_passed: the resolution is on record and the await's deadline has
+  // passed by the store's clock. The run decides whether it takes it, and
+  // repeating the request changes nothing.
   bool deadline_passed = 10;
 }
 

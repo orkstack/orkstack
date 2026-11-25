@@ -40,7 +40,10 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/healthcheck"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/procguard"
+	"github.com/orkstack/orkstack/internal/provider"
+	"github.com/orkstack/orkstack/internal/provider/types"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/temporalconn"
@@ -188,6 +191,13 @@ type config struct {
 	// setting.
 	auth    authConfig
 	authErr error
+	// providers is the providers document (ORK_PROVIDERS); providersErr
+	// refuses the boot, naming the setting.
+	providers    provider.Set
+	providersErr error
+	// sessionTags are the audiences whose tokens carry session tags, as the
+	// providers ask.
+	sessionTags map[string]artifacts.SessionTagging
 	// identity is identity.* (identityFromEnv): the task identity issuer.
 	identity    identityConfig
 	identityErr error
@@ -296,6 +306,13 @@ func loadConfig() config {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
 	cfg.auth, cfg.authErr = authFromEnv(os.LookupEnv)
+	cfg.providers, cfg.providersErr = provider.FromEnv(os.LookupEnv, types.All())
+	if cfg.providersErr == nil {
+		cfg.sessionTags, cfg.providersErr = identity.SessionTagSettings(cfg.providers)
+		if cfg.providersErr != nil {
+			cfg.providersErr = fmt.Errorf("%s (%s): %w", provider.Setting, provider.Var, cfg.providersErr)
+		}
+	}
 	cfg.identity, cfg.identityErr = identityFromEnv(os.LookupEnv)
 	cfg.ui, cfg.uiErr = uiFromEnv()
 	cfg.listener, cfg.listenerErr = listenerFromEnv(tasks.value)
@@ -1187,6 +1204,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	if cfg.authErr != nil {
 		return cfg.authErr
+	}
+	if cfg.providersErr != nil {
+		return cfg.providersErr
 	}
 	if err := cfg.auth.checkBoot(tcfg.AdminAddr, tcfg.PprofEnabled); err != nil {
 		return err
@@ -2083,6 +2103,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// The build the recorder names is the one an admission records, by the
 	// same rule, so the two compare.
 	recorder := newRecorder(minter, issuedRecords, orkflows.Get, engineBuild(cfg.deployment.BuildID))
+	// The two local activities that record a child run's outputs and a
+	// composed task's values, of a run whose results the engine records.
+	valueRecords := engine.NewValueRecordActivities(newValuesRecorder(minter, issuedRecords, orkflows.Get, compose, engineBuild(cfg.deployment.BuildID)))
+	runWorker.RegisterActivityWithOptions(valueRecords.RecordOutputs,
+		activity.RegisterOptions{Name: engine.ActivityRecordOutputs})
+	runWorker.RegisterActivityWithOptions(valueRecords.RecordComposed,
+		activity.RegisterOptions{Name: engine.ActivityRecordComposed})
 	svc := api.NewService(api.Config{
 		Minter:                 minter,
 		MintObserver:           identityMetrics,
@@ -2143,6 +2170,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		IdentityAttemptsMax:      cfg.identity.attemptsMax,
 		IdentityTokenTTL:         cfg.identity.tokenTTL.Default,
 		IdentityAdmissions:       admissionRecords(issuedRecords),
+		Providers:                cfg.providers,
+		SessionTags:              cfg.sessionTags,
+		AwaitRecords:             awaitRecords(minter, issuedRecords),
+		AwaitChecks:              awaitChecks(minter),
+		ClockSkew:                cfg.auth.clockSkew,
 		EngineBuild:              engineBuild(cfg.deployment.BuildID),
 		Issuer:                   issuer,
 		ServeDiscovery:           cfg.identity.serveDiscovery,

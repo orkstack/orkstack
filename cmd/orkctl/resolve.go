@@ -25,9 +25,10 @@ func newRunResolveCommand(g *globalFlags) *cobra.Command {
 		valuesFile string
 		reject     bool
 		reason     string
+		redeliver  bool
 	)
 	cmd := &cobra.Command{
-		Use:   "resolve <run-id> --task TASK [--values JSON | --values-file PATH | --reject --reason TEXT]",
+		Use:   "resolve <run-id> --task TASK [--values JSON | --values-file PATH | --reject --reason TEXT | --redeliver]",
 		Short: "Complete or reject an awaited task of a running run",
 		Long: "resolve delivers the outcome of an awaited task from outside its run.\n\n" +
 			"A completion's values become the task's values.json, byte for byte:\n" +
@@ -36,7 +37,10 @@ func newRunResolveCommand(g *globalFlags) *cobra.Command {
 			"with AWAIT_REJECTED and needs a --reason.\n\n" +
 			"The resolution is stored and delivered to the run before this returns;\n" +
 			"the run applies it next. Follow the run to see the outcome: a resolution\n" +
-			"that loses a race is recorded on the run, never applied twice.",
+			"that loses a race is recorded on the run, never applied twice.\n\n" +
+			"A run that holds a task identity keeps a record of each resolution, and\n" +
+			"the first stands. --redeliver tells such a run again of the resolution on\n" +
+			"record, without deciding anything, when its delivery was lost.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if taskID == "" {
@@ -44,6 +48,9 @@ func newRunResolveCommand(g *globalFlags) *cobra.Command {
 			}
 			valuesSet := cmd.Flags().Changed("values")
 			fileSet := cmd.Flags().Changed("values-file")
+			if redeliver && (valuesSet || fileSet || reject || cmd.Flags().Changed("reason")) {
+				return errors.New("--redeliver carries no decision: give it without --values, --values-file, --reject or --reason")
+			}
 			if valuesSet && fileSet {
 				return errors.New("--values and --values-file are exclusive")
 			}
@@ -74,6 +81,7 @@ func newRunResolveCommand(g *globalFlags) *cobra.Command {
 				ValuesJson: body,
 				Reject:     reject,
 				Reason:     reason,
+				Redeliver:  redeliver,
 			}))
 			if err != nil {
 				return rpcError("resolve await", err)
@@ -81,7 +89,7 @@ func newRunResolveCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderResolved(cmd.OutOrStdout(), g.namespace, resp.Msg, reason)
+			return renderResolved(cmd.OutOrStdout(), g.namespace, resp.Msg, reason, redeliver)
 		},
 	}
 	cmd.Flags().StringVarP(&taskID, "task", "t", "", "the awaited task to resolve (required)")
@@ -89,6 +97,7 @@ func newRunResolveCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&valuesFile, "values-file", "", "read the completion's values from a file, verbatim (- for stdin)")
 	cmd.Flags().BoolVar(&reject, "reject", false, "reject the await instead of completing it")
 	cmd.Flags().StringVar(&reason, "reason", "", "why the await is rejected (with --reject)")
+	cmd.Flags().BoolVar(&redeliver, "redeliver", false, "tell the run again of the resolution on record")
 	return cmd
 }
 
@@ -111,9 +120,20 @@ func readValuesFile(stdin io.Reader, path string) (string, error) {
 }
 
 // renderResolved prints what was delivered — never that it was applied.
-func renderResolved(out io.Writer, namespace string, resp *orkstackv1.ResolveAwaitResponse, reason string) error {
+func renderResolved(out io.Writer, namespace string, resp *orkstackv1.ResolveAwaitResponse, reason string, redelivered bool) error {
 	var b strings.Builder
+	check := orkctlCommand(namespace, "run", "get", resp.GetRunId())
 	switch {
+	// A run that keeps a record of its resolutions says what became of it.
+	case resp.GetDeadlinePassed():
+		fmt.Fprintf(&b, "The resolution of await %s of run %s is on record, and its deadline has passed: the run decides "+
+			"whether it takes it. Repeating changes nothing; check the task with: %s\n", resp.GetTaskId(), resp.GetRunId(), check)
+	case resp.GetDeliveryPending():
+		fmt.Fprintf(&b, "The resolution of await %s of run %s is on record, and the run could not be told yet. Deliver it with: %s\n",
+			resp.GetTaskId(), resp.GetRunId(), orkctlCommand(namespace, "run", "resolve", resp.GetRunId(), "--task", resp.GetTaskId(), "--redeliver"))
+	case resp.GetToldAt() != nil && (redelivered || resp.GetRepeat()):
+		fmt.Fprintf(&b, "The resolution of await %s of run %s is on record; the run was told at %s. Check the task with: %s\n",
+			resp.GetTaskId(), resp.GetRunId(), formatTime(resp.GetToldAt()), check)
 	case resp.GetRepeat() && resp.GetReject():
 		fmt.Fprintf(&b, "Await %s of run %s was already rejected with this reason; nothing was sent.\n",
 			resp.GetTaskId(), resp.GetRunId())

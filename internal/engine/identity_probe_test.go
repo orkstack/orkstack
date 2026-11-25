@@ -30,17 +30,72 @@ func TestCheckIdentitySupport(t *testing.T) {
 		}
 		return fleetOf(cpu, gpu)
 	}
-	if err := cachePoolsResolver(fleet(true)).CheckIdentitySupport(context.Background(), ns, planned); err != nil {
+	if err := cachePoolsResolver(fleet(true)).CheckIdentitySupport(context.Background(), ns, planned, nil); err != nil {
 		t.Fatalf("every Orker serves it: %v", err)
 	}
-	err := cachePoolsResolver(fleet(false)).CheckIdentitySupport(context.Background(), ns, planned)
+	err := cachePoolsResolver(fleet(false)).CheckIdentitySupport(context.Background(), ns, planned, nil)
 	var refused *engine.PoolNoIdentitySupportError
 	if !errors.As(err, &refused) || refused.Pool != "gpu" || refused.OrkerID != "gpu-3" || refused.BuildID != "2026.11.18" ||
 		!strings.Contains(err.Error(), engine.ReasonPoolNoIdentitySupport) || !strings.Contains(err.Error(), "not confirmed scoped") {
 		t.Fatalf("err = %v", err)
 	}
-	if err := cachePoolsResolver(&fakeFleet{silent: []string{"cpu-1", "gpu-3"}}).CheckIdentitySupport(context.Background(), ns, planned); err != nil {
+	if err := cachePoolsResolver(&fakeFleet{silent: []string{"cpu-1", "gpu-3"}}).CheckIdentitySupport(context.Background(), ns, planned, nil); err != nil {
 		t.Fatalf("no Orker answering is refused: %v", err)
+	}
+}
+
+// TestCheckIdentitySupport_EveryOrkerDeclaresTheProvider: a task that logs in
+// through a grant is refused on a pool one of whose Orkers does not declare
+// the grant's provider, or declares it as another type; a pool no such task
+// runs on is not asked.
+func TestCheckIdentitySupport_EveryOrkerDeclaresTheProvider(t *testing.T) {
+	planned := &orkstackv1.Orkflow{Name: "deploy", Tasks: []*orkstackv1.Task{
+		{Id: "build", Pool: "cpu"},
+		{Id: "push", Pool: "gpu", Credentials: []*orkstackv1.CredentialRef{{Name: "c", Grant: "deployer"}}},
+		{Id: "read", Pool: "gpu", Secrets: []*orkstackv1.SecretRef{{Name: "s", Source: "vault:secret/data/db", Grant: "reader"}}},
+	}}
+	ns := &orkstackv1.Namespace{Name: "ml"}
+	needs := map[string]engine.ProviderNeed{
+		"deployer": {Name: "aws", Type: "aws"}, "reader": {Name: "vault", Type: "vault"}, "unused": {Name: "other", Type: "vault"},
+	}
+	orkers := func(second ...*orkstackv1.ProviderInfo) *fakeFleet {
+		cpu, one, two := currentOrker("cpu-1", "cpu", 0), currentOrker("gpu-1", "gpu", 0), currentOrker("gpu-2", "gpu", 0)
+		one.Providers = []*orkstackv1.ProviderInfo{{Name: "aws", Type: "aws"}, {Name: "vault", Type: "vault"}}
+		two.Providers, two.BuildId = second, "2026.11.25"
+		cpu.IdentitySupported, one.IdentitySupported, two.IdentitySupported = true, true, true
+		return fleetOf(cpu, one, two)
+	}
+	check := func(fleet *fakeFleet) error {
+		return cachePoolsResolver(fleet).CheckIdentitySupport(context.Background(), ns, planned, needs)
+	}
+	aws, vault := &orkstackv1.ProviderInfo{Name: "aws", Type: "aws"}, &orkstackv1.ProviderInfo{Name: "vault", Type: "vault"}
+	if err := check(orkers(vault, aws)); err != nil {
+		t.Fatalf("every Orker declares both: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		second   []*orkstackv1.ProviderInfo
+		provider string
+		task     string
+		says     string
+	}{
+		"one is missing":  {[]*orkstackv1.ProviderInfo{aws}, "vault", "read", "does not declare"},
+		"none":            {nil, "aws", "push", "does not declare"},
+		"of another type": {[]*orkstackv1.ProviderInfo{{Name: "aws", Type: "vault"}, vault}, "aws", "push", `as type "vault"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := check(orkers(tc.second...))
+			var refused *engine.PoolNoProviderError
+			if !errors.As(err, &refused) {
+				t.Fatalf("err = %v", err)
+			}
+			if refused.Pool != "gpu" || refused.OrkerID != "gpu-2" || refused.BuildID != "2026.11.25" || refused.Provider != tc.provider ||
+				len(refused.Tasks) != 1 || refused.Tasks[0] != tc.task {
+				t.Errorf("refused = %+v", refused)
+			}
+			if msg := err.Error(); !strings.HasPrefix(msg, engine.ReasonPoolNoProvider+":") || !strings.Contains(msg, tc.says) {
+				t.Errorf("message = %q", msg)
+			}
+		})
 	}
 }
 
@@ -80,7 +135,7 @@ func TestCheckIdentitySupport_AnOrkerThatDoesNotAnswer(t *testing.T) {
 	live := livePools{cpuQueue: 2, gpuQueue: 1}
 
 	resolver := &engine.PoolResolver{Fleet: fleet, Probe: pollingPools{livePools: live, polling: map[string][]string{cpuQueue: {"cpu-1", "cpu-2"}}}}
-	err := resolver.CheckIdentitySupport(context.Background(), ns, planned)
+	err := resolver.CheckIdentitySupport(context.Background(), ns, planned, nil)
 	var refused *engine.PoolNoIdentitySupportError
 	if !errors.As(err, &refused) || refused.Pool != "cpu" || refused.OrkerID != "cpu-2" || !refused.Unanswered ||
 		!strings.Contains(err.Error(), "did not answer") || !strings.Contains(err.Error(), "unknown") {
@@ -93,7 +148,7 @@ func TestCheckIdentitySupport_AnOrkerThatDoesNotAnswer(t *testing.T) {
 		"the probe names no pollers":    live,
 	} {
 		r := &engine.PoolResolver{Fleet: &fakeFleet{orkers: []*orkstackv1.DescribeOrkerResult{serving}, silent: []string{"cpu-2"}}, Probe: probe}
-		if err := r.CheckIdentitySupport(context.Background(), ns, planned); err != nil {
+		if err := r.CheckIdentitySupport(context.Background(), ns, planned, nil); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}

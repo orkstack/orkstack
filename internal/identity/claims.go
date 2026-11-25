@@ -94,5 +94,8 @@ func BuildClaims(in ClaimsInput) (map[string]any, error) {
 	if adm.Origin.Verified && adm.Origin.Principal != "" {
 		c["ork_submitted_by"] = adm.Origin.Principal
 	}
+	if tagging, ok := adm.SessionTags[in.Audience]; ok {
+		c[ClaimAWSTags] = sessionTags(c, in.Grant, tagging)
+	}
 	return c, nil
 }

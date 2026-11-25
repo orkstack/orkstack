@@ -11,6 +11,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/eachlines"
 	"github.com/orkstack/orkstack/internal/identity"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -318,6 +319,18 @@ var reasonCategory = map[string]string{
 	ReasonIdentitySpecSkew:           CategoryInfrastructureError,
 	ReasonIdentityClockSkew:          CategoryInfrastructureError,
 	ReasonIdentityRefreshFailed:      CategoryInfrastructureError,
+	// What a provider's answer ends an attempt with (provider.Classify and
+	// its fixed outcomes; held equal by a test).
+	provider.ReasonProviderUnavailable:       CategoryInfrastructureError,
+	provider.ReasonCredentialRefreshFailed:   CategoryInfrastructureError,
+	provider.ReasonCredentialRefused:         CategoryContractViolation,
+	provider.ReasonSecretAccessDenied:        CategoryContractViolation,
+	provider.ReasonSecretNotFound:            CategoryContractViolation,
+	provider.ReasonProviderRequestInvalid:    CategoryContractViolation,
+	provider.ReasonSecretTooLarge:            CategoryContractViolation,
+	provider.ReasonProviderNotConfigured:     CategoryInfrastructureError,
+	provider.ReasonProviderContractViolation: CategoryInfrastructureError,
+	ReasonProviderSetup:                      CategoryInfrastructureError,
 	// What the engine's answer to a commit ends an attempt with
 	// (recorded_results.go).
 	ReasonCommitEngineUnavailable:   CategoryInfrastructureError,
@@ -363,6 +376,10 @@ var retryableReason = map[string]bool{
 	identity.ReasonTaskNotAsAdmitted: false,
 	identity.ReasonAttemptsExhausted: false,
 	identity.ReasonAttemptExpired:    false,
+	// A provider this Orker does not declare, and one that broke its
+	// contract at setup, would be the same again.
+	provider.ReasonProviderNotConfigured:     false,
+	provider.ReasonProviderContractViolation: false,
 	// No retry of the dependent makes an upstream's record appear, and a
 	// task a record it follows lacks is refused again (recorded_results.go).
 	ReasonUpstreamNotRecorded:       false,

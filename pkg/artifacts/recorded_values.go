@@ -42,6 +42,13 @@ func init() { recordFormats.Store(1) }
 
 func knownRecordFormat(v int64) bool { return v >= 1 && v <= recordFormats.Load() }
 
+// RecordFormat is the format a run admitted now has its records written in.
+const RecordFormat = 1
+
+// WritesRecordFormat says this build reads records of format v, and so may
+// write one a run pins.
+func WritesRecordFormat(v int) bool { return knownRecordFormat(int64(v)) }
+
 // MarshalRecordedValues writes a record as it is stored: protojson,
 // indented by stablejson, with a final newline. A record over 64 KiB is
 // refused.
@@ -100,6 +107,42 @@ func (f *RecordedFound) StoredAt() time.Time { return f.storedAt }
 // Detail is a resolution's detail; nil for any other kind.
 func (f *RecordedFound) Detail() *orkstackv1.ResolutionDetail { return f.detail }
 
+// Standing is what a found record says of its task to a check that asks
+// only whether the result is on record: whether it is a rejection, the
+// digest of its values, and a copy of what it follows. It hands over no
+// values: those are adopted through InTime.
+func (f *RecordedFound) Standing() (rejected bool, valuesSHA256 string, follows []*orkstackv1.RecordedSource) {
+	for _, row := range f.record.GetFollows() {
+		follows = append(follows, proto.Clone(row).(*orkstackv1.RecordedSource))
+	}
+	return f.record.GetRejected(), f.record.GetValues().GetSha256(), follows
+}
+
+// Artifacts is a copy of the artifacts a found record of a composed task or of
+// a run's outputs names, each under its output's name.
+func (f *RecordedFound) Artifacts() []*orkstackv1.ArtifactRef {
+	out := make([]*orkstackv1.ArtifactRef, 0, len(f.record.GetArtifacts()))
+	for _, a := range f.record.GetArtifacts() {
+		out = append(out, proto.Clone(a).(*orkstackv1.ArtifactRef))
+	}
+	return out
+}
+
+// ValuesRef is where a found record of a composed task or of a run's outputs
+// keeps its values. A resolution's are taken only through InTime: nil.
+func (f *RecordedFound) ValuesRef() *orkstackv1.ArtifactRef {
+	if f.record.GetValues() == nil || f.record.GetKind() == orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_RESOLUTION {
+		return nil
+	}
+	return proto.Clone(f.record.GetValues()).(*orkstackv1.ArtifactRef)
+}
+
+// Child is the child run a composed task's record takes its values from, and
+// the digests of that run's admission and of its outputs' record.
+func (f *RecordedFound) Child() (runID, admissionSHA256, outputsSHA256 string) {
+	return f.record.GetChildRunId(), f.record.GetChildAdmissionSha256(), f.record.GetChildOutputsSha256()
+}
+
 // RecordedAdoption is a found record adopted in time.
 type RecordedAdoption struct{ f *RecordedFound }
 
@@ -155,12 +198,7 @@ func RecordedInTime(storedAt, deadline, runEnd time.Time) bool {
 // are present and hash to theirs. A store that does not answer is
 // *RecordStoreUnanswered.
 func (s *RecordStore) ReadRecordedValues(ctx context.Context, class SlotClass, spacing *RecordSpacings, key string, want RecordWant) (RecordRead[*RecordedFound], error) {
-	r := s.reader
-	if spacing != nil {
-		copied := *r
-		copied.spacing = *spacing
-		r = &copied
-	}
+	r := s.readerWith(spacing)
 	body, storedAt, found, err := r.readObject(ctx, class, key, maxRecordedValuesBytes+1)
 	if err != nil {
 		return RecordRead[*RecordedFound]{}, err
@@ -306,6 +344,8 @@ func checkRecorded(rec *orkstackv1.RecordedValues, want RecordWant) string {
 		return "a resolution's field on another kind"
 	case !composed && (rec.GetChildRunId() != "" || rec.GetChildAdmissionSha256() != "" || rec.GetChildOutputsSha256() != ""):
 		return "a composed task's field on another kind"
+	case resolution && len(rec.GetArtifacts()) != 0:
+		return "artifacts on a resolution"
 	case !outputs && len(rec.GetSources()) != 0:
 		return "sources on a record that is not a run's outputs"
 	}
@@ -331,6 +371,13 @@ func checkRecorded(rec *orkstackv1.RecordedValues, want RecordWant) string {
 	}
 	if v := rec.GetValues(); v != nil && !lowerHex64(v.GetSha256()) {
 		return "the values' digest is not a SHA-256"
+	}
+	names := make(map[string]bool, len(rec.GetArtifacts()))
+	for _, a := range rec.GetArtifacts() {
+		if a.GetName() == "" || names[a.GetName()] || a.GetUri() == "" || !lowerHex64(a.GetSha256()) {
+			return fmt.Sprintf("artifact %q is not named once, with where it is and its SHA-256", a.GetName())
+		}
+		names[a.GetName()] = true
 	}
 	for _, rows := range [][]*orkstackv1.RecordedSource{rec.GetSources(), rec.GetFollows()} {
 		seen := make(map[string]bool, len(rows))

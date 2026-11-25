@@ -31,6 +31,10 @@ func TestIdentityConfig_Validate(t *testing.T) {
 		{"setup budget below retry_min", func(c *IdentityConfig) { c.SetupBudget = time.Second; c.RetryMin = 5 * time.Second }, IdentitySetupBudgetVar},
 		{"no concurrency", func(c *IdentityConfig) { c.MaxConcurrent = 0 }, IdentityMaxConcurrentVar},
 		{"no skew", func(c *IdentityConfig) { c.MaxClockSkew = 0 }, IdentityMaxClockSkewVar},
+		{"a provider call too short", func(c *IdentityConfig) { c.ProviderCallTimeout = time.Millisecond }, ProvidersCallTimeoutVar},
+		{"a provider call too long", func(c *IdentityConfig) { c.ProviderCallTimeout = time.Hour }, ProvidersCallTimeoutVar},
+		{"no provider calls", func(c *IdentityConfig) { c.ProviderMaxConcurrent = 0 }, ProvidersMaxConcurrentVar},
+		{"too many provider calls", func(c *IdentityConfig) { c.ProviderMaxConcurrent = 257 }, ProvidersMaxConcurrentVar},
 		{"a negative grace", func(c *IdentityConfig) { c.MaskGrace = -time.Second }, LogMaskGraceVar},
 	} {
 		c := DefaultIdentityConfig()
@@ -59,13 +63,16 @@ func TestIdentityConfigFromEnv(t *testing.T) {
 	c, err = IdentityConfigFromEnv(env(map[string]string{
 		IdentityDirVar: "workroot", IdentitySetupBudgetVar: "5s", IdentityRetryMinVar: "200ms",
 		IdentityMaxConcurrentVar: "2", IdentityMaxClockSkewVar: "30s", LogMaskGraceVar: "0s",
+		ProvidersCallTimeoutVar: "3s", ProvidersMaxConcurrentVar: "4",
 	}))
 	want := IdentityConfig{Dir: "workroot", SetupBudget: 5 * time.Second, RetryMin: 200 * time.Millisecond,
-		MaxConcurrent: 2, MaxClockSkew: 30 * time.Second, MaskGrace: 0}
+		MaxConcurrent: 2, MaxClockSkew: 30 * time.Second, MaskGrace: 0,
+		ProviderCallTimeout: 3 * time.Second, ProviderMaxConcurrent: 4}
 	if err != nil || c != want {
 		t.Fatalf("set: %+v, %v", c, err)
 	}
-	for k, v := range map[string]string{IdentitySetupBudgetVar: "two minutes", IdentityMaxConcurrentVar: "eight", IdentityRetryMinVar: "1h"} {
+	for k, v := range map[string]string{IdentitySetupBudgetVar: "two minutes", IdentityMaxConcurrentVar: "eight", IdentityRetryMinVar: "1h",
+		ProvidersCallTimeoutVar: "soon", ProvidersMaxConcurrentVar: "many"} {
 		if _, err := IdentityConfigFromEnv(env(map[string]string{k: v})); err == nil || !strings.Contains(err.Error(), k) {
 			t.Errorf("%s=%s: %v", k, v, err)
 		}

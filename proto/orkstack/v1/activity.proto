@@ -860,6 +860,10 @@ message RecordedValues {
   // input_binding binds the record to its run's start input
   // (identity.InputBinding); a record without one settles nothing.
   bytes input_binding = 18;
+  // artifacts: COMPOSED and OUTPUTS, the artifacts the run returns, each
+  // under its output's name, as the records of the tasks that produced them
+  // name them.
+  repeated ArtifactRef artifacts = 19;
 }
 
 // ---------------------------------------------------------------- failure transport
@@ -1351,9 +1355,9 @@ message IdentityContext {
   repeated IdentityRef identities = 2;
   // credentials are the task's credentials, as admitted.
   repeated CredentialRef credentials = 3;
-  // 4 is the grants the task uses as resolved at submit, added with
-  // providers.
-  reserved 4;
+  // grants are the grants the task's credentials and secrets use, as
+  // resolved at submit, in name order.
+  repeated IdentityGrant grants = 4;
   // admission_sha256 is the digest of the run's admission record, which a
   // mint names.
   string admission_sha256 = 5;
@@ -1370,6 +1374,20 @@ message IdentityContext {
   // commit, pinned when the run was submitted
   // (identity.results.commit_wait).
   int32 commit_wait_seconds = 20;
+}
+
+// IdentityGrant is one of a namespace's grants as a run was admitted with
+// it: which provider a task logs in to through it, and as whom
+// (docs/PROVIDERS.md).
+message IdentityGrant {
+  // name is the grant's name in its namespace's identity policy.
+  string name = 1;
+  // provider is the name of the declared provider.
+  string provider = 2;
+  // principal is whom a login through the grant is, in the provider's terms.
+  string principal = 3;
+  // audience is the audience its identity token is for.
+  string audience = 4;
 }
 
 // IdentityStorage is where an Orker keeps identity token and credential

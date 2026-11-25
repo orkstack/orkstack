@@ -2266,7 +2266,7 @@ Flags:
 - `--fair-share-weight FLOAT64` — this namespace's share of dispatch when several namespaces' tasks wait for one pool, pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect only where the cluster has fair dispatch enabled
 - `--grant STRINGARRAY` — set a grant as NAME=PROVIDER:PRINCIPAL (repeatable)
 - `--grant-current-only STRINGARRAY` — let only a run of its Orkflow's current version use the grant NAME (repeatable)
-- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, event-source, parent-run or run-again (repeatable)
+- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, parent-run or run-again (repeatable)
 - `--grant-orkflow STRINGARRAY` — let an Orkflow use a grant, as NAME=ORKFLOW: a name, * or <owner>/<name> (repeatable)
 - `--hold STRING` — close this namespace to new runs, with the reason the next operator reads (runs already accepted finish untouched)
 - `--identities-current-only` — give an identity only to a run of its Orkflow's current version
@@ -3795,9 +3795,14 @@ The resolution is stored and delivered to the run before this returns;
 the run applies it next. Follow the run to see the outcome: a resolution
 that loses a race is recorded on the run, never applied twice.
 
+A run that holds a task identity keeps a record of each resolution, and
+the first stands. --redeliver tells such a run again of the resolution on
+record, without deciding anything, when its delivery was lost.
+
 Flags:
 
 - `--reason STRING` — why the await is rejected (with --reject)
+- `--redeliver` — tell the run again of the resolution on record
 - `--reject` — reject the await instead of completing it
 - `-t, --task STRING` — the awaited task to resolve (required)
 - `--values STRING` — the completion's values as one JSON object (default {})

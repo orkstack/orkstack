@@ -675,6 +675,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 	if id := a.dispatcher.identity.Load(); id != nil {
 		result.IdentitySupported, result.IdentityUnsupportedReason = id.Report()
 	}
+	result.Providers = a.dispatcher.describeProviders()
 	result.IdentityStorage = identityStorageReport(a.dispatcher.identityStorage.Load())
 	a.describeMetadata(result)
 	a.describeServiceHost(result)

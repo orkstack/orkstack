@@ -1214,6 +1214,55 @@
       ],
       "type": "object"
     },
+    "orkflow.credential": {
+      "additionalProperties": false,
+      "properties": {
+        "grant": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "params": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "object"
+        },
+        "path": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "refresh": {
+          "enum": [
+            "best_effort",
+            "required"
+          ]
+        }
+      },
+      "required": [
+        "grant",
+        "name"
+      ],
+      "type": "object"
+    },
     "orkflow.each": {
       "additionalProperties": false,
       "properties": {
@@ -1393,6 +1442,23 @@
     "orkflow.secret": {
       "additionalProperties": false,
       "properties": {
+        "ciphertext": {
+          "description": "optional: base64 a provider that decrypts is given, never a value",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "grant": {
+          "description": "optional: the grant a provider's source is read as (see \"Secrets from a provider\")",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
         "mask": {
           "description": "optional: `false` leaves the value unmasked in the task's logs",
           "type": "boolean"
@@ -1483,6 +1549,7 @@
               "cache": false,
               "cancellation_grace_period_seconds": false,
               "command": false,
+              "credentials": false,
               "devices": false,
               "each": false,
               "env": false,
@@ -1652,6 +1719,7 @@
             "cache": false,
             "cancellation_grace_period_seconds": false,
             "command": false,
+            "credentials": false,
             "devices": false,
             "each": false,
             "env": false,
@@ -1727,6 +1795,13 @@
             "number",
             "boolean"
           ]
+        },
+        "credentials": {
+          "description": "optional: the bundles of files the task holds, issued by the namespace's grants (see \"Credentials\")",
+          "items": {
+            "$ref": "#/definitions/orkflow.credential"
+          },
+          "type": "array"
         },
         "devices": {
           "description": "optional device and gpu profiles the pool's Orkers define, each a name or name@contract to pin one contract (see \"Device profiles\")",
@@ -1888,6 +1963,7 @@
           "cache": false,
           "cancellation_grace_period_seconds": false,
           "command": false,
+          "credentials": false,
           "devices": false,
           "each": false,
           "env": false,

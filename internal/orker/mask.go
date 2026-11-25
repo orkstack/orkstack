@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +40,9 @@ type attemptMask struct {
 	// checked is what values.json is held to: every secret that does not say
 	// mask: false, in declaration order.
 	checked []logstream.NamedValue
+	// guarded are the values that reached the attempt after its secrets did,
+	// by holder, refused in values.json until their holder is dropped.
+	guarded map[string][][]byte
 	// sizes is every registered secret's own forms, for a refusal's
 	// contributors.
 	sizes []maskContributor
@@ -269,11 +274,28 @@ func (m *attemptMask) Add(holder string, value []byte) (bool, error) {
 	if m == nil {
 		return false, nil
 	}
-	if m.values {
-		// A token is refused in values.json as a secret is.
-		m.mu.Lock()
-		m.checked = append(m.checked, logstream.NamedValue{Name: holder, Value: value})
-		m.mu.Unlock()
+	// A token is refused in values.json as a secret is.
+	m.Guard(holder, value)
+	return m.maskValue(holder, value)
+}
+
+// Guard keeps a value out of values.json, under holder, until it is dropped.
+func (m *attemptMask) Guard(holder string, value []byte) {
+	if m == nil || !m.values {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.guarded == nil {
+		m.guarded = map[string][][]byte{}
+	}
+	m.guarded[holder] = append(m.guarded[holder], bytes.Clone(value))
+}
+
+// maskValue masks a value in the task's logs alone.
+func (m *attemptMask) maskValue(holder string, value []byte) (bool, error) {
+	if m == nil {
+		return false, nil
 	}
 	if !m.logs {
 		// Said once for a value, at its first generation, not at every refresh.
@@ -298,6 +320,9 @@ func (m *attemptMask) Drop(holder string) {
 	}
 	m.mu.Lock()
 	masker := m.masker
+	// A value replaced and past its grace is no secret any more: kept for
+	// the attempt's life, a long task's refreshes would outgrow the check.
+	delete(m.guarded, holder)
 	m.mu.Unlock()
 	if masker != nil {
 		masker.Drop(holder)
@@ -414,7 +439,12 @@ func (m *attemptMask) checkValues(raw []byte) *Failure {
 		return nil
 	}
 	m.mu.Lock()
-	checked := m.checked
+	checked := slices.Clone(m.checked)
+	for _, holder := range slices.Sorted(maps.Keys(m.guarded)) {
+		for _, value := range m.guarded[holder] {
+			checked = append(checked, logstream.NamedValue{Name: holder, Value: value})
+		}
+	}
 	m.mu.Unlock()
 	if len(checked) == 0 {
 		return nil

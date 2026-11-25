@@ -147,7 +147,7 @@ settings has two namespace steps, the settings first and the policy after.
 | Key | Value | Absent means |
 | --- | --- | --- |
 | `audiences` | list of strings: token audiences the namespace's tasks may ask for; a trailing `*` matches any rest | none |
-| `grants` | mapping of grant names, each with `provider`, `principal`, `orkflows` (a name, `*` or `<owner>/<name>`), `current_only` (boolean) and `origins` (`submit`, `schedule`, `trigger`, `event-source`, `parent-run`, `run-again`) | none |
+| `grants` | mapping of grant names, each with `provider`, `principal`, `orkflows` (a name, `*` or `<owner>/<name>`), `current_only` (boolean) and `origins` (`submit`, `schedule`, `trigger`, `parent-run`, `run-again`) | none |
 | `identities_current_only` | boolean: give an identity only to a run of its Orkflow's current version | `false` |
 | `attempts_extra` | integer ≥ 0, at most `identity.attempts.max_extra`: attempts past a task's own retries that may hold its identity | the deployment's `identity.attempts.extra` |
 

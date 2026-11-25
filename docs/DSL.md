@@ -500,7 +500,7 @@ tasks:
     with:                 # image-specific config, rendered into config.json
       op: get
       url: https://example.test/health
-    # each:, await:, sleep:, identities: — see "Fan-out", "Awaited tasks", "Sleeping tasks" and "Task identity"
+    # each:, await:, sleep:, identities:, credentials: — see "Fan-out", "Awaited tasks", "Sleeping tasks", "Task identity" and "Credentials"
 ```
 
 `needs:` is the only thing that orders tasks. Declaration order sequences
@@ -1261,7 +1261,7 @@ tasks:
   what was sent. Keys the schema does not declare are accepted.
 
 An awaited task takes only `id`, `needs`, `condition`, `join` and `await`; every key
-that shapes a container (`uses`, `with`, `command`, `env`, `secrets`, `identities`,
+that shapes a container (`uses`, `with`, `command`, `env`, `secrets`, `identities`, `credentials`,
 `resources`, `network`, `devices`, `pool`, `pin`, `retry`, `timeout_seconds`,
 `cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
 `cache`) is refused by name. While a task awaits, its run is `RUNNING`;
@@ -1361,7 +1361,7 @@ tasks:
 
 A sleeping task takes only `id`, `needs`, `condition`, `join` and `sleep`.
 `uses` and `await` are refused as another kind of task (rule 6), and every key
-that shapes a container (`with`, `command`, `env`, `secrets`, `identities`, `resources`,
+that shapes a container (`with`, `command`, `env`, `secrets`, `identities`, `credentials`, `resources`,
 `network`, `devices`, `pool`, `pin`, `retry`, `timeout_seconds`,
 `cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
 `cache`) is refused by name (rule 49). While a task sleeps, its run is
@@ -1710,7 +1710,7 @@ tasks:
   changes nothing for a parent that pinned an older one.
 - **What it may carry:** `id`, `needs`, `condition`, `join`, `uses`, `with`
   and `artifacts` (see "Passing artifacts to a child run").
-  `command`, `env`, `secrets`, `identities`, `resources`, `network`, `devices`, `pool`, `pin`,
+  `command`, `env`, `secrets`, `identities`, `credentials`, `resources`, `network`, `devices`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
   `run_as_orker_user`, `each`, `await` and `cache` are refused by name: the
   child's own tasks declare where and how they run (and may be cached). There
@@ -1974,7 +1974,7 @@ and is given. It looks for a **memo** under that key: a small pointer to a
 | `image` | the pinned index digest |
 | `command` | SHA-256 of the command (`[]` when empty) |
 | `env` | SHA-256 of the environment (`{}` when empty) |
-| `secrets` | SHA-256 of every secret's name and source — **never a value** |
+| `secrets` | SHA-256 of every secret's name and source and, for a secret from a provider, its `grant` and `ciphertext` — **never a value** |
 | `network` | `default` or `none` |
 | `run_as_orker_user` | `true` or `false` |
 | `config` | SHA-256 of the exact `config.json` bytes (every rendered `with:` value) |
@@ -2370,6 +2370,72 @@ tasks:
 At most 8 identities a task. OrkStack sets no environment variable for
 them; a task's own `env:` may point an SDK at the file.
 
+## Credentials (`credentials:`)
+
+`credentials:` is optional: the bundles of files the task holds, issued by the namespace's grants (see "Credentials").
+A provider issues each for each attempt, as the grant's principal,
+logging in with the attempt's identity token, and the Orker keeps it fresh
+while the container runs ([PROVIDERS.md](./PROVIDERS.md)). It lands in
+`/orkstack/credentials/<name>/`. **Credentials are not available in this
+build**: validate and create refuse a task that declares one, on
+`tasks[i].credentials`, after the rules below.
+
+```yaml
+tasks:
+  - id: migrate
+    uses: ghcr.io/acme/migrate@sha256:9c1e…
+    credentials:
+      - name: aws
+        grant: deployer
+      - name: db
+        grant: vault-app
+        path: database/creds/payments-rw
+```
+
+| Key | Rule |
+|---|---|
+| `name` | `^[a-z][a-z0-9-]{0,62}$`, unique in the task: the credential's directory |
+| `grant` | required: a grant of the namespace's identity policy that admits this Orkflow, `^[a-z][a-z0-9-]{0,62}$` |
+| `path` | optional: where the provider issues from, for a provider that issues from a path; a locator, validated and never normalized ([PROVIDERS.md](./PROVIDERS.md#references)), with no `#` field |
+| `params` | optional, with a `path` only: literal strings, never templated; at most 16 keys of `^[a-z][a-z0-9_]{0,62}$`, each value at most 1024 bytes, 4 KiB in all |
+| `refresh` | optional: `required` (the default) or `best_effort` |
+
+At most 8 credentials a task. Whether the grant exists, admits this Orkflow
+and names a declared provider, and whether that provider takes the path and
+its params, is checked with the namespace and the deployment in hand.
+`orkctl task run` refuses a task that declares a credential, naming each:
+a local run holds no identity to obtain one with. A secret from a provider
+is supplied to a local run with `--secret`, from a local source.
+
+## Secrets from a provider
+
+A secret's `source` may name a provider of the deployment
+([PROVIDERS.md](./PROVIDERS.md)), `<provider>:<locator>`, read once before
+the container starts as one of the namespace's grants. **Provider secrets are
+not available in this build**: validate and create refuse a task that reads
+one, on `tasks[i].secrets`, after the rules below.
+
+```yaml
+secrets:
+  - name: db-url
+    source: vault:secret/data/payments/db#url
+    grant: vault-app
+  - name: signing-key
+    source: aws:kms:alias/payments-secrets
+    grant: reader
+    ciphertext: AQICAHhZ…
+```
+
+| Key | Rule |
+|---|---|
+| `grant` | optional: the grant a provider's source is read as (see "Secrets from a provider"); required with a provider's source and refused with `env:` or `file:` |
+| `ciphertext` | optional: base64 a provider that decrypts is given, never a value; standard base64, padded and on one line, of at most 8192 characters, with a `grant`; at most 16 KiB a task once decoded |
+
+The source after the provider's name is a locator, validated and never
+normalized ([PROVIDERS.md](./PROVIDERS.md#references)). Whether the provider is
+declared and decrypts, and whether the grant admits this Orkflow, is checked
+with the deployment and the namespace in hand.
+
 ## Validation rules (enforced by `internal/dsl`)
 
 1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent
@@ -2661,10 +2727,25 @@ them; a task's own `env:` may point an SDK at the file.
     its task; its `audience` is 1 to 255 bytes with no whitespace or control
     character; its `ttl_seconds`, when set, is at least 600; its `refresh` is
     `required` or `best_effort`; a task declares at most 8.
-60. An awaited, sleeping or composed task declares no `identities` (with rules
-    15, 27 and 49).
+60. An awaited, sleeping or composed task declares no `identities` and no
+    `credentials` (with rules 15, 27 and 49).
 61. A fan-out's identities are the same for every item: their `name` and
     `audience` are not templates.
+62. A credential's `name` matches `^[a-z][a-z0-9-]{0,62}$` and is unique in
+    its task; its `grant` is set and has the same shape; its `path`, when
+    set, is a locator with no `#` field; its `params` come with a `path`,
+    hold at most 16 keys of `^[a-z][a-z0-9_]{0,62}$` and values of at most
+    1024 bytes of UTF-8 with no control character, 4 KiB in all; its
+    `refresh` is `required` or `best_effort`; a task declares at most 8.
+63. A credential's `params` are literal strings: none is a template.
+64. A fan-out's credentials are the same for every item: their `name`,
+    `grant` and `path` are not templates.
+65. A secret whose `source` has a scheme other than `env:` or `file:` reads
+    a provider and sets `grant`; a secret's `grant`, when set, matches
+    `^[a-z][a-z0-9-]{0,62}$`, and its `source` is a provider's name and a
+    locator, never `env:` or `file:`;
+    its `ciphertext` comes with a `grant` and is standard base64, padded and
+    on one line, of at most 8192 characters; a task's ciphertexts are at most 16 KiB once decoded.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
