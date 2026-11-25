@@ -106,13 +106,17 @@ func (s *runState) startEachLines(ctx, runCtx workflow.Context, id string, inFli
 			"task %q is a fan-out over the lines of %s, and this run's plan carries no line policy", id, label))
 	}
 	// A producer joined with none_failed may be reached not succeeded: the
-	// author's wiring, a ContractViolation naming it.
+	// author's wiring, a ContractViolation naming it. _inputs is no task.
 	if run := s.taskRuns[art.GetProducer()]; run != nil && run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		return s.failExpansion(ctx, id, EachOverMissingCode, fmt.Sprintf(
 			"each.over_artifact %s: task %q is %s, so its artifacts do not exist — a fan-out joined with "+
 				"none_failed reads the lines of a task that always runs", label, art.GetProducer(), statusWord(run.GetStatus())))
 	}
-	source := findArtifact(s.results[art.GetProducer()].GetArtifacts(), art.GetName())
+	source := s.linesSource(art)
+	if source == nil && art.GetProducer() == dsl.InputsProducer {
+		return s.failExpansion(ctx, id, EachOverMissingCode, fmt.Sprintf(
+			"each.over_artifact %s: this run received no artifact %q", label, art.GetName()))
+	}
 	if source == nil {
 		return s.failExpansion(ctx, id, EachOverMissingCode, fmt.Sprintf(
 			"each.over_artifact %s: task %q wrote no artifact %q%s", label, art.GetProducer(), art.GetName(),
@@ -243,7 +247,7 @@ func (s *runState) collectEachLines(ctx, runCtx workflow.Context, id string, fut
 			label, result.GetCount(), k, result.GetTotalLines()))
 	}
 	e.lines = &orkstackv1.EachLines{
-		Source: findArtifact(s.results[art.GetProducer()].GetArtifacts(), art.GetName()),
+		Source: s.linesSource(art),
 		Index:  result.GetIndex(),
 		Format: spec.GetFormat(),
 		Batch:  spec.GetBatch(),
@@ -278,6 +282,29 @@ func eachLinesReason(code string) bool {
 		return true
 	}
 	return false
+}
+
+// linesSource is the artifact a lines fan-out reads: its producer's committed
+// one, or, of a composed task, the one its child returned, which this run
+// claimed before recording it; or, for _inputs, the one this run received and
+// claimed before its first dispatch. nil when there is none. A passed
+// artifact's source keys are audit data on the run, not on every item's input.
+func (s *runState) linesSource(art *orkstackv1.EachArtifactSource) *orkstackv1.ArtifactRef {
+	var source *orkstackv1.ArtifactRef
+	if art.GetProducer() == dsl.InputsProducer {
+		received, ok := s.receivedArtifact(art.GetName())
+		if !ok {
+			return nil
+		}
+		source = received.Artifact.Proto()
+	} else if source = findArtifact(s.results[art.GetProducer()].GetArtifacts(), art.GetName()); source == nil {
+		return nil
+	}
+	if _, passed := source.GetMetadata()[ArtifactSourceRunKey]; passed {
+		source = proto.Clone(source).(*orkstackv1.ArtifactRef)
+		source.Metadata = nil
+	}
+	return source
 }
 
 // findArtifact is the artifact named name, or nil.

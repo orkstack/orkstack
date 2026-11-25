@@ -37,6 +37,17 @@ type profileState struct {
 	// own (useCDI).
 	cdiDirs   []string
 	cdiSocket string
+	// hookBinary hashes a hook binary again before a container is created;
+	// nil is the host's (hashHostHook). A test's seam.
+	hookBinary func(path string) (hostHook, error)
+	// inspectMount inspects a mount source again before a container is
+	// created; nil is the host's (inspectHostMount). A test's seam.
+	inspectMount func(path string) (hostMount, error)
+	// runtime is the engine's default-runtime question, asked again by the
+	// periodic audit and before every create, and bootRuntime what it
+	// answered at boot (useRuntime). Nil for an Orker with no profile.
+	runtime     defaultRuntimeAsker
+	bootRuntime runtimeFacts
 
 	mu        sync.Mutex
 	described []*orkstackv1.OrkerProfile

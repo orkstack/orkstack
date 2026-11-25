@@ -55,6 +55,7 @@ test('the only parameter splits, trims and drops empties, and keeps unknown name
 test('reason sentences, the summary and the footnotes are the CLI golden strings', () => {
 	const sentences: Record<string, string> = {
 		definition_unavailable: 'the pinned definition is no longer stored',
+		definition_not_readable: "this caller may not read the shared Orkflow in its owner's namespace",
 		definition_digest_mismatch: 'the stored definition does not hash to the digest this run pinned',
 		task_not_in_definition: 'the pinned definition has no task of this id',
 		no_attempt_store: 'this engine has no task attempt store configured',

@@ -161,12 +161,21 @@ func metadataLiterals(targets []Target) map[string]bool {
 
 func ask(ctx context.Context, t Target, listed map[string]bool) servicehost.Observation {
 	o := servicehost.Observation{Question: t.Question, Target: t.Addr, Kind: t.Kind, Via: t.Via}
-	for _, addr := range dialAddrs(ctx, t, listed) {
+	addrs, err := dialAddrs(ctx, t, listed)
+	if err != nil || len(addrs) == 0 {
+		o.Unresolved = true
+		return o
+	}
+	for _, addr := range addrs {
 		if ctx.Err() != nil {
 			break
 		}
 		c, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 		if err != nil {
+			// A name's own lookup is part of its dial: one that failed asked
+			// nothing.
+			var dns *net.DNSError
+			o.Unresolved = errors.As(err, &dns)
 			continue
 		}
 		_ = c.Close()
@@ -185,22 +194,45 @@ func ask(ctx context.Context, t Target, listed map[string]bool) servicehost.Obse
 	return o
 }
 
-// dialAddrs is where a target is tried. A name for question 1 is tried only
-// at those of its addresses that are link-local or that question 1 lists
-// literally (14 §7): a resolver that answers every name with one address
-// would otherwise make every host of a fleet unfit together.
-func dialAddrs(ctx context.Context, t Target, listed map[string]bool) []string {
+// dialAddrs is where a target is tried: an address at itself, and a name at
+// itself too, so a TLS server sees the name it is known by, once the name is
+// known to lead somewhere that may be asked. None, or an error, is a name
+// that gave nothing to ask. A name for question 1 is tried only at those of
+// its addresses that askable keeps.
+func dialAddrs(ctx context.Context, t Target, listed map[string]bool) ([]string, error) {
 	host, port, _ := net.SplitHostPort(t.Addr)
-	if net.ParseIP(host) != nil || t.Question != servicehost.QuestionMetadata {
-		return []string{t.Addr}
+	if net.ParseIP(host) != nil {
+		return []string{t.Addr}, nil
 	}
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
-		return nil
+		return nil, err
 	}
+	return nameAddrs(t, ips, port, listed), nil
+}
+
+// nameAddrs is where a name that resolved to ips is tried (dialAddrs).
+func nameAddrs(t Target, ips []net.IPAddr, port string, listed map[string]bool) []string {
+	addrs := askable(t.Question, ips, port, listed)
+	if len(addrs) > 0 && t.Question != servicehost.QuestionMetadata {
+		return []string{t.Addr}
+	}
+	return addrs
+}
+
+// askable is which of a name's addresses may be asked. For question 1, those
+// that are link-local or that it lists literally (14 §7): a resolver that
+// answers every name with one address would otherwise make every host of a
+// fleet unfit together. For the others, any but loopback and the unspecified
+// address, which from a container lead back to the container.
+func askable(question int, ips []net.IPAddr, port string, listed map[string]bool) []string {
 	var out []string
 	for _, ip := range ips {
-		if ip.IP.IsLinkLocalUnicast() || listed[ip.IP.String()] {
+		keep := !ip.IP.IsLoopback() && !ip.IP.IsUnspecified()
+		if question == servicehost.QuestionMetadata {
+			keep = ip.IP.IsLinkLocalUnicast() || listed[ip.IP.String()]
+		}
+		if keep {
 			out = append(out, net.JoinHostPort(ip.IP.String(), port))
 		}
 	}

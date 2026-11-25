@@ -238,7 +238,7 @@ func (w *gateRun) register(ctx workflow.Context) error {
 		return fmt.Errorf("register %s: %w", GateUpdateAcquire, err)
 	}
 	if err := workflow.SetQueryHandler(ctx, GateQueryState, func() (GateStateView, error) {
-		return GateStateView{Namespace: w.in.Namespace, State: *w.g}, nil
+		return GateStateView{Namespace: w.in.Namespace, Key: w.in.Key, State: *w.g}, nil
 	}); err != nil {
 		return fmt.Errorf("register %s: %w", GateQueryState, err)
 	}

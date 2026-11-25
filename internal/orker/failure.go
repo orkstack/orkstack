@@ -87,12 +87,22 @@ const (
 	// of a namespace other than its own, refused before anything of it is
 	// read or written. Every Orker of a pool serves the same list, so it is
 	// a ContractViolation and never retried.
-	ReasonNamespaceNotServed   = "NAMESPACE_NOT_SERVED"
-	ReasonCommitReadFailed     = "COMMIT_READ_FAILED"
-	ReasonCommitWriteFailed    = "COMMIT_WRITE_FAILED"
-	ReasonCommitSchema         = "COMMIT_SCHEMA_UNSUPPORTED"
-	ReasonCommitIdentity       = "COMMIT_IDENTITY_MISMATCH"
-	ReasonCommitUndecodable    = "COMMIT_UNDECODABLE"
+	ReasonNamespaceNotServed = "NAMESPACE_NOT_SERVED"
+	ReasonCommitReadFailed   = "COMMIT_READ_FAILED"
+	ReasonCommitWriteFailed  = "COMMIT_WRITE_FAILED"
+	ReasonCommitSchema       = "COMMIT_SCHEMA_UNSUPPORTED"
+	ReasonCommitIdentity     = "COMMIT_IDENTITY_MISMATCH"
+	ReasonCommitUndecodable  = "COMMIT_UNDECODABLE"
+	// ReasonPayloadEncryptionNotConfigured: a sealed task reached an Orker
+	// that has no source of run keys. Every Orker of a pool has the same
+	// settings, so trying again would meet the same; never retried.
+	ReasonPayloadEncryptionNotConfigured = "PAYLOAD_ENCRYPTION_NOT_CONFIGURED"
+	// ReasonPayloadKeyUnavailable: the Orker could not get the key of the
+	// task's run tree; retried under the task's policy.
+	ReasonPayloadKeyUnavailable = "PAYLOAD_KEY_UNAVAILABLE"
+	// ReasonPayloadUnreadable: a sealed task input does not open under its
+	// run tree's key, or names another run than it is sealed for.
+	ReasonPayloadUnreadable    = "PAYLOAD_UNREADABLE"
 	ReasonCommitTooLarge       = "COMMIT_TOO_LARGE"
 	ReasonCommitNotConditional = "COMMIT_STORE_NOT_CONDITIONAL"
 	// ReasonCommitStoreUnavailable refuses boot: the conditional-create probe
@@ -215,54 +225,58 @@ const ReasonRuntimePostureRefused = "RUNTIME_POSTURE_REFUSED"
 // direction, because the alternative is refusing to retry something nobody
 // classified.
 var reasonCategory = map[string]string{
-	ReasonContainerExitNonzero:       CategoryActivityFailed,
-	ReasonContainerTimeout:           CategoryTimedOut,
-	ReasonRuntimeRefused:             CategoryInfrastructureError,
-	ReasonContainerStoppedByRuntime:  CategoryInfrastructureError,
-	ReasonWorkspaceNotBindable:       CategoryInfrastructureError,
-	ReasonWorkdirNotBindable:         CategoryInfrastructureError,
-	ReasonImagePullFailed:            CategoryInfrastructureError,
-	ReasonImageDigestMismatch:        CategoryContractViolation,
-	ReasonImageNotPinned:             CategoryContractViolation,
-	ReasonValuesMissing:              CategoryContractViolation,
-	ReasonValuesMalformed:            CategoryContractViolation,
-	ReasonValuesTooLarge:             CategoryContractViolation,
-	ReasonValuesContainSecret:        CategoryContractViolation,
-	ReasonMaskCapacityExceeded:       CategoryContractViolation,
-	ReasonArtifactNotAFile:           CategoryContractViolation,
-	ReasonArtifactLimit:              CategoryContractViolation,
-	ReasonArtifactNameNotUTF8:        CategoryContractViolation,
-	ReasonArtifactUploadFailed:       CategoryInfrastructureError,
-	ReasonInputUnavailable:           CategoryInfrastructureError,
-	ReasonInputCorrupt:               CategoryContractViolation,
-	ReasonInputTooLarge:              CategoryContractViolation,
-	ReasonRenderFailed:               CategoryContractViolation,
-	ReasonWorkdirFailed:              CategoryInfrastructureError,
-	ReasonProfileNotOffered:          CategoryInfrastructureError,
-	ReasonProfileChanged:             CategoryInfrastructureError,
-	ReasonProfileDrifted:             CategoryInfrastructureError,
-	ReasonProfileContractNotServed:   CategoryInfrastructureError,
-	ReasonProfileDeclarationMismatch: CategoryContractViolation,
-	ReasonGPUUnitsUnavailable:        CategoryInfrastructureError,
-	ReasonSecretUnresolved:           CategoryInfrastructureError,
-	ReasonSecretSchemeForbid:         CategoryContractViolation,
-	ReasonSecretNotPermitted:         CategoryContractViolation,
-	ReasonNamespaceNotServed:         CategoryContractViolation,
-	ReasonCommitReadFailed:           CategoryInfrastructureError,
-	ReasonCommitWriteFailed:          CategoryInfrastructureError,
-	ReasonCommitSchema:               CategoryContractViolation,
-	ReasonCommitIdentity:             CategoryContractViolation,
-	ReasonCommitUndecodable:          CategoryContractViolation,
-	ReasonCommitTooLarge:             CategoryContractViolation,
-	ReasonCommitNotConditional:       CategoryInfrastructureError,
-	ReasonCommitStoreUnavailable:     CategoryInfrastructureError,
-	ReasonOutputNotReadable:          CategoryContractViolation,
-	ReasonValuesCorrupt:              CategoryContractViolation,
-	ReasonValuesRefetchFailed:        CategoryInfrastructureError,
-	ReasonResourceRefused:            CategoryContractViolation,
-	ReasonResourceAdmissionMismatch:  CategoryContractViolation,
-	ReasonNetworkModeRefused:         CategoryContractViolation,
-	ReasonEachItemUnavailable:        CategoryContractViolation,
+	ReasonContainerExitNonzero:           CategoryActivityFailed,
+	ReasonContainerTimeout:               CategoryTimedOut,
+	ReasonRuntimeRefused:                 CategoryInfrastructureError,
+	ReasonContainerStoppedByRuntime:      CategoryInfrastructureError,
+	ReasonWorkspaceNotBindable:           CategoryInfrastructureError,
+	ReasonWorkdirNotBindable:             CategoryInfrastructureError,
+	ReasonImagePullFailed:                CategoryInfrastructureError,
+	ReasonImageDigestMismatch:            CategoryContractViolation,
+	ReasonImageNotPinned:                 CategoryContractViolation,
+	ReasonValuesMissing:                  CategoryContractViolation,
+	ReasonValuesMalformed:                CategoryContractViolation,
+	ReasonValuesTooLarge:                 CategoryContractViolation,
+	ReasonValuesContainSecret:            CategoryContractViolation,
+	ReasonMaskCapacityExceeded:           CategoryContractViolation,
+	ReasonArtifactNotAFile:               CategoryContractViolation,
+	ReasonArtifactLimit:                  CategoryContractViolation,
+	ReasonArtifactNameNotUTF8:            CategoryContractViolation,
+	ReasonArtifactUploadFailed:           CategoryInfrastructureError,
+	ReasonInputUnavailable:               CategoryInfrastructureError,
+	ReasonInputCorrupt:                   CategoryContractViolation,
+	ReasonInputTooLarge:                  CategoryContractViolation,
+	ReasonRenderFailed:                   CategoryContractViolation,
+	ReasonWorkdirFailed:                  CategoryInfrastructureError,
+	ReasonProfileNotOffered:              CategoryInfrastructureError,
+	ReasonProfileChanged:                 CategoryInfrastructureError,
+	ReasonProfileDrifted:                 CategoryInfrastructureError,
+	ReasonProfileContractNotServed:       CategoryInfrastructureError,
+	ReasonProfileDeclarationMismatch:     CategoryContractViolation,
+	ReasonGPUCountRequired:               CategoryContractViolation,
+	ReasonGPUUnitsUnavailable:            CategoryInfrastructureError,
+	ReasonSecretUnresolved:               CategoryInfrastructureError,
+	ReasonSecretSchemeForbid:             CategoryContractViolation,
+	ReasonSecretNotPermitted:             CategoryContractViolation,
+	ReasonNamespaceNotServed:             CategoryContractViolation,
+	ReasonCommitReadFailed:               CategoryInfrastructureError,
+	ReasonCommitWriteFailed:              CategoryInfrastructureError,
+	ReasonCommitSchema:                   CategoryContractViolation,
+	ReasonCommitIdentity:                 CategoryContractViolation,
+	ReasonCommitUndecodable:              CategoryContractViolation,
+	ReasonPayloadEncryptionNotConfigured: CategoryInfrastructureError,
+	ReasonPayloadKeyUnavailable:          CategoryInfrastructureError,
+	ReasonPayloadUnreadable:              CategoryContractViolation,
+	ReasonCommitTooLarge:                 CategoryContractViolation,
+	ReasonCommitNotConditional:           CategoryInfrastructureError,
+	ReasonCommitStoreUnavailable:         CategoryInfrastructureError,
+	ReasonOutputNotReadable:              CategoryContractViolation,
+	ReasonValuesCorrupt:                  CategoryContractViolation,
+	ReasonValuesRefetchFailed:            CategoryInfrastructureError,
+	ReasonResourceRefused:                CategoryContractViolation,
+	ReasonResourceAdmissionMismatch:      CategoryContractViolation,
+	ReasonNetworkModeRefused:             CategoryContractViolation,
+	ReasonEachItemUnavailable:            CategoryContractViolation,
 	// The line indexer's refusals (IndexEachLines): the source decides them.
 	eachlines.ReasonLineInvalid:     CategoryContractViolation,
 	eachlines.ReasonTooManyItems:    CategoryContractViolation,
@@ -317,6 +331,8 @@ var retryableReason = map[string]bool{
 	ReasonWorkdirNotBindable:     false,
 	ReasonCommitNotConditional:   false,
 	ReasonCommitStoreUnavailable: false,
+	// Every Orker of a pool has the same settings (AGENTS.md §5).
+	ReasonPayloadEncryptionNotConfigured: false,
 	// The boot probe's finding, which is the host's and not the moment's.
 	ReasonRunAsOrkerUnavailable: false,
 	// orker.engine is unset on this Orker, which a retry here cannot change.

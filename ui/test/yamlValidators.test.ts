@@ -36,7 +36,9 @@ test('a changed schema is seen: it compiles to other code', () => {
 	// A byte that compiles the same still moves the hash TestSchemas_ValidatorsAreCurrent reads.
 	const reformatted = generate({ ...sources, Orkflow: `${sources.Orkflow}\n` });
 	expect(reformatted[OUTPUTS.validators] === current[OUTPUTS.validators]).toBe(false);
-});
+	// Three whole compiles: CPU work, with nothing to wait on. bun's 5 s default
+	// is no budget of this test's, and a loaded host ran past it.
+}, 60_000);
 
 test('every `if` the walker can meet is compiled, and nothing else is', () => {
 	const keys = new Set<string>();

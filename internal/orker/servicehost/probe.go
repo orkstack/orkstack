@@ -57,7 +57,10 @@ type Observation struct {
 	Kind      string `json:"kind"`
 	Via       string `json:"via"`
 	Connected bool   `json:"connected"`
-	TLS       string `json:"tls,omitzero"`
+	// Unresolved: the target is a name that resolved to no address that may
+	// be asked, so nothing was asked of it.
+	Unresolved bool   `json:"unresolved,omitzero"`
+	TLS        string `json:"tls,omitzero"`
 	// Status is the gRPC status code's name of an answered call ("OK",
 	// "Unimplemented", "Unauthenticated", …), "" when no call was answered.
 	Status string `json:"status,omitzero"`
@@ -105,6 +108,8 @@ func (o Observation) valid() error {
 		return fmt.Errorf("tls %q", o.TLS)
 	case len(o.Status) > 64 || !printable(o.Status):
 		return errors.New("a status is at most 64 printable bytes")
+	case o.Unresolved && (o.Connected || o.TLS != ""):
+		return errors.New("a connection to a name that did not resolve")
 	case o.Status != "" && !o.Connected:
 		return errors.New("an answered call on no connection")
 	}

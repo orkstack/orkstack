@@ -504,7 +504,7 @@ func replayRecorded(h *historypb.History, runID string) error {
 	}
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return replayer.ReplayWorkflowHistoryWithOptions(nil, h, worker.ReplayWorkflowHistoryOptions{
-		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
+		OriginalExecution: replayExecution(runID, h),
 	})
 }
 

@@ -282,6 +282,23 @@ func (x dialect) notRunning(message string) bool {
 	return containsAnyFold(message, notRunningPhrases) || x.gone(message)
 }
 
+// unreachable recognizes the CLI's own word that no engine answered it, as
+// against an answer the engine gave.
+func (x dialect) unreachable(message string) bool {
+	return containsAnyFold(message, unreachablePhrases)
+}
+
+// unreachablePhrases are the docker and podman CLIs' words that no engine
+// answered them: their own, so never a path, an image or a registry's.
+var unreachablePhrases = []string{
+	"cannot connect to the docker daemon",
+	"while trying to connect to the docker daemon socket",
+	"while trying to connect to the docker api",
+	"error during connect:",
+	"cannot connect to podman",
+	"unable to connect to podman",
+}
+
 // gone recognizes a container that no longer exists.
 func (x dialect) gone(message string) bool {
 	return containsFold(message, goneSubstring)
@@ -421,4 +438,73 @@ func (x dialect) answerTmpfsOptions(t ServiceTmpfs) string {
 		return fmt.Sprintf("rw,nosuid,nodev,noexec,size=%d,mode=0700,U", t.Bytes)
 	}
 	return fmt.Sprintf("rw,nosuid,nodev,noexec,size=%d,nr_inodes=%d,mode=0700,uid=%d,gid=%d", t.Bytes, t.Inodes, t.UID, t.GID)
+}
+
+// runtimeQuery is the `info` template that answers, as one JSON object, which
+// OCI runtime the engine runs containers with by default and where its binary
+// is: the docker CLI reports the default's name and the registered runtimes'
+// paths, the podman CLI its OCI runtime's name and path. The runtime is the
+// one a CDI spec's hooks run under (design §4.10 item 2).
+func (x dialect) runtimeQuery() string {
+	if x.cli == CLIPodman {
+		return "{{json .Host.OCIRuntime}}"
+	}
+	return `{"name":{{json .DefaultRuntime}},"runtimes":{{json .Runtimes}}}`
+}
+
+// runtimeFacts is the engine's default OCI runtime as it reports it.
+type runtimeFacts struct {
+	Name string
+	Path string
+}
+
+// parseRuntimeFacts reads runtimeQuery's answer. An answer that is not what
+// the query asks for, or that names no path for the default runtime, is an
+// error: the rule below is held to a path, never to a name alone.
+func (x dialect) parseRuntimeFacts(answer string) (runtimeFacts, error) {
+	var raw struct {
+		Name     string `json:"name"`
+		Path     string `json:"path"`
+		Runtimes map[string]struct {
+			Path string `json:"path"`
+		} `json:"runtimes"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(answer)), &raw); err != nil {
+		return runtimeFacts{}, fmt.Errorf("the container engine answered %q to %s: %w", truncateString(strings.TrimSpace(answer), 200), x.runtimeQuery(), err)
+	}
+	facts := runtimeFacts{Name: strings.TrimSpace(raw.Name), Path: strings.TrimSpace(raw.Path)}
+	if x.cli != CLIPodman {
+		facts.Path = strings.TrimSpace(raw.Runtimes[facts.Name].Path)
+	}
+	return facts, nil
+}
+
+// checkDefaultRuntime holds the engine's default runtime to runc or crun, by
+// name and by the binary the name points at: a wrapper such as the NVIDIA
+// runtime registered under the name runc, or a sandboxed runtime, would run a
+// CDI spec's hooks and devices under rules this audit never read.
+func checkDefaultRuntime(f runtimeFacts) error {
+	switch f.Name {
+	case "runc", "crun":
+	default:
+		return fmt.Errorf("the container engine's default runtime is %q; a profile needs runc or crun", truncateString(f.Name, 200))
+	}
+	switch filepath.Base(f.Path) {
+	case "runc", "crun":
+		return nil
+	}
+	return fmt.Errorf("the container engine's default runtime %q is the binary %q, not runc or crun; a profile needs runc or crun (its path is reported, and is held to the name)",
+		f.Name, truncateString(f.Path, 200))
+}
+
+// hostAlias is the name this engine gives its containers for the host, ""
+// for none. Podman resolves host.containers.internal to an address that
+// leads to the host; a rootless Podman copies the host's own address into
+// the container's namespace, where it leads nowhere, so this name is the one
+// way to the host there.
+func (x dialect) hostAlias() string {
+	if x.engine == CLIPodman {
+		return "host.containers.internal"
+	}
+	return ""
 }

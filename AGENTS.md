@@ -630,7 +630,11 @@ A GPU reaches a task only as a counted, exclusive unit of a `gpu` profile,
 through CDI. A CDI spec is operator data read only from directories root
 alone can write, and its owners hold the trust of the host's root; it may
 pass a unit's device nodes and groups only, and a hook, an environment
-variable or a mount in it is refused. The spec bytes and device nodes of a
+variable or a mount in it is refused. The one exception is an `nvidia.com`
+spec (experimental, proven by emulation and not on NVIDIA hardware), admitted
+only under the compiled grammar of the hooks, env and mounts NVIDIA's
+generator writes, and only for a hook binary that is a row of the compiled
+table of toolkit builds. The spec bytes and device nodes of a
 profile the Orker audited stay fixed for its lifetime: any change is detected
 before a container is started, is drift, and is never adopted; only a restart
 audits again. No device grants a capability or `--privileged`, and the
@@ -1053,7 +1057,7 @@ internal never appears on any of those surfaces.
   | store outage | the Orker, after consecutive failed object-storage checks | the Orker, after consecutive good ones | yes |
   | stopping | the Orker, on its first stop signal; from then it accepts no new task, pin or pin creation, and what its open polls still deliver runs in flight | the process's exit | yes, until the process exits |
   | profile drift | the Orker, when a profile no longer matches what it audited, or the GPU host lock directory was replaced | a restart | no |
-  | profile unavailable | the Orker, when a profile's devices or units are absent, or the GPU host lock is held by another process, or fewer usable GPU units than a task may hold | the Orker, after consecutive good checks, or once the lock is held or the units are back | yes |
+  | profile unavailable | the Orker, when a profile's devices or units are absent, or the GPU host lock is held by another process, or fewer usable GPU units than a task may hold, or the container engine starting none of a gpu profile's unit probes, three passes in a row | the Orker, after consecutive good checks, or once the lock is held or the units are back, or once one starts | yes |
   | stuck service | the Orker, when a service container it stopped is not gone a minute after SIGKILL | the Orker, once the container is gone | no |
 
   An event-source instance is the one thing in flight a cordon does not
@@ -1277,7 +1281,9 @@ where the path first diverges (`lean-event-path`, `run-history-guard`,
 `fairness-pin-creation`, `retry-max-interval`, `task-publish-window`,
 `emit-past-cancel`, `interruption-retry`, `schedule-fire-concurrency`,
 `run-pause`, `pause-carry`, `pause-cascade`, `pause-deferred`,
-`pausable-pin-timeout`), so a
+`pausable-pin-timeout`, `run-resume`: asked by a reset run only, and not
+compatibility but a guard for runs of this release, since a run reset by
+hand past R replays a prefix with no marker), so a
 history recorded before the gate replays its `DefaultVersion` branch; the
 AutoUpgrade workflows gate every later change the same way under a prefix of
 their own (`concurrency-gate-*`, `force-cancel-*`), each with its recorded
@@ -1625,7 +1631,8 @@ the merge-gate tests or specs that cover the same behaviour at a smaller size
 or by another route, and the date the user approved it. A test or spec is
 listed only when such coverage exists, and the lists change only with the
 user's approval. Every other test and spec, and every scenario above, except
-as the last bullet states, stays in the merge gate: the run page at the task
+as the last bullet states and except the GPU-host lists
+(`scripts/proof-gpu-tests.txt`, `scripts/proof-gpu-specs.txt`), stays in the merge gate: the run page at the task
 ceiling is proven there by `ui/e2e/run-page-reduced-ceiling.spec.ts`, its
 measurement at a ceiling lowered to 1,000, and at the 4,000-task default by
 the nightly tier. A full proof records each listed test, and each test of a
@@ -1635,7 +1642,8 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
-The tests `scripts/proof-gpu-tests.txt` lists need the GPU host it names: a
+The tests `scripts/proof-gpu-tests.txt` lists, and the Playwright specs of its
+twin `scripts/proof-gpu-specs.txt`, need the GPU host it names: a
 proof without `ORK_PROOF_GPU_HOST=1` records them as `host-deferred`; a proof of
 the **GPU-host tier** (a full proof, or the GPU gate alone, `make proof-gpu`,
 run on that host with the flag) runs them; and a change to a path the list
@@ -1693,7 +1701,13 @@ with no inputs, ending where `examples/README.md` says. Those examples reach
 `httpbin.org` and `github.com`, so no proof runs that job and `release.yml` does
 not require it: the merge gate runs them against stand-ins
 (`TestIntegration_ExamplesRunWithNoInputs`), and a failure of the job is a
-regression on `main` unless its log shows one of those services was down.
+regression on `main` unless its log shows one of those services was down. It
+holds the table of NVIDIA's `nvidia-cdi-hook` builds an Orker accepts
+(`internal/orker/cdi_hook_table.go`) to NVIDIA's signed package repository
+as a job of its own too, `cdi-hook-table`
+(`go run ./internal/orker/cmd/gencdihooks -check`), because it reads that
+repository over the network: a toolkit release at or above the floor that the
+table lacks, or a row that no longer derives, fails that run.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) is a
 regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or
@@ -1709,7 +1723,7 @@ lanes nor its vulnerability scan (`vuln`, `vuln-js` and `vuln-images`), so a
 release is not tagged while either is red, and `release.yml` checks it: before
 it asks for the approval, it refuses a commit whose latest completed nightly on
 `main` did not pass (its proof, each of the scan's three jobs,
-`release-notes` and `quickstart`), or that no nightly measured, waiting a bounded time for one
+`release-notes`, `cdi-hook-table` and `quickstart`), or that no nightly measured, waiting a bounded time for one
 still running. (`make
 release-tag`, which publishes nothing, leaves it a rule.) A nightly's verdict
 is its `proof.json`,
@@ -2109,8 +2123,8 @@ duration. A listed test without an outcome fails the gate. In the full tier,
 test the nightly list names, or a test of a spec file the nightly spec list
 names, and in every other tier it fails the gate.
 `host-deferred` is legal in the full, nightly and pre-release tiers only for
-an entry both the base's and the tree's `scripts/proof-gpu-tests.txt` carry;
-in the GPU-host tier it fails the gate. With `ORK_PROOF_GPU_HOST=1` a missing
+an entry both the base's and the tree's `scripts/proof-gpu-tests.txt`
+(or `proof-gpu-specs.txt`) carry; in the GPU-host tier it fails the gate. With `ORK_PROOF_GPU_HOST=1` a missing
 GPU device, spec or lock group exits 77, never `host-deferred`, and
 `proof.json` records whether the GPU gate ran. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
@@ -2339,7 +2353,7 @@ Do not build:
 - a plugin marketplace;
 - a code plugin or extension point; profile kinds (`devices`, `gpu`) are a compiled-in closed set
   (§6) and a profile is operator data, so a new kind is a change to this file
-  and a release;
+  and a release; the NVIDIA hook grammar is a closed set too, never an extension point;
 - a business-process forms platform;
 - hundreds of SaaS connectors;
 - a custom scripting language;

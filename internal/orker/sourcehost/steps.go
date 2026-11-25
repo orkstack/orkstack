@@ -58,10 +58,13 @@ const (
 
 // Verdict is ask/lanes/<k>/verdict.json.
 type Verdict struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Seq           int64  `json:"seq"`
-	Action        string `json:"action"`
-	DelaySeconds  int    `json:"delaySeconds"`
+	SchemaVersion int   `json:"schemaVersion"`
+	Seq           int64 `json:"seq"`
+	// VerdictID names this verdict: the settle that answers it carries it
+	// back, so a settle that answers none is recognised whenever it lands.
+	VerdictID    string `json:"verdictId"`
+	Action       string `json:"action"`
+	DelaySeconds int    `json:"delaySeconds"`
 }
 
 // HandedMessage is a message.json the Orker read and checked, with the
@@ -209,9 +212,12 @@ func ReadEmpty(raw []byte) (Empty, error) {
 // Settled is a settled.json: how the broker answered a verdict, or the
 // container's own release at its hold bound.
 type Settled struct {
-	Seq   int64
-	OK    bool
-	Error *StepError
+	Seq int64
+	// VerdictID is the verdict this settle answers; "" for a container's own
+	// close at its hold bound, which answers none.
+	VerdictID string
+	OK        bool
+	Error     *StepError
 }
 
 // ReadSettled reads settled.json.
@@ -221,11 +227,15 @@ func ReadSettled(raw []byte) (Settled, error) {
 		return Settled{}, err
 	}
 	var s struct {
-		OK    *bool      `json:"ok"`
-		Error *StepError `json:"error"`
+		VerdictID string     `json:"verdictId"`
+		OK        *bool      `json:"ok"`
+		Error     *StepError `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &s); err != nil || s.OK == nil {
 		return Settled{}, violation(StepSettled, "not of settled.json's shape")
+	}
+	if len(s.VerdictID) > maxVerdictID || !printableASCII(s.VerdictID) {
+		return Settled{}, violation(StepSettled, "verdictId is at most %d bytes of printable ASCII", maxVerdictID)
 	}
 	if *s.OK != (s.Error == nil) {
 		return Settled{}, violation(StepSettled, "ok and error disagree")
@@ -235,8 +245,11 @@ func ReadSettled(raw []byte) (Settled, error) {
 			return Settled{}, err
 		}
 	}
-	return Settled{Seq: h.Seq, OK: *s.OK, Error: s.Error}, nil
+	return Settled{Seq: h.Seq, VerdictID: s.VerdictID, OK: *s.OK, Error: s.Error}, nil
 }
+
+// maxVerdictID bounds the verdict id a settle carries back.
+const maxVerdictID = 64
 
 func checkStepError(step string, e *StepError, kinds ...string) error {
 	known := false

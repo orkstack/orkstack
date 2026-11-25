@@ -67,6 +67,7 @@ func concurrencySettingsFromEnv() (engine.GateTunables, engine.CensusSettings, e
 	errs = append(errs, concurrencyInt("ORK_CONCURRENCY_REQUEUE_BACKOFF_FACTOR", "engine.concurrency.requeue_backoff_factor", &r.RequeueBackoffFactor))
 	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_REQUEUE_INTERVAL_MAX", "engine.concurrency.requeue_interval_max", &r.RequeueIntervalMax))
 	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_RETRY_AFTER", "engine.concurrency.retry_after", &r.RetryAfter))
+	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_FIRE_UNAVAILABLE_RETRY", "engine.concurrency.fire_unavailable_retry", &r.FireUnavailableRetry))
 	errs = append(errs, concurrencyInt("ORK_CONCURRENCY_EVENT_HOLDERS_SHOWN", "engine.concurrency.event_holders_shown", &r.EventHoldersShown))
 	errs = append(errs, concurrencyInt("ORK_CONCURRENCY_API_HOLDERS_SHOWN", "engine.concurrency.api_holders_shown", &r.APIHoldersShown))
 	if err := errors.Join(errs...); err != nil {

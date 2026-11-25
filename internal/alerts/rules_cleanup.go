@@ -230,7 +230,7 @@ func cleanupRules() []Rule {
 // runbooks hold them.
 func Rules() []Rule {
 	var out []Rule
-	for _, group := range [][]Rule{pipelineRules(), poolRules(), runRules(), storageRules(), temporalRules(), scheduleRules(), cleanupRules()} {
+	for _, group := range [][]Rule{pipelineRules(), poolRules(), runRules(), storageRules(), temporalRules(), scheduleRules(), concurrencyRules(), cleanupRules()} {
 		out = append(out, group...)
 	}
 	return out

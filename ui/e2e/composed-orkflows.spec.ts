@@ -113,6 +113,53 @@ tasks:
     uses: orkflow:slow-block@0.1.0
 `;
 
+// A child that takes a file and gives one back, and a parent that passes it
+// one and uses what it returns (docs/DSL.md "Passing artifacts to a child
+// run").
+const trainBlock = `apiVersion: orkstack/v1
+kind: Orkflow
+name: train-block
+version: "0.1.0"
+inputs:
+  dataset:
+    type: artifact
+    required: true
+outputs:
+  model:
+    artifact: fit/model.bin
+tasks:
+  - id: fit
+    uses: shell
+    timeout_seconds: 120
+    with:
+      op: exec
+      command: ["sh", "-c", 'wc -c < {{ artifact "_inputs/dataset" | sh }} > /orkstack/output/artifacts/model.bin']
+`;
+const artifactParent = `apiVersion: orkstack/v1
+kind: Orkflow
+name: composed-train
+version: "0.1.0"
+tasks:
+  - id: build
+    uses: shell
+    timeout_seconds: 120
+    with:
+      op: exec
+      command: ["sh", "-c", "printf dataset > /orkstack/output/artifacts/dataset.tar"]
+  - id: train
+    uses: orkflow:train-block@0.1.0
+    needs: [build]
+    artifacts:
+      dataset: build/dataset.tar
+  - id: publish
+    uses: shell
+    timeout_seconds: 120
+    needs: [train]
+    with:
+      op: exec
+      command: ["sh", "-c", 'cat {{ artifact "train/model" | sh }}']
+`;
+
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
@@ -135,7 +182,7 @@ test.beforeAll(async () => {
 	});
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'composed orkflows' } });
 	// The child first: a composed task resolves its child at apply.
-	for (const yaml of [example('release-block.ork.yaml'), example('composed-release.ork.yaml'), chainTop, failingBlock, failingParent, slowBlock, slowParent]) {
+	for (const yaml of [example('release-block.ork.yaml'), example('composed-release.ork.yaml'), chainTop, failingBlock, failingParent, slowBlock, slowParent, trainBlock, artifactParent]) {
 		await rpc('OrkflowService/ApplyOrkflow', { yaml, namespace: NS });
 	}
 	note(`namespace ${NS}, orkflows release-block@0.1.0 and composed-release@0.1.0, engine ${ENGINE}, ui ${UI}`);
@@ -414,4 +461,34 @@ tasks:
 	await expect(output).toHaveAttribute('data-severity', 'error');
 	await expect(output).toContainText('declares no output "digets" (outputs: digest, url)');
 	await shot(page, 'screenshot-apply-composition-issues.png');
+});
+
+test('a composed task passes its child a file and gets one back, each a download', async ({ page }) => {
+	const runId = await submit('composed-train');
+	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
+	const childId = await childRunId(page, 'train');
+	// The composed row: what it passed, and what its child returned.
+	const passedIn = page.getByTestId('task-train-passed-in-dataset');
+	await expect(passedIn).toHaveText('dataset');
+	await expect(passedIn).toHaveAttribute('data-tip', `from run ${runId}, task build (dataset.tar)`);
+	// Downloads once the run's artifact records are read: a button then, by
+	// role, so the click never lands on the name shown while they load.
+	const returned = page.getByRole('button', { name: `Download model, from run ${childId}, task fit (model.bin)` });
+	await expect(returned).toBeEnabled({ timeout: 30_000 });
+	await expect(returned).toHaveText('model');
+	const [download] = await Promise.all([page.waitForEvent('download'), returned.click()]);
+	// The UI's downloadFilename adds an extension from the content type.
+	expect(download.suggestedFilename()).toMatch(/^model(\.[a-z0-9]+)?$/);
+	await shot(page, 'screenshot-composed-artifacts-parent.png');
+	// The child's header: what it received and what it returned.
+	await page.goto(`${UI}/runs/${childId}?ns=${NS}`);
+	const received = page.getByRole('button', { name: `Download dataset, from run ${runId}, task build (dataset.tar)` });
+	await expect(received).toBeEnabled({ timeout: 30_000 });
+	await expect(received).toHaveText('dataset');
+	const [input] = await Promise.all([page.waitForEvent('download'), received.click()]);
+	expect(input.suggestedFilename()).toMatch(/^dataset(\.[a-z0-9]+)?$/);
+	await expect(page.getByTestId('run-returned-model')).toHaveText('model');
+	await shot(page, 'screenshot-composed-artifacts-child.png');
+	note(`run ${runId}: train passed dataset to child ${childId} and got model back; both download`);
 });

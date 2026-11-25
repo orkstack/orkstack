@@ -115,7 +115,7 @@ func newDeliveryHarness(t *testing.T) *deliveryHarness {
 	})
 	var suite testsuite.WorkflowTestSuite
 	h.env = suite.NewTestWorkflowEnvironment()
-	h.env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{h.options}})
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{h.options}}))
 	h.env.RegisterWorkflowWithOptions(engine.WebhookDeliveryWorkflow, workflow.RegisterOptions{Name: engine.WebhookDeliveryWorkflowType})
 	activities := engine.NewWebhookDeliveryActivities(bodies, h.registry,
 		webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}), notifier, nil)

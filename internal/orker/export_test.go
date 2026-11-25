@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -148,4 +149,83 @@ func CheckReleaseProbeImage(ctx context.Context, rt *DockerRuntime, release *Rel
 // outside a Temporal activity and so have no retry policy to read.
 func ListInterruptions(d *OCIDispatcher, types ...string) {
 	d.listed = func(context.Context) []string { return types }
+}
+
+// ErrHookBuildUnknown is the audit's answer for a hook binary the table lacks,
+// for the integration tests' errors.Is.
+var ErrHookBuildUnknown = errHookBuildUnknown
+
+// AuditNVIDIASpecForTest audits an NVIDIA CDI spec, as written (a host's
+// paths), for units, on a host that has nvidia-ctk's mock nodes and library
+// files (nvidiaTestHost) and whose hook binary has the digest given, on arch.
+// It returns the hook binaries the audit recorded, by path. It is exported
+// for TestIntegration_NVIDIAEmulation, which lives in package orker_test and
+// holds the real binaries it fetched to the table by digest.
+func AuditNVIDIASpecForTest(t testing.TB, spec, arch, hookSHA256 string, units ...string) (map[string]string, error) {
+	t.Helper()
+	h := nvidiaTestHost(t)
+	h.arch = arch
+	h.hookBinary = func(string) (hostHook, error) { return hostHook{SHA256: hookSHA256}, nil }
+	audit, err := auditGPUSpecs([]string{specDir(t, map[string]string{"nvidia.yaml": spec})}, "nvidia.com/gpu", units, h)
+	return audit.hooks, err
+}
+
+// HookTableRowsForTest lists the table's builds for arch as "version-arch-packaging",
+// with each one's binary digest, for the same test.
+func HookTableRowsForTest(arch string) map[string]string {
+	rows := map[string]string{}
+	for _, b := range cdiHookTable {
+		if b.Arch == arch {
+			rows[b.Version+"-"+b.Arch+"-"+b.Packaging] = b.BinarySHA256
+		}
+	}
+	return rows
+}
+
+// CheckDefaultRuntimeForTest is the default-runtime rule on an engine's
+// answer, for TestIntegration_NVIDIAEmulation, which asks a real dockerd.
+func CheckDefaultRuntimeForTest(name, path string) error {
+	return checkDefaultRuntime(runtimeFacts{Name: name, Path: path})
+}
+
+// RuntimeQueryForTest is the `docker info --format` template that asks an
+// engine for its default runtime, and RuntimeFactsForTest reads its answer, for
+// the same test.
+func RuntimeQueryForTest() string { return dockerDialect.runtimeQuery() }
+
+func RuntimeFactsForTest(answer string) (name, path string, err error) {
+	facts, err := dockerDialect.parseRuntimeFacts(answer)
+	return facts.Name, facts.Path, err
+}
+
+// NVIDIASpecsDriftForTest audits two NVIDIA specs (each with the hook digest
+// given) as one Orker's boot audit and its later periodic audit would, and
+// says whether the Orker would latch a drift between them: the specs' bytes,
+// the nodes, the mount sources or the hook binary differ.
+func NVIDIASpecsDriftForTest(t testing.TB, boot, later, arch, bootHook, laterHook string, units ...string) (bool, error) {
+	t.Helper()
+	audit := func(spec, hook string) (profileAudit, error) {
+		h := nvidiaTestHost(t)
+		h.arch = arch
+		h.hookBinary = func(string) (hostHook, error) { return hostHook{SHA256: hook}, nil }
+		found, err := auditGPUSpecs([]string{specDir(t, map[string]string{"nvidia.yaml": spec})}, "nvidia.com/gpu", units, h)
+		return gpuAuditOf("id", found), err
+	}
+	a, err := audit(boot, bootHook)
+	if err != nil {
+		return false, err
+	}
+	b, err := audit(later, laterHook)
+	if err != nil {
+		return false, err
+	}
+	// The spec bytes are at different paths in the two temp directories; the
+	// periodic audit compares them by path, so the digests are compared here.
+	for _, x := range a.gpu.files {
+		a.gpu.files = map[string]string{"f": x}
+	}
+	for _, y := range b.gpu.files {
+		b.gpu.files = map[string]string{"f": y}
+	}
+	return !sameGPUAudit(a, b), nil
 }

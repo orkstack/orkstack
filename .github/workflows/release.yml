@@ -332,8 +332,9 @@ jobs:
   # run on main whose head is this commit is judged by its proof.json as
   # `make merge-check NIGHTLY=` judges one, never by the proof's colour, and
   # by the jobs outside its proof: the scan's three, release-notes (every
-  # published release's notes against its CHANGELOG.md section) and
-  # quickstart.
+  # published release's notes against its CHANGELOG.md section),
+  # cdi-hook-table (the table of NVIDIA's CDI hook builds against NVIDIA's
+  # signed repository, E91-N1) and quickstart.
   nightly:
     needs: [validate, gate, artifacts]
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.gate.outputs.proof_artifact != '' }}

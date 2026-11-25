@@ -22,6 +22,38 @@ part_need() { # <what> <command...>
 	fi
 }
 
+# part_nvidia_emulation makes what TestIntegration_NVIDIAEmulation needs ready
+# (scripts/nvidia-emulation.sh) and leaves the hooks' directory in NVIDIA_HOOKS.
+# An unreachable registry or repository is a missing prerequisite (the part exits
+# 77); an image or build that is not the pinned one fails the part (exit 1).
+part_nvidia_emulation() {
+	local log rc
+	log="$(mktemp)"
+	NVIDIA_HOOKS="$("$REPO/scripts/nvidia-emulation.sh" 2>"$log")"
+	rc=$?
+	case $rc in
+	0) ;;
+	77) printf '  - what TestIntegration_NVIDIAEmulation needs: %s\n' "$(tail -n1 "$log")" >>"$PART_MISSING" ;;
+	*)
+		part_say "proof: what TestIntegration_NVIDIAEmulation needs is not what is pinned, so the part fails:"
+		sed 's/^/  /' "$log"
+		rm -f "$log"
+		return 1
+		;;
+	esac
+	rm -f "$log"
+}
+
+# part_holds_test: this integration part's plan gives it test $1. A plan that
+# cannot be read says yes: a prerequisite is fetched for nothing rather than
+# missing.
+part_holds_test() {
+	local held
+	held="$(jq -r --argjson k "${PART#integration:}" --arg t "$1" \
+		'[.jobs[] | select(.shard == $k) | .tests[] | select(. == $t)] | length' "$PLAN" 2>/dev/null)" || return 0
+	[ "$held" != 0 ]
+}
+
 part_require() {
 	: >"$PART_MISSING"
 	case "$PART" in
@@ -66,6 +98,9 @@ part_require() {
 		part_need "the local registry on $REGISTRY (make infra-up)" curl -sf -o /dev/null "http://$REGISTRY/v2/"
 		part_need "a layout directory (--layouts)" test -d "$LAYOUTS"
 		part_need "an integration plan (--plan)" test -f "$PLAN"
+		if [ ! -s "$PART_MISSING" ] && part_holds_test TestIntegration_NVIDIAEmulation; then
+			part_nvidia_emulation || return 1
+		fi
 		;;
 	ui-e2e:*)
 		part_need "docker on PATH" command -v docker
@@ -321,6 +356,7 @@ part_main() { # <part>
 		ORK_TEST_BIN_DIR="$DIR/bin"
 		ORK_TEST_IMAGE_TAG="$PROOF_ID"
 		ORK_TEST_REGISTRY="$REGISTRY"
+		ORK_TEST_NVIDIA_HOOKS="${NVIDIA_HOOKS:-}"
 	)
 	PART_IMAGES=""
 
@@ -330,6 +366,7 @@ part_main() { # <part>
 		git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-gpu-tests.txt" >"$DIR/gpu-base.txt" 2>/dev/null || : >"$DIR/gpu-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-gpu-specs.txt" >"$DIR/gpu-specs-base.txt" 2>/dev/null || : >"$DIR/gpu-specs-base.txt"
 		local mode=defer
 		[ "$TIER" = release ] && mode=include
 		[ "$TIER" = nightly ] && mode=only
@@ -354,10 +391,13 @@ part_main() { # <part>
 			if [ -s "$DIR/ui-list.json" ]; then
 				# The full tier's UI shards never hold a spec file both nightly
 				# spec lists carry; the nightly tier's hold the listed ones alone.
+				# No UI shard holds a spec file the GPU spec list names: a CI
+				# proof is never on the GPU host, so each is recorded host-deferred.
 				part_run ui-plan ui-plan.log "$PR" ui-plan -list "$DIR/ui-list.json" -costs scripts/proof-ui-costs.tsv \
 					-shards "$UI_SHARDS" -out "$DIR/ui-plan.json" -matrix-out "$DIR/ui-matrix.json" \
 					-nightly-mode "$mode" -nightly-specs scripts/proof-nightly-specs.txt \
-					-nightly-specs-base "$DIR/nightly-specs-base.txt" || true
+					-nightly-specs-base "$DIR/nightly-specs-base.txt" \
+					-gpu-specs scripts/proof-gpu-specs.txt -gpu-specs-base "$DIR/gpu-specs-base.txt" || true
 				UI_PLAN="$DIR/ui-plan.json"
 			fi
 		fi

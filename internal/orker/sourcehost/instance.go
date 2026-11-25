@@ -365,7 +365,7 @@ func (in *Instance) took(ctx context.Context, i int, d *LaneDriver, ex Exchange)
 		case <-time.After(wait):
 		}
 		return true
-	case ExchangeSettled:
+	case ExchangeSettled, ExchangeHoldExpired:
 		in.resetReceive(i)
 		in.mu.Lock()
 		in.breakers.Certain()
@@ -396,11 +396,16 @@ func receiveBackoff(n int) time.Duration {
 	return min(d, 30*time.Second)
 }
 
-// settled counts a settled exchange toward the breakers and the wait.
+// settled counts an exchange that ended with its message decided toward the
+// breakers and the wait. One its container closed at the hold bound says
+// nothing of how the broker settles, so it counts no settlement.
 func (in *Instance) settled(ctx context.Context, ex Exchange) bool {
 	in.mu.Lock()
 	refused := !ex.Settled.OK && ex.Settled.Error != nil && ex.Settled.Error.Kind == KindRefused
-	trip := in.breakers.Settled(refused)
+	trip := ""
+	if ex.Kind == ExchangeSettled {
+		trip = in.breakers.Settled(refused)
+	}
 	switch ex.Decision.Receipt.Outcome {
 	case artifacts.ReceiptAccepted, artifacts.ReceiptDuplicate:
 		in.breakers.Accepted()

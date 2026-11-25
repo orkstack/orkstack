@@ -834,6 +834,26 @@ func (r *TemporalRunReader) ReleasePausedRuns(ctx context.Context, deployment, b
 	return n, true, nil
 }
 
+// ReleaseQueuedRuns counts the live runs on one release waiting in a
+// concurrency limit's line (OrkflowRunQueued "true"): each keeps its release
+// from draining for up to its queue_timeout. Where the cluster does not index
+// them it asks nothing and answers ok false.
+func (r *TemporalRunReader) ReleaseQueuedRuns(ctx context.Context, deployment, buildID string) (int64, bool, error) {
+	if !r.queuedIndexed {
+		return 0, false, nil
+	}
+	indexed, err := task.IndexedVersion(deployment, buildID)
+	if err != nil {
+		return 0, false, err
+	}
+	base := fmt.Sprintf("%s AND %s = %q", releaseRunsQuery(indexed), task.SearchAttrOrkflowRunQueued, "true")
+	n, err := r.liveRunCount(ctx, base, 0)
+	if err != nil {
+		return 0, false, fmt.Errorf("engine: count the queued runs on release %s: %w", buildID, err)
+	}
+	return n, true, nil
+}
+
 func (r *TemporalRunReader) ReleaseRuns(ctx context.Context, deployment, buildID string, limit int) (int64, []*orkstackv1.Run, error) {
 	indexed, err := task.IndexedVersion(deployment, buildID)
 	if err != nil {

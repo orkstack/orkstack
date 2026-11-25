@@ -13,11 +13,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/orker/servicehost"
+	"github.com/orkstack/orkstack/internal/orker/sourcehost"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // The event-source fixtures under `orkctl service test`
@@ -89,6 +95,13 @@ func TestIntegration_ServiceTest_Fixtures(t *testing.T) {
 			fails: []string{checkStatus, checkBeat}, details: "OBJECT_INVALID broker.maxDeliveries"},
 		{name: "hostile-ack-no-verdict", dir: "source-hostile", mode: "ack-no-verdict",
 			fails: []string{checkAccepted, checkReleased}, details: "settled without a verdict"},
+		// The late unbidden settle: after the verdict exists, naming none.
+		{name: "hostile-late-settle", dir: "source-hostile", mode: "late-settle",
+			fails: []string{checkAccepted, checkReleased}, details: "not answering this lane's verdict"},
+		// The same under the one settle that names no verdict, the close at
+		// the hold bound, before that bound.
+		{name: "hostile-early-close", dir: "source-hostile", mode: "early-close",
+			fails: []string{checkAccepted, checkReleased}, details: "before its hold bound"},
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
@@ -98,6 +111,188 @@ func TestIntegration_ServiceTest_Fixtures(t *testing.T) {
 			assertServiceReport(t, f, report, stderr, code)
 		})
 	}
+}
+
+// TestIntegration_ServiceTest_FixturesGiveBack: a message held without a
+// verdict when its container is stopped, or loses its Orker's beat, goes
+// back to the broker with no settled.json (there is no verdict to name), and
+// is delivered again; a settle written there is refused, and nothing is
+// recorded for it (docs/EVENT_SOURCE_IMAGES.md, "Stopping, and a lost
+// beat"). The containers are plain ones whose broker and answer directories
+// are the test's own, because both are looked at once the container is gone;
+// the Orker's side is its own lane driver.
+func TestIntegration_ServiceTest_FixturesGiveBack(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		infraAbsent(t, "service images run on Linux only")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		infraAbsent(t, "docker is not on PATH: %v", err)
+	}
+	registry := localcatalog.Registry()
+	requireRegistry(t, registry)
+	root := repoRoot(t)
+	for _, f := range []serviceFixture{
+		{name: "giveback-bash", dir: "source-bash"},
+		{name: "giveback-go", dir: "source-go"},
+		{name: "giveback-python", dir: "source-python"},
+		{name: "giveback-hostile", dir: "source-hostile", mode: "stop-settle", details: "settled without a verdict"},
+	} {
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			image := buildServiceFixture(ctx, t, root, registry, f)
+			t.Run("stop", func(t *testing.T) { giveBack(ctx, t, f, image, 120, "0", (*fixtureRun).terminate) })
+			t.Run("lost beat", func(t *testing.T) { giveBack(ctx, t, f, image, 20, "3", (*fixtureRun).loseBeat) })
+		})
+	}
+}
+
+// giveBack ends a container that holds a message. orphanSeconds is far above
+// any stall of the test's own beat, so only a beat stopped on purpose is lost.
+func giveBack(ctx context.Context, t *testing.T, f serviceFixture, image string, orphanSeconds int, wantExit string, end func(*fixtureRun, context.Context, *testing.T)) {
+	broker := t.TempDir()
+	first := startFixture(ctx, t, image, broker, orphanSeconds)
+	first.door.setWait(true)
+	must.OK(t, os.WriteFile(filepath.Join(broker, "broker", "m1"), []byte("hello"), 0o644))
+	must.OK(t, os.Rename(filepath.Join(broker, "broker", "m1"), filepath.Join(broker, "broker", "ready", "m1")))
+	held, err := first.poll(ctx)
+	must.OKf(t, err, "the message")
+	if held.Kind != sourcehost.ExchangeHeld {
+		t.Fatalf("the message ended kind %d, not held", held.Kind)
+	}
+	end(first, ctx, t)
+	if code := strings.TrimSpace(first.docker(ctx, t, "wait", first.id)); code != wantExit {
+		t.Fatalf("the container exited %s; want %s\n%s", code, wantExit, first.docker(ctx, t, "logs", first.id))
+	}
+	if _, err := os.Stat(filepath.Join(broker, "broker", "ready", "m1")); err != nil {
+		t.Fatalf("the message was not given back to the broker: %v", err)
+	}
+	_, settledErr := os.Stat(filepath.Join(first.answer, sourcehost.LanePath(0, sourcehost.StepSettled)))
+	closed, err := first.driver.HoldExpired(ctx, held.Message)
+	if f.details != "" {
+		release := sourcehost.Decision{Disposition: sourcehost.Wait, Action: sourcehost.ActionRelease,
+			Receipt: sourcehost.Receipt{Outcome: artifacts.ReceiptReleased}}
+		_, verdictErr := first.driver.Verdict(ctx, held.Message, release)
+		for _, err := range []error{err, verdictErr} {
+			var v *servicehost.ViolationError
+			if !errors.As(err, &v) || !strings.Contains(v.Error(), f.details) {
+				t.Errorf("a settle with no verdict: %v; want a violation holding %q", err, f.details)
+			}
+		}
+		if settledErr != nil || closed || len(first.recorded.receipts) != 0 {
+			t.Errorf("settled.json %v, closed %v, receipts %+v; want the settle there and nothing recorded for it", settledErr, closed, first.recorded.receipts)
+		}
+		return
+	}
+	if !errors.Is(settledErr, os.ErrNotExist) || closed || err != nil || len(first.recorded.receipts) != 0 {
+		t.Fatalf("settled.json %v, closed %v (%v), receipts %+v; want no settle and nothing recorded", settledErr, closed, err, first.recorded.receipts)
+	}
+	second := startFixture(ctx, t, image, broker, orphanSeconds)
+	again, err := second.poll(ctx)
+	must.OKf(t, err, "the message again")
+	if again.Kind != sourcehost.ExchangeSettled || again.Message.ID != held.Message.ID || again.Message.DeliveryCount != held.Message.DeliveryCount+1 ||
+		len(second.recorded.receipts) != 1 || second.recorded.receipts[0].Outcome != artifacts.ReceiptAccepted {
+		t.Fatalf("after a give-back of %q count %d: kind %d, %q count %d, receipts %+v", held.Message.ID, held.Message.DeliveryCount,
+			again.Kind, again.Message.ID, again.Message.DeliveryCount, second.recorded.receipts)
+	}
+}
+
+// fixtureRun is one fixture container over directories of the test's own,
+// and the Orker's side of its one lane.
+type fixtureRun struct {
+	id       string
+	answer   string
+	door     *acceptingDoor
+	driver   *sourcehost.LaneDriver
+	recorded *keptReceipts
+	stopBeat func()
+}
+
+// keptReceipts keeps what a lane records; one goroutine uses it.
+type keptReceipts struct{ receipts []sourcehost.Receipt }
+
+func (k *keptReceipts) Record(_ context.Context, _ sourcehost.HandedMessage, _ int64, r sourcehost.Receipt) error {
+	k.receipts = append(k.receipts, r)
+	return nil
+}
+
+func startFixture(ctx context.Context, t *testing.T, image, broker string, orphanSeconds int) *fixtureRun {
+	t.Helper()
+	dir := t.TempDir()
+	input, ask, answer := filepath.Join(dir, "input"), filepath.Join(dir, "ask"), filepath.Join(dir, "answer")
+	for _, d := range []string{input, ask, answer} {
+		must.OK(t, os.Mkdir(d, 0o755))
+	}
+	must.OK(t, os.WriteFile(filepath.Join(input, "service.json"), fmt.Appendf(nil, `{"limits":{"holdSeconds":960,"orphanSeconds":%d}}`, orphanSeconds), 0o644))
+	asks, err := servicehost.OpenAskDir(ask)
+	must.OK(t, err)
+	t.Cleanup(func() { _ = asks.Close() })
+	steps, err := servicehost.OpenAnswerDir(answer)
+	must.OK(t, err)
+	t.Cleanup(func() { _ = steps.Close() })
+	r := &fixtureRun{answer: answer, door: &acceptingDoor{}, recorded: &keptReceipts{}}
+	var beat servicehost.Beat
+	must.OK(t, asks.WriteJSON("alive.json", beat.Next()))
+	beating, beaten := make(chan struct{}), make(chan struct{})
+	r.stopBeat = sync.OnceFunc(func() { close(beating); <-beaten })
+	go func() {
+		defer close(beaten)
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-beating:
+				return
+			case <-tick.C:
+				_ = asks.WriteJSON("alive.json", beat.Next())
+			}
+		}
+	}()
+	t.Cleanup(r.stopBeat)
+	judge := sourcehost.NewJudge(&orkstackv1.EventSource{Id: "src", Name: "giveback", Namespace: "default", JudgingRevision: 1}, 1, r.door, noStager{}, time.Now)
+	r.driver = &sourcehost.LaneDriver{Index: 0, Steps: steps, Asks: asks, Judge: judge, Recorder: r.recorded, Now: time.Now,
+		Limits: sourcehost.LaneLimits{PollWait: time.Second, Answer: 30 * time.Second, Settle: 30 * time.Second, Hold: 960 * time.Second,
+			LeaseSeconds: 60, MaxBodyBytes: 1 << 20}}
+	r.id = strings.TrimSpace(r.docker(ctx, t, "run", "-d", "--init", "--network", "none", "--read-only", "--cap-drop", "ALL",
+		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--label", fmt.Sprintf("ork.service-test=%d", os.Getpid()),
+		"-v", input+":/orkstack/input:ro", "-v", ask+":"+servicehost.PathAsk+":ro", "-v", answer+":"+servicehost.PathAnswer,
+		"-v", broker+":/tmp", image))
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", r.id).Run() })
+	for {
+		if _, err := steps.ReadStep(servicehost.StatusName, servicehost.MaxStatusBytes); err == nil {
+			return r
+		}
+		if running := r.docker(ctx, t, "inspect", "--format", "{{.State.Running}}", r.id); strings.TrimSpace(running) != "true" {
+			t.Fatalf("the fixture exited before it wrote a status:\n%s", r.docker(ctx, t, "logs", r.id))
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("the fixture wrote no status:\n%s", r.docker(context.WithoutCancel(ctx), t, "logs", r.id))
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+func (r *fixtureRun) poll(ctx context.Context) (sourcehost.Exchange, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	return r.driver.Poll(ctx, 1)
+}
+
+func (r *fixtureRun) terminate(ctx context.Context, t *testing.T) {
+	r.docker(ctx, t, "kill", "--signal", "TERM", r.id)
+}
+
+func (r *fixtureRun) loseBeat(context.Context, *testing.T) { r.stopBeat() }
+
+func (r *fixtureRun) docker(ctx context.Context, t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 // buildServiceFixture builds one fixture and pushes it under a tag of this

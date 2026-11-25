@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -216,10 +217,13 @@ func NewHeartbeater(ctx context.Context) *Heartbeater {
 	info := activity.GetInfo(ctx)
 	h.ackTimeout = info.HeartbeatTimeout
 	beats := activity.GetClient(ctx)
+	// The attempt's run key, taken once from the attempt's own context: every
+	// beat is sealed with it, whatever context it is sent on.
+	scope := attemptScope(ctx)
 	h.send = func(call context.Context, progress HeartbeatProgress) error {
 		return beats.RecordActivityHeartbeatWithOptions(call, client.RecordActivityHeartbeatOptions{
 			TaskToken:    info.TaskToken,
-			Details:      []any{progress},
+			Details:      []any{payloadcrypt.Seal(scope, progress)},
 			Namespace:    info.Namespace,
 			WorkflowID:   info.WorkflowExecution.ID,
 			ActivityType: info.ActivityType.Name,
@@ -228,7 +232,7 @@ func NewHeartbeater(ctx context.Context) *Heartbeater {
 		})
 	}
 	h.deliver = func(call context.Context, progress HeartbeatProgress) {
-		activity.RecordHeartbeat(call, progress)
+		activity.RecordHeartbeat(call, payloadcrypt.Seal(scope, progress))
 	}
 	h.completeCanceled = func(call context.Context) error {
 		return beats.CompleteActivity(call, info.TaskToken, nil, temporal.NewCanceledError())

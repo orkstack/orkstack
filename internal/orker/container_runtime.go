@@ -366,6 +366,10 @@ var ErrRunAsOrkerUnavailable = errors.New("running a container as the Orker's us
 // within its budget, can say.
 var ErrProbeTimedOut = errors.New("the bind probe timed out")
 
+// errEngineUnreachable marks a run the container CLI could not ask the engine
+// for at all, beside the error its caller already matches.
+var errEngineUnreachable = errors.New("the container engine could not be reached")
+
 // ReapIncompleteError is Reap's report that it removed every orphan it could
 // and some it could not. Boot logs each failure and proceeds: one container
 // stuck in removal must not stop an Orker from starting.

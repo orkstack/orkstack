@@ -206,7 +206,7 @@ func evidenceCountsLine(c evidence.Counts) string {
 	for _, part := range []struct {
 		n    int
 		word string
-	}{{c.Reclaimed, "reclaimed"}, {c.Unrecorded, "unrecorded"}, {c.Rejected, "rejected"}} {
+	}{{c.Reclaimed, "reclaimed"}, {c.Unrecorded, "unrecorded"}, {c.Rejected, "rejected"}, {c.Withheld, "withheld"}} {
 		if part.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", part.n, part.word))
 		}
@@ -220,9 +220,9 @@ func newRunEvidenceVerifyCommand(g *globalFlags) *cobra.Command {
 		Use:   "verify <bundle.tar.gz>",
 		Short: "Check an evidence bundle's members against its MANIFEST.json",
 		Long: "Verify hashes every member of a bundle and compares it with MANIFEST.json. It\n" +
-			"needs no server, no credentials and writes nothing to disk. Reclaimed and\n" +
-			"unrecorded members are findings, not failures; any member whose bytes do not\n" +
-			"match is named and the command exits 1.\n\n" +
+			"needs no server, no credentials and writes nothing to disk. Reclaimed,\n" +
+			"unrecorded and withheld members are findings, not failures; any member whose\n" +
+			"bytes do not match is named and the command exits 1.\n\n" +
 			"--against-store additionally asks the engine for the live manifest of the same\n" +
 			"run and scope and compares the two member by member.",
 		Args: cobra.ExactArgs(1),
@@ -320,6 +320,9 @@ func compareWithStore(file, live *evidence.Manifest) *storeComparison {
 			continue
 		}
 		switch {
+		case (m.State == evidence.StateWithheld) != (now.State == evidence.StateWithheld):
+			// What one of the two exporters may read: nothing moved in the store.
+			c.Findings = append(c.Findings, evidence.Failure{Path: m.Path, Reason: "readable to only one of the exporter and this caller"})
 		case m.State == evidence.StatePresent && now.State == evidence.StateReclaimed:
 			c.Findings = append(c.Findings, evidence.Failure{Path: m.Path, Reason: "reclaimed since export", Got: now.Reason})
 		case m.State != evidence.StatePresent && now.State == evidence.StatePresent:
@@ -384,7 +387,7 @@ func renderVerifyReport(r *evidence.Report) string {
 		b.WriteString(strings.TrimRight(line, " ") + "\n")
 	}
 	row("run", m.RunID, "namespace "+m.Namespace)
-	row("definition", m.DefinitionDigest, fmt.Sprintf("%s@%s (%s)", m.OrkflowName, m.OrkflowVersion, definitionState(m.Definition)))
+	row("definition", m.DefinitionDigest, fmt.Sprintf("%s@%s (%s)", ownedLabel(m.OrkflowNamespace, m.OrkflowName), m.OrkflowVersion, definitionState(m.Definition)))
 	exported := fmt.Sprintf("exported %s by engine %s", m.ExportedAt.UTC().Format("2006-01-02T15:04:05Z07:00"), m.EngineVersion)
 	if m.BuildID != "" {
 		exported += " (build " + m.BuildID + ")"
@@ -415,6 +418,9 @@ func renderVerifyReport(r *evidence.Report) string {
 			paths = append(paths, member.Path)
 		}
 		row("rejected", fmt.Sprintf("%s: %s", pluralForms(len(r.Rejected), "member", "members"), strings.Join(paths, ", ")), "")
+	}
+	for _, member := range r.Withheld {
+		row("withheld", fmt.Sprintf("%s (%s)", member.Path, member.Reason), "")
 	}
 	// A gap is a notice, not a failure: the bundle is exactly what the
 	// archive holds, and the archive says what it does not hold and why —
@@ -461,7 +467,7 @@ func writeFailures(b *strings.Builder, failures []evidence.Failure) {
 func reasonTokens(r *evidence.Report) []string {
 	var tokens []string
 	seen := map[string]bool{}
-	for _, list := range [][]evidence.Member{r.Reclaimed, r.Unrecorded, r.Rejected} {
+	for _, list := range [][]evidence.Member{r.Reclaimed, r.Unrecorded, r.Rejected, r.Withheld} {
 		for _, member := range list {
 			if member.Reason != "" && !seen[member.Reason] {
 				seen[member.Reason] = true
@@ -480,6 +486,8 @@ func definitionState(d evidence.Definition) string {
 		return "source.yaml reclaimed: definition deleted"
 	case evidence.StateRejected:
 		return fmt.Sprintf("source.yaml rejected: stored document hashes to %s, not the pinned digest", d.StoredDefinitionDigest)
+	case evidence.StateWithheld:
+		return "source.yaml withheld: the exporter may not read it in its owner's namespace"
 	default:
 		return "source.yaml " + string(d.State)
 	}

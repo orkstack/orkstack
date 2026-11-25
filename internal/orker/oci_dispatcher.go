@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1416,7 +1417,7 @@ func (d *OCIDispatcher) execute(
 		return nil, beforeClaimStopped(context.Cause(ctx))
 	}
 	// The devices again, just before create (profile_gate.go).
-	if failure := d.profileRecheck(in); failure != nil {
+	if failure := d.profileRecheck(ctx, in, true); failure != nil {
 		return nil, failure
 	}
 	// The ordinal is held from before the create: a create that failed may
@@ -2133,6 +2134,12 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 // created.
 const ReasonProfileDeclarationMismatch = "PROFILE_DECLARATION_MISMATCH"
 
+// ReasonGPUCountRequired: the task names this Orker's gpu profile and asks
+// for no unit (resources.gpu unset). A gpu profile passes a task nothing but
+// its units, so the definition does not hold: a ContractViolation, never
+// retried, found at step 3c before any container.
+const ReasonGPUCountRequired = "GPU_COUNT_REQUIRED"
+
 // profileGate is execute's STEP 3c (profile_gate.go, profile_contracts.go):
 // each profile the task names offered here, its devices as audited, and the
 // contract that serves the run. It returns that contract's devices, and
@@ -2143,6 +2150,17 @@ func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heart
 		return nil, nil
 	}
 	beat.Phase("profiles")
+	// A gpu profile passes a task only its units, so a task naming the
+	// declared one with no count is a definition that cannot hold, whatever
+	// the profile's state on this Orker (offered, waiting for the host lock,
+	// drifted): checked before the drift check and the contract.
+	if d.profiles != nil && in.GetResources().GetGpu() == 0 {
+		if p, ok := gpuProfileOf(d.profiles.declared); ok &&
+			slices.ContainsFunc(in.GetDevices(), func(r *orkstackv1.ProfileRef) bool { return r.GetName() == p.Name }) {
+			return nil, Fail(ReasonGPUCountRequired,
+				"task %q names the gpu profile %q and asks for no unit; set resources.gpu to the units it needs", in.GetTaskId(), p.Name)
+		}
+	}
 	if d.profiles == nil {
 		return nil, Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
 	}
@@ -2155,15 +2173,16 @@ func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heart
 }
 
 // profileRecheck is the device comparison just before the container is
-// created, and again just before it is started.
-func (d *OCIDispatcher) profileRecheck(in *orkstackv1.ExecuteTaskInput) *Failure {
+// created (beforeCreate, which also asks the engine's runtime once and rescans
+// the spec directories) and again just before it is started.
+func (d *OCIDispatcher) profileRecheck(ctx context.Context, in *orkstackv1.ExecuteTaskInput, beforeCreate bool) *Failure {
 	if len(in.GetDevices()) == 0 {
 		return nil
 	}
 	if d.profiles == nil {
 		return Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
 	}
-	return d.profiles.recheck(in.GetDevices(), d.deviceInspector(), time.Now())
+	return d.profiles.recheck(ctx, in.GetDevices(), d.deviceInspector(), time.Now(), beforeCreate)
 }
 
 // effectiveProfiles is what the attempt record says each profile ran under:
@@ -2520,7 +2539,7 @@ func (d *OCIDispatcher) runContainer(
 	// creates it (design Q18), so a spec or node changed since the create is
 	// drift here. Start is never called, so the attempt never started; the
 	// deferred removal frees the container and its units.
-	if failure := d.profileRecheck(in); failure != nil {
+	if failure := d.profileRecheck(ctx, in, false); failure != nil {
 		beat.setUsage(unmeasuredSampler(reasonNotRun))
 		return capture, failure
 	}

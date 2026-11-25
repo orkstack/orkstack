@@ -19,7 +19,7 @@ import (
 
 func nightlyJobs(over map[string]string) map[string]string {
 	jobs := map[string]string{"nightly / proof": "failure", "vuln": "success", "vuln-js": "success", "vuln-images": "success",
-		"release-notes": "success", "quickstart": "success", "flakes": "failure"}
+		"release-notes": "success", "cdi-hook-table": "success", "quickstart": "success", "flakes": "failure"}
 	for k, v := range over {
 		if v == "" {
 			delete(jobs, k)
@@ -55,6 +55,10 @@ func TestVerify_AReleaseNeedsTheNightlyOfItsCommitToHavePassed(t *testing.T) {
 		{"an unreadable proof", func(t *testing.T) string { return filepath.Join(t.TempDir(), "gone") }, "main-tree", nightlyJobs(nil), "is unreadable"},
 		{"a vulnerability", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
 			nightlyJobs(map[string]string{"vuln": "failure"}), "the nightly run's vuln job concluded failure"},
+		{"the CDI hook table out of date", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
+			nightlyJobs(map[string]string{"cdi-hook-table": "failure"}), "the nightly run's cdi-hook-table job concluded failure"},
+		{"no CDI hook table job", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
+			nightlyJobs(map[string]string{"cdi-hook-table": ""}), "cdi-hook-table"},
 		{"a JavaScript advisory", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
 			nightlyJobs(map[string]string{"vuln-js": "failure"}), "the nightly run's vuln-js job concluded failure"},
 		{"an image vulnerability", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
@@ -90,7 +94,7 @@ func TestVerify_TheReleaseNightlyCheckReadsADownloadedNightly(t *testing.T) {
 	}
 	t.Chdir(dir)
 	quiet(t)
-	writeJobs("nightly / proof\tsuccess\nvuln\tsuccess\nvuln-js\tsuccess\nvuln-images\tsuccess\nrelease-notes\tsuccess\nquickstart\tsuccess\nflakes\tsuccess\n")
+	writeJobs("nightly / proof\tsuccess\nvuln\tsuccess\nvuln-js\tsuccess\nvuln-images\tsuccess\nrelease-notes\tsuccess\ncdi-hook-table\tsuccess\nquickstart\tsuccess\nflakes\tsuccess\n")
 	if code := cmdVerify([]string{"-commit", mainTip, "-nightly", nightly, "-nightly-jobs", jobs}); code != 0 {
 		t.Fatalf("a passing nightly of the commit was refused: exit %d", code)
 	}

@@ -211,9 +211,15 @@ message OpenLossEvent {
   google.protobuf.Timestamp first_at = 2;
 }
 
-// RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
-// batch).
-message RunResumeCarry {}
+// RunResumeCarry is a resumed run's resume, carried across a continuation.
+message RunResumeCarry {
+  // seq_base is the resume's RUN_RESUMED sequence.
+  uint64 seq_base = 1;
+  // resumed_after is the sequence of the ending the resume set aside.
+  int64 resumed_after = 2;
+  // resume_count is how many resumes of the run got going.
+  int32 resume_count = 3;
+}
 
 // ResumeBlock is one resume's plan as the reset run executes it (E85 §4.1,
 // engine-internal): written into the resume's record before the reset and

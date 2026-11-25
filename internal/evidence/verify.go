@@ -35,11 +35,12 @@ const (
 // second listing of a path, is a Failure.
 type Report struct {
 	Manifest   *Manifest `json:"manifest"`
-	Verified   []Member  `json:"verified"`   // present in manifest, present in file, digest and size equal
-	Reclaimed  []Member  `json:"reclaimed"`  // listed reclaimed; absent from the file, as they must be
-	Unrecorded []Member  `json:"unrecorded"` // listed unrecorded; absent from the file
-	Rejected   []Member  `json:"rejected"`   // listed rejected; absent from the file
-	Failures   []Failure `json:"failures"`   // anything else
+	Verified   []Member  `json:"verified"`           // present in manifest, present in file, digest and size equal
+	Reclaimed  []Member  `json:"reclaimed"`          // listed reclaimed; absent from the file, as they must be
+	Unrecorded []Member  `json:"unrecorded"`         // listed unrecorded; absent from the file
+	Rejected   []Member  `json:"rejected"`           // listed rejected; absent from the file
+	Withheld   []Member  `json:"withheld,omitempty"` // listed withheld; absent from the file
+	Failures   []Failure `json:"failures"`           // anything else
 	// EventGaps are the ranges of the run's event stream its archive does
 	// not hold — lost from object storage before it was archived, or never
 	// published — as the manifest names them. A notice, never a failure: the
@@ -114,6 +115,8 @@ func Verify(r io.Reader) (*Report, error) {
 			report.Unrecorded = append(report.Unrecorded, member)
 		case StateRejected:
 			report.Rejected = append(report.Rejected, member)
+		case StateWithheld:
+			report.Withheld = append(report.Withheld, member)
 		default:
 			report.Failures = append(report.Failures, Failure{Path: member.Path, Reason: FailureUnknownState,
 				Got: string(member.State)})

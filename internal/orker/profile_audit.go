@@ -167,6 +167,8 @@ func auditGPUProfiles(declared Profiles, dirs []string, host cdiHost) (map[strin
 		switch {
 		case errors.Is(err, errCDISpecAbsent):
 			absent = append(absent, p.Name)
+		case errors.Is(err, errHookBuildUnknown):
+			audit.hookUnknown = fmt.Sprintf("profile %s: %v", p.Name, err)
 		case err != nil:
 			return nil, nil, fmt.Errorf("profile %s: %w", p.Name, err)
 		default:
@@ -191,15 +193,28 @@ func gpuAuditOf(identity string, found gpuSpecAudit) profileAudit {
 	for _, unit := range found.units {
 		var nodes []auditedDevice
 		for _, n := range unit.nodes {
+			host := n.host
+			host.Mode = 0
 			nodes = append(nodes, auditedDevice{
 				ProfileDevice: ProfileDevice{Path: n.hostPath, ContainerPath: n.path, Permissions: n.permissions},
-				Host:          n.host,
+				Host:          host,
 			})
 		}
 		audit.unitNodes = append(audit.unitNodes, nodes)
 		audit.gpuNodes = append(audit.gpuNodes, nodes...)
 	}
 	return audit
+}
+
+// holdUnknownBuilds holds every profile whose boot audit met a hook binary the
+// table lacks unavailable for HOOK_BUILD_UNKNOWN: that profile alone, with
+// no cordon of the Orker, which keeps serving its other profiles.
+func (s *profileState) holdUnknownBuilds(audits map[string]profileAudit, now time.Time) {
+	for _, name := range slices.Sorted(maps.Keys(audits)) {
+		if detail := audits[name].hookUnknown; detail != "" {
+			s.setUnavailable(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN, detail, now)
+		}
+	}
 }
 
 // auditGPUOnce is the periodic full audit of every gpu profile that has not
@@ -210,8 +225,10 @@ func gpuAuditOf(identity string, found gpuSpecAudit) profileAudit {
 // the audit, latch a drift (SPEC_CHANGED). It returns the drifts it found.
 func (s *profileState) auditGPUOnce(host cdiHost, now time.Time) map[string]string {
 	const (
-		absent  = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT
-		changed = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED
+		absent    = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT
+		changed   = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED
+		unlisted  = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN
+		hookMoved = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED
 	)
 	drifted := map[string]string{}
 	for _, p := range s.declared.List {
@@ -226,6 +243,20 @@ func (s *profileState) auditGPUOnce(host cdiHost, now time.Time) map[string]stri
 		switch {
 		case errors.Is(err, errCDISpecAbsent):
 			s.setUnavailable(p.Name, absent, err.Error(), now)
+		case errors.Is(err, errHookBuildUnknown) && old.gpu == nil:
+			// Unlisted at boot and still: the profile stays out, for that alone.
+			s.setUnavailable(p.Name, unlisted, err.Error(), now)
+		case errors.Is(err, errHookBuildUnknown) || errors.Is(err, errHookBinaryUnreadable):
+			// A binary that is another build, or that cannot be held to root's
+			// any more, is a changed binary when the audited specs already ran
+			// a hook. A spec edited to add a hook behind such a binary is a
+			// changed spec.
+			reason := changed
+			if old.gpu != nil && len(old.gpu.hooks) > 0 {
+				reason = hookMoved
+			}
+			drifted[p.Name] = err.Error()
+			s.setDrift(p.Name, reason, err.Error(), now)
 		case err != nil:
 			drifted[p.Name] = err.Error()
 			s.setDrift(p.Name, changed, err.Error(), now)
@@ -233,11 +264,14 @@ func (s *profileState) auditGPUOnce(host cdiHost, now time.Time) map[string]stri
 			adopted := gpuAuditOf(old.identity, found)
 			adopted.contracts, adopted.def = old.contracts, old.def
 			s.adoptAudit(p.Name, adopted)
-			s.clearUnavailable(p.Name, absent)
+			s.clearUnavailable(p.Name, absent, unlisted)
 		case !sameGPUAudit(old, gpuAuditOf(old.identity, found)):
-			detail := "the CDI specs or the nodes they pass differ from this Orker's audit"
+			detail, reason := "the CDI specs or the nodes they pass differ from this Orker's audit", changed
+			if !maps.Equal(old.gpu.hooks, found.hooks) {
+				detail, reason = "a hook binary differs from the build this Orker audited", hookMoved
+			}
 			drifted[p.Name] = detail
-			s.setDrift(p.Name, changed, detail, now)
+			s.setDrift(p.Name, reason, detail, now)
 		default:
 			s.clearUnavailable(p.Name, absent)
 		}
@@ -249,6 +283,7 @@ func (s *profileState) auditGPUOnce(host cdiHost, now time.Time) map[string]stri
 // spec bytes and the same nodes.
 func sameGPUAudit(a, b profileAudit) bool {
 	return a.gpu != nil && b.gpu != nil && maps.Equal(a.gpu.files, b.gpu.files) &&
+		maps.Equal(a.gpu.hooks, b.gpu.hooks) && maps.Equal(a.gpu.mounts, b.gpu.mounts) &&
 		slices.EqualFunc(a.unitNodes, b.unitNodes, func(x, y []auditedDevice) bool { return slices.Equal(x, y) })
 }
 
@@ -294,6 +329,7 @@ func (s *profileState) bootAuditProfiles() error {
 			fmt.Sprintf("no CDI spec of its kind in %s", strings.Join(s.cdiDirs, ", ")), time.Now())
 	}
 	s.setAudited(audits)
+	s.holdUnknownBuilds(audits, time.Now())
 	s.setDescribed(described)
 	return nil
 }
@@ -358,6 +394,17 @@ func (a *Activities) RunProfileAudit(ctx context.Context) {
 				drifted = map[string]string{}
 			}
 			maps.Copy(drifted, s.auditGPUOnce(hostCDI(parseProcDevices(string(raw)), s.cdiSocket), now))
+		}
+		found, err := s.auditRuntimeOnce(ctx, now)
+		if err != nil {
+			a.dispatcher.logger().Warn("the container engine's default runtime could not be checked this audit; "+
+				"it is checked again at the next one and before every container is created", "error", err)
+		}
+		if len(found) > 0 {
+			if drifted == nil {
+				drifted = map[string]string{}
+			}
+			maps.Copy(drifted, found)
 		}
 		for _, name := range slices.Sorted(maps.Keys(drifted)) {
 			a.dispatcher.logger().Error("a device profile drifted: it is out of service on this Orker until it restarts",
