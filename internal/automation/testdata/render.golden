@@ -21,7 +21,7 @@ input unset: unset
 telemetry: {sink: "datadog", task_logs: inherit, attributes: {a: "1", b: "2"}}
 telemetry unset: {}
 events: [TASK_SUCCEEDED, RUN_FAILED]
-events every run transition: []
+events the run's lifecycle: []
 schedule summary: reconcile@current  0 2 * * * (Europe/Lisbon)
 schedule summary interval: sync@2  @daily | every 1h
 trigger summary: deploy@current

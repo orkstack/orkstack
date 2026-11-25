@@ -172,7 +172,7 @@ func (s *runState) passChildArtifacts(ctx workflow.Context, id string) ([]NamedA
 	}
 	child.InputArtifacts = namedArtifactsProto(received)
 	req := ArtifactClaimRequest{RunID: s.runID, Artifacts: received}
-	err = workflow.ExecuteLocalActivity(claimCtx, ActivityStatAndClaimChildInputs, req).Get(ctx, nil)
+	err = s.getLocal(ctx, workflow.ExecuteLocalActivity(claimCtx, ActivityStatAndClaimChildInputs, req), nil)
 	if err != nil {
 		node := categoryOf(err)
 		if node.canceled || ctx.Err() != nil {
@@ -215,7 +215,7 @@ func (s *runState) claimReceived(ctx workflow.Context) error {
 	if err != nil {
 		return runLevelError(InvalidCompositionCode, err.Error())
 	}
-	err = workflow.ExecuteLocalActivity(claimCtx, ActivityClaimReceivedArtifacts, req).Get(ctx, nil)
+	err = s.getLocal(ctx, workflow.ExecuteLocalActivity(claimCtx, ActivityClaimReceivedArtifacts, req), nil)
 	if err == nil {
 		return nil
 	}
@@ -374,7 +374,7 @@ func (s *runState) receiveChildArtifacts(ctx workflow.Context, id string, child 
 	// archive listing every object it may have claimed.
 	s.taskRuns[id].Artifacts = refs
 	req := ArtifactClaimRequest{RunID: s.runID, Artifacts: plans}
-	if err := workflow.ExecuteLocalActivity(claimCtx, ActivityClaimReturnedArtifacts, req).Get(ctx, nil); err != nil {
+	if err := s.getLocal(ctx, workflow.ExecuteLocalActivity(claimCtx, ActivityClaimReturnedArtifacts, req), nil); err != nil {
 		node := categoryOf(err)
 		if node.canceled || ctx.Err() != nil {
 			return nil, err

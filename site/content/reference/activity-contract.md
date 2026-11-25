@@ -27,7 +27,7 @@ The working directory is `/orkstack`, and the container reads every input file.
 
 | Path | Access | Contents |
 |---|---|---|
-| `/orkstack/input/task.json` | read-only | The activity context: the task, the run, and the idempotency key. |
+| `/orkstack/input/task.json` | read-only | The activity context: the task, the run, its run context, and the idempotency key. |
 | `/orkstack/input/config.json` | read-only | The task's rendered `with:` block. `{}` when it sets none. |
 | `/orkstack/input/run.json` | read-only | The run's input. |
 | `/orkstack/input/upstream/<task>/values.json` | read-only | An upstream task's `values.json`. A fan-out has one directory per item, numbered from `00000`. |
@@ -45,6 +45,8 @@ The Orker reads the output only from inside `/orkstack/output` and follows no li
 ## Idempotency key
 
 `task.json` has an idempotency key of the form `{namespace}/{runId}/{taskId}`. It stays the same across the retries of one activity, and a fan-out item adds its index. Pass it to any external system that must deduplicate.
+
+`task.json` also says what the task may know about its run. `run.context` is `available`, `cached` or `unavailable`, and when it is `available`, `run` gives the run's origin, its start times and deadline, and its parent and root runs, and `task` gives when the task was scheduled. Check `run.context` first. A cached task gets `cached` and none of those keys, so a reused result never depends on them. `task.ownAttempt` and `task.maxAttempts` count the task's own attempts, and the last one is `ownAttempt == maxAttempts`.
 
 ## Exit status and result
 

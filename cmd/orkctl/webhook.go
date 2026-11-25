@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,20 +24,46 @@ type webhookListEnvelope struct {
 	Webhooks []webhooks.Webhook `json:"webhooks"`
 }
 
+// optInRunEvents are the run events an empty subscription does not select.
+func optInRunEvents() []webhooks.Event {
+	return slices.DeleteFunc(webhooks.KnownEvents(), func(e webhooks.Event) bool {
+		return slices.Contains(webhooks.RunEvents(), e) || slices.Contains(webhooks.TaskEvents(), e)
+	})
+}
+
+// eventLines lists events for help text, two spaces in, within 78 columns.
+func eventLines(events []webhooks.Event) string {
+	var out strings.Builder
+	line := " "
+	for i, e := range events {
+		word := " " + string(e)
+		if i < len(events)-1 {
+			word += ","
+		}
+		if len(line)+len(word) > 78 {
+			out.WriteString(line + "\n")
+			line = " "
+		}
+		line += word
+	}
+	return out.String() + line + "\n"
+}
+
 func newWebhookCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "webhook",
 		Short: "Create and inspect run-event callbacks",
 		Long: "A webhook receives a signed POST when a run or one of its tasks changes\n" +
-			"state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,\n" +
-			"RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,\n" +
-			"TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED. A pause's\n" +
-			"events: RUN_PAUSED, RUN_UNPAUSED.\n\n" +
-			"Omitting --event means every run transition; task events and a pause's\n" +
-			"events are opt-in by name. Task events are best-effort hints with a short retry budget: a\n" +
+			"state.\n\n" +
+			"The run's lifecycle, what omitting --event means:\n" + eventLines(webhooks.RunEvents()) +
+			"Run events opt-in by name:\n" + eventLines(optInRunEvents()) +
+			"Task events, opt-in by name:\n" + eventLines(webhooks.TaskEvents()) + "\n" +
+			"Task events are best-effort hints with a short retry budget: a\n" +
 			"subscriber that must not miss one reconciles with GetRun.\n\n" +
 			"A subscription is deployment-wide unless it names a scope: a namespace\n" +
-			"(-n), an orkflow (--orkflow) and a task (--task), each an exact match.\n\n" +
+			"(-n), an orkflow (--orkflow) and a task (--task), each an exact match. An\n" +
+			"orkflow is the run's own namespace's: another namespace's shared orkflow of\n" +
+			"that name is never one.\n\n" +
 			"What each delivery did is recorded; `deliveries` lists the records, `delivery`\n" +
 			"shows one, `redeliver` sends one again by hand.",
 	}
@@ -64,11 +91,13 @@ func newWebhookCreateCommand(g *globalFlags) *cobra.Command {
 		Use:   "create <url>",
 		Short: "Create a webhook: a callback URL for run events",
 		Long: "Create a webhook that calls a URL. Repeat --event to select transitions;\n" +
-			"omitting it subscribes to every run transition. Task events are opt-in\n" +
-			"and are best-effort hints: reconcile with GetRun if one must not be missed.\n\n" +
+			"omitting it subscribes to a run's start, its endings and RUN_RESUMED. Every\n" +
+			"other event is opt-in; task events are best-effort hints: reconcile with\n" +
+			"GetRun if one must not be missed.\n\n" +
 			"Scope defaults to every namespace; only an explicit -n narrows it.\n" +
-			"ORK_NAMESPACE and the saved default do not apply here. --orkflow and\n" +
-			"--task narrow further; each is an exact match, empty means every, and\n" +
+			"ORK_NAMESPACE and the saved default do not apply here. --orkflow (the\n" +
+			"run's own namespace's, never another's shared one) and --task narrow\n" +
+			"further; each is an exact match, empty means every, and\n" +
 			"--task needs at least one TASK_* event.\n\n" +
 			"--name gives the subscription a handle, unique in its namespace scope,\n" +
 			"by which an automation document addresses it; it needs an explicit -n.\n\n" +
@@ -136,7 +165,7 @@ func newWebhookCreateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&secret, "secret", "",
 		"signing secret to use instead of a generated one")
 	cmd.Flags().StringVar(&orkflowName, "orkflow", "",
-		"narrow to runs of this orkflow (exact name; empty means every orkflow)")
+		"narrow to runs of this orkflow of the run's own namespace (exact name; empty means every orkflow)")
 	cmd.Flags().StringVarP(&taskID, "task", "t", "",
 		"narrow task events to this task (exact id; needs a TASK_* --event)")
 	cmd.Flags().StringVar(&name, "name", "",
@@ -161,7 +190,7 @@ func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
 			"id and signing secret never change, so a receiver keeps verifying and the\n" +
 			"subscription's delivery history stays continuous.\n\n" +
 			"Only the flags given change anything: --event replaces the event list,\n" +
-			"--clear-events empties it (every run transition), an explicit -n sets the\n" +
+			"--clear-events empties it (the run's lifecycle), an explicit -n sets the\n" +
 			"namespace scope and --deployment-wide clears it, --orkflow \"\" and\n" +
 			"--task \"\" clear those, --name \"\" makes the subscription unnamed. A\n" +
 			"name needs a namespace scope. Rotating a secret is delete then create.",
@@ -268,9 +297,9 @@ func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "new handle (\"\" makes the subscription unnamed; needs a namespace scope)")
 	cmd.Flags().StringVar(&target, "url", "", "new callback URL")
 	cmd.Flags().StringArrayVar(&events, "event", nil, "replace the event list (repeatable): "+strings.Join(eventNames(), " | "))
-	cmd.Flags().BoolVar(&clearEvents, "clear-events", false, "empty the event list: every run transition")
+	cmd.Flags().BoolVar(&clearEvents, "clear-events", false, "empty the event list: the run's lifecycle")
 	cmd.Flags().BoolVar(&deploymentWide, "deployment-wide", false, "clear the namespace scope")
-	cmd.Flags().StringVar(&orkflowName, "orkflow", "", "narrow to runs of this orkflow (\"\" clears it)")
+	cmd.Flags().StringVar(&orkflowName, "orkflow", "", "narrow to runs of this orkflow of the run's own namespace (\"\" clears it)")
 	cmd.Flags().StringVarP(&taskID, "task", "t", "", "narrow task events to this task (\"\" clears it)")
 	return cmd
 }

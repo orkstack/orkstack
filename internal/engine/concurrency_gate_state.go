@@ -763,15 +763,26 @@ func (g *gateState) phaseNow() string {
 
 // dropExpiredQueued removes queued entries whose wait_until has passed
 // (§5.1.5); their runs learn it from their own deadline, not from the gate.
-func (g *gateState) dropExpiredQueued(now time.Time) {
+// It returns what it removed, by limit.
+func (g *gateState) dropExpiredQueued(now time.Time) map[gateReclaimKey]int {
+	var dropped map[gateReclaimKey]int
 	g.Queue = slices.DeleteFunc(g.Queue, func(e gateEntry) bool {
-		return !e.WaitUntil.IsZero() && !now.Before(e.WaitUntil)
+		if e.WaitUntil.IsZero() || now.Before(e.WaitUntil) {
+			return false
+		}
+		if dropped == nil {
+			dropped = map[gateReclaimKey]int{}
+		}
+		dropped[gateReclaimKey{gateLabel(g, e.LabelIx), gateReclaimExpired}]++
+		return true
 	})
+	return dropped
 }
 
-// gatePassEvents is what one check pass costs a gate's history (§5.1.10):
+// gatePassEvents is what one check pass costs a gate's history (§5.1.10),
+// the marker of its report included:
 // the boot refuses a continuation threshold below four of them.
-const gatePassEvents = 12
+const gatePassEvents = 13
 
 // gateWorstRunIDBytes and gateWorstLabelBytes size the worst-case carry and
 // are what the acquire validator holds a run id and a template to: a run id

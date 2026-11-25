@@ -11,11 +11,13 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/sdk/converter"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
@@ -24,14 +26,6 @@ import (
 // runStartedSequence is RUN_STARTED's sequence in generation 0: event 1 is
 // RUN_CREATED (workflow.go).
 const runStartedSequence = 2
-
-// resumeDispatchTypes are the activity types a task's attempt is scheduled
-// as. ExecuteResumedTask, a rerun's attempt on the pool's rerun channel,
-// lands with the resume engine (PR 2); a base resumed before holds it.
-var resumeDispatchTypes = map[string]bool{
-	task.ActivityExecuteTask: true,
-	"ExecuteResumedTask":     true,
-}
 
 // ResumeDispatch is one element of D: a task attempt the base scheduled.
 type ResumeDispatch struct {
@@ -44,6 +38,18 @@ type ResumeDispatch struct {
 	Grace            time.Duration
 	// Open: no completion, failure, timeout or cancellation follows it.
 	Open bool
+	// Completed: its Orker reported a result, so its container has exited.
+	Completed bool
+	// ClosedAt is when it closed; zero while Open.
+	ClosedAt time.Time
+}
+
+// ResumeChild is a child run the base asked to start.
+type ResumeChild struct {
+	RunID            string
+	InitiatedEventID int64
+	// Closed: the base saw it end, or saw that it never started.
+	Closed bool
 }
 
 // ResumeHistory is what ScanResumeBase found.
@@ -57,6 +63,16 @@ type ResumeHistory struct {
 	Dispatched map[ResumeUnit]bool
 	// Published names the tasks this execution published a task event for.
 	Published map[string]bool
+	// MaxPublishedSequence is the highest sequence of an event this execution
+	// scheduled a publish of.
+	MaxPublishedSequence int64
+	// Children is the child runs it asked to start, in order.
+	Children []ResumeChild
+	// PrefixBytes is the size of the events a reset to R keeps, through R's
+	// completion; zero without an R.
+	PrefixBytes int64
+	// WorkflowTaskTimeout is the run's own, from its start.
+	WorkflowTaskTimeout time.Duration
 	// CloseTime is the closing event's time. A base is always closed: a
 	// history without a closing event is refused as truncated.
 	CloseTime time.Time
@@ -89,14 +105,20 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 		Continued:  continued,
 		Dispatched: map[ResumeUnit]bool{},
 		Published:  map[string]bool{},
+
+		WorkflowTaskTimeout: started.GetWorkflowTaskTimeout().AsDuration(),
 	}
 	// Generation 0 waits for its RUN_STARTED publish: the activity whose
 	// input is that event, then its completion.
 	var runStartedScheduled int64
 	runStartedDone := h.Continued
-	open := map[int64]int{} // scheduled event id -> index in Dispatches
+	open := map[int64]int{}     // scheduled event id -> index in Dispatches
+	children := map[int64]int{} // initiated event id -> index in Children
 	last := int64(0)
 	for _, ev := range events {
+		if !h.ResetPoint.Found() {
+			h.PrefixBytes += int64(proto.Size(ev))
+		}
 		if id := ev.GetEventId(); id != last+1 {
 			return nil, fmt.Errorf("engine: scan resume base: event %d after event %d: the history is not whole", id, last)
 		}
@@ -117,6 +139,7 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 				if event.GetType() == orkstackv1.EventType_EVENT_TYPE_UNSPECIFIED {
 					return nil, fmt.Errorf("engine: scan resume base: the event published at event %d has no type", ev.GetEventId())
 				}
+				h.MaxPublishedSequence = max(h.MaxPublishedSequence, event.GetSequence())
 				if event.GetTaskId() != "" {
 					h.Published[event.GetTaskId()] = true
 				}
@@ -125,7 +148,7 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 					event.GetSequence() == runStartedSequence {
 					runStartedScheduled = ev.GetEventId()
 				}
-			case resumeDispatchTypes[name]:
+			case name == task.ActivityExecuteTask:
 				d, err := decodeDispatch(dc, ev)
 				if err != nil {
 					return nil, err
@@ -144,13 +167,36 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 					ev.GetEventId(), sched)
 			}
 			if i, ok := open[sched]; ok {
-				h.Dispatches[i].Open = false
+				if ev.GetEventTime() == nil {
+					return nil, fmt.Errorf("engine: scan resume base: the activity close at event %d has no time", ev.GetEventId())
+				}
+				d := &h.Dispatches[i]
+				d.Open, d.ClosedAt = false, ev.GetEventTime().AsTime()
+				d.Completed = ev.GetEventType() == enumspb.EVENT_TYPE_ACTIVITY_TASK_COMPLETED
 				delete(open, sched)
 			}
 			if runStartedScheduled != 0 && sched == runStartedScheduled &&
 				ev.GetEventType() == enumspb.EVENT_TYPE_ACTIVITY_TASK_COMPLETED {
 				runStartedDone = true
 			}
+		case enumspb.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED:
+			id := ev.GetStartChildWorkflowExecutionInitiatedEventAttributes().GetWorkflowId()
+			if id == "" {
+				return nil, fmt.Errorf("engine: scan resume base: the child run started at event %d has no id", ev.GetEventId())
+			}
+			children[ev.GetEventId()] = len(h.Children)
+			h.Children = append(h.Children, ResumeChild{RunID: id, InitiatedEventID: ev.GetEventId()})
+		case enumspb.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED,
+			enumspb.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED,
+			enumspb.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED,
+			enumspb.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED,
+			enumspb.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT,
+			enumspb.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED:
+			i, ok := children[childInitiatedID(ev)]
+			if !ok {
+				return nil, fmt.Errorf("engine: scan resume base: the child run's end at event %d names no start", ev.GetEventId())
+			}
+			h.Children[i].Closed = true
 		case enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED:
 			if runStartedDone && !h.ResetPoint.Found() {
 				attrs := ev.GetWorkflowTaskCompletedEventAttributes()
@@ -171,6 +217,9 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 			}
 			h.CloseTime = ev.GetEventTime().AsTime()
 		}
+	}
+	if !h.ResetPoint.Found() {
+		h.PrefixBytes = 0
 	}
 	if h.CloseTime.IsZero() {
 		return nil, fmt.Errorf("engine: scan resume base: the history ends at event %d without the execution's close", last)
@@ -203,6 +252,24 @@ func activityScheduledID(ev *historypb.HistoryEvent) int64 {
 		return ev.GetActivityTaskTimedOutEventAttributes().GetScheduledEventId()
 	case ev.GetActivityTaskCanceledEventAttributes() != nil:
 		return ev.GetActivityTaskCanceledEventAttributes().GetScheduledEventId()
+	}
+	return 0
+}
+
+func childInitiatedID(ev *historypb.HistoryEvent) int64 {
+	switch {
+	case ev.GetStartChildWorkflowExecutionFailedEventAttributes() != nil:
+		return ev.GetStartChildWorkflowExecutionFailedEventAttributes().GetInitiatedEventId()
+	case ev.GetChildWorkflowExecutionCompletedEventAttributes() != nil:
+		return ev.GetChildWorkflowExecutionCompletedEventAttributes().GetInitiatedEventId()
+	case ev.GetChildWorkflowExecutionFailedEventAttributes() != nil:
+		return ev.GetChildWorkflowExecutionFailedEventAttributes().GetInitiatedEventId()
+	case ev.GetChildWorkflowExecutionCanceledEventAttributes() != nil:
+		return ev.GetChildWorkflowExecutionCanceledEventAttributes().GetInitiatedEventId()
+	case ev.GetChildWorkflowExecutionTimedOutEventAttributes() != nil:
+		return ev.GetChildWorkflowExecutionTimedOutEventAttributes().GetInitiatedEventId()
+	case ev.GetChildWorkflowExecutionTerminatedEventAttributes() != nil:
+		return ev.GetChildWorkflowExecutionTerminatedEventAttributes().GetInitiatedEventId()
 	}
 	return 0
 }
@@ -266,6 +333,21 @@ func (h *ResumeHistory) Facts(run *orkstackv1.Run) (ResumeBaseFacts, error) {
 		Dispatched: h.Dispatched,
 		Earlier:    map[string]bool{},
 	}
+	if ResumePlanNeverRan(run.GetError().GetCode()) {
+		// This execution dispatched nothing: its rows are those of the run it
+		// was to resume, and one with an attempt was dispatched there.
+		f.Dispatched = maps.Clone(h.Dispatched)
+		for _, r := range run.GetTaskRuns() {
+			if r.GetAttempt() > 0 {
+				f.Dispatched[nodeUnit(r.GetTaskId())] = true
+			}
+			for _, it := range r.GetItems() {
+				if it.GetAttempt() > 0 {
+					f.Dispatched[ResumeUnit{Task: r.GetTaskId(), Item: int(it.GetItem())}] = true
+				}
+			}
+		}
+	}
 	if h.Continued {
 		for _, r := range run.GetTaskRuns() {
 			if isTerminalStatus(r.GetStatus()) && !h.Published[r.GetTaskId()] {
@@ -274,6 +356,31 @@ func (h *ResumeHistory) Facts(run *orkstackv1.Run) (ResumeBaseFacts, error) {
 		}
 	}
 	return f, nil
+}
+
+// resumeStopMargin is added to when the base's containers must have stopped.
+const resumeStopMargin = 30 * time.Second
+
+// ContainersStoppedBy is the instant after which no live Orker still runs a
+// container of the base (design §25.2): each attempt's Orker learns that its
+// activity is over within a heartbeat timeout and stops the container within
+// its grace. An attempt that reported its result had already exited. It says
+// nothing of an Orker that died, whose attempts ResumeRun asks about.
+func (h *ResumeHistory) ContainersStoppedBy() time.Time {
+	bound := h.CloseTime
+	for _, d := range h.Dispatches {
+		if d.Completed {
+			continue
+		}
+		ref := d.ClosedAt
+		if d.Open {
+			ref = h.CloseTime
+		}
+		if t := ref.Add(d.HeartbeatTimeout + d.Grace); t.After(bound) {
+			bound = t
+		}
+	}
+	return bound.Add(resumeStopMargin)
 }
 
 // OpenPinsAt names the pins a force cancel caught open: a pin with any

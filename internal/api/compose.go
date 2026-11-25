@@ -906,15 +906,20 @@ func (s *Service) mintChildren(planned *orkstackv1.Orkflow, plan *engine.RunPlan
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run's plan: %w", err))
 	}
-	reserved := 0
+	// What a child's start adds to its planned bytes: its origin, and the
+	// references its artifacts: bindings pass. Its trace is no larger than the
+	// top-level plan's, which is in the measured bytes (a context's parts have
+	// fixed lengths, and the state is copied).
+	references := 0
 	if plan.ArtifactClaims != nil {
-		reserved = bindings * int(plan.ArtifactClaims.ReserveBytesPerBind)
+		references = bindings * int(plan.ArtifactClaims.ReserveBytesPerBind)
 	}
+	reserved := engine.ChildOriginMaxBytes + references
 	if len(encoded)+reserved > engine.MaxPlanBytes {
-		what := ","
-		if reserved > 0 {
-			what = fmt.Sprintf(", and its %d artifact bindings reserve %d KiB for the references they pass,",
-				bindings, kib(reserved))
+		what := fmt.Sprintf(", and a child's start reserves %d KiB for its origin,", engine.ChildOriginMaxBytes/1024)
+		if references > 0 {
+			what = fmt.Sprintf(", a child's start reserves %d KiB for its origin, and its %d artifact bindings "+
+				"reserve %d KiB for the references they pass,", engine.ChildOriginMaxBytes/1024, bindings, kib(references))
 		}
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"the run's plan — this definition and the %d child runs it composes — encodes to %d KiB%s "+

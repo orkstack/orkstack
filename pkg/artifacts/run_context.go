@@ -6,23 +6,30 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"path"
+
+	"github.com/aws/smithy-go"
 )
 
 // The run-context object (docs/STORAGE.md): what a run tree's tasks may read
 // about the runs they belong to — the root's Orkflow and origin, and each
 // composed child's place in the tree. It is written once per run tree at
-// submit, named by the SHA-256 of its own bytes, under the root run's
-// snapshot prefix, and reclaimed with it. It holds no run id of the tree:
+// submit, named by the SHA-256 of its own bytes, under the root run's part of
+// a prefix of its own, and reclaimed with the root. An engine writes it and
+// an Orker only gets it, by the key its task's input names: the prefix is
+// apart from the run's saved state and admission, which an Orker's credential
+// must not reach (docs/DEPLOY.md). It holds no run id of the tree:
 // those are minted after its content is fixed and travel in each task's
 // input (ExecuteTaskInput.run_context). It is never execution state.
 
 const (
+	// RunContextPrefix roots the run-context objects.
+	RunContextPrefix = "metadata/run-context"
 	// MaxRunContextObjectBytes bounds one object. The run plan's 256 KiB
 	// bounds how many composed runs a tree holds, and each entry is far
 	// smaller than the plan's share for it.
 	MaxRunContextObjectBytes = 1 << 20
 	runContextFormat         = 1
-	runContextObjectPrefix   = "run-context-"
 	runContextObjectSuffix   = ".json"
 )
 
@@ -30,6 +37,11 @@ var (
 	// ErrRunContextMissing is a run-context object the store says is not
 	// there.
 	ErrRunContextMissing = errors.New("run context object missing")
+	// ErrRunContextRefused is a run-context object the store refused to read.
+	// A store refuses a missing key as it refuses a forbidden one to a
+	// credential that may not list, as an Orker's may not, so it says the
+	// object is missing or the credential may not read it, and not which.
+	ErrRunContextRefused = errors.New("run context object refused")
 	// ErrRunContextInvalid is a run-context object whose bytes are not what
 	// its name says, or are no object of a known format.
 	ErrRunContextInvalid = errors.New("run context object invalid")
@@ -156,24 +168,61 @@ func checkRunContextObject(o RunContextObject) string {
 	return ""
 }
 
+// RunContextRunPrefix renders the prefix of a root run's run-context object:
+// metadata/run-context/{ns}/{root-run-id}/. Run-scoped cleanup deletes it.
+func RunContextRunPrefix(namespace, rootRunID string) (string, error) {
+	namespaceSegment, err := encodeArchiveSegment(ResolveNamespace(namespace))
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run context prefix: namespace: %w", err)
+	}
+	runSegment, err := encodeArchiveSegment(rootRunID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run context prefix: run id: %w", err)
+	}
+	return path.Join(RunContextPrefix, namespaceSegment, runSegment) + "/", nil
+}
+
 // RunContextKey renders the key of a run tree's run-context object:
-// metadata/snapshots/{ns}/{root-run-id}/run-context-{sha256}.json.
+// metadata/run-context/{ns}/{root-run-id}/{sha256}.json.
 func RunContextKey(namespace, rootRunID, sha256Hex string) (string, error) {
 	if !lowerHex64(sha256Hex) {
 		return "", fmt.Errorf("artifacts: run context key: %q is not a SHA-256 in lowercase hex", sha256Hex)
 	}
-	prefix, err := RunSnapshotPrefix(namespace, rootRunID)
+	prefix, err := RunContextRunPrefix(namespace, rootRunID)
 	if err != nil {
 		return "", err
 	}
-	return prefix + runContextObjectPrefix + sha256Hex + runContextObjectSuffix, nil
+	return prefix + sha256Hex + runContextObjectSuffix, nil
+}
+
+// RunContextStore holds the run-context objects: the engine writes them, the
+// Orkers read them.
+type RunContextStore struct{ blobBase }
+
+// NewRunContextStore opens the run-context objects of a deployment's store.
+func NewRunContextStore(ctx context.Context, cfg Config) (*RunContextStore, error) {
+	b, err := openBlobs(ctx, cfg, "run context store", RunContextPrefix)
+	if err != nil {
+		return nil, err
+	}
+	return &RunContextStore{blobBase{b}}, nil
+}
+
+// NewLocalRunContextStore opens (creating if needed) the run-context objects
+// under dir.
+func NewLocalRunContextStore(dir string) (*RunContextStore, error) {
+	b, err := openLocalBlobs("run context store", dir, RunContextPrefix)
+	if err != nil {
+		return nil, err
+	}
+	return &RunContextStore{blobBase{b}}, nil
 }
 
 // WriteRunContext writes a run tree's object under its root run,
 // create-if-absent at the key its bytes name. The same bytes already there
 // are success, so a retried or reissued write converges; other bytes at the
 // key are an error.
-func (s *BlobRunSnapshotStore) WriteRunContext(ctx context.Context, namespace, rootRunID string, data []byte) error {
+func (s *RunContextStore) WriteRunContext(ctx context.Context, namespace, rootRunID string, data []byte) error {
 	if _, err := DecodeRunContextObject(data); err != nil {
 		return fmt.Errorf("artifacts: put run context: %w", err)
 	}
@@ -202,25 +251,39 @@ func (s *BlobRunSnapshotStore) WriteRunContext(ctx context.Context, namespace, r
 
 // ReadRunContext reads and verifies the object sha256Hex names under the root
 // run: ErrRunContextMissing when the store says it is not there,
-// ErrRunContextInvalid when sha256Hex names no object or the bytes do not hash
+// ErrRunContextRefused when it refuses the read, ErrRunContextInvalid when sha256Hex names no object or the bytes do not hash
 // to the name or are no object; any other error is the store's. A reader
 // never retries an invalid object: its bytes cannot change.
-func (s *BlobRunSnapshotStore) ReadRunContext(ctx context.Context, namespace, rootRunID, sha256Hex string) (RunContextObject, error) {
+func (s *RunContextStore) ReadRunContext(ctx context.Context, namespace, rootRunID, sha256Hex string) (RunContextObject, error) {
+	raw, err := s.ReadRunContextBytes(ctx, namespace, rootRunID, sha256Hex)
+	if err != nil {
+		return RunContextObject{}, err
+	}
+	return DecodeRunContextObject(raw)
+}
+
+// ReadRunContextBytes is ReadRunContext's read without the decode: the bytes
+// sha256Hex names, verified against it, with the same error classes.
+func (s *RunContextStore) ReadRunContextBytes(ctx context.Context, namespace, rootRunID, sha256Hex string) ([]byte, error) {
 	key, err := RunContextKey(namespace, rootRunID, sha256Hex)
 	if err != nil {
 		// A run's reference that names no object is as invalid as one that
 		// names other bytes: no read can change it.
-		return RunContextObject{}, fmt.Errorf("%w: %v", ErrRunContextInvalid, err)
+		return nil, fmt.Errorf("%w: %v", ErrRunContextInvalid, err)
 	}
 	raw, _, err := s.b.get(ctx, key, MaxRunContextObjectBytes+1)
 	if errors.Is(err, errBlobNotFound) {
-		return RunContextObject{}, fmt.Errorf("%w: %s", ErrRunContextMissing, s.b.locate(key))
+		return nil, fmt.Errorf("%w: %s", ErrRunContextMissing, s.b.locate(key))
 	}
 	if err != nil {
-		return RunContextObject{}, fmt.Errorf("artifacts: read run context %q: %w", s.b.locate(key), err)
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "AccessDenied" {
+			return nil, fmt.Errorf("%w: %s: %w", ErrRunContextRefused, s.b.locate(key), err)
+		}
+		return nil, fmt.Errorf("artifacts: read run context %q: %w", s.b.locate(key), err)
 	}
 	if hexDigest(raw) != sha256Hex {
-		return RunContextObject{}, fmt.Errorf("%w: %s does not hash to its name", ErrRunContextInvalid, s.b.locate(key))
+		return nil, fmt.Errorf("%w: %s does not hash to its name", ErrRunContextInvalid, s.b.locate(key))
 	}
-	return DecodeRunContextObject(raw)
+	return raw, nil
 }

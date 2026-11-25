@@ -246,6 +246,11 @@ func scopeCheckRequest(r s3scope.Request) bool {
 				return true
 			}
 		}
+		for _, p := range artifacts.ScopeReadOnlyPrefixes {
+			if !p.Listed && r.Key == p.Prefix+"/" {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -296,6 +301,16 @@ func TestIntegration_TheDocumentedOrkerPolicyIsEnough(t *testing.T) {
 	}
 	if tasks == 0 {
 		t.Fatal("no task request went through the proxy, so nothing here was tested")
+	}
+	// The run-context object was read through the policy, by its key alone.
+	contexts := 0
+	for _, r := range s.proxy.Requests() {
+		if r.Verb == s3scope.Get && strings.HasPrefix(r.Key, artifacts.RunContextPrefix+"/") && r.Allowed {
+			contexts++
+		}
+	}
+	if contexts == 0 {
+		t.Fatal("no task read its run context through the proxy")
 	}
 	if len(refused) > 0 {
 		t.Fatalf("the documented policy refused %d of the Orker's own requests: %q", len(refused), refused)

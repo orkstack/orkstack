@@ -360,7 +360,7 @@ func (h *StatsHandler) compute(
 		RunsByStatus: statusCounts(tally, len(running)-int(paused)),
 		Paused:       paused,
 		MostFailing:  mostFailing(tally),
-		Running:      running,
+		Running:      withoutTraceparents(running),
 		Pools:        pools,
 		ComputedAt:   timestamppb.New(now),
 		Namespace:    window.Namespace,

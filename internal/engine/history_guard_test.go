@@ -599,7 +599,8 @@ func TestStartChild_CopiesTheRunTreeLimits(t *testing.T) {
 		parent, plan := tree(t)
 		starts := run(t, plan, parent)
 		want := plan.Children["release"].Plan
-		want.Origin = &engine.RunOrigin{Kind: engine.RunOriginKindParentRun, ID: "ork-parent"}
+		want.Origin = &engine.RunOrigin{Kind: engine.RunOriginKindParentRun, ID: "ork-parent", ParentTaskID: "release",
+			ParentOrkflow: &engine.OrkflowRefPlan{Name: parent.GetName(), Version: parent.GetVersion(), Digest: parent.GetDefinitionDigest()}}
 		var got engine.RunPlan
 		for _, start := range starts {
 			if start.runID == plan.Children["release"].RunID {

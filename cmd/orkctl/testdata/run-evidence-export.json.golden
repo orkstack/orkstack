@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "run_id": "ork-evidence-1",
   "namespace": "default",
   "orkflow_name": "payments-reconcile",

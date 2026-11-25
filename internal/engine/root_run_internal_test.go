@@ -53,7 +53,7 @@ func TestChildStartPlan_RecordsTheRoot(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := &runState{runID: "ork-this-run", plan: RunPlan{Origin: tc.origin, RecordRootRun: tc.record}}
-			got := state.childStartPlan(&ChildRunPlan{RunID: "ork-child"})
+			got := state.childStartPlan("release", &ChildRunPlan{RunID: "ork-child"})
 			if got.Origin == nil || got.Origin.Kind != RunOriginKindParentRun || got.Origin.ID != "ork-this-run" {
 				t.Fatalf("child origin = %+v, want the parent named", got.Origin)
 			}
@@ -73,7 +73,7 @@ func TestChildStartPlan_RecordsTheRoot(t *testing.T) {
 // is byte for byte what its build sent.
 func TestChildStartPlan_UnrecordedParentEncodesAsBefore(t *testing.T) {
 	state := &runState{runID: "ork-this-run", plan: RunPlan{Origin: &RunOrigin{Kind: "RUN_ORIGIN_KIND_SUBMIT"}}}
-	encoded, err := stablejson.Marshal(state.childStartPlan(&ChildRunPlan{RunID: "ork-child"}))
+	encoded, err := stablejson.Marshal(state.childStartPlan("release", &ChildRunPlan{RunID: "ork-child"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestRunStartSearchAttributes_StampsTheRootOnlyWhenTheClusterHasIt(t *testin
 func TestChildStartPlan_CopiesTheRootIndexAnswer(t *testing.T) {
 	for _, indexed := range []bool{true, false} {
 		state := &runState{runID: "ork-this-run", plan: RunPlan{RecordRootRun: true, RootRunIndexed: indexed}}
-		if got := state.childStartPlan(&ChildRunPlan{RunID: "ork-child"}).RootRunIndexed; got != indexed {
+		if got := state.childStartPlan("release", &ChildRunPlan{RunID: "ork-child"}).RootRunIndexed; got != indexed {
 			t.Errorf("parent's answer %v became the child's %v", indexed, got)
 		}
 	}

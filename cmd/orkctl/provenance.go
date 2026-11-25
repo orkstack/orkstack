@@ -109,7 +109,7 @@ func renderArtifactProvenance(out io.Writer, res *orkstackv1.GetArtifactProvenan
 				created = ref.GetRunCreatedAt().AsTime().UTC().Format(time.RFC3339)
 			}
 			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				ref.GetRunId(), orDash(ref.GetOrkflowName()), orDash(ref.GetOrkflowVersion()), itemLabel(ref.GetTaskId(), ref.Item),
+				ref.GetRunId(), orDash(ownedLabel(ref.GetOrkflowNamespace(), ref.GetOrkflowName())), orDash(ref.GetOrkflowVersion()), itemLabel(ref.GetTaskId(), ref.Item),
 				enumname.Of(ref.GetKind()), statusLabel(ref.GetRunStatus()), created)
 		}
 		if err := table.Flush(); err != nil {

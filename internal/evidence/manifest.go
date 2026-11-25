@@ -18,18 +18,20 @@ import (
 	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
-// SchemaVersion is the manifest schema every bundle whose run's archive
-// records no gap is written with.
-const SchemaVersion = 1
+// SchemaVersion is the manifest schema every bundle is written with. Its
+// event_gaps names every range of the run's event stream its archive does not
+// hold — events lost from object storage before it was archived, or numbers
+// it never published — and is absent when there is none. A tool older than it
+// refuses the bundle with its own message instead of verifying it while
+// ignoring a key or a state it does not know; a newer bundle is refused here.
+const SchemaVersion = 3
 
-// SchemaVersionEventGaps is the schema of a bundle whose run's archive
-// records gaps in its event stream — events lost from object storage before
-// it was archived, or numbers it never published: the same members, plus
-// event_gaps naming every range. It is a new version, not an additive key,
-// so a tool older than it refuses the bundle with its own message instead of
-// verifying it silently. These are the two versions this build reads; a
-// newer bundle is not verified by an older tool.
-const SchemaVersionEventGaps = 2
+// The schemas earlier engines wrote, which this build reads: one for a bundle
+// with no event gap, one for a bundle that names some.
+const (
+	SchemaVersionNoGaps    = 1
+	SchemaVersionEventGaps = 2
+)
 
 // ManifestPath is the name of a bundle's first member.
 const ManifestPath = "MANIFEST.json"
@@ -127,7 +129,7 @@ type Manifest struct {
 	Tasks            []TaskEntry `json:"tasks"`
 	Members          []Member    `json:"members"`
 	Counts           Counts      `json:"counts"`
-	// EventGaps is set, and only set, on a schema_version 2 bundle: every
+	// EventGaps is set only when the run's archive records a gap: every
 	// range of the run's event stream its archive does not hold — lost from
 	// object storage before the run was archived, or never published. The
 	// archive body (run.jsonl) records the same ranges as gap lines.
@@ -163,7 +165,7 @@ type Scope struct {
 	Logs      bool   `json:"logs"`
 	Artifacts bool   `json:"artifacts"`
 	// Item is set when the request narrowed task_id to one item of a
-	// fan-out. Additive: schema_version stays 1.
+	// fan-out.
 	Item *int32 `json:"item,omitzero"`
 }
 
@@ -280,8 +282,8 @@ func (m Manifest) MarshalJSON() ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// ParseManifest decodes a MANIFEST.json document. It reads schema_version 1
-// and 2: version 2 requires a non-empty event_gaps, and version 1 forbids
+// ParseManifest decodes a MANIFEST.json document. It reads schema_version 1,
+// 2 and 3: version 2 requires a non-empty event_gaps, and version 1 forbids
 // one. Any other version is refused: a newer bundle is not read by an older
 // tool.
 func ParseManifest(document []byte) (*Manifest, error) {
@@ -294,9 +296,9 @@ func ParseManifest(document []byte) (*Manifest, error) {
 	if probe.SchemaVersion == nil {
 		return nil, fmt.Errorf("evidence: MANIFEST.json has no schema_version")
 	}
-	if *probe.SchemaVersion != SchemaVersion && *probe.SchemaVersion != SchemaVersionEventGaps {
-		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d is not supported by this tool (it reads %d and %d)",
-			*probe.SchemaVersion, SchemaVersion, SchemaVersionEventGaps)
+	if *probe.SchemaVersion < SchemaVersionNoGaps || *probe.SchemaVersion > SchemaVersion {
+		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d is not supported by this tool (it reads %d to %d)",
+			*probe.SchemaVersion, SchemaVersionNoGaps, SchemaVersion)
 	}
 	var m manifestJSON
 	if err := json.Unmarshal(document, &m); err != nil {
@@ -306,9 +308,9 @@ func ParseManifest(document []byte) (*Manifest, error) {
 	switch {
 	case manifest.SchemaVersion == SchemaVersionEventGaps && len(manifest.EventGaps) == 0:
 		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d names no event_gaps", SchemaVersionEventGaps)
-	case manifest.SchemaVersion == SchemaVersion && len(manifest.EventGaps) > 0:
-		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d carries event_gaps, which only schema_version %d may",
-			SchemaVersion, SchemaVersionEventGaps)
+	case manifest.SchemaVersion == SchemaVersionNoGaps && len(manifest.EventGaps) > 0:
+		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d carries event_gaps, which only schema_version %d and later may",
+			SchemaVersionNoGaps, SchemaVersionEventGaps)
 	}
 	for _, gap := range manifest.EventGaps {
 		if gap.First < 1 || gap.Last < gap.First {

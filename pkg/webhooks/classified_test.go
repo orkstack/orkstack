@@ -9,11 +9,7 @@ import (
 )
 
 // notSubscribable is every event type a subscription can never name.
-// A resumed run's two events are here until E85's webhook commit (PR7, before
-// or with PR5's ResumeRun) makes them subscribable, with their documentation
-// and UI: no subscription receives them today (engine.IsSubscribableEvent
-// names neither).
-var notSubscribable = []Event{"RUN_CREATED", "TASK_LOG", "STREAM_GAP", "RUN_RESUMED", "RUN_RESULTS_KEPT"}
+var notSubscribable = []Event{"RUN_CREATED", "TASK_LOG", "STREAM_GAP"}
 
 // TestWebhooks_EveryEventTypeIsClassified: a new proto event type fails here
 // until it is placed in KnownEvents or in notSubscribable, so no event is
@@ -38,7 +34,7 @@ func TestWebhooks_EveryEventTypeIsClassified(t *testing.T) {
 			t.Errorf("KnownEvents names %s, which is no proto event type", event)
 		}
 	}
-	want := []Event{"RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED"}
+	want := []Event{"RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "RUN_RESUMED"}
 	if got := RunEvents(); !slices.Equal(got, want) {
 		t.Errorf("RunEvents() = %v, want %v", got, want)
 	}

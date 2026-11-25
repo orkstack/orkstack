@@ -79,12 +79,13 @@ type ConcurrencyArrival struct {
 }
 
 type concurrencyInstruments struct {
-	arrivals, exits metric.Int64Counter
-	wait            metric.Float64Histogram
+	arrivals, exits                         metric.Int64Counter
+	wait                                    metric.Float64Histogram
+	reclaimed, verifyErrors, rebuilt, gates metric.Int64Counter
 }
 
-// ConcurrencyMetrics records arrivals and exits on each namespace's sink. A
-// nil *ConcurrencyMetrics records nothing.
+// ConcurrencyMetrics records arrivals, exits and what the gates report on
+// each namespace's sink. A nil *ConcurrencyMetrics records nothing.
 type ConcurrencyMetrics struct {
 	sinks        *areaSinks[*concurrencyInstruments]
 	orkflowLabel bool
@@ -111,6 +112,7 @@ func NewConcurrencyMetrics(p *Providers, route GCRouter, orkflowLabel bool, logg
 				metric.WithDescription("Seconds a run or task waited in a concurrency limit's line, by how the wait ended."),
 				metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(concurrencyWaitBuckets...))
 			errs = append(errs, err)
+			errs = append(errs, inst.buildGateReport(meter))
 			if err := errors.Join(errs...); err != nil {
 				return nil, err
 			}

@@ -123,12 +123,12 @@ func (s *runState) endResumeUnrunnable(ctx workflow.Context, failure error) (*or
 	}
 	now := workflow.Now(ctx)
 	var uri string
-	err := workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, snapshotLocalActivityOptions()), ActivityWriteResumeEnding,
+	err := s.getLocal(ctx, workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, snapshotLocalActivityOptions()), ActivityWriteResumeEnding,
 		ResumeEndingInput{
 			Namespace: s.wf.GetNamespace(), RunID: s.runID,
 			From: int64(f.scope) - 1, To: int64(f.scope),
 			Code: f.code, Message: f.message, FinishedAt: now,
-		}).Get(ctx, &uri)
+		}), &uri)
 	if err != nil {
 		workflow.GetLogger(ctx).Error("a reset run cannot write its ending from its base's last snapshot; it fails with no event",
 			"run_id", s.runID, "code", f.code, "error", err)

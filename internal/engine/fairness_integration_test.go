@@ -83,7 +83,7 @@ func startPrivateTemporal(t *testing.T, ctx context.Context, settings ...string)
 	must.OK(t, err)
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
+		c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: client.DefaultNamespace}, nil))
 		if err == nil {
 			_, err = c.WorkflowService().DescribeNamespace(ctx,
 				&workflowservice.DescribeNamespaceRequest{Namespace: client.DefaultNamespace})
@@ -155,7 +155,7 @@ func lateNamespaceMeanPosition(t *testing.T, ctx context.Context, address string
 // namespace's dispatches queued in the shape given.
 func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address string, shape fairShape) float64 {
 	t.Helper()
-	c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
+	c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: client.DefaultNamespace}, nil))
 	must.OKf(t, err, "dial %s", address)
 	t.Cleanup(c.Close)
 	runQueue, orkerQueue := "ork-fair-runs", "ork-fair-tasks"

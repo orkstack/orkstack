@@ -28,13 +28,32 @@ var OrkerAllowedPrefixes = []string{
 	s3OrkflowNamespace,
 	s3ManifestNamespace,
 	CommitPrefix,
-	"metadata/attested",
+	AttestedPrefix,
 	MemoPrefix,
 	LogPrefix,
 	AttemptPrefix,
 	"metadata/probes",
 	ReceiptPrefix,
 	EventSourceStagingPrefix,
+	RunContextPrefix,
+}
+
+// ScopeReadOnly is one prefix of the allow-list an Orker may only read.
+type ScopeReadOnly struct {
+	Prefix string
+	// Listed says the Orker may also list the prefix, because it reads keys
+	// there that may not exist.
+	Listed bool
+}
+
+// ScopeReadOnlyPrefixes are the allow-list's prefixes only an engine may
+// write: the results it attested, which an Orker that could write there could
+// forge, and the run contexts, which an Orker gets by a key it was handed and
+// so need not list. The check asks the store to refuse a write and a delete
+// of each, and a listing of one that is not Listed.
+var ScopeReadOnlyPrefixes = []ScopeReadOnly{
+	{Prefix: AttestedPrefix, Listed: true},
+	{Prefix: RunContextPrefix},
 }
 
 // ScopeCheckedPrefixes is every prefix outside the allow-list, each of which
@@ -213,8 +232,9 @@ func reach(a answer) answer {
 }
 
 // checkStoreScope runs one round: the control, then a conditional write, a
-// conditional delete and a listing of each checked prefix, then a read of the
-// sentinel, then the results request.
+// conditional delete and a listing of each checked prefix, and of each
+// read-only one what it does not grant, then a read of the sentinel, then the
+// results request.
 func checkStoreScope(ctx context.Context, client *s3.Client, bucket, orkerID string) ScopeRound {
 	var round ScopeRound
 	// leftBehind is every key a 2xx stored that the check could not remove.
@@ -266,7 +286,7 @@ func checkStoreScope(ctx context.Context, client *s3.Client, bucket, orkerID str
 			}
 		}
 	}
-	for _, prefix := range ScopeCheckedPrefixes {
+	refuse := func(prefix string, list bool) {
 		key := prefix + "/" + ScopeResultsSegment + "/" + orkerID
 		a, code := readAnswer(put(key))
 		note("put "+prefix+"/", reach(a), code)
@@ -276,6 +296,9 @@ func checkStoreScope(ctx context.Context, client *s3.Client, bucket, orkerID str
 		a, code = readAnswer(err)
 		note("delete "+prefix+"/", reach(a), code)
 
+		if !list {
+			return
+		}
 		_, err = client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket),
 			Prefix: aws.String(prefix + "/"), MaxKeys: aws.Int32(1)})
 		a, code = readAnswer(err)
@@ -283,6 +306,12 @@ func checkStoreScope(ctx context.Context, client *s3.Client, bucket, orkerID str
 			a = answerUnclear
 		}
 		note("list "+prefix+"/", a, code)
+	}
+	for _, prefix := range ScopeCheckedPrefixes {
+		refuse(prefix, true)
+	}
+	for _, p := range ScopeReadOnlyPrefixes {
+		refuse(p.Prefix, !p.Listed)
 	}
 
 	out, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(ScopeSentinelKey)})

@@ -24,7 +24,7 @@
             "type": "prometheus",
             "uid": "${prom}"
           },
-          "expr": "sum(rate(ork_runs_total{ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[5m])) * 60 or vector(0)",
+          "expr": "sum(rate(ork_runs_total{ork_run_resumption!=\"true\",ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[5m])) * 60 or vector(0)",
           "instant": true,
           "legendFormat": "runs",
           "range": false,
@@ -32,7 +32,7 @@
         }
       ],
       "title": "Runs / min",
-      "description": "Runs that finished, per minute, over the last 5 minutes.",
+      "description": "Runs that finished, per minute, over the last 5 minutes. A resumed run counts once: its later endings are left out.",
       "transparent": false,
       "datasource": {
         "type": "prometheus",
@@ -90,7 +90,7 @@
         }
       ],
       "title": "Failure ratio, 15 m",
-      "description": "The share of runs that finished in the last 15 minutes and failed.",
+      "description": "The share of runs that finished in the last 15 minutes and failed. Each ending of a resumed run counts.",
       "transparent": false,
       "datasource": {
         "type": "prometheus",
@@ -923,7 +923,7 @@
             }
           ],
           "title": "Runs by status",
-          "description": "Runs that finished, per second, by status.",
+          "description": "Runs that finished, per second, by status. Each ending of a resumed run counts.",
           "transparent": false,
           "datasource": {
             "type": "prometheus",
@@ -964,7 +964,7 @@
                 "type": "prometheus",
                 "uid": "${prom}"
               },
-              "expr": "histogram_quantile(0.5, sum by (le) (rate(ork_run_duration_seconds_bucket{ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.5, sum by (le) (rate(ork_run_duration_seconds_bucket{ork_run_resumption!=\"true\",ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__rate_interval])))",
               "instant": false,
               "legendFormat": "p50",
               "range": true,
@@ -975,7 +975,7 @@
                 "type": "prometheus",
                 "uid": "${prom}"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_run_duration_seconds_bucket{ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(ork_run_duration_seconds_bucket{ork_run_resumption!=\"true\",ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__rate_interval])))",
               "instant": false,
               "legendFormat": "p95",
               "range": true,
@@ -986,7 +986,7 @@
                 "type": "prometheus",
                 "uid": "${prom}"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(ork_run_duration_seconds_bucket{ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(ork_run_duration_seconds_bucket{ork_run_resumption!=\"true\",ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__rate_interval])))",
               "instant": false,
               "legendFormat": "p99",
               "range": true,
@@ -994,7 +994,7 @@
             }
           ],
           "title": "Run duration",
-          "description": "Run duration from start to finish, at the 50th, 95th and 99th percentiles.",
+          "description": "Run duration from start to finish, at the 50th, 95th and 99th percentiles. A resumed run's later endings are left out.",
           "transparent": false,
           "datasource": {
             "type": "prometheus",
@@ -1309,7 +1309,7 @@
                 "uid": "${prom}"
               },
               "exemplar": true,
-              "expr": "sum by (le) (increase(ork_run_duration_seconds_bucket{ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__interval]))",
+              "expr": "sum by (le) (increase(ork_run_duration_seconds_bucket{ork_run_resumption!=\"true\",ork_namespace=~\"$namespace\",ork_orkflow_name=~\"$orkflow\"}[$__interval]))",
               "format": "heatmap",
               "instant": false,
               "legendFormat": "{{le}}",
@@ -1318,7 +1318,7 @@
             }
           ],
           "title": "Run duration distribution",
-          "description": "How long runs took, bucket by bucket; an exemplar opens the trace of one run of that length.",
+          "description": "How long runs took, bucket by bucket; an exemplar opens the trace of one run of that length. A resumed run's later endings are left out.",
           "transparent": false,
           "datasource": {
             "type": "prometheus",
@@ -4955,6 +4955,145 @@
                 "type": "prometheus",
                 "uid": "${prom}"
               },
+              "expr": "sum by (ork_concurrency_limit, ork_concurrency_outcome) (rate(ork_concurrency_reclaimed_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_concurrency_limit}} {{ork_concurrency_outcome}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_concurrency_limit) (rate(ork_concurrency_verify_errors_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "{{ork_concurrency_limit}} check failed",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Slots taken back",
+          "description": "Slots and places in line a limit took back, per second, because their run no longer holds or waits for them, by why, and the checks of a run that failed, whose slot or place is kept.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 331
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        10,
+                        10
+                      ],
+                      "fill": "dash"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(rate(ork_concurrency_gates_started_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "started",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum by (ork_concurrency_outcome) (rate(ork_concurrency_rebuilt_total{ork_namespace=~\"$namespace\"}[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "rebuild {{ork_concurrency_outcome}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Limit starts",
+          "description": "Keys that became active, per second, and the rebuilds of their record: skipped after a clean end, done, or an attempt that failed and is tried again.",
+          "transparent": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 331
+          },
+          "repeatDirection": "h",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "",
+              "sort": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {}
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
               "expr": "max(ork_concurrency_census_gates)",
               "instant": false,
               "legendFormat": "gates",
@@ -5004,6 +5143,17 @@
               "legendFormat": "{{ork_namespace}} partial",
               "range": true,
               "refId": "E"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${prom}"
+              },
+              "expr": "sum(increase(ork_concurrency_census_failures_total[$__rate_interval]))",
+              "instant": false,
+              "legendFormat": "passes that could not run",
+              "range": true,
+              "refId": "F"
             }
           ],
           "title": "Concurrency census",
@@ -5017,7 +5167,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 331
+            "y": 339
           },
           "repeatDirection": "h",
           "options": {
@@ -5037,7 +5187,26 @@
               "unit": "short",
               "custom": {}
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "F"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        10,
+                        10
+                      ],
+                      "fill": "dash"
+                    }
+                  }
+                ]
+              }
+            ]
           }
         },
         {
@@ -5088,7 +5257,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 331
+            "y": 339
           },
           "repeatDirection": "h",
           "options": {
@@ -5137,7 +5306,7 @@
             "h": 4,
             "w": 4,
             "x": 0,
-            "y": 339
+            "y": 347
           },
           "repeatDirection": "h",
           "options": {
@@ -5184,7 +5353,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 343
+        "y": 351
       },
       "id": 0,
       "panels": [
@@ -5214,7 +5383,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 344
+            "y": 352
           },
           "repeatDirection": "h",
           "options": {
@@ -5274,7 +5443,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 344
+            "y": 352
           },
           "repeatDirection": "h",
           "options": {
@@ -5323,7 +5492,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 352
+            "y": 360
           },
           "repeatDirection": "h",
           "options": {
@@ -5383,7 +5552,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 352
+            "y": 360
           },
           "repeatDirection": "h",
           "options": {
@@ -5432,7 +5601,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 360
+            "y": 368
           },
           "repeatDirection": "h",
           "options": {
@@ -5481,7 +5650,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 360
+            "y": 368
           },
           "repeatDirection": "h",
           "options": {
@@ -5530,7 +5699,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 368
+            "y": 376
           },
           "repeatDirection": "h",
           "options": {
@@ -5579,7 +5748,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 368
+            "y": 376
           },
           "repeatDirection": "h",
           "options": {
@@ -5639,7 +5808,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 376
+            "y": 384
           },
           "repeatDirection": "h",
           "options": {
@@ -5688,7 +5857,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 376
+            "y": 384
           },
           "repeatDirection": "h",
           "options": {
@@ -5748,7 +5917,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 384
+            "y": 392
           },
           "repeatDirection": "h",
           "options": {
@@ -5797,7 +5966,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 384
+            "y": 392
           },
           "repeatDirection": "h",
           "options": {
@@ -5857,7 +6026,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 392
+            "y": 400
           },
           "repeatDirection": "h",
           "options": {
@@ -5906,7 +6075,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 392
+            "y": 400
           },
           "repeatDirection": "h",
           "options": {
@@ -5966,7 +6135,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 400
+            "y": 408
           },
           "repeatDirection": "h",
           "options": {
@@ -6015,7 +6184,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 400
+            "y": 408
           },
           "repeatDirection": "h",
           "options": {
@@ -6064,7 +6233,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 408
+            "y": 416
           },
           "repeatDirection": "h",
           "options": {
@@ -6124,7 +6293,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 408
+            "y": 416
           },
           "repeatDirection": "h",
           "options": {
@@ -6195,7 +6364,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 416
+            "y": 424
           },
           "repeatDirection": "h",
           "options": {
@@ -6255,7 +6424,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 416
+            "y": 424
           },
           "repeatDirection": "h",
           "options": {
@@ -6304,7 +6473,7 @@
             "h": 4,
             "w": 4,
             "x": 0,
-            "y": 424
+            "y": 432
           },
           "repeatDirection": "h",
           "options": {
@@ -6350,7 +6519,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 428
+        "y": 436
       },
       "id": 0,
       "panels": [
@@ -6380,7 +6549,7 @@
             "h": 4,
             "w": 4,
             "x": 0,
-            "y": 429
+            "y": 437
           },
           "repeatDirection": "h",
           "options": {
@@ -6454,7 +6623,7 @@
             "h": 4,
             "w": 4,
             "x": 4,
-            "y": 429
+            "y": 437
           },
           "repeatDirection": "h",
           "options": {
@@ -6523,7 +6692,7 @@
             "h": 8,
             "w": 12,
             "x": 8,
-            "y": 429
+            "y": 437
           },
           "repeatDirection": "h",
           "options": {
@@ -6572,7 +6741,7 @@
             "h": 8,
             "w": 12,
             "x": 20,
-            "y": 429
+            "y": 437
           },
           "repeatDirection": "h",
           "options": {
@@ -6621,7 +6790,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 437
+            "y": 445
           },
           "repeatDirection": "h",
           "options": {
@@ -6670,7 +6839,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 437
+            "y": 445
           },
           "repeatDirection": "h",
           "options": {
@@ -6741,7 +6910,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 445
+            "y": 453
           },
           "repeatDirection": "h",
           "options": {
@@ -6790,7 +6959,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 445
+            "y": 453
           },
           "repeatDirection": "h",
           "options": {
@@ -6861,7 +7030,7 @@
             "h": 4,
             "w": 8,
             "x": 0,
-            "y": 453
+            "y": 461
           },
           "repeatDirection": "h",
           "options": {
@@ -6946,7 +7115,7 @@
             "h": 8,
             "w": 12,
             "x": 8,
-            "y": 453
+            "y": 461
           },
           "repeatDirection": "h",
           "options": {
@@ -7006,7 +7175,7 @@
             "h": 8,
             "w": 12,
             "x": 20,
-            "y": 453
+            "y": 461
           },
           "repeatDirection": "h",
           "options": {
@@ -7055,7 +7224,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 461
+            "y": 469
           },
           "repeatDirection": "h",
           "options": {
@@ -7104,7 +7273,7 @@
             "h": 4,
             "w": 4,
             "x": 12,
-            "y": 461
+            "y": 469
           },
           "repeatDirection": "h",
           "options": {
@@ -7163,7 +7332,7 @@
             "h": 4,
             "w": 4,
             "x": 16,
-            "y": 461
+            "y": 469
           },
           "repeatDirection": "h",
           "options": {
@@ -7225,7 +7394,7 @@
             "h": 8,
             "w": 12,
             "x": 20,
-            "y": 461
+            "y": 469
           },
           "repeatDirection": "h",
           "options": {
@@ -7274,7 +7443,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 469
+            "y": 477
           },
           "repeatDirection": "h",
           "options": {
@@ -7334,7 +7503,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 469
+            "y": 477
           },
           "repeatDirection": "h",
           "options": {
@@ -7405,7 +7574,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 477
+            "y": 485
           },
           "repeatDirection": "h",
           "options": {
@@ -7454,7 +7623,7 @@
             "h": 4,
             "w": 4,
             "x": 12,
-            "y": 477
+            "y": 485
           },
           "repeatDirection": "h",
           "options": {
@@ -7513,7 +7682,7 @@
             "h": 4,
             "w": 4,
             "x": 16,
-            "y": 477
+            "y": 485
           },
           "repeatDirection": "h",
           "options": {
@@ -7576,7 +7745,7 @@
             "h": 8,
             "w": 12,
             "x": 20,
-            "y": 477
+            "y": 485
           },
           "repeatDirection": "h",
           "options": {
@@ -7636,7 +7805,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 485
+            "y": 493
           },
           "repeatDirection": "h",
           "options": {
@@ -7685,7 +7854,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 485
+            "y": 493
           },
           "repeatDirection": "h",
           "options": {
@@ -7745,7 +7914,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 493
+            "y": 501
           },
           "repeatDirection": "h",
           "options": {
@@ -7794,7 +7963,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 493
+            "y": 501
           },
           "repeatDirection": "h",
           "options": {
@@ -7843,7 +8012,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 501
+            "y": 509
           },
           "repeatDirection": "h",
           "options": {
@@ -7892,7 +8061,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 501
+            "y": 509
           },
           "repeatDirection": "h",
           "options": {
@@ -7941,7 +8110,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 509
+            "y": 517
           },
           "repeatDirection": "h",
           "options": {
@@ -8001,7 +8170,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 509
+            "y": 517
           },
           "repeatDirection": "h",
           "options": {
@@ -8061,7 +8230,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 517
+            "y": 525
           },
           "repeatDirection": "h",
           "options": {
@@ -8121,7 +8290,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 517
+            "y": 525
           },
           "repeatDirection": "h",
           "options": {

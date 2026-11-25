@@ -10,6 +10,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -60,7 +61,7 @@ func newPausedConcHarness(t *testing.T, answers ...AcquireConcurrencyResult) *pa
 		func(_, _, _, _ string, arg any) error {
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			h.single = append(h.single, arg.(GateRelease))
+			h.single = append(h.single, payloadcrypt.Unplain(arg).(GateRelease))
 			return nil
 		})
 	return h

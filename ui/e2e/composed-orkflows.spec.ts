@@ -305,6 +305,11 @@ test('a grandchild links its root run beside its parent, and a child of the root
 	await expect(page.getByTestId('run-origin-link')).toHaveText(short(rootId));
 	await expect(page.getByTestId('run-origin-root-kind')).toHaveCount(0);
 	await expect(page.getByTestId('run-origin-root-link')).toHaveCount(0);
+	// The composed task, its Orkflow, and what started the root, whose Orkflow
+	// is the parent's and is not named twice.
+	await expect(page.getByTestId('run-origin-parent-task')).toHaveText('task release of chain-top@0.1.0');
+	await expect(page.getByTestId('run-origin-root-orkflow')).toHaveCount(0);
+	await expect(page.getByTestId('run-origin-root-started')).toHaveText('started by submit');
 
 	// The grandchild, three levels down: its parent and, separately, its root.
 	const leafId = await childRunId(page, 'release');
@@ -321,11 +326,19 @@ test('a grandchild links its root run beside its parent, and a child of the root
 	await expect(page.getByTestId('run-origin-root-kind')).toHaveText('Root run');
 	await expect(page.getByTestId('run-origin-root-link')).toHaveText(short(rootId));
 	await expect(page.getByTestId('run-origin-root-link')).toHaveAttribute('href', `/runs/${rootId}?ns=${NS}`);
+	await expect(page.getByTestId('run-origin-parent-task')).toHaveText('task release of composed-release@0.1.0');
+	await expect(page.getByTestId('run-origin-root-orkflow')).toHaveText('of chain-top@0.1.0');
+	await expect(page.getByTestId('run-origin-root-started')).toHaveText('started by submit');
 	await shot(page, 'screenshot-root-run.png');
 	await page.setViewportSize({ width: 360, height: 800 });
 	await expect(page.getByTestId('run-origin-root-link')).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll at 360 px').toBe(true);
 	await shot(page, 'screenshot-root-run-phone.png');
+	// The longest names a child can hold wrap too.
+	await page.getByTestId('run-origin-parent-task').evaluate((el) => {
+		for (const mono of el.querySelectorAll('span')) mono.textContent = 'n'.repeat(200);
+	});
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'long names wrap at 360 px').toBe(true);
 	await page.setViewportSize({ width: 1280, height: 800 });
 
 	await page.getByTestId('run-origin-root-link').click();

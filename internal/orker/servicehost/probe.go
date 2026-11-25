@@ -48,6 +48,8 @@ const (
 	MaxProbeAnswerBytes  = 256 << 10
 	maxProbeObservations = 1024
 	maxProbeText         = 256
+	// MaxProbeName bounds the name a service port is asked under.
+	MaxProbeName = 253
 )
 
 // Observation is one thing the probe tried and what it saw.
@@ -61,6 +63,9 @@ type Observation struct {
 	// be asked, so nothing was asked of it.
 	Unresolved bool   `json:"unresolved,omitzero"`
 	TLS        string `json:"tls,omitzero"`
+	// Name is the name a service port was asked under at its address, "" when
+	// it was asked as its target names it.
+	Name string `json:"name,omitzero"`
 	// Status is the gRPC status code's name of an answered call ("OK",
 	// "Unimplemented", "Unauthenticated", …), "" when no call was answered.
 	Status string `json:"status,omitzero"`
@@ -106,6 +111,8 @@ func (o Observation) valid() error {
 		return fmt.Errorf("via %q", o.Via)
 	case o.TLS != "" && o.TLS != TLSOK && o.TLS != TLSClientCertRequire && o.TLS != TLSFailed:
 		return fmt.Errorf("tls %q", o.TLS)
+	case o.Name != "" && (o.Kind != TargetService || !ProbeName(o.Name)):
+		return errors.New("a name on no service port, or not a name")
 	case len(o.Status) > 64 || !printable(o.Status):
 		return errors.New("a status is at most 64 printable bytes")
 	case o.Unresolved && (o.Connected || o.TLS != ""):
@@ -114,6 +121,33 @@ func (o Observation) valid() error {
 		return errors.New("an answered call on no connection")
 	}
 	return nil
+}
+
+// ProbeName reports whether s is a name a service port may be asked under: 1
+// to MaxProbeName letters, digits, dots, dashes and underscores.
+func ProbeName(s string) bool {
+	if s == "" || len(s) > MaxProbeName {
+		return false
+	}
+	for _, c := range []byte(s) {
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9', c == '.', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// Asked is o's target as the probe's argument spells it.
+func (o Observation) Asked() string { return probeTarget(o.Question, o.Kind, o.Via, o.Target, o.Name) }
+
+func probeTarget(q int, kind, via, addr, name string) string {
+	t := fmt.Sprintf("%d,%s,%s,%s", q, kind, via, addr)
+	if name != "" {
+		t += "," + name
+	}
+	return t
 }
 
 // Reached reports whether one observation is something a service could
@@ -157,7 +191,9 @@ func JudgeProbe(obs []Observation, wantQuestions ...int) Fitness {
 	asked := map[int]bool{}
 	// A port whose TLS handshake demanded a client certificate is closed
 	// (14 §7): the plaintext leg's failure to be answered there is the same
-	// server refusing a client that came without one, not an opening.
+	// server refusing a client that came without one, not an opening. Keyed by
+	// the port alone: whichever name the demand was seen under, it says the
+	// port speaks TLS, and each TLS leg is judged by itself below.
 	certDemanded := map[string]bool{}
 	for _, o := range obs {
 		if o.Kind == TargetService && o.Via == ViaTLS && o.Connected && o.TLS == TLSClientCertRequire {

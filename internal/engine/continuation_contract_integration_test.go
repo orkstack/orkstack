@@ -490,7 +490,7 @@ func (k *canContract) historyLimitReason(t *testing.T) {
 	var c client.Client
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		c, err = client.DialContext(k.ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
+		c, err = client.DialContext(k.ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: client.DefaultNamespace}, nil))
 		if err == nil {
 			if _, err = c.CheckHealth(k.ctx, &client.CheckHealthRequest{}); err == nil {
 				break

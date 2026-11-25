@@ -131,7 +131,7 @@ func inputEmpty(input *orkstackv1.Payload) bool {
 }
 
 // renderEvents renders a subscription's events in lifecycle order; [] means
-// every run transition.
+// the run's lifecycle.
 func renderEvents(events []webhooks.Event) string {
 	names := make([]string, 0, len(events))
 	for _, event := range events {

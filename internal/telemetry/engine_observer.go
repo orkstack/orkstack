@@ -150,6 +150,7 @@ func (o *EngineObserver) ObserveEvent(ctx context.Context, event *orkstackv1.Eve
 		return
 	}
 	o.recordMetric(ctx, event, run)
+	o.recordRunSpan(ctx, event, run)
 	o.log(ctx, event, run)
 }
 
@@ -163,6 +164,16 @@ func (o *EngineObserver) recordMetric(ctx context.Context, event *orkstackv1.Eve
 		}
 	}
 	switch event.GetType() {
+	case orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED, orkstackv1.EventType_EVENT_TYPE_RUN_RESULTS_KEPT:
+		if run == nil {
+			return
+		}
+		if p, ok := o.sinkFor(run); ok {
+			o.recordResume(ctx, event, run, o.instrumentsOf(ctx, p))
+		} else {
+			o.sinks.DropRecords(ctx, SignalMetrics, DropReasonSinkUnknown, 1)
+		}
+		return
 	case orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED,
@@ -198,8 +209,8 @@ func (o *EngineObserver) recordMetric(ctx context.Context, event *orkstackv1.Eve
 }
 
 // recordTwin records a terminal run or task event's operator twin: its
-// status, and for a task its pool, failure category and cache outcome; never
-// its namespace or a name.
+// status, a failure reason of the closed set, and for a task its pool,
+// failure category and cache outcome; never its namespace or a name.
 func (o *EngineObserver) recordTwin(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run) {
 	if o.twins == nil || run == nil {
 		return
@@ -208,7 +219,8 @@ func (o *EngineObserver) recordTwin(ctx context.Context, event *orkstackv1.Event
 	case orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED:
-		o.twins.Runs.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrStatus, statusLabel(run.GetStatus()))))
+		attrs := append([]attribute.KeyValue{attribute.String(AttrStatus, statusLabel(run.GetStatus()))}, resumptionAttr(run)...)
+		o.twins.Runs.Add(ctx, 1, metric.WithAttributes(withFailureReason(attrs, run.GetError(), runFailureReasons)...))
 	default:
 		task := findTaskRun(run, event.GetTaskId())
 		if task == nil {
@@ -228,7 +240,7 @@ func (o *EngineObserver) recordTwin(ctx context.Context, event *orkstackv1.Event
 		if outcome := CacheOutcomeLabel(task.GetCache()); outcome != "" {
 			attrs = append(attrs, attribute.String(AttrCacheOutcome, outcome))
 		}
-		o.twins.Tasks.Add(ctx, 1, metric.WithAttributes(attrs...))
+		o.twins.Tasks.Add(ctx, 1, metric.WithAttributes(withFailureReason(attrs, task.GetError(), taskFailureReasons)...))
 	}
 }
 
@@ -253,8 +265,9 @@ func (o *EngineObserver) recordRun(ctx context.Context, run *orkstackv1.Run, ins
 	attrs := inst.Cardinality.RunAttrs(run, "",
 		attribute.String(AttrStatus, statusLabel(run.GetStatus())))
 	attrs = append(attrs, inst.Cardinality.orkflowAttr(run.GetOrkflowName())...)
+	attrs = append(attrs, resumptionAttr(run)...)
 	attrs = append(attrs, selectionMetricAttrs(inst, run)...)
-	inst.Runs.Add(ctx, 1, metric.WithAttributes(attrs...))
+	inst.Runs.Add(ctx, 1, metric.WithAttributes(withFailureReason(attrs, run.GetError(), runFailureReasons)...))
 	recordRunTimeout(ctx, run, inst)
 
 	started := run.GetStartedAt()
@@ -303,7 +316,7 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 		attrs = append(attrs, attribute.String(AttrCacheOutcome, outcome))
 		durationAttrs = append(durationAttrs, attribute.String(AttrCacheOutcome, outcome))
 	}
-	inst.Tasks.Add(ctx, 1, metric.WithAttributes(attrs...))
+	inst.Tasks.Add(ctx, 1, metric.WithAttributes(withFailureReason(attrs, task.GetError(), taskFailureReasons)...))
 
 	// Dispatch to finish: finished_at − scheduled_at. started_at is the
 	// Orker's start of the deciding attempt, and measuring from it would

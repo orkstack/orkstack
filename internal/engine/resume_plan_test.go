@@ -539,7 +539,7 @@ func TestResumePlan_BaseRefusals(t *testing.T) {
 func TestResumePlan_ResumableRunEndings(t *testing.T) {
 	for _, code := range []string{"RUN_FAILED", RunTimedOutCode, RunPauseTimeoutCode, "RUN_QUEUE_TIMEOUT",
 		"RUN_CONCURRENCY_LIMIT", "RUN_CONCURRENCY_FULL", "RUN_CONCURRENCY_UNAVAILABLE",
-		"RUN_CONCURRENCY_FENCED", "RUN_CONCURRENCY_UNSUPPORTED"} {
+		"RUN_CONCURRENCY_FENCED", "RUN_CONCURRENCY_UNSUPPORTED", ReasonResumePlanInvalid, ReasonResumePlanUnreadable} {
 		t.Run(code, func(t *testing.T) {
 			f := newPlan([]*orkstackv1.Task{ptask("a")}, prow("a", sFail))
 			f.in.Base.Error.Code = code

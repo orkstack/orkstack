@@ -316,13 +316,14 @@ func referencesIn(run *orkstackv1.Run, objectID string) []*orkstackv1.ArtifactRe
 	refs := make([]*orkstackv1.ArtifactReference, 0, len(matches))
 	for _, item := range matches {
 		refs = append(refs, &orkstackv1.ArtifactReference{
-			RunId:          run.GetId(),
-			OrkflowName:    run.GetOrkflowName(),
-			OrkflowVersion: run.GetOrkflowVersion(),
-			TaskId:         item.GetTaskId(),
-			Kind:           item.GetKind(),
-			RunStatus:      run.GetStatus(),
-			RunCreatedAt:   run.GetCreatedAt(),
+			RunId:            run.GetId(),
+			OrkflowName:      run.GetOrkflowName(),
+			OrkflowNamespace: run.GetOrkflowNamespace(),
+			OrkflowVersion:   run.GetOrkflowVersion(),
+			TaskId:           item.GetTaskId(),
+			Kind:             item.GetKind(),
+			RunStatus:        run.GetStatus(),
+			RunCreatedAt:     run.GetCreatedAt(),
 			// Set when the referencing run recorded the object under an item.
 			Item: item.Item,
 		})

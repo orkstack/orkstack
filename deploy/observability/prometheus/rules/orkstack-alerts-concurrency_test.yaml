@@ -129,6 +129,44 @@ tests:
   - eval_time: 20m
     alertname: OrkStackConcurrencyQueuedTooLong
     exp_alerts: []
+- name: 'OrkStackConcurrencyQueueExitsUnstarted: timed out'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_exits_total{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_concurrency_level="run",ork_concurrency_strategy="queue",ork_concurrency_outcome="timed_out",ork_deployment="d"}
+    values: 0+1x50
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: OrkStackConcurrencyQueueExitsUnstarted
+    exp_alerts:
+    - exp_labels:
+        component: concurrency
+        ork_concurrency_limit: db#1a2b3c4d
+        ork_deployment: d
+        ork_namespace: 'n'
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: Waits in the line of limit "db#1a2b3c4d" of namespace "n" have ended without the run or task starting for 15 minutes.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyqueueexitsunstarted
+        summary: Runs waiting in a concurrency limit's line end without starting.
+- name: 'OrkStackConcurrencyQueueExitsUnstarted: one timeout'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_exits_total{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_concurrency_level="run",ork_concurrency_strategy="queue",ork_concurrency_outcome="timed_out",ork_deployment="d"}
+    values: 0x5 1x60
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: OrkStackConcurrencyQueueExitsUnstarted
+    exp_alerts: []
+- name: 'OrkStackConcurrencyQueueExitsUnstarted: started'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_exits_total{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_concurrency_level="run",ork_concurrency_strategy="queue",ork_concurrency_outcome="started",ork_deployment="d"}
+    values: 0+1x50
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: OrkStackConcurrencyQueueExitsUnstarted
+    exp_alerts: []
 - name: 'OrkStackConcurrencyQueueFillsMaxRunning: filled'
   interval: 1m
   input_series:
@@ -189,6 +227,50 @@ tests:
   alert_rule_test:
   - eval_time: 30m
     alertname: OrkStackConcurrencyHolderStalled
+    exp_alerts: []
+- name: 'OrkStackConcurrencySlotsNotReclaimed: full and unchecked'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_verify_errors_total{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_deployment="d"}
+    values: 0+1x70
+  - series: ork_concurrency_keys_full{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_deployment="d"}
+    values: 1x70
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: OrkStackConcurrencySlotsNotReclaimed
+    exp_alerts:
+    - exp_labels:
+        component: concurrency
+        ork_concurrency_limit: db#1a2b3c4d
+        ork_deployment: d
+        ork_namespace: 'n'
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: Limit "db#1a2b3c4d" of namespace "n" has a full key, and its checks of the runs holding or waiting for it have failed for 30 minutes.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyslotsnotreclaimed
+        summary: A full concurrency limit cannot check who holds it.
+- name: 'OrkStackConcurrencySlotsNotReclaimed: not full'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_verify_errors_total{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_deployment="d"}
+    values: 0+1x70
+  - series: ork_concurrency_keys_full{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_deployment="d"}
+    values: '0x70'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: OrkStackConcurrencySlotsNotReclaimed
+    exp_alerts: []
+- name: 'OrkStackConcurrencySlotsNotReclaimed: checked'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_verify_errors_total{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_deployment="d"}
+    values: '0x70'
+  - series: ork_concurrency_keys_full{ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d",ork_deployment="d"}
+    values: 1x70
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: OrkStackConcurrencySlotsNotReclaimed
     exp_alerts: []
 - name: 'OrkStackConcurrencyRebuildFailing: failing'
   interval: 1m

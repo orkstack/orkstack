@@ -183,6 +183,9 @@ func (o *attemptOrdinal) bind(n int32) {
 		return
 	}
 	o.n = n
+	if o.d.Claims != nil {
+		o.d.attempts.begin(o.ref(n))
+	}
 	if o.beat != nil {
 		o.beat.setOrdinal(n)
 	}
@@ -242,6 +245,21 @@ func (o *attemptOrdinal) Close() {
 	sink.Close()
 }
 
+// ref is the attempt numbered n.
+func (o *attemptOrdinal) ref(n int32) artifacts.AttemptRef {
+	ref := o.scope()
+	ref.Attempt = n
+	return ref
+}
+
+// Container names the attempt's container, or the one a failed create may
+// have left.
+func (o *attemptOrdinal) Container(id ContainerID) {
+	if n := o.Ordinal(); n != 0 {
+		o.d.attempts.container(o.ref(n), id)
+	}
+}
+
 // ContainerCreated and ContainerRemoved bracket the attempt's container: the
 // ordinal is released only once nothing of the attempt runs.
 func (o *attemptOrdinal) ContainerCreated() {
@@ -255,6 +273,9 @@ func (o *attemptOrdinal) ContainerRemoved(err error) {
 	o.mu.Lock()
 	if err == nil {
 		o.live = false
+		if o.n != 0 {
+			o.d.attempts.container(o.ref(o.n), "")
+		}
 	}
 	o.mu.Unlock()
 }
@@ -266,14 +287,16 @@ func (o *attemptOrdinal) ContainerRemoved(err error) {
 func (o *attemptOrdinal) Release(ctx context.Context) {
 	o.mu.Lock()
 	n, live, done := o.n, o.live, o.released
+	if n != 0 {
+		o.d.attempts.end(o.ref(n))
+	}
 	if n == 0 || live || done || o.d.Claims == nil {
 		o.mu.Unlock()
 		return
 	}
 	o.released = true
 	o.mu.Unlock()
-	ref := o.scope()
-	ref.Attempt = n
+	ref := o.ref(n)
 	call, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimTimeout)
 	defer cancel()
 	if err := o.d.Claims.ReleaseAttempt(call, ref, o.d.OrkerID); err != nil {

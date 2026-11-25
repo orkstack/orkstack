@@ -42,7 +42,7 @@ type admissionWorld struct {
 	records     *artifacts.RecordStore
 	dir         string
 	starter     *executionStarter
-	runContexts *artifacts.LocalRunSnapshotStore
+	runContexts *artifacts.RunContextStore
 }
 
 // executionStarter is the unit tests' stand-in cluster, answering each
@@ -99,7 +99,7 @@ func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
 		o.attemptsMax = identity.DefaultAttemptsMax
 	}
 	starter := &executionStarter{}
-	runContexts, err := artifacts.NewLocalRunSnapshotStore(o.dir)
+	runContexts, err := artifacts.NewLocalRunContextStore(o.dir)
 	if err != nil {
 		t.Fatal(err)
 	}

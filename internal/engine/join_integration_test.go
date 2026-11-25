@@ -89,7 +89,7 @@ func (j *joinE2E) orker(id string) worker.Worker {
 	// This Orker's OWN client: killing it closes the client before the
 	// worker stops, so the stop can never sneak a completion out ahead of the
 	// death (pin_affinity_integration_test.go's pinOrker.kill).
-	own, err := client.DialContext(j.ctx, client.Options{HostPort: temporalAddress(), Namespace: j.namespace, Identity: id})
+	own, err := client.DialContext(j.ctx, engine.ClientOptions(client.Options{HostPort: temporalAddress(), Namespace: j.namespace, Identity: id}, nil))
 	if err != nil {
 		infraAbsent(j.t, "orker %s cannot dial temporal: %v", id, err)
 	}

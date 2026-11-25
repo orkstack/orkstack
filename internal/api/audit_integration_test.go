@@ -151,7 +151,7 @@ func auditTemporalClient(ctx context.Context, t *testing.T, namespace string) cl
 	if address == "" {
 		address = client.DefaultHostPort
 	}
-	bootstrap, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
+	bootstrap, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: client.DefaultNamespace}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -162,7 +162,7 @@ func auditTemporalClient(ctx context.Context, t *testing.T, namespace string) cl
 	bootstrap.Close()
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 		if err == nil {
 			t.Cleanup(c.Close)
 			return c

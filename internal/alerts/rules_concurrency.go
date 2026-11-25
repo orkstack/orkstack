@@ -1,8 +1,10 @@
 package alerts
 
 // concurrencyRules are the concurrency limits' alerts (E88 §9.9.4), read
-// from the census's gauges, the arrivals and the schedule fires. A limit is
-// its template's label (ork_concurrency_limit), never a rendered key.
+// from the census's gauges, the arrivals and exits, the gates' own reports
+// and the schedule fires. A limit is its template's label
+// (ork_concurrency_limit), never a rendered key. An instrument of theirs past
+// its cardinality limit is MetricOverflow's, which reads every ork_* series.
 func concurrencyRules() []Rule {
 	const g = "concurrency"
 	lim := `ork_namespace="n",ork_concurrency_limit="db#1a2b3c4d"`
@@ -78,6 +80,23 @@ func concurrencyRules() []Rule {
 			},
 		},
 		{
+			Name: "ConcurrencyQueueExitsUnstarted", Group: g, Component: "concurrency", Severity: Warning, For: "15m",
+			Expr: "sum " + by("ork_namespace", "ork_concurrency_limit") +
+				` (rate(ork_concurrency_exits_total{ork_concurrency_outcome=~"timed_out|full|unavailable|unsupported|fenced"}[15m])) > 0`,
+			Summary:     "Runs waiting in a concurrency limit's line end without starting.",
+			Description: `Waits in the line of limit "{{ $labels.ork_concurrency_limit }}" of namespace "{{ $labels.ork_namespace }}" have ended without the run or task starting for 15 minutes.`,
+			Meaning:     "The waits reached their queue timeout, or the limit stopped answering, refused or fenced them. A cancel or a supersede does not count.",
+			Impact:      "Those runs and tasks fail without doing their work.",
+			Confirm:     "kit: `ork_concurrency_exits_total` by `ork_concurrency_outcome` says how they end; `orkctl concurrency get KEY` shows the line.",
+			Fix:         "For `timed_out`, raise the limit or lengthen `queue_timeout`; for `unavailable`, see ConcurrencyUnavailable; for `unsupported`, see ConcurrencyIndexMissing.",
+			Related:     []string{"ConcurrencyQueuedTooLong", "ConcurrencyUnavailable"},
+			Cases: []Case{
+				fire("timed out", "40m", wantLim, s("ork_concurrency_exits_total", run+`,ork_concurrency_strategy="queue",ork_concurrency_outcome="timed_out"`, "0+1x50")),
+				quiet("one timeout", "40m", s("ork_concurrency_exits_total", run+`,ork_concurrency_strategy="queue",ork_concurrency_outcome="timed_out"`, "0x5 1x60")),
+				quiet("started", "40m", s("ork_concurrency_exits_total", run+`,ork_concurrency_strategy="queue",ork_concurrency_outcome="started"`, "0+1x50")),
+			},
+		},
+		{
 			Name: "ConcurrencyQueueFillsMaxRunning", Group: g, Component: "concurrency", Severity: Warning, For: "15m",
 			Expr: "max " + by("ork_namespace") + " (last_over_time(ork_concurrency_queued_runs[10m])) > 0 and " + on("ork_namespace") + " sum " +
 				by("ork_namespace") + ` (rate(ork_runs_refused_total{ork_refusal_reason="max_running_reached"}[15m])) > 0`,
@@ -108,6 +127,23 @@ func concurrencyRules() []Rule {
 			Cases: []Case{
 				fire("stalled", "30m", wantLim, s("ork_concurrency_stalled_holders", lim, "1x40")),
 				quiet("moving", "30m", s("ork_concurrency_stalled_holders", lim, "0x40")),
+			},
+		},
+		{
+			Name: "ConcurrencySlotsNotReclaimed", Group: g, Component: "concurrency", Severity: Warning, For: "30m",
+			Expr: "sum " + by("ork_namespace", "ork_concurrency_limit") + " (rate(ork_concurrency_verify_errors_total[15m])) > 0 and " +
+				on("ork_namespace", "ork_concurrency_limit") + " max " + by("ork_namespace", "ork_concurrency_limit") + " (last_over_time(ork_concurrency_keys_full[10m])) > 0",
+			Summary:     "A full concurrency limit cannot check who holds it.",
+			Description: `Limit "{{ $labels.ork_concurrency_limit }}" of namespace "{{ $labels.ork_namespace }}" has a full key, and its checks of the runs holding or waiting for it have failed for 30 minutes.`,
+			Meaning:     "The limit asks the cluster about each run it holds a slot for and cannot get an answer, so it keeps every slot.",
+			Impact:      "A slot whose run has already ended is not freed, and the line behind it waits.",
+			Confirm:     "The engines' logs say which checks fail (\"kept entries it could not check\"); `orkctl concurrency get KEY` shows the holders.",
+			Fix:         "Check Temporal's health; the limit checks again by itself and frees the slots of runs that ended.",
+			Related:     []string{"ConcurrencyHolderStalled", "TemporalUnreachable"},
+			Cases: []Case{
+				fire("full and unchecked", "60m", wantLim, s("ork_concurrency_verify_errors_total", lim, "0+1x70"), s("ork_concurrency_keys_full", lim, "1x70")),
+				quiet("not full", "60m", s("ork_concurrency_verify_errors_total", lim, "0+1x70"), s("ork_concurrency_keys_full", lim, "0x70")),
+				quiet("checked", "60m", s("ork_concurrency_verify_errors_total", lim, "0x70"), s("ork_concurrency_keys_full", lim, "1x70")),
 			},
 		},
 		{

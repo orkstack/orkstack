@@ -19,6 +19,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -90,7 +91,7 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 	} else {
 		address := temporalAddress()
 		namespace = routingNamespace()
-		c = dialRoutingCluster(t, ctx, address, namespace)
+		c = dialRoutingCluster(t, ctx, address, namespace, canStackInterceptors...)
 	}
 	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
 	must.OKf(t, err, "snapshot store")
@@ -147,6 +148,9 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 	if canStackRunNotifier != nil {
 		eventActivities = eventActivities.WithRunNotifier(canStackRunNotifier)
 	}
+	if canStackObserver != nil {
+		eventActivities = eventActivities.WithEventObserver(canStackObserver)
+	}
 	publish := eventActivities.PublishEvent
 	if pace != nil {
 		execute, publish = pace.execute(s, execute), pace.publish(s, publish)
@@ -182,6 +186,14 @@ var canStackPublishWrap func(publishFunc) publishFunc
 // its event worker announces subscribable events to, as cmd/ork wires the
 // webhook fan-out (TestIntegration_WebhookRunQueued).
 var canStackRunNotifier engine.RunNotifier
+
+// canStackInterceptors and canStackObserver, when set before a stack is
+// built, are how it takes part in traces, as cmd/ork wires them
+// (TestIntegration_OneTraceAcrossAFireAndAContinuation).
+var (
+	canStackInterceptors []interceptor.ClientInterceptor
+	canStackObserver     engine.EventObserver
+)
 
 // canStackSnapshotWrap is canStackPublishWrap for the run worker's snapshot
 // store: a recorder that needs one run's emit to fail at its snapshot write

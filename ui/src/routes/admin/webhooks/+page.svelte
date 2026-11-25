@@ -148,7 +148,7 @@
 		</div>
 		<div class="grid gap-4 sm:grid-cols-3">
 			<div><label class="field-label" for="webhook-namespace">Namespace <span class="field-hint">empty means every</span></label><input id="webhook-namespace" data-testid="webhook-namespace" bind:value={namespace} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="analytics" class={inputClass} /></div>
-			<div><label class="field-label" for="webhook-orkflow">Orkflow <span class="field-hint">empty means every</span></label><input id="webhook-orkflow" data-testid="webhook-orkflow" bind:value={orkflowName} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="nightly-etl" class={inputClass} /></div>
+			<div><label class="field-label" for="webhook-orkflow">Orkflow <span class="field-hint">empty means every</span></label><input id="webhook-orkflow" data-testid="webhook-orkflow" bind:value={orkflowName} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="nightly-etl" class={inputClass} aria-describedby="webhook-orkflow-hint" /><p class="mt-1 text-xs text-ink-muted" id="webhook-orkflow-hint">the namespace's own, never another's shared one</p></div>
 			<div><label class="field-label" for="webhook-task">Task <span class="field-hint">empty means every</span></label><input id="webhook-task" data-testid="webhook-task" bind:value={taskId} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="extract" class={inputClass} /></div>
 		</div>
 		<div>
@@ -157,7 +157,7 @@
 			{#if !namespace.trim()}<p class="mt-1 text-xs text-ink-muted" data-testid="webhook-name-hint">a name needs a namespace scope</p>{/if}
 		</div>
 		<fieldset class="border-y border-rule py-3">
-			<legend class="field-label float-left w-full">Events <span class="field-hint">(none means every run transition; task events are opt-in)</span></legend>
+			<legend class="field-label float-left w-full">Events <span class="field-hint">(none means a run's start, endings and resumption; every other event is opt-in)</span></legend>
 			<div class="clear-left flex flex-wrap gap-x-4 gap-y-2" data-testid="webhook-run-events">{#each [...RUN_EVENTS, ...OPT_IN_RUN_EVENTS] as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-event-{label(event)}" checked={selected.includes(event)} onchange={(e) => toggle(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
 			<div class="mt-2 flex flex-wrap gap-x-4 gap-y-2" data-testid="webhook-task-events">{#each TASK_EVENTS as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-event-{label(event)}" checked={selected.includes(event)} onchange={(e) => toggle(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
 			<p class="mt-2 max-w-prose text-xs text-ink-muted" data-testid="webhook-task-caveat">Task events are best-effort hints with a short retry budget. A subscriber that must not miss one should reconcile with GetRun.</p>
@@ -183,10 +183,10 @@
 				<div><label class="field-label" for="webhook-edit-url">URL</label><input id="webhook-edit-url" data-testid="webhook-edit-url" bind:value={editUrl} required class={inputClass} /></div>
 				<div class="grid gap-3 sm:grid-cols-3">
 					<div><label class="field-label" for="webhook-edit-namespace">Namespace</label><input id="webhook-edit-namespace" data-testid="webhook-edit-namespace" bind:value={editNamespace} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
-					<div><label class="field-label" for="webhook-edit-orkflow">Orkflow</label><input id="webhook-edit-orkflow" data-testid="webhook-edit-orkflow" bind:value={editOrkflow} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
+					<div><label class="field-label" for="webhook-edit-orkflow">Orkflow</label><input id="webhook-edit-orkflow" data-testid="webhook-edit-orkflow" bind:value={editOrkflow} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} aria-describedby="webhook-edit-orkflow-hint" /><p class="mt-1 text-xs text-ink-muted" id="webhook-edit-orkflow-hint">the namespace's own, never another's shared one</p></div>
 					<div><label class="field-label" for="webhook-edit-task">Task</label><input id="webhook-edit-task" data-testid="webhook-edit-task" bind:value={editTask} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
 				</div>
-				<fieldset class="border-y border-rule py-3"><legend class="field-label float-left w-full">Events <span class="field-hint">(none means every run transition)</span></legend>
+				<fieldset class="border-y border-rule py-3"><legend class="field-label float-left w-full">Events <span class="field-hint">(none means a run's start, endings and resumption)</span></legend>
 					<div class="clear-left flex flex-wrap gap-x-4 gap-y-2">{#each [...RUN_EVENTS, ...OPT_IN_RUN_EVENTS, ...TASK_EVENTS] as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-edit-event-{label(event)}" checked={editEvents.includes(event)} onchange={(e) => toggleEdit(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
 				</fieldset>
 				{#if editError}<ErrorPanel testid="webhook-edit-error" message={editError} />{/if}

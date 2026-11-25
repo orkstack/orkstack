@@ -37,13 +37,17 @@ func (s *runState) adoptResume(ctx workflow.Context, deps workflowDeps) error {
 	if deps.hasConcurrency(s.plan) && !resumeConcurrencyBuilt {
 		return &resumeLoadFailure{code: RunConcurrencyUnsupportedCode, message: resumeConcurrencyUnbuilt, scope: h.key.Scope}
 	}
-	if part, why, refused := ResumeNeedsUnbuilt(s.wf, resumeUnitsOf(b), false); refused {
+	units, err := DecodeResumeUnits(s.wf, b, false)
+	if err != nil {
+		return &resumeLoadFailure{code: ReasonResumePlanInvalid, message: err.Error(), scope: h.key.Scope}
+	}
+	if part, why, refused := ResumeNeedsUnbuilt(s.wf, resumeUnitsOf(units), false); refused {
 		return &resumeLoadFailure{code: ReasonResumePlanInvalid, message: fmt.Sprintf("resume_unsupported:%s: %s", part, why), scope: h.key.Scope}
 	}
 	if b.GetSeqBase() < 1 || b.GetSeqBase() > maxResumeScope || int64(b.GetSeqBase()) <= int64(s.eventSeq) {
 		return &resumeLoadFailure{code: ReasonResumePlanInvalid, message: fmt.Sprintf("its block's seq_base %d is not above this run's events", b.GetSeqBase()), scope: h.key.Scope}
 	}
-	if err := s.applyDispositions(ctx, b); err != nil {
+	if err := s.applyDispositions(ctx, b, units); err != nil {
 		return &resumeLoadFailure{code: ReasonResumePlanInvalid, message: err.Error(), scope: h.key.Scope}
 	}
 
@@ -53,7 +57,7 @@ func (s *runState) adoptResume(ctx workflow.Context, deps workflowDeps) error {
 	s.runError = nil
 	s.finished = nil
 	s.status = orkstackv1.Status_STATUS_RUNNING
-	s.eventResumed = s.runResumedOf(h)
+	s.eventResumed = s.runResumedOf(h, units)
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED, "",
 		orkstackv1.Status_STATUS_RUNNING, "run resumed"); err != nil {
 		return err
@@ -61,7 +65,7 @@ func (s *runState) adoptResume(ctx workflow.Context, deps workflowDeps) error {
 
 	// Step 3.
 	started := workflow.Now(ctx)
-	kept, err := s.readBack(ctx, b, started)
+	kept, err := s.readBack(ctx, b, units, started)
 	if err != nil {
 		return err
 	}
@@ -85,72 +89,39 @@ func (s *runState) adoptResume(ctx workflow.Context, deps workflowDeps) error {
 // applyDispositions is step 1: every unit of S waits to run again under
 // the resume's scope, every kept unit waits to be read back, and every
 // unit kept skipped is skipped now. No task event is emitted.
-func (s *runState) applyDispositions(ctx workflow.Context, b *orkstackv1.ResumeBlock) error {
+func (s *runState) applyDispositions(ctx workflow.Context, b *orkstackv1.ResumeBlock, units []ResumeUnitPlan) error {
 	now := timestamppb.New(workflow.Now(ctx))
-	// A pin with any member run again runs again whole (§4.3): a kept member
-	// beside a rerun one would leave the rerun an empty /orkstack/shared.
-	rerunPins := map[string]bool{}
-	for _, r := range b.GetRerun() {
-		if pin := s.tasks[r.GetTaskId()].GetPin(); pin != "" {
-			rerunPins[pin] = true
+	for _, u := range units {
+		row := s.taskRuns[u.Task]
+		if row == nil || u.Item >= 0 {
+			return fmt.Errorf("its block treats %s, which this build does not carry out", u.unit())
 		}
-	}
-	for _, d := range b.GetDispositions() {
-		if pin := s.tasks[d.GetTaskId()].GetPin(); pin != "" && rerunPins[pin] {
-			return fmt.Errorf("its block keeps %q of pin %q, whose other members run again", d.GetTaskId(), pin)
-		}
-	}
-	seen := map[string]bool{}
-	for _, r := range b.GetRerun() {
-		row := s.taskRuns[r.GetTaskId()]
-		if row == nil || r.GetFirstItem() >= 0 || seen[r.GetTaskId()] {
-			return fmt.Errorf("its block runs %q again, which is no task of this run, or names it twice", r.GetTaskId())
-		}
-		seen[r.GetTaskId()] = true
-		row.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN
-		row.ResultEpoch = int64(b.GetSeqBase())
-	}
-	for _, d := range b.GetDispositions() {
-		row := s.taskRuns[d.GetTaskId()]
-		if row == nil || d.GetItem() >= 0 || seen[d.GetTaskId()] {
-			return fmt.Errorf("its block keeps %q, which is no task of this run, or names it twice", d.GetTaskId())
-		}
-		seen[d.GetTaskId()] = true
-		row.ResumeDisposition = d.GetDisposition()
-		switch d.GetDisposition() {
+		row.ResumeDisposition = u.Disposition
+		switch u.Disposition {
+		case orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN:
+			row.ResultEpoch = int64(b.GetSeqBase())
 		case orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT:
 			row.ReadingBack = true
-			row.ResultEpoch = d.GetResultEpoch()
+			row.ResultEpoch = int64(u.Epoch)
 		case orkstackv1.ResumeDisposition_RESUME_DISPOSITION_KEEP_SKIPPED:
 			row.Status = orkstackv1.Status_STATUS_SKIPPED
 			row.FinishedAt = now
 		default:
-			return fmt.Errorf("its block gives %q the disposition %v, which this build does not carry out", d.GetTaskId(), d.GetDisposition())
-		}
-	}
-	// A task the block does not name would run under its first run's key and
-	// be answered by that run's commit, without a check of it.
-	for _, id := range s.order {
-		if !seen[id] {
-			return fmt.Errorf("its block says nothing of task %q", id)
+			return fmt.Errorf("its block gives %s the disposition %v, which this build does not carry out", u.unit(), u.Disposition)
 		}
 	}
 	return nil
 }
 
 // runResumedOf is RUN_RESUMED's account of h (§5.4).
-func (s *runState) runResumedOf(h *resumeHolder) *orkstackv1.RunResumed {
+func (s *runState) runResumedOf(h *resumeHolder, units []ResumeUnitPlan) *orkstackv1.RunResumed {
 	b, rec := h.block(), h.record
 	var rerun, kept int32
-	for _, r := range b.GetRerun() {
-		if r.GetFirstItem() < 0 {
+	for _, u := range units {
+		switch u.Disposition {
+		case orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN:
 			rerun++
-		} else {
-			rerun += r.GetCount()
-		}
-	}
-	for _, d := range b.GetDispositions() {
-		if d.GetDisposition() == orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT {
+		case orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT:
 			kept++
 		}
 	}
@@ -206,35 +177,21 @@ func readbackTunablesOf(r *orkstackv1.ResumeReadback) (readbackTunables, error) 
 // workflow task, each bounded by the phase's one recorded deadline. A
 // result read back is applied silently, as an adopted attempt's; a call
 // that fails fails the first task it did not read back.
-func (s *runState) readBack(ctx workflow.Context, b *orkstackv1.ResumeBlock, started time.Time) (int, error) {
+func (s *runState) readBack(ctx workflow.Context, b *orkstackv1.ResumeBlock, units []ResumeUnitPlan, started time.Time) (int, error) {
 	var entries []*orkstackv1.AdoptEntry
 	var sizes []int64
-	byTask := map[string]*orkstackv1.ResumeUnitDisposition{}
-	for _, d := range b.GetDispositions() {
-		byTask[d.GetTaskId()] = d
-	}
-	for _, id := range s.order {
-		d := byTask[id]
-		if d.GetDisposition() != orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT {
+	for _, u := range units {
+		id := u.Task
+		if !readBackUnit(s.tasks[id], u) {
 			continue
 		}
-		uri, _, err := s.commitFor(s.tasks[id], -1, d.GetResultEpoch())
+		// The entry the resume was verified with (ResumeVerifier).
+		entry, err := adoptEntryOf(s.wf, s.plan.CommitRoot, s.runID, s.tasks[id], int32(u.Item), int64(u.Epoch))
 		if err != nil {
-			return 0, err
+			return 0, temporal.NewNonRetryableApplicationError(err.Error(), "INVALID_COMMIT_KEY", err)
 		}
-		identity, err := ExpectedCommitIdentity(s.wf, s.runID, s.tasks[id], -1, uint64(d.GetResultEpoch()))
-		if err != nil {
-			return 0, err
-		}
-		entries = append(entries, &orkstackv1.AdoptEntry{
-			TaskId: id, Item: -1, Kind: orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_COMMIT, CommitUri: uri,
-			Expected: &orkstackv1.ExpectedCommit{
-				Namespace: identity.Namespace, RunId: identity.RunID, TaskId: identity.TaskID,
-				DefinitionDigest: identity.DefinitionDigest, IdempotencyKey: identity.IdempotencyKey,
-				ImageIndexDigest: identity.ImageIndexDigest,
-			},
-		})
-		sizes = append(sizes, d.GetEncodedSize())
+		entries = append(entries, entry)
+		sizes = append(sizes, u.EncodedSize)
 	}
 	if len(entries) == 0 {
 		return 0, nil
@@ -273,14 +230,14 @@ func (s *runState) readBack(ctx workflow.Context, b *orkstackv1.ResumeBlock, sta
 			},
 		}
 		var result orkstackv1.AdoptRecordedResult
-		err := workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityAdoptRecorded,
+		err := s.getLocal(ctx, workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityAdoptRecorded,
 			&orkstackv1.AdoptRecordedInput{
 				Entries:     entries[call[0]:call[1]],
 				Concurrency: int32(tun.Concurrency),
 				GetTimeout:  durationpb.New(tun.GetTimeout),
 				GetTries:    int32(tun.GetTries),
 				Budget:      tun.Budget,
-			}).Get(ctx, &result)
+			}), &result)
 		if err != nil {
 			return kept, s.readBackFailed(ctx, first, err)
 		}

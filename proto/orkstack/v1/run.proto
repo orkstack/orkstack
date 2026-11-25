@@ -783,7 +783,9 @@ message Run {
   // output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
   repeated NamedArtifact output_artifacts = 21;
 
-  // trace_id is set from E87; unset until it lands (v0.4.0 proto batch).
+  // trace_id is the trace the run belongs to, as 32 hex digits: the one its
+  // submission was accepted in, and for a child run its parent's. Empty when
+  // the submission was not traced.
   string trace_id = 22;
 
   // run_context says whether the run's tasks can read its run context (their
@@ -841,6 +843,12 @@ message Run {
   // carrying on. Unspecified when nothing is held, and while the run is
   // paused (pause says why). A task waiting behind this hold reads PENDING.
   RunDispatchHold dispatch_hold = 36;
+
+  // traceparent is the W3C trace context the run was started in, whose span
+  // is its run span's parent; for a child run that is its parent's run span.
+  // Only a read of the run carries it: a response to a submit or a cancel,
+  // and a webhook body, do not. Empty when the submission was not traced.
+  string traceparent = 38;
 }
 
 // RunCancelRequest is ENGINE-INTERNAL: the record CancelRun writes as the
@@ -941,16 +949,24 @@ message RunOrigin {
   // schedule is set from E86; unset until it lands (v0.4.0 proto batch).
   RunScheduleFire schedule = 9;
 
-  // parent_task_id is set from E87; unset until it lands (v0.4.0 proto batch).
+  // parent_task_id is the composed task that started this run, in the parent
+  // run id names. Set on a PARENT_RUN origin and empty on every other kind.
   string parent_task_id = 10;
 
-  // parent_orkflow is set from E87; unset until it lands (v0.4.0 proto batch).
+  // parent_orkflow is the parent run's Orkflow, its version and definition
+  // digest; its namespace is set only when another namespace owns it. Set as
+  // parent_task_id is.
   OrkflowRef parent_orkflow = 11;
 
-  // root_orkflow is set from E87; unset until it lands (v0.4.0 proto batch).
+  // root_orkflow is the Orkflow of the run root_run_id names, as
+  // parent_orkflow is the parent's. Set with root_run_id.
   OrkflowRef root_orkflow = 12;
 
-  // root_origin is set from E87; unset until it lands (v0.4.0 proto batch).
+  // root_origin is the whole origin of the run root_run_id names: what
+  // started the chain, and its principal, asserted or verified as it says. A
+  // child has no principal or reference of its own. It holds no parent or
+  // root of its own, so an origin nests one level. Absent when the root
+  // recorded no origin.
   RunOrigin root_origin = 13;
 
   // principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
@@ -1347,9 +1363,51 @@ enum ResumeDisposition {
   RESUME_DISPOSITION_SLEEP_UNTIL = 6;
 }
 
-// ResumeHint is E85's; it is empty until E85 lands (v0.4.0 proto
-// batch).
-message ResumeHint {}
+// ResumeHint says whether a finished run's ending is one a resume can start
+// from, and which tasks offer Resume or Retry from here. It is advisory: it
+// is derived from the run's ending alone, with no look at its history or its
+// saved results, so a ResumeRun preview can still refuse (docs/RESUME.md).
+message ResumeHint {
+  ResumeHintState state = 1;
+  // refusal is the RUN_NOT_RESUMABLE sub-reason (docs/REASONS.md) when state
+  // is NOT_RESUMABLE.
+  string refusal = 2;
+  // message is the sentence to show beside the run's ending.
+  string message = 3;
+  repeated ResumeTaskAction task_actions = 4;
+  // resumes_used counts this run's resumes toward the cap of 20.
+  int32 resumes_used = 5;
+}
+
+// ResumeHintState is what a run's ending allows.
+enum ResumeHintState {
+  // A run that has not ended, or ended in a way a resume never starts from
+  // (succeeded, canceled).
+  RESUME_HINT_STATE_UNSPECIFIED = 0;
+  // A failed run: Resume reruns its failed tasks; Retry from here also
+  // reruns a chosen task.
+  RESUME_HINT_STATE_RESUMABLE = 1;
+  // A force-cancelled run: it is resumed only from a task the caller picks.
+  RESUME_HINT_STATE_RESUMABLE_FROM_TASK = 2;
+  // An ending no resume can fix; refusal says why.
+  RESUME_HINT_STATE_NOT_RESUMABLE = 3;
+}
+
+// ResumeTaskAction is what one task of a resumable run offers.
+message ResumeTaskAction {
+  string task_id = 1;
+  // resume: the task failed, so Resume reruns it.
+  bool resume = 2;
+  // retry_from: Retry from here can start from it.
+  bool retry_from = 3;
+}
+
+// ResumeFromState is how the run had ended when it was resumed.
+enum ResumeFromState {
+  RESUME_FROM_STATE_UNSPECIFIED = 0;
+  RESUME_FROM_STATE_FAILED = 1;
+  RESUME_FROM_STATE_FORCE_CANCELED = 2;
+}
 
 // RunContextState is whether a run's tasks are given its run context.
 message RunContextState {
@@ -1398,9 +1456,49 @@ message RunPause {
   bool ended_by_verified = 11;
 }
 
-// RunResume is E85's; it is empty until E85 lands (v0.4.0 proto
-// batch).
-message RunResume {}
+// RunResume is one resume of a run, oldest first in Run.resumes: who asked,
+// what for, and how the run ended afterwards. A run keeps one id, one event
+// stream and one archive however often it is resumed (docs/RESUME.md).
+message RunResume {
+  google.protobuf.Timestamp at = 1;
+  ResumeAction action = 2;
+  // from_task_id is the task retried from; empty for RESUME.
+  string from_task_id = 3;
+  // principal is who resumed the run, verified or asserted as
+  // principal_verified says (docs/ACCESS.md).
+  string principal = 4;
+  bool principal_verified = 5;
+  string reason = 6;
+  // superseded_reason is the run's earlier ending, which the resume set
+  // aside.
+  string superseded_reason = 7;
+  // resumed_after_sequence is the last event sequence of the ending set
+  // aside; sequence is this resume's RUN_RESUMED event.
+  int64 resumed_after_sequence = 8;
+  int64 sequence = 9;
+  // ended is how the run ended after this resume; unset while it runs.
+  RunResumeEnded ended = 10;
+  ResumeFromState from_state = 11;
+  // force_canceled_by is who force-cancelled the run, for a resume of a
+  // force-cancelled run.
+  ResumeForceCanceledBy force_canceled_by = 12;
+  // scope numbers this resume's records (docs/STORAGE.md).
+  uint64 scope = 13;
+}
+
+// RunResumeEnded is how a run ended after one resume.
+message RunResumeEnded {
+  Status status = 1;
+  string reason = 2;
+  // before_anything_reran: the run ended before any task ran again.
+  bool before_anything_reran = 3;
+}
+
+// ResumeForceCanceledBy names who force-cancelled a resumed run.
+message ResumeForceCanceledBy {
+  string principal = 1;
+  bool principal_verified = 2;
+}
 
 // RunResumed is how a run was resumed, carried by RUN_RESUMED.
 message RunResumed {

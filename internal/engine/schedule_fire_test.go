@@ -23,6 +23,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 
@@ -634,6 +635,47 @@ func TestScheduleFireWorkflow_ConcurrencyEndingsOfTheRun(t *testing.T) {
 	h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
 	if err := h.env.GetWorkflowError(); err == nil || !strings.Contains(err.Error(), "task sync failed") {
 		t.Fatalf("fire error = %v, want the run's own failure", err)
+	}
+}
+
+// TestScheduleFireWorkflow_ASealedRunALimitKeptFromStarting: the fire's own
+// child start, so the failure comes wrapped as the cluster hands it over.
+func TestScheduleFireWorkflow_ASealedRunALimitKeptFromStarting(t *testing.T) {
+	s := newSealedRun(t, "ork-6")
+	for _, started := range []bool{false, true} {
+		t.Run(fmt.Sprintf("started %v", started), func(t *testing.T) {
+			h := newFireHarness(t)
+			fc := payloadcrypt.NewFailureConverter(payloadcrypt.NewConverter(engine.DataConverter(), s.keys), true)
+			h.env.SetFailureConverter(fc)
+			h.scheduled(t, nightly)
+			h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+				return firePreparationWith(t, "ork-6", engine.ConcurrencyStrategyQueue), nil
+			})
+			h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+				reason := engine.RunQueueTimeoutCode
+				if !started {
+					reason += "_NOT_STARTED"
+				}
+				return payloadcrypt.WithKey(temporal.NewNonRetryableApplicationError("waited for "+engine.Canary, engine.RunQueueTimeoutCode, nil,
+					engine.ConcurrencyRunNotStarted{NotStarted: !started}), s.scope, reason)
+			})
+			h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+			err := h.env.GetWorkflowError()
+			skip := h.capture.memoString(engine.MemoScheduleFireSkipCode)
+			if started && (err == nil || skip != "") {
+				t.Fatalf("a run that ran: fire error %v, skip code %q; want its own failure", err, skip)
+			}
+			if !started && (err != nil || skip != engine.FireNotStartedConcurrencyCode) {
+				t.Fatalf("a run that never started: fire error %v, skip code %q", err, skip)
+			}
+			if msg := h.capture.memoString(engine.MemoScheduleFireSkipMessage); strings.Contains(msg, engine.Canary) {
+				t.Fatalf("the fire's memo quotes its run: %q", msg)
+			}
+			var sealed *payloadcrypt.SealedFailure
+			if started && !errors.As(err, &sealed) {
+				t.Fatalf("the run's failure reached the fire as %v, not sealed: this test proves nothing", err)
+			}
+		})
 	}
 }
 

@@ -114,6 +114,8 @@ const RUN_LIFECYCLE = new Set<EventType>([
 	EventType.RUN_CANCELED,
 	EventType.RUN_PAUSED,
 	EventType.RUN_UNPAUSED,
+	EventType.RUN_RESUMED,
+	EventType.RUN_RESULTS_KEPT,
 	// A gap in the run's own stream, not about any one task.
 	EventType.STREAM_GAP
 ]);

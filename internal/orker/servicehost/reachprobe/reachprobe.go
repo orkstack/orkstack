@@ -67,22 +67,37 @@ type Target struct {
 	Kind     string
 	Via      string
 	Addr     string
+	// Name, for a service port at an address, is the name the caller shows
+	// the server (SNI and the call's authority), "" for none.
+	Name string
 }
 
-// ParseTarget reads QUESTION,KIND,VIA,HOST:PORT.
+// ParseTarget reads QUESTION,KIND,VIA,HOST:PORT, with ,NAME after it for a
+// service port asked under a name.
 func ParseTarget(s string) (Target, error) {
-	if len(s) > maxAddr+32 {
+	if len(s) > maxAddr+32+1+servicehost.MaxProbeName {
 		return Target{}, errors.New("target: an address is at most 256 bytes")
 	}
 	f := strings.Split(s, ",")
+	name := ""
+	if len(f) == 5 {
+		name = f[4]
+		if !servicehost.ProbeName(name) {
+			return Target{}, fmt.Errorf("target %q: the name is 1 to %d letters, digits, dots, dashes and underscores", s, servicehost.MaxProbeName)
+		}
+		f = f[:4]
+	}
 	if len(f) != 4 {
-		return Target{}, fmt.Errorf("target %q: want four fields, QUESTION,KIND,VIA,HOST:PORT", s)
+		return Target{}, fmt.Errorf("target %q: want four fields, QUESTION,KIND,VIA,HOST:PORT, and perhaps a name", s)
 	}
 	q, ok := canonicalInt(f[0])
 	if !ok || q < servicehost.QuestionMetadata || q > servicehost.QuestionCanary {
 		return Target{}, fmt.Errorf("target %q: the question is 1 to 4", s)
 	}
-	t := Target{Question: q, Kind: f[1], Via: f[2], Addr: f[3]}
+	t := Target{Question: q, Kind: f[1], Via: f[2], Addr: f[3], Name: name}
+	if name != "" && t.Kind != servicehost.TargetService {
+		return Target{}, fmt.Errorf("target %q: only a service port is asked under a name", s)
+	}
 	switch t.Kind {
 	case servicehost.TargetService, servicehost.TargetMembership, servicehost.TargetAddress:
 	default:
@@ -160,7 +175,7 @@ func metadataLiterals(targets []Target) map[string]bool {
 }
 
 func ask(ctx context.Context, t Target, listed map[string]bool) servicehost.Observation {
-	o := servicehost.Observation{Question: t.Question, Target: t.Addr, Kind: t.Kind, Via: t.Via}
+	o := servicehost.Observation{Question: t.Question, Target: t.Addr, Kind: t.Kind, Via: t.Via, Name: t.Name}
 	addrs, err := dialAddrs(ctx, t, listed)
 	if err != nil || len(addrs) == 0 {
 		o.Unresolved = true
@@ -182,11 +197,11 @@ func ask(ctx context.Context, t Target, listed map[string]bool) servicehost.Obse
 		o.Connected = true
 		switch t.Via {
 		case servicehost.ViaPlaintext:
-			o.Status = call(ctx, addr, insecure.NewCredentials())
+			o.Status = call(ctx, addr, t.Name, insecure.NewCredentials())
 		case servicehost.ViaTLS:
-			o.TLS = handshake(ctx, addr)
+			o.TLS = handshake(ctx, addr, t.Name)
 			if o.TLS == servicehost.TLSOK {
-				o.Status = call(ctx, addr, credentials.NewTLS(clientTLS(nil)))
+				o.Status = call(ctx, addr, t.Name, credentials.NewTLS(clientTLS(nil)))
 			}
 		}
 		return o
@@ -263,9 +278,11 @@ func clientTLS(asked *atomic.Bool) *tls.Config {
 // it) ended the connection before any data, demands one: whichever alert
 // it sent (Go and OpenSSL send handshake_failure under TLS 1.2,
 // certificate_required under TLS 1.3), the request is what says so.
-func handshake(ctx context.Context, addr string) string {
+func handshake(ctx context.Context, addr, name string) string {
 	var asked atomic.Bool
-	d := &tls.Dialer{Config: clientTLS(&asked)}
+	conf := clientTLS(&asked)
+	conf.ServerName = name // "" is the address's own host
+	d := &tls.Dialer{Config: conf}
 	c, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -308,9 +325,14 @@ func refused(asked *atomic.Bool) string {
 
 // call makes one health check and returns the status code's name: any
 // answer at all, Unimplemented included, says the server got as far as
-// judging a call from a caller with no credential.
-func call(ctx context.Context, addr string, creds credentials.TransportCredentials) string {
-	conn, err := grpc.NewClient("passthrough:///"+addr, grpc.WithTransportCredentials(creds))
+// judging a call from a caller with no credential. name, when there is one,
+// is the authority the caller names, and over TLS the server name with it.
+func call(ctx context.Context, addr, name string, creds credentials.TransportCredentials) string {
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
+	if _, port, err := net.SplitHostPort(addr); err == nil && name != "" {
+		opts = append(opts, grpc.WithAuthority(net.JoinHostPort(name, port)))
+	}
+	conn, err := grpc.NewClient("passthrough:///"+addr, opts...)
 	if err != nil {
 		return ""
 	}

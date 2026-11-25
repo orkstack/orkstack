@@ -93,21 +93,11 @@ func ResumeNeedsUnbuilt(wf *orkstackv1.Orkflow, units []ResumeUnitNeed, continue
 	return "", "", false
 }
 
-// resumeUnitsOf is a block's units as ResumeNeedsUnbuilt reads them: S as
-// RERUN, and every other unit with its disposition.
-func resumeUnitsOf(b *orkstackv1.ResumeBlock) []ResumeUnitNeed {
-	var units []ResumeUnitNeed
-	for _, r := range b.GetRerun() {
-		if r.GetFirstItem() < 0 {
-			units = append(units, ResumeUnitNeed{Task: r.GetTaskId(), Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN})
-			continue
-		}
-		for i := int32(0); i < r.GetCount(); i++ {
-			units = append(units, ResumeUnitNeed{Task: r.GetTaskId(), Item: r.GetFirstItem() + i, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN})
-		}
+// resumeUnitsOf are a plan's units as ResumeNeedsUnbuilt reads them.
+func resumeUnitsOf(units []ResumeUnitPlan) []ResumeUnitNeed {
+	needs := make([]ResumeUnitNeed, 0, len(units))
+	for _, u := range units {
+		needs = append(needs, ResumeUnitNeed{Task: u.Task, Item: int32(u.Item), Disposition: u.Disposition})
 	}
-	for _, d := range b.GetDispositions() {
-		units = append(units, ResumeUnitNeed{Task: d.GetTaskId(), Item: d.GetItem(), Disposition: d.GetDisposition()})
-	}
-	return units
+	return needs
 }

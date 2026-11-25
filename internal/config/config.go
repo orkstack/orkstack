@@ -215,6 +215,12 @@ var Schema = []Var{
 	{Path: "engine.continuation.events", Env: "ORK_CONTINUATION_EVENTS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultContinuationEvents)},
 	{Path: "engine.continuation.bytes", Env: "ORK_CONTINUATION_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultContinuationBytes)},
 	{Path: "engine.continuation.restore_timeout", Env: "ORK_CONTINUATION_RESTORE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultContinuationRestoreTimeout)},
+	// engine.resume.* (E85): what ResumeRun waits for and bounds, read at each
+	// request; each default is the engine's.
+	{Path: "engine.resume.confirm_timeout", Env: "ORK_RESUME_CONFIRM_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultResumeConfirmTimeout)},
+	{Path: "engine.resume.visibility_lag_floor", Env: "ORK_RESUME_VISIBILITY_LAG_FLOOR", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultResumeVisibilityLagFloor)},
+	{Path: "engine.resume.max_seq_gap", Env: "ORK_RESUME_MAX_SEQ_GAP", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultResumeMaxSequenceGap)},
+	{Path: "engine.resume.confirm_per_run", Env: "ORK_RESUME_CONFIRM_PER_RUN", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultResumeConfirmsPerRun))},
 	// ORK_DEFINITION_BY_REFERENCE's fallback is
 	// engine.DefaultDefinitionByReference — on, when unset, only where
 	// continuation is on (cmd/ork's definitionByReferenceFromEnv).
@@ -426,6 +432,7 @@ var Schema = []Var{
 	{Path: "telemetry.pprof_enabled", Env: "ORK_PPROF_ENABLED", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.high_cardinality", Env: "ORK_TELEMETRY_HIGH_CARDINALITY", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.orkflow_label", Env: telemetry.OrkflowLabelVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultOrkflowLabel)},
+	{Path: "telemetry.trust_inbound_trace", Env: telemetry.TrustInboundTraceVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultTrustInboundTrace)},
 	{Path: "telemetry.object_labels", Env: telemetry.ObjectLabelsVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultObjectLabels)},
 	{Path: "telemetry.metric_cardinality_limit", Env: telemetry.MetricCardinalityLimitVar, Binaries: usesBoth, Kind: KindInt, Default: formatInt(int64(telemetry.DefaultMetricCardinalityLimit))},
 	{Path: "telemetry.census_requests_per_minute", Env: telemetry.CensusRequestsPerMinuteVar, Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(telemetry.DefaultCensusRequestsPerMinute))},

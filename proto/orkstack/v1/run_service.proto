@@ -170,6 +170,221 @@ service RunService {
   // terms as ReadArtifact. The bundle layout and manifest schema are
   // docs/RUN_EVIDENCE.md.
   rpc ExportRunEvidence(ExportRunEvidenceRequest) returns (stream EvidenceChunk);
+
+  // ResumeRun resumes a failed run from its failed tasks, or retries it from
+  // a chosen task, keeping the results of the tasks that need not run again.
+  // The run keeps its id, and its event stream continues after RUN_RESUMED.
+  //
+  // dry_run previews the plan and changes nothing (run.read). A confirm
+  // (run.resume and run.submit) must send the preview's terminal_sequence
+  // and plan_digest; if the run or the plan changed since, it is refused and
+  // nothing is done. A refusal is FailedPrecondition with a ResumeRefusal
+  // detail naming its RUN_NOT_RESUMABLE sub-reason and its class: permanent,
+  // wait (try again after retry_after_seconds) or replan (preview again).
+  // docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason.
+  rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
+}
+
+message ResumeRunRequest {
+  string namespace = 1;
+  string run_id = 2;
+  // reason is recorded with the resume; at most 1 KiB.
+  string reason = 3;
+  // from_task_id empty is Resume; set, Retry from here.
+  string from_task_id = 4;
+  bool dry_run = 5;
+  // expected_terminal_sequence is the preview's terminal_sequence; required
+  // unless dry_run.
+  int64 expected_terminal_sequence = 6;
+  // expected_plan_digest is the preview's plan_digest.
+  string expected_plan_digest = 7;
+  // acknowledged_unknown_attempts lists the acknowledge_key of every
+  // ATTEMPT_OUTCOME_UNKNOWN warning the caller accepts; it needs
+  // expected_plan_digest.
+  repeated string acknowledged_unknown_attempts = 8;
+  // accept_sequence_gap and accepted_highest_seq accept a gap in the run's
+  // stored events (run.resume.accept_gap); accepted_highest_seq is the
+  // preview's highest_sequence.
+  bool accept_sequence_gap = 9;
+  int64 accepted_highest_seq = 10;
+  // accept_unverified_stop accepts a force cancel whose stop could not be
+  // confirmed (run.resume.accept_gap).
+  bool accept_unverified_stop = 11;
+}
+
+message ResumeRunResponse {
+  string run_id = 1;
+  // resume is the resume made, or the one a repeated confirm found.
+  RunResume resume = 2;
+  bool already_resumed = 3;
+  // plan_digest names the plan: what reruns, what is kept and how.
+  string plan_digest = 4;
+  // seq_base is RUN_RESUMED's sequence.
+  int64 seq_base = 5;
+  int32 kept_count = 6;
+  repeated ResumeTask tasks = 7;
+  repeated ResumeCount counts = 8;
+  // diff is what changed since the plan the caller previewed.
+  ResumeDiff diff = 9;
+  ResumeAction action = 10;
+  // concurrency_effect says whether the run waits for a concurrency slot.
+  string concurrency_effect = 11;
+  int64 estimated_readback_seconds = 12;
+  int32 readback_calls = 13;
+  // resumes_used counts this run's resumes toward the cap of 20.
+  int32 resumes_used = 14;
+  repeated ResumeWarning warnings = 15;
+  // terminal_sequence is the sequence of the ending a confirm sets aside.
+  int64 terminal_sequence = 16;
+  // highest_sequence is the highest event sequence stored for the run.
+  int64 highest_sequence = 17;
+}
+
+// ResumeTask is one task, or one fan-out item, of a resume's plan.
+message ResumeTask {
+  string task_id = 1;
+  // item is set for one item of a fan-out.
+  optional int32 item = 2;
+  ResumeCategory category = 3;
+  // why is the sentence the plan lists the task with.
+  string why = 4;
+  Status previous_outcome = 5;
+  ResumeMemoState memo = 6;
+  // callback_works: an awaited task's callback token accepts one more
+  // resolution once the run waits for it again.
+  bool callback_works = 7;
+  string detail = 8;
+  // answer_not_used_reason: why an answer on record was not used.
+  string answer_not_used_reason = 9;
+  // child_waiting_on: what a composed task's open child run waits on.
+  string child_waiting_on = 10;
+}
+
+// ResumeCount is how many units of a plan fall in one category.
+message ResumeCount {
+  ResumeCategory category = 1;
+  int32 count = 2;
+}
+
+// ResumeDiff is what changed in a plan since the caller's preview.
+message ResumeDiff {
+  repeated ResumeUnitRef added = 1;
+  repeated ResumeUnitRef dropped = 2;
+}
+
+// ResumeUnitRef names a task, or one item of a fan-out.
+message ResumeUnitRef {
+  string task_id = 1;
+  optional int32 item = 2;
+}
+
+// ResumeCategory is the section of the plan a task is listed in.
+enum ResumeCategory {
+  RESUME_CATEGORY_UNSPECIFIED = 0;
+  // Reruns: it failed.
+  RESUME_CATEGORY_RERUN_FAILED = 1;
+  // Reruns: it is the task retried from.
+  RESUME_CATEGORY_RERUN_SELECTED = 2;
+  // Reruns: it is downstream of a task that reruns.
+  RESUME_CATEGORY_RERUN_DOWNSTREAM = 3;
+  // Reruns: its saved result is gone.
+  RESUME_CATEGORY_RERUN_RESULT_GONE = 4;
+  // Reruns: it never finished.
+  RESUME_CATEGORY_RERUN_UNFINISHED = 5;
+  // Reruns: another member of its pin reruns.
+  RESUME_CATEGORY_RERUN_PIN_MEMBER = 6;
+  // Reruns: the task its fan-out is over reruns.
+  RESUME_CATEGORY_RERUN_EACH_SOURCE = 7;
+  // Kept: its saved result is read back.
+  RESUME_CATEGORY_KEPT = 8;
+  // Already done: an awaited or composed task's result is kept.
+  RESUME_CATEGORY_SETTLED = 9;
+  // Stays skipped.
+  RESUME_CATEGORY_SKIPPED = 10;
+  // Waits again, from the resume, with a fresh deadline.
+  RESUME_CATEGORY_WAITS_AGAIN = 11;
+  // A sleep that already started: it wakes when it would have.
+  RESUME_CATEGORY_SLEEP_KEPT = 12;
+  // Finished in an earlier part of the run, before it carried on.
+  RESUME_CATEGORY_EARLIER = 13;
+  // Answered and on record: the answer given is used.
+  RESUME_CATEGORY_RESOLVED_ON_RECORD = 14;
+  // A composed task whose child run's outputs are on record.
+  RESUME_CATEGORY_CHILD_OUTPUTS_ON_RECORD = 15;
+}
+
+// ResumeMemoState is what a cached task that reruns does with its memo.
+enum ResumeMemoState {
+  // Not a cached task.
+  RESUME_MEMO_STATE_UNSPECIFIED = 0;
+  // It succeeded before: it runs again, and its memo points at the new
+  // result.
+  RESUME_MEMO_STATE_BYPASSED = 1;
+  // It never succeeded: its memo is looked up as on any run.
+  RESUME_MEMO_STATE_LOOKED_UP = 2;
+}
+
+// ResumeWarning is something a resume's caller should know before
+// confirming. Only ATTEMPT_OUTCOME_UNKNOWN needs acknowledging.
+message ResumeWarning {
+  ResumeWarningKind kind = 1;
+  string message = 2;
+  // build_id: FORCE_CANCELED_SAME_BUILD's release build.
+  string build_id = 3;
+  // orker_id, task_id, item, ordinal and last_seen_at name an attempt whose
+  // outcome is unknown; acknowledge_key is what a confirm lists in
+  // acknowledged_unknown_attempts.
+  string orker_id = 4;
+  string task_id = 5;
+  optional int32 item = 6;
+  int32 ordinal = 7;
+  google.protobuf.Timestamp last_seen_at = 8;
+  string acknowledge_key = 9;
+  // pin and until: PIN_LEASE_HELD's pin and when its host's old slot frees.
+  string pin = 10;
+  google.protobuf.Timestamp until = 11;
+}
+
+// ResumeWarningKind is a ResumeWarning's kind.
+enum ResumeWarningKind {
+  RESUME_WARNING_KIND_UNSPECIFIED = 0;
+  // The run was force-cancelled on the build it resumes on, and may stall
+  // the same way.
+  RESUME_WARNING_KIND_FORCE_CANCELED_SAME_BUILD = 1;
+  // The run was paused; it resumes unpaused.
+  RESUME_WARNING_KIND_WAS_PAUSED = 2;
+  // A pin's host may still hold its old slot until the lease expires.
+  RESUME_WARNING_KIND_PIN_LEASE_HELD = 3;
+  // An earlier attempt may still be running on an Orker that is gone.
+  RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN = 4;
+  // The force cancel of the run is still finishing.
+  RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING = 5;
+}
+
+// ResumeRefusal is the error detail of a refused ResumeRun.
+message ResumeRefusal {
+  // reason is the RUN_NOT_RESUMABLE sub-reason (docs/REASONS.md).
+  string reason = 1;
+  ResumeRefusalClass class = 2;
+  // retry_after_seconds: when to try again, for the wait class.
+  int64 retry_after_seconds = 3;
+  // cause refines reason, as docs/REASONS.md lists.
+  string cause = 4;
+  repeated string tasks = 5;
+  string message = 6;
+  // diff: for PLAN_CHANGED, what changed since the preview.
+  ResumeDiff diff = 7;
+}
+
+// ResumeRefusalClass is what a refused caller can do.
+enum ResumeRefusalClass {
+  RESUME_REFUSAL_CLASS_UNSPECIFIED = 0;
+  // Resuming cannot fix it; run it again instead.
+  RESUME_REFUSAL_CLASS_PERMANENT = 1;
+  // Try again after retry_after_seconds.
+  RESUME_REFUSAL_CLASS_WAIT = 2;
+  // Preview again and decide.
+  RESUME_REFUSAL_CLASS_REPLAN = 3;
 }
 
 message SubmitRunRequest {
@@ -524,6 +739,9 @@ message ArtifactReference {
   google.protobuf.Timestamp run_created_at = 7;
   // item is set when the referencing run recorded the object under one item.
   optional int32 item = 8;
+  // orkflow_namespace is the namespace that owns orkflow_name when that is
+  // not the run's own: a shared Orkflow's child run. Empty otherwise.
+  string orkflow_namespace = 9;
 }
 
 message GetArtifactProvenanceResponse {

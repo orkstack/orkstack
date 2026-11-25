@@ -54,9 +54,16 @@ only the events below, and a subscription receives only the ones it names
 | `TASK_FAILED` | a task fails for good, after its retries stop; a task cancelled because its run ended is never delivered as this event |
 | `RUN_PAUSED` | the run is paused, by a person (`orkctl run pause`) or by its parent run's pause, or stays paused with its causes changed; status `PAUSED`, and `pause_transition` says which ([API.md](API.md#pauserunrequest)) |
 | `RUN_UNPAUSED` | the run continues after a pause (status `RUNNING`), or an unpause found it not paused (`pause_transition` `NOT_PAUSED`); a pause its run's end closed has none: the terminal delivery's `pause_transition` and the run's `last_pause` say so |
+| `RUN_RESUMED` | a run that had ended runs again under the same id, from failed to running (status `RUNNING`); `resumeCount` says which resume of the run it is |
+| `RUN_RESULTS_KEPT` | a resumed run has read back the results it keeps (status `RUNNING`); `resultsKept` says how many |
 
-- An empty `events` selects the four run transitions and no task event. Task
-  events, `RUN_QUEUED`, `RUN_PAUSED` and `RUN_UNPAUSED` are opt-in, by name.
+- An empty `events` selects the run's lifecycle: `RUN_STARTED`, the three
+  endings and `RUN_RESUMED`, and no other event. Task events, `RUN_QUEUED`,
+  `RUN_PAUSED`, `RUN_UNPAUSED` and `RUN_RESULTS_KEPT` are opt-in, by name.
+- No build resumes runs yet, so `RUN_RESUMED` and `RUN_RESULTS_KEPT` are never
+  sent. Once one does, a run that failed and is resumed delivers `RUN_FAILED`, then `RUN_RESUMED`,
+  then its next ending, all with rising sequences. The highest sequence is the
+  run's current state.
 - `TASK_LOG` is refused: a log line is not a transition (`ParseEvent`).
 - Duplicates are removed and the list is kept in lifecycle order on registration
   (`normalizeEvents`).
@@ -78,9 +85,13 @@ and an empty field matches every value.
 | Field | Matches |
 | --- | --- |
 | `namespace` | runs of one namespace. A run that names none is in `default`, so a subscription scoped to `default` matches it |
-| `orkflow_name` | runs of one Orkflow, by name |
+| `orkflow_name` | runs of the namespace's own Orkflow of that name. A child run of another namespace's shared Orkflow is never one, whatever its name |
 | `task_id` | one task's outcome events. It is consulted only for `TASK_*` events, so a `RUN_*` event passes it |
 
+- An Orkflow name is read in the namespace a run ran in: a deployment-wide
+  subscription that names one hears each namespace's own Orkflow of that name. A
+  scope with no Orkflow name hears a shared Orkflow's child runs with the
+  namespace's other runs, and the body's `orkflowNamespace` says whose they are.
 - A subscription with no scope is deployment-wide. It receives the transitions of
   every namespace.
 - A `task_id` needs at least one `TASK_*` event in `events`. Otherwise the task
@@ -99,7 +110,7 @@ and an empty field matches every value.
 | --- | --- |
 | `id` | `wh-` and 16 hex characters: 8 bytes from `crypto/rand`. Opaque; it survives an update |
 | `url` | an absolute `http` or `https` URL with a host (`ValidateURL`) |
-| `events` | the transitions, as above; empty means the four run transitions |
+| `events` | the transitions, as above; empty means the run's lifecycle: its start, endings and resumption |
 | `secret` | the signing secret. It is returned once, by the response that creates the subscription, and never by a listing or a read |
 | `namespace`, `orkflowName`, `taskId` | the scope |
 | `name` | an optional handle, unique among the named subscriptions of its namespace scope. It requires a namespace, and it plays no part in delivery |
@@ -193,9 +204,12 @@ X-Ork-Redelivery-Of: dlv-…               (redelivery only)
 The body is one JSON object, in this field order:
 
 ```json
-{"runId":"ork-…","orkflowName":"…","status":"FAILED","timestamp":"<RFC 3339 instant>","sequence":7,"pauseTransition":"…","taskId":"…","attempt":2,"run":{…}}
+{"runId":"ork-…","orkflowName":"…","orkflowNamespace":"…","status":"FAILED","timestamp":"<RFC 3339 instant>","sequence":7,"pauseTransition":"…","taskId":"…","attempt":2,"run":{…}}
 ```
 
+- `orkflowNamespace` is present only for a child run of another namespace's
+  shared Orkflow: the namespace that owns it. `orkflowName` is the name there,
+  and the run is in the namespace it runs in (`run.namespace`).
 - `sequence` is the run event's sequence: the number the run's event stream
   gives the event, counted per run from 1 in the order the run emitted its
   events (`orkctl run watch --from-sequence` resumes by the same number). It
@@ -207,6 +221,11 @@ The body is one JSON object, in this field order:
   (`PAUSED`, `CAUSES_CHANGED`, `UNPAUSED`, `NOT_PAUSED`, `ENDED_TIMED_OUT`,
   `ENDED_RUN_ENDED`). The embedded run's `pause`, `pausedByParent` and
   `lastPause` say who paused it, when and until when.
+- `resumeCount` is present only on `RUN_RESUMED`: how many resumes of the run
+  got going, that one included. `resultsKept` is present only on
+  `RUN_RESULTS_KEPT`: `keptCount` results read back from their commits,
+  `settledCount` awaited and composed tasks kept from their records, and
+  `readBackSeconds`. A kept task has no task event of its own.
 - `taskId` and `attempt` are present only for a task event. `attempt` is the
   task's own attempt number, and it is omitted when the engine has not numbered
   it. It is never invented.
@@ -354,9 +373,10 @@ reason `WEBHOOK_DESTINATION_BLOCKED` ([REASONS.md](REASONS.md), "Webhooks").
   than its event, and a redelivery embeds the run as it reads now. A receiver
   that needs the run's current state reads it with `GetRun`.
 - Sequences have gaps. A subscription receives only the events it names, and
-  the run's stream itself can skip numbers. Opt-in events (`RUN_PAUSED`,
-  `RUN_UNPAUSED` and the task events) leave gaps in a subscription that does
-  not name them. A receiver never waits for a missing number, keeps the
+  the run's stream itself can skip numbers: a resumed run's stream skips to its
+  resume's starting number (`RUN_RESUMED`). Opt-in events (`RUN_QUEUED`,
+  `RUN_PAUSED`, `RUN_UNPAUSED`, `RUN_RESULTS_KEPT` and the task events) leave
+  gaps in a subscription that does not name them. A receiver never waits for a missing number, keeps the
   highest sequence it has applied per run, and deduplicates on (run id,
   sequence), the `X-Ork-Sequence` header. Sequences of different runs are not
   comparable.
@@ -429,7 +449,8 @@ A record holds:
 
 - every attempt: its number, status code, code, error, backoff, duration and
   start time;
-- the subscription, run, namespace, Orkflow, task, event, the event's
+- the subscription, run, namespace, Orkflow (and its owner, for another
+  namespace's shared one), task, event, the event's
   sequence, status and URL. The URL is the subscription's when the delivery
   settled, or, for a subscription deleted before then, the one the delivery
   was queued with, when it carried one;
@@ -477,7 +498,8 @@ synchronously:
   nothing is sent, and the call is refused with `FailedPrecondition`;
 - signed with its current secret;
 - with the run as it reads now, and with the original's event, transition
-  timestamp and sequence;
+  timestamp and sequence. `pauseTransition`, `resumeCount` and `resultsKept`
+  are omitted: a delivery's record does not hold them;
 - with `X-Ork-Redelivery-Of` naming the original.
 
 It makes no retry, since the operator is the retry policy. Its outcome is
@@ -503,7 +525,7 @@ Every `orkctl webhook` subcommand takes `--json`, `-n`, `--server` and
   namespace. Only an explicit `-n` narrows it, even when `ORK_NAMESPACE` or the
   saved namespace is set. `--name` needs an explicit `-n`.
 - `update` is read-modify-write: it changes only the flags given. `--clear-events`
-  empties the list, so every run transition is selected. `--deployment-wide`
+  empties the list, so the run's lifecycle is selected. `--deployment-wide`
   clears the namespace scope.
 
 ```bash
@@ -531,7 +553,8 @@ webhooks:
 ```
 
 The keys are `url` (required), `events`, `orkflow`, `task` and `secret_env`. An
-absent `events` selects every run transition, an absent `orkflow` every Orkflow,
+absent `events` selects the run's lifecycle (above), an absent `orkflow` every Orkflow
+(a present one is the namespace's own, never another's shared one),
 and an absent `task` every task. An absent `secret_env` generates the signing
 secret, which is disclosed once ([AUTOMATION.md](AUTOMATION.md), "webhooks").
 

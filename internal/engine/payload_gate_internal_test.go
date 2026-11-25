@@ -33,7 +33,7 @@ func TestGate_ReadsASealedRunsReleases(t *testing.T) {
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetDataConverter(NewDataConverter(keys))
 	env.SetWorkerOptions(worker.Options{Interceptors: append(
-		[]interceptor.WorkerInterceptor{payloadcrypt.WorkflowInterceptor(keys)}, RunWorkerInterceptors()...)})
+		[]interceptor.WorkerInterceptor{PayloadInterceptor(keys)}, RunWorkerInterceptors()...)})
 	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-held"})
 	must.OK(t, env.SetMemoOnStart(map[string]any{payloadcrypt.MemoField: field}))
 

@@ -3,21 +3,30 @@ import { EventType } from './gen/orkstack/v1/run_pb';
 // The Admin → Webhooks page's pure rules, kept here so they are unit-tested
 // and cannot drift from orkctl's (cmd/orkctl/webhook.go).
 
-/** The run's own transitions: what a subscription with no events receives. */
+/**
+ * The run's lifecycle, its start, its endings and the resume that re-opens an
+ * ended run: what a subscription with no events receives.
+ */
 export const RUN_EVENTS: EventType[] = [
 	EventType.RUN_STARTED,
 	EventType.RUN_SUCCEEDED,
 	EventType.RUN_FAILED,
-	EventType.RUN_CANCELED
+	EventType.RUN_CANCELED,
+	EventType.RUN_RESUMED
 ];
 
 /**
  * Run events a subscription must name to receive: opt-in, like the task
- * events, and offered beside them. A wait for a concurrency slot and a
- * pause's two are transitions inside an open run, so a subscription with no
- * events does not receive them.
+ * events, and offered beside them. A wait for a concurrency slot, a pause's
+ * two and a resume's kept results are transitions inside an open run, so a
+ * subscription with no events does not receive them.
  */
-export const OPT_IN_RUN_EVENTS: EventType[] = [EventType.RUN_QUEUED, EventType.RUN_PAUSED, EventType.RUN_UNPAUSED];
+export const OPT_IN_RUN_EVENTS: EventType[] = [
+	EventType.RUN_QUEUED,
+	EventType.RUN_PAUSED,
+	EventType.RUN_UNPAUSED,
+	EventType.RUN_RESULTS_KEPT
+];
 
 /**
  * Task events: opt-in by name, always, in lifecycle order — an awaited task's

@@ -123,6 +123,8 @@
 		UNRECORDED_CAPTION,
 		originKindSlug,
 		originLinkPath,
+		originParentTask,
+		originRoot,
 		originRootRunPath,
 		originReferenceURL
 	} from '#lib/origin.ts';
@@ -280,6 +282,8 @@
 		const path = originLinkPath(origin, run?.orkflowName ?? '');
 		return path ? withNamespace(path, data.namespace) : null;
 	});
+	const originParent = $derived(originParentTask(origin));
+	const originRootFacts = $derived(originRoot(origin));
 	const originRootHref = $derived.by(() => {
 		const path = originRootRunPath(origin);
 		return path ? withNamespace(path, data.namespace) : null;
@@ -2489,10 +2493,15 @@
 						<b data-testid="run-origin-id" class="font-semibold">{origin.id}</b>
 					{/if}
 				{/if}
+				{#if originParent}
+					<span data-testid="run-origin-parent-task">task <span class="font-mono text-sm break-all">{originParent.task}</span>{#if originParent.orkflow}{' of '}<span class="font-mono text-sm break-all">{originParent.orkflow}</span>{/if}</span>
+				{/if}
 				{#if originRootHref && origin}
 					<span data-testid="run-origin-root-kind">Root run</span>
 					<a href={originRootHref} data-testid="run-origin-root-link" class="font-mono text-sm font-semibold">{shortRunId(origin.rootRunId)}</a>
+					{#if originRootFacts.orkflow}<span data-testid="run-origin-root-orkflow">of <span class="font-mono text-sm break-all">{originRootFacts.orkflow}</span></span>{/if}
 				{/if}
+				{#if originRootFacts.startedBy}<span data-testid="run-origin-root-started" class="break-words text-ink-3">started by {originRootFacts.startedBy}</span>{/if}
 				{#if origin?.description}<span data-testid="run-origin-description" class="text-ink-3">({origin.description})</span>{/if}
 				{#if origin?.reference}
 					{#if originReference}

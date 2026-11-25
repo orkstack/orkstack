@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -200,12 +201,21 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 			hosts = append(hosts, alias)
 		}
 	}
+	own, err := ownAddresses()
+	if err != nil {
+		return notRun("the host's addresses", err)
+	}
+	clusterAddrs, err := clusterAddresses(ctx, r.cfg.Cluster, own, net.DefaultResolver.LookupIPAddr)
+	if err != nil {
+		return notRun("the cluster's name", err)
+	}
 	plan := servicehost.ProbePlan{
 		OperatorAddresses:  r.cfg.OperatorAddresses,
 		AdminPort:          r.cfg.AdminPort,
 		LoopbackCanaryPort: loop.Addr().(*net.TCPAddr).Port,
 		HostAddresses:      append([]string{gateway}, hosts...),
 		Cluster:            r.cfg.Cluster,
+		ClusterAddresses:   clusterAddrs,
 		Canaries:           listeners[1:],
 	}
 	back := "4,address,tcp," + net.JoinHostPort(listenerAddr, reachProbePort)
@@ -230,7 +240,7 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 	if failed := control(", after the probe"); failed != nil {
 		return *failed
 	}
-	out.Result = servicehost.JudgeAnswered(obs, r.cfg.Allow)
+	out.Result = servicehost.JudgeAnswered(obs, plan, r.cfg.Allow)
 	return out
 }
 
@@ -386,7 +396,7 @@ func (r *reachRun) dial(ctx context.Context, name, mode, network string, targets
 		return nil, fmt.Errorf("the probe answered %d of %d targets", len(obs), len(targets))
 	}
 	for i, o := range obs {
-		if got := fmt.Sprintf("%d,%s,%s,%s", o.Question, o.Kind, o.Via, o.Target); got != targets[i] {
+		if got := o.Asked(); got != targets[i] {
 			return nil, fmt.Errorf("the probe answered %q for target %q", got, targets[i])
 		}
 	}
@@ -422,6 +432,70 @@ func hostAddresses() ([]string, error) {
 			continue
 		}
 		out = append(out, ipnet.IP.String())
+	}
+	return out, nil
+}
+
+// ownAddresses is every address of this host's interfaces.
+func ownAddresses() ([]string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok {
+			out = append(out, ipnet.IP.String())
+		}
+	}
+	return out, nil
+}
+
+// The bounds of resolving the cluster's name: one lookup's time, and the
+// addresses one probe asks about.
+const (
+	clusterLookupTimeout = 10 * time.Second
+	maxClusterAddresses  = 16
+)
+
+// clusterAddresses is what the Orker itself resolves the name in cluster
+// (host:port) to, none for an address: what it reaches by a name its own
+// hosts file or network knows, a container may reach by address. An address
+// of this host's own (own) is its loopback: a container reaches the host at
+// the addresses the plan lists. A name that resolves to nothing, or to more
+// than the probe asks, is an error.
+func clusterAddresses(ctx context.Context, cluster string, own []string, lookup func(context.Context, string) ([]net.IPAddr, error)) ([]string, error) {
+	const loopback = "127.0.0.1"
+	host, _, err := net.SplitHostPort(cluster)
+	if err != nil || host == "" {
+		return nil, nil // question 3 is not asked
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		// The plan lists the host's IPv4 addresses itself.
+		if ip.To4() == nil && slices.Contains(own, ip.String()) {
+			return []string{loopback}, nil
+		}
+		return nil, nil
+	}
+	if !servicehost.ProbeName(host) {
+		return nil, fmt.Errorf("the probe cannot ask under the name %q", host)
+	}
+	ctx, cancel := context.WithTimeout(ctx, clusterLookupTimeout)
+	defer cancel()
+	ips, err := lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 || len(ips) > maxClusterAddresses {
+		return nil, fmt.Errorf("%s resolves to %d addresses; the probe asks 1 to %d", host, len(ips), maxClusterAddresses)
+	}
+	var out []string
+	for _, ip := range ips {
+		addr := ip.IP.String()
+		if slices.Contains(own, addr) {
+			addr = loopback
+		}
+		out = append(out, addr)
 	}
 	return out, nil
 }

@@ -3272,7 +3272,7 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 	must.OKf(t, export.Err(), "export the evidence bundle")
 	report, err := evidence.Verify(bytes.NewReader(bundle.Bytes()))
 	must.OK(t, err)
-	if !report.OK() || report.Manifest.SchemaVersion != evidence.SchemaVersionEventGaps || len(report.EventGaps) != 1 ||
+	if !report.OK() || report.Manifest.SchemaVersion != evidence.SchemaVersion || len(report.EventGaps) != 1 ||
 		report.EventGaps[0].First != segment.GetFirstSequence() || report.EventGaps[0].Last != segment.GetLastSequence() {
 		t.Fatalf("the bundle verifies %t, schema %d, gaps %+v (failures %+v)", report.OK(), report.Manifest.SchemaVersion,
 			report.EventGaps, report.Failures)

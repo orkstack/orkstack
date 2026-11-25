@@ -72,8 +72,8 @@ export interface Manifest {
 	counts: { present: number; reclaimed: number; unrecorded: number; rejected: number; withheld?: number; bytes_present: number };
 }
 
-/** The only manifest schema this client reads. */
-export const EVIDENCE_SCHEMA_VERSION = 1;
+/** The manifest schema the engine writes: the only one this client reads. */
+export const EVIDENCE_SCHEMA_VERSION = 3;
 
 /** Parses MANIFEST.json bytes; a schema this client does not know is refused. */
 export function parseManifest(bytes: Uint8Array): Manifest {

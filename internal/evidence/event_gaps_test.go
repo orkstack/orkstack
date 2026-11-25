@@ -9,7 +9,7 @@ import (
 )
 
 // gappedFixture is the fixture bundle of a run that lost events 1201–2400
-// before it was archived: schema_version 2 with event_gaps.
+// before it was archived, as an earlier engine wrote it: schema_version 2.
 func gappedFixture() fixtureBundle {
 	f := newFixture()
 	f.manifest.SchemaVersion = SchemaVersionEventGaps
@@ -31,9 +31,9 @@ func TestParseManifest_AcceptsSchemaTwoOnlyWithEventGaps(t *testing.T) {
 	if _, err := ParseManifest(empty); err == nil || !strings.Contains(err.Error(), "names no event_gaps") {
 		t.Fatalf("schema 2 without gaps = %v, want a refusal", err)
 	}
-	if _, err := ParseManifest(bytes.Replace(document, []byte(`"schema_version": 2`), []byte(`"schema_version": 3`), 1)); err == nil ||
-		!strings.Contains(err.Error(), "schema_version 3") {
-		t.Fatalf("schema 3 = %v, want a refusal naming it", err)
+	if _, err := ParseManifest(bytes.Replace(document, []byte(`"schema_version": 2`), []byte(`"schema_version": 4`), 1)); err == nil ||
+		!strings.Contains(err.Error(), "schema_version 4") {
+		t.Fatalf("schema 4 = %v, want a refusal naming it", err)
 	}
 	backwards := bytes.Replace(document, []byte(`"first": 1201`), []byte(`"first": 2401`), 1)
 	if _, err := ParseManifest(backwards); err == nil {
@@ -43,11 +43,41 @@ func TestParseManifest_AcceptsSchemaTwoOnlyWithEventGaps(t *testing.T) {
 
 func TestParseManifest_SchemaOneForbidsEventGaps(t *testing.T) {
 	f := gappedFixture()
-	f.manifest.SchemaVersion = SchemaVersion
+	f.manifest.SchemaVersion = SchemaVersionNoGaps
 	document, err := f.manifest.MarshalJSON()
 	must.OK(t, err)
 	if _, err := ParseManifest(document); err == nil || !strings.Contains(err.Error(), "carries event_gaps") {
 		t.Fatalf("schema 1 with gaps = %v, want a refusal", err)
+	}
+}
+
+// Version 3 is every bundle an engine writes: with or without event gaps.
+func TestParseManifest_SchemaThreeMayNameEventGaps(t *testing.T) {
+	for _, f := range []fixtureBundle{newFixture(), gappedFixture()} {
+		f.manifest.SchemaVersion = SchemaVersion
+		document, err := f.manifest.MarshalJSON()
+		must.OK(t, err)
+		parsed, err := ParseManifest(document)
+		must.OKf(t, err, "ParseManifest(schema 3, %d gaps)", len(f.manifest.EventGaps))
+		if parsed.SchemaVersion != 3 || len(parsed.EventGaps) != len(f.manifest.EventGaps) {
+			t.Fatalf("parsed schema %d, %d gaps", parsed.SchemaVersion, len(parsed.EventGaps))
+		}
+		report, err := Verify(bytes.NewReader(writeFixture(t, f)))
+		must.OKf(t, err, "Verify")
+		if !report.OK() || len(report.EventGaps) != len(f.manifest.EventGaps) {
+			t.Fatalf("report = %+v", report)
+		}
+	}
+}
+
+// A bundle an earlier engine wrote is still read: version 1 without gaps.
+func TestVerify_ReadsAVersionOneBundle(t *testing.T) {
+	f := newFixture()
+	f.manifest.SchemaVersion = SchemaVersionNoGaps
+	report, err := Verify(bytes.NewReader(writeFixture(t, f)))
+	must.OKf(t, err, "Verify")
+	if !report.OK() || report.Manifest.SchemaVersion != 1 {
+		t.Fatalf("report = %+v", report)
 	}
 }
 

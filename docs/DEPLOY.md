@@ -658,7 +658,7 @@ then the variable it becomes.
 | `orker.event_sources.parse_bytes` | `ORK_ORKER_EVENT_SOURCE_PARSE_BYTES` | `67108864` | `orker` | the most JSON bodies all lanes of this Orker read at once |
 | `orker.event_sources.log_bytes_per_hour` | `ORK_ORKER_EVENT_SOURCE_LOG_BYTES_PER_HOUR` | `4194304` | `orker` | an instance's log budget per stream after the first megabyte of an attempt |
 | `orker.services.allow_metadata_reach` | `ORK_ORKER_SERVICES_ALLOW_METADATA_REACH` | `false` | `orker` | `true` lets this Orker host services although a container on a service network can reach an instance-metadata endpoint; logged at every boot |
-| `orker.services.allow_open_cluster` | `ORK_ORKER_SERVICES_ALLOW_OPEN_CLUSTER` | `false` | `orker` | `true` lets this Orker host services although the cluster serves a container on a service network that presents no credential, in plaintext or over TLS without a client certificate: any tenant's long-lived container could then act as any worker of the deployment. Logged at every boot; for a trial deployment only |
+| `orker.services.allow_open_cluster` | `ORK_ORKER_SERVICES_ALLOW_OPEN_CLUSTER` | `false` | `orker` | `true` lets this Orker host services although the cluster serves a container on a service network that presents no credential, in plaintext or over TLS without a client certificate: any tenant's long-lived container could then act as any worker of the deployment. It never accepts a reachable membership port. Logged at every boot; for a trial deployment only |
 | `orker.services.allow_container_reach` | `ORK_ORKER_SERVICES_ALLOW_CONTAINER_REACH` | `false` | `orker` | `true` lets this Orker host services although a container on a service network can reach a container on another service's network or the runtime's default one; logged at every boot. For a host with one tenant |
 | `orker.services.probe_addresses` | `ORK_ORKER_SERVICES_PROBE_ADDRESSES` | *(empty)* | `orker` | a list of `host:port` no service on this host may reach, added to the reach probe: a node agent's port, an internal registry. A port is 1 to 65535, written without a sign or a leading zero, or the Orker does not start |
 | `orker.services.probe_image` | `ORK_ORKER_SERVICES_PROBE_IMAGE` | *(derived)* | `orker` | the image the reach probe runs (`orker probe reach`): unset is this release's own `ghcr.io/orkstack/orker:<version>`, signature- and build-checked; set, a copy of the orker image of this build, by digest; required on an Orker built from source |
@@ -706,6 +706,10 @@ then the variable it becomes.
 | `engine.continuation.events` | `ORK_CONTINUATION_EVENTS` | `8192` | `ork` | history growth (events) after which a run carries on at its next moment with nothing running. A run with no such moment pauses new tasks once its history plus what its failure path still needs reaches 60% of the limit, and carries on once what was running finishes. At least 50, at most a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled. Read at submit, so a change applies to new runs |
 | `engine.continuation.bytes` | `ORK_CONTINUATION_BYTES` | `8 MiB` | `ork` | the same, for history bytes; also the most a run copies into any one of its histories (the one bounded copy AGENTS.md §2.2 allows into history): the saved state it carries forward, plus its definition when that is passed by reference (`engine.definition_by_reference`, below), which may take at most a quarter of it, compressed. A run whose saved state is larger carries on in its current history instead, and may stop `RUN_HISTORY_LIMIT` naming the size. At least 16 KiB, at most a fifth of `engine.history.max_bytes`; anything else is refused at boot when continuation is enabled |
 | `engine.continuation.restore_timeout` | `ORK_CONTINUATION_RESTORE_TIMEOUT` | `1h` | `ork` | how long a run that carried on waits for object storage to return its saved state before it fails `RUN_STATE_UNAVAILABLE`, explicitly. Each read is retried with a backoff doubling from 1 s to at most 1 minute, and a retry that would start past the timeout is not made, so the run stops at its last read inside the window — up to one backoff early (31 s into a 1m timeout, within the last minute of the default hour). 1m to 8h, and its worst-case history — about `128 + 3 per 8 s` events at the default bytes (1,478 at 1h, 10,928 at 8h)— must fit in a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled, naming this key, `engine.continuation.bytes` and `engine.history.max_events`. Each await still open when a run carries on adds one more event to that restore (its deadline timer, recreated), which the run's history guard counts like any other |
+| `engine.resume.confirm_timeout` | `ORK_RESUME_CONFIRM_TIMEOUT` | `30s` | `ork` | (No build resumes runs yet, so `engine.resume.*` has no effect.) how long a confirmed resume waits for its run to carry on before it answers `RESUME_UNCONFIRMED` (`not_carried_on`). It also bounds how late the cluster may still apply the resume: this plus 30 s, a deadline the cluster itself enforces. A resume whose answer was lost is settled 60 s after that deadline, so keep the engine replicas' clocks within 30 s of each other, and let nothing between an engine and the cluster drop a request's deadline ("A proxy between the engines and the cluster", below). 1s to 10m, refused at boot otherwise. Read at each request |
+| `engine.resume.visibility_lag_floor` | `ORK_RESUME_VISIBILITY_LAG_FLOOR` | `15s` | `ork` | how long after the last ending below a run the cluster's index of runs is trusted to show every run still open there; until then a resume of a run that started child runs is refused `STILL_STOPPING` (`children_unconfirmed`). Raise it where the cluster's index is slower. 1s to 10m, refused at boot otherwise. Read at each request |
+| `engine.resume.max_seq_gap` | `ORK_RESUME_MAX_SEQ_GAP` | `4096` | `ork` | how far a run's stored events may go on above its ending before a resume is refused `STATE_UNREADABLE` (`events_above_terminal`) and asks to accept the gap (`--accept-sequence-gap`). 1 to 1,000,000, refused at boot otherwise. Read at each request |
+| `engine.resume.confirm_per_run` | `ORK_RESUME_CONFIRM_PER_RUN` | `6` | `ork` | how many confirms of one run's resume each engine replica serves a minute; one past it is refused `RESUME_CHECK_UNAVAILABLE` (`throttled`). Previews are not counted. 1 to 600, refused at boot otherwise. Read at each request |
 | `engine.definition_by_reference` | `ORK_DEFINITION_BY_REFERENCE` | `true` | `ork` | a top-level run whose planned definition is over the 256 KiB a run's start may carry travels by reference instead: the start carries a stub naming it, and the run copies the definition into its own history in bounded chunks, sharing the copy bound below (`engine.continuation.bytes`), of which it may take at most a quarter, compressed (2 MiB at the default); a larger one is refused at submit and at create, "split it into composed Orkflows" (`docs/DSL.md`, "How many tasks an Orkflow may declare"). Needs `engine.continuation.enabled`: an explicit `true` without it is refused at boot, naming both keys, and when neither the configuration file nor the environment sets this key it is on only where the built-in default is on and continuation is (the boot logs the effective value). A submit that needs it is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs an older release (§5, "Engine capabilities and the fleet check"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below that release (§4, R3) |
 | `engine.snapshot_overlays` | `ORK_SNAPSHOT_OVERLAYS` | `true` | `ork` | a run that declares more than 256 rows — its tasks plus every fan-out's `max_items` — writes, for each event before its last, only the rows that changed since its last full snapshot (a snapshot overlay, `docs/STORAGE.md`), and a full snapshot at least every 64 events and whenever more than 256 rows changed; its last event's snapshot is always full. Decided per run, so a small child of a large parent keeps full snapshots. Read at submit, so a change applies to new runs. While any `ork` process polling `ork-engine-events` runs an older release (a draining build's included), or a process of a build that new runs start on does, new runs write full snapshots instead, and the engine logs why at most once a minute (§5, "Snapshot overlays"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below the release that has it (§4) |
 | `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `500` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs. Raising it is allowed, but it lowers the flat-stage bound X (`engine.orkflow_max_tasks`, §5): above about 700, X is below the 4,000-task default and the boot warns |
@@ -804,6 +808,7 @@ then the variable it becomes.
 | `telemetry.pprof_enabled` | `ORK_PPROF_ENABLED` | `false` | both | mounts `net/http/pprof` on the admin listener. Off by default: an Orker's heap holds resolved secret bytes |
 | `telemetry.high_cardinality` | `ORK_TELEMETRY_HIGH_CARDINALITY` | `false` | both | adds `ork.run_id`/`ork.task_id`/`ork.orkflow.name`/`ork.orkflow.version` labels to `ork_*` metrics — see §7, "High-cardinality labels" |
 | `telemetry.orkflow_label` | `ORK_TELEMETRY_ORKFLOW_LABEL` | `true` | ork | puts `ork.orkflow.name` on `ork.runs`, `ork.tasks`, `ork.run.duration` and `ork.runs.refused`; never on a task duration or an Orker's metric (§7, "The Orkflow label") |
+| `telemetry.trust_inbound_trace` | `ORK_TELEMETRY_TRUST_INBOUND_TRACE` | `false` | ork | whether an API request joins the trace its caller sends (`traceparent`, `tracestate`), with the caller's sampling decision and baggage. Off, a request starts a trace of its own, linked to the caller's; see §7, "Traces" |
 | `telemetry.object_labels` | `ORK_TELEMETRY_OBJECT_LABELS` | `false` | ork | puts a schedule's name (`ork.schedule`) on the schedule metrics and a webhook's id (`ork.webhook.id`) on the webhook metrics; each name is a series of its own, bounded by `telemetry.metric_cardinality_limit` |
 | `telemetry.metric_cardinality_limit` | `ORK_TELEMETRY_METRIC_CARDINALITY_LIMIT` | `2000` | both | the most series one instrument keeps; past it new series fold into one marked `otel.metric.overflow="true"` (§7, "The Orkflow label") |
 | `telemetry.census_requests_per_minute` | `ORK_TELEMETRY_CENSUS_REQUESTS_PER_MINUTE` | `60` | ork | each engine replica's budget of census requests (§7, "Censuses") |
@@ -814,7 +819,7 @@ then the variable it becomes.
 | `telemetry.exporters.traces` | `OTEL_TRACES_EXPORTER` | `none` | both | `otlp` or `none`. `otlp` wires the Orkflow's spans end to end — see §7, "Traces" |
 | `telemetry.sampler.name` | `OTEL_TRACES_SAMPLER` | *(SDK default: `parentbased_always_on`)* | both | standard OpenTelemetry sampler selector, honored verbatim by the SDK — see §7, "Traces" |
 | `telemetry.sampler.arg` | `OTEL_TRACES_SAMPLER_ARG` | *(SDK default)* | both | the chosen sampler's argument, e.g. a ratio for `traceidratio` — see §7, "Traces" |
-| — | `OTEL_PROPAGATORS` | *(SDK default: `tracecontext,baggage`)* | both | standard propagator selector for the context a trace travels in, honored verbatim by the SDK. Not in the config file schema — set it in the environment |
+| — | `OTEL_PROPAGATORS` | *(not read)* | both | a trace travels as W3C trace context whatever this says: between OrkStack's own processes with baggage, and from a caller as §7, "Traces", states |
 | `telemetry.exporters.logs` | `OTEL_LOGS_EXPORTER` | `none` | both | `otlp` or `none`. Also forwards the process's own log lines, including the Temporal SDK's |
 | `telemetry.otlp.{endpoint,protocol,headers,timeout,certificate}`, `telemetry.otlp.{traces,metrics,logs}.{endpoint,headers}` | `OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL`, `_HEADERS`, `_TIMEOUT`, `_CERTIFICATE`, and the per-signal `OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES}_*` | *(SDK defaults)* | both | standard OTLP exporter configuration, honored verbatim by the SDK — recipes in §7. Only `http/protobuf` is supported for `_PROTOCOL` |
 | `telemetry.batch.metric_export_interval` | `OTEL_METRIC_EXPORT_INTERVAL` | *(SDK default)* | both | the metric export interval |
@@ -2174,11 +2179,17 @@ An Orker needs exactly this, and nothing else. Each prefix ends in its slash.
 | `metadata/attempts/` | put, list |
 | `metadata/probes/` | put, get, list, delete |
 | `metadata/receipts/`, `metadata/staging/event-sources/` | put |
+| `metadata/run-context/` | get; never list |
 
 Where the store separates listing from reading, as AWS S3 does, grant listing
 by prefix for every prefix above where the Orker reads a key that may not
 exist: without it the store answers `403` for a missing key, and the Orker
-cannot tell "no commit yet" from "forbidden". On AWS S3:
+cannot tell "no commit yet" from "forbidden". `metadata/run-context/` is the
+exception, and takes no listing: an engine writes the object before the run
+starts, so an Orker reads no key there that may not exist, and a credential
+that cannot list cannot enumerate other runs' objects. Where the store answers
+`403` for a missing key, a missing object and a refused one then read alike,
+and `RUN_CONTEXT_UNAVAILABLE` says it may be either. On AWS S3:
 
 ```json
 {
@@ -2198,7 +2209,10 @@ cannot tell "no commit yet" from "forbidden". On AWS S3:
     {
       "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::BUCKET/metadata/attested/*"
+      "Resource": [
+        "arn:aws:s3:::BUCKET/metadata/attested/*",
+        "arn:aws:s3:::BUCKET/metadata/run-context/*"
+      ]
     },
     {
       "Effect": "Allow",
@@ -2251,7 +2265,10 @@ copy of it on a retired host is reported by nobody.
 `orker.store_scope_recheck` (§1, `1h`), and a minute after a round that could
 not tell. A round makes a conditional write the store must refuse on a key
 under `metadata/probes/` first, as its control; then, for every control-plane
-prefix, a conditional write, a conditional delete and a one-key listing; then
+prefix, a conditional write, a conditional delete and a one-key listing; then,
+for the two prefixes above an Orker may only read, `metadata/attested/` and
+`metadata/run-context/`, the same write and delete, and for
+`metadata/run-context/` the listing; then
 a read of `metadata/identity/sentinel`, which every engine writes at boot.
 Only the store's own error code counts, never the HTTP status alone:
 
@@ -2625,8 +2642,9 @@ under a running run fail its dependents' input staging):
 Do not expire the other prefixes: `metadata/orkflows/`, `metadata/namespaces/`,
 `metadata/settings/`, `metadata/triggers/` and `metadata/webhooks/` are
 definitions and registries; `metadata/commits/` holds the commits a retry
-adopts and `metadata/snapshots/` what live reads need, both reclaimed by
-cleanup at retention; `metadata/runs/` and `metadata/index/` are the archive.
+adopts, `metadata/snapshots/` what live reads need and `metadata/run-context/`
+what a live run's tasks read about it, all three reclaimed by cleanup at
+retention; `metadata/runs/` and `metadata/index/` are the archive.
 That includes `metadata/snapshots/{ns}/{run}/continuations/`: the event
 segments, switch snapshots and saved state a run that carried on into a fresh
 history wrote (§2, "Runs that span several executions"). A live run reads its
@@ -5047,12 +5065,16 @@ A name the probe cannot resolve on a service network, or that leads only to
 the container itself, was not asked, so that probe counts as one that could
 not be run, naming the target, unless it found something open. The same holds
 for a name in `orker.services.probe_addresses` that resolves to an address
-question 1 does not list: list the address. Two names are excepted: a
-metadata endpoint's own, which resolves only inside its cloud, and one of a
-question the operator accepted (question 2 never is). So a cluster the Orker reaches by a name that
-only the host's own `/etc/hosts` knows must be given by its address for the
-Orker to host services, and on Podman `host.containers.internal` must lead to
-the host: where Podman sets none, set `host_containers_internal_ip` in
+question 1 does not list: list the address. Three names are excepted: a
+metadata endpoint's own, which resolves only inside its cloud; one of a
+question the operator accepted (question 2 never is, nor a membership port);
+and the cluster's, once the probe has asked every address the Orker itself
+resolves it to, its service ports both under the cluster's name and under
+none, since a container may show a server either. A cluster's name that
+resolves to nothing from the Orker either (one only a proxy resolves, say), or
+to more than 16 addresses, is a probe that could not be run: give the cluster
+by its address. On Podman `host.containers.internal` must lead to the host:
+where Podman sets none, set `host_containers_internal_ip` in
 `containers.conf`.
 Rootless networking passes a container's traffic out through the host
 itself, instance-metadata endpoints included: on such a host, question 1
@@ -5108,7 +5130,10 @@ four clean answers:
    find, and none of its membership ports accepts a connection. Only a
    refused or timed-out connection, a handshake that demands a client
    certificate, or an `Unauthenticated` or `PermissionDenied` answer counts
-   as closed;
+   as closed. The probe asks the ports a Temporal server has by default; a
+   development server (`temporal server start-dev`) picks its membership
+   ports at random, which the probe cannot list, so there it is question 4's
+   keeping networks apart that protects them;
 4. no other container can be reached from it, and none can reach it.
 
 A deployment whose cluster asks its clients for no credential is unfit for
@@ -5116,7 +5141,9 @@ sources on every host: whoever reaches it can take any tenant's tasks
 ([Temporal over TLS](#temporal-over-tls)). Three settings accept a failed
 question on purpose — `orker.services.allow_metadata_reach`,
 `allow_open_cluster` and `allow_container_reach` — and each is logged at
-every boot. The probe and its canaries run the Orker's own image, as the
+every boot. `allow_open_cluster` accepts the cluster's service ports only: a
+membership port that accepts a connection leaves the Orker unfit whatever it
+is set to. The probe and its canaries run the Orker's own image, as the
 device probes do ("Running a device Orker"): by default a release Orker uses
 `ghcr.io/orkstack/orker:<version>`, resolved to a digest, its cosign
 signature verified against the release key and its `org.orkstack.build`
@@ -5136,6 +5163,47 @@ while such a container exists; clearing it touches no other cause, and the
 next boot sets it again if its reap cannot remove one. A stuck service keeps
 its pool live for no submission: like an operator's cordon, it is a host to
 look at.
+
+### A proxy between the engines and the cluster
+
+A resume is sent to the cluster with a deadline, and the cluster applies none
+after it. That is what makes it safe to send a resume whose answer was lost
+again, 60 s after its deadline, and still resume the run once. A proxy between
+the engines and the cluster must therefore pass on a request's deadline (gRPC's
+`grpc-timeout` header) and its cancellation, and must not hold a request back or
+send one again by itself.
+
+**The engine cannot detect a proxy that does not.** It looks at the run right
+before every send, so a resume that landed by then is found and no second one is
+sent; but a first send that such a proxy delivers more than 60 s after its
+deadline, when a second has already been made, is applied too. The run is then
+taken back to where the resume started. A task the second send had finished is
+answered from its saved result and one still running runs again, as after any
+lost attempt, possibly beside a container not yet stopped; but the run's events
+are numbered from the same point again, so a client that followed the run misses
+the new ones. Where that happens while the second send is being answered, the
+engine counts `reset_run_mismatch` (`ork.run.resume.anomalies`); later, nothing
+says so. Run the engines straight against the cluster, or through a proxy known
+to keep deadlines.
+
+### A container that outlived its run
+
+An Orker that learns its attempt is over stops the container: within a
+heartbeat timeout it knows, and within the task's cancellation grace the
+container is gone. A resume waits for that (`STILL_STOPPING`,
+`containers_stopping`). Past it, it asks the Orker of every attempt that was
+claimed and never released:
+
+- **The Orker still has it** (`container_still_running`). It did not act on
+  the end of its attempt, or its container runtime does not remove the
+  container. `orkctl orker cordon ID`, then restart that Orker: its boot
+  removes its containers. If the Orker is gone and its container runtime is
+  up, remove the containers labelled `ork.run=RUN` on that host yourself.
+- **The Orker does not answer** (`ATTEMPT_OUTCOME_UNKNOWN`). The container may
+  still run on a host that is lost or cut off. Make sure that it does not, or
+  that running the task beside it is safe, and accept the attempt when you
+  confirm the resume. An Orker that comes back under its own identity removes
+  the container at boot, and nothing is left to accept.
 
 ### What removes a task's container
 
@@ -6725,7 +6793,7 @@ not just that the containers are up.
 ### Traces
 
 `OTEL_TRACES_EXPORTER=otlp` turns on one trace that runs end to end through
-both binaries: the engine starts a span for the run's own workflow processing,
+both binaries, and through every child run of the tree: the engine starts a span for the run's own workflow processing,
 `ork.task.attempt` is the Orker's span for one activity attempt, and
 `ork.task.phase` (attribute `ork.phase`) is its child for one phase of that
 attempt (image resolution, workspace setup, container run, artifact upload,
@@ -6740,8 +6808,39 @@ span the engine emits is started from the activity boundary, never from inside
 `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` are the standard
 OpenTelemetry sampler selector and argument, honored verbatim by the SDK — set
 `traceidratio` with an argument below `1` to sample a fraction of runs on a
-busy deployment. `OTEL_PROPAGATORS` selects the context propagation format;
-the default (`tracecontext,baggage`) is what every recipe above assumes.
+busy deployment. A trace travels as W3C trace context; `OTEL_PROPAGATORS` is
+not read.
+
+**Where a run's trace starts.** A submit or a trigger pins its request's span
+on the run, and a schedule's fire pins its own; `Run.trace_id` is the trace, and
+`Run.traceparent` the span, on a read of the run (an evidence export is one; a
+submit's or a cancel's answer and a webhook body are not). By default a request starts a
+trace of its own, sampled by this deployment's sampler, and links the context
+its caller sent (`traceparent`, `tracestate`), so no caller decides what is
+traced. `telemetry.trust_inbound_trace: true` joins the caller's trace instead,
+with its sampling decision and its baggage: set it only where every caller, or
+the gateway in front of them, is trusted. A trace state that does not parse, or
+is over 32 members or 512 bytes, is not read, and a malformed `traceparent` is
+ignored. A deployment that does not trace pins nothing.
+
+**A run's own span** is `ork.run`, from the run's start to its end, made once
+when it ends: under the span its submission was accepted in, or under its
+parent's `ork.run` for a child run. Its attributes are `ork.run_id`,
+`ork.namespace`, `ork.orkflow.name`, `ork.orkflow.version`,
+`ork.orkflow.digest`, `ork.origin.kind`, `ork.origin.id`, `ork.run.status`,
+`ork.failure.reason` and, for a child run, `ork.parent_run_id`,
+`ork.parent_task_id` and `ork.root_run_id`; `ork.task.attempt` carries the
+Orkflow's and the tree's too. Never the run's principal or reference. To find a
+whole tree, match `ork.root_run_id` or `ork.run_id` with the root's id.
+
+- It goes to the sink the run's namespace selected, as its attempts' spans do;
+  the engine's workflow spans stay on the default sink. Give a namespace's sink
+  and the default one the same trace store to see them joined.
+- It appears only at the run's end, so read a run in flight from metrics, its
+  status and its attempts' spans. A run ended outside OrkStack, or whose last
+  publish failed, has none.
+- It can be exported twice, with the same id: a publish made again on another
+  replica, or a resumed run that ends again. The later end stands.
 
 Every process log line this package emits carries `trace_id` (and `span_id`)
 when one is live on the context it was logged from — the engine's structured
@@ -6753,10 +6852,10 @@ line and paste it into Tempo's search.
 A task's `task.json` carries an optional `trace` key —
 `{"traceparent": "...", "tracestate": "..."}` in the same shape the W3C
 `traceparent`/`tracestate` HTTP headers use — so a workload that wants its own
-work folded into the same trace can propagate it. This is informational, not
-part of the OCI Activity Contract's ABI (`docs/OCI_ACTIVITY_CONTRACT.md` §3.2): it is present only when tracing
-is on and a real span exists, absent otherwise, and no image needs to read it
-to run correctly. A workload that does not recognize the key ignores it.
+work folded into the same trace can propagate it. It is the attempt's span, and
+part of the OCI Activity Contract's ABI (`docs/OCI_ACTIVITY_CONTRACT.md` §3.2):
+present only when tracing is on and the attempt has a span, absent otherwise,
+with no baggage. No image needs to read it to run correctly.
 
 ### Profiles
 
@@ -7024,6 +7123,25 @@ in seconds, under the same labels. Both are recorded once, on the first
 publication of the run's event that ended the wait: the event carries it as
 `Event.wait_end` (docs/API.md).
 
+What a key's gate does is counted too, by the engine replica whose worker did
+it:
+
+| Counter | Labels | Counts |
+|---|---|---|
+| `ork.concurrency.reclaimed` | `ork.namespace`, `ork.concurrency.limit`, `ork.concurrency.outcome` | slots and places in line taken back: the run `closed`, was `not_found`, moved to a newer incarnation (`stale`), does not record the slot (`missing_slot`), or its wait passed its bound (`expired`) |
+| `ork.concurrency.verify_errors` | `ork.namespace`, `ork.concurrency.limit` | checks of a holding or waiting run that failed or ran out of time; its slot or place is kept |
+| `ork.concurrency.rebuilt` | `ork.namespace`, `ork.concurrency.outcome` | rebuilds of a key's record: `skipped` after a clean end, `ok`, or a `failed_attempt` that is tried again |
+| `ork.concurrency.gates_started` | `ork.namespace` | keys that became active; two requests that find the key inactive at once may both count it, and a `skipped` rebuild with it |
+
+A slot or place taken back is counted at the end of the check that took it, or
+before the gate closes or carries its state on; a gate that is canceled, and a
+report that cannot be made (it is logged), leave it out. A check or rebuild an
+engine's shutdown cuts short is not counted: another replica does it again. A
+call repeated after a crash may be counted twice. No decision depends on any
+of these counts.
+`ork.concurrency.census.failures`, with no label, counts the attempts at a
+census pass that could not run.
+
 #### The store clock
 
 With metrics exported, every engine compares its clock with the object
@@ -7049,14 +7167,23 @@ policy names one — they can land on a different sink than the process default
 
 | Metric | Labels | Emitted by |
 |---|---|---|
-| `ork.runs` | `status` | engine, once per terminal run (succeeded/failed/canceled) |
-| `ork.run.duration` | `status` | engine, same event, `finished_at - started_at` |
+| `ork.runs` | `status`, `ork.run.resumption`, `ork.failure.reason` | engine, once per terminal run (succeeded/failed/canceled), and once more for each ending a resume led to, labelled `ork.run.resumption="true"`; the label is absent from a run's first ending. Leave those out to count runs, and keep them in a failure ratio, where each ending is one outcome. A resumed run that ended with no event of its own is not counted again; `ork.failure.reason` only on a run that ended `RUN_HISTORY_LIMIT` |
+| `ork.run.duration` | `status`, `ork.run.resumption` | engine, same event, `finished_at - started_at`; for a resumed run, `started_at` is its first start's |
 | `ork.run.timeouts` | `ork.namespace` | engine, once per terminal run its own `timeout:` ended (`RUN_TIMED_OUT`, `docs/DSL.md` "Run timeout"); a run already failing when its deadline passed keeps its own cause and counts only on `ork.run.timeout.hard_ends`, if its handlers were stopped |
 | `ork.run.timeout.hard_ends` | `ork.namespace` | engine, once per terminal run whose failure handlers were stopped, or never started, at its run timeout's hard end (`engine.run_timeout_handler_grace`) |
-| `ork.run.resume.anomalies` | `ork.namespace`, `kind` | engine, once per thing a resumed run met that should not happen: `reset_unreadable` (a reset run could not read the reset that made it, so it failed `RESUME_PLAN_UNREADABLE` with no event) |
+| `ork.run.resumes` | `ork.namespace`, `action` (`resume`, `retry_from`), `from_state` (`failed`, `canceled_force`), `outcome` (`resumed`, `already`, `refused`, `preview_refused`, `unavailable`, `unconfirmed`), `ork.refusal.reason` | engine, once per request to resume a run that was answered one of these; a preview that planned is none |
+| `ork.run.resume.tasks` | `ork.namespace`, `kind` (why each runs again or is kept) | engine, per confirmed resume: its tasks and items of each kind |
+| `ork.run.resume.preflight.headroom` | `ork.namespace` | engine, per planned resume, a preview's too: the history it would start with, as a share of the run's hold line |
+| `ork.run.resume.confirm.duration` | `ork.namespace` | engine, per confirmed resume: seconds to answer |
+| `ork.run.resume.ordinal` | `ork.namespace` | engine, per confirmed resume: which resume of its run it is |
+| `ork.run.resume.since_failure` | `ork.namespace` | engine, per confirmed resume: seconds from the run's ending to it |
+| `ork.run.resumed` | `ork.namespace`, `action`, `from_state` | engine, once per resume that got going (`RUN_RESUMED`, first publication) |
+| `ork.run.resume.readback.duration` | `ork.namespace`, `outcome` (`kept`) | engine, on `RUN_RESULTS_KEPT`: seconds a resumed run took to read its kept results back |
+| `ork.run.resume.readback.attempts` | `ork.namespace` | engine, per read of kept results that answered or failed for good: the tries it took; a read its deadline ended is not recorded |
+| `ork.run.resume.anomalies` | `ork.namespace`, `kind` | engine, once per thing a resumed run met that should not happen: `reset_unreadable` (a reset run could not read the reset that made it, so it failed `RESUME_PLAN_UNREADABLE` with no event); or that a request to resume one met: `reset_run_mismatch` (the run's earlier part names another run than its resume answered; the log has both), `events_above_terminal` (stored events go on above its ending by more than `engine.resume.max_seq_gap`), `container_after_bound` (an Orker still has a container of it past the time it had to stop) |
 | `ork.runs.pauses` | `ork.pause.cause` (`self`, `parent`), `ork.pause.outcome` (`paused`, `causes_changed`, `unpaused`, `not_paused`, `timed_out`, `run_ended`) | engine, once per pause transition, on the event that marks it (`pause_transition`, first publication only, so a repeated delivery counts once); a replica starts every outcome series of a namespace at 0 the first time it records one |
 | `ork.runs.pause.duration` | `ork.pause.outcome` (`unpaused`, `timed_out`, `run_ended`) | engine, when a run's own pause ends: seconds from its start to its end, buckets 1 min to 31 d |
-| `ork.tasks` | `ork.pool`, `status`, `failure_category`, `ork.cache.outcome` | engine, once per terminal task (succeeded/failed) |
+| `ork.tasks` | `ork.pool`, `status`, `failure_category`, `ork.failure.reason`, `ork.cache.outcome` | engine, once per terminal task (succeeded/failed); `ork.failure.reason` only on a pinned task that failed `PIN_HOST_LOST` or `PIN_UNAVAILABLE` |
 | `ork.task.duration` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
 | `ork.task.attempts` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event: the attempt number the task finished on — one observation per fan-out item, none for a composed task |
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Orker, once per attempt (`outcome`: `succeeded`, `failed`, `canceled`, or `adopted` for a retry that found an existing durable commit and ran no container) |
@@ -7349,8 +7476,8 @@ sink is visible on the default sink through its twins alone.
 
 | Twin | Labels |
 |---|---|
-| `ork.deployment.runs` | `status` |
-| `ork.deployment.tasks` | `status`, `failure_category`, `ork.pool`, `ork.cache.outcome` |
+| `ork.deployment.runs` | `status`, `ork.run.resumption`, `ork.failure.reason` |
+| `ork.deployment.tasks` | `status`, `failure_category`, `ork.failure.reason`, `ork.pool`, `ork.cache.outcome` |
 | `ork.deployment.runs.refused` | `ork.refusal.reason` |
 | `ork.deployment.run.continuations` | `outcome` |
 | `ork.deployment.orker.tasks` | `ork.pool`, `outcome`, `ork.failure.reason` |

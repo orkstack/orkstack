@@ -181,6 +181,10 @@ type Options struct {
 	// fails such an index EACH_EXPANSION_FAILED and such an item
 	// EACH_ITEM_UNAVAILABLE; cmd/orker always builds one.
 	EachIndexes *artifacts.EachIndexStore
+	// RunContexts is where a task's run-context object is read from. Nil
+	// fails a task whose input carries a run context RUN_CONTEXT_UNAVAILABLE;
+	// cmd/orker always builds one.
+	RunContexts RunContextReader
 }
 
 // Activities implements the engine<->Orker activity seam.
@@ -339,6 +343,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Namespaces:          opts.Namespaces,
 			CommitRoot:          strings.TrimSuffix(opts.CommitRoot, "/"),
 			EachIndexes:         eachIndexReaderOf(opts.EachIndexes),
+			RunContexts:         opts.RunContexts,
 			Policy:              policy,
 			WorkRoot:            workRoot,
 			OrkerID:             orkerID,
@@ -673,6 +678,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 	a.profiles.report(result)
 	result.Pins = a.describePins()
 	result.OpenPins = int32(len(result.Pins))
+	result.Running, result.RunningTruncated = a.dispatcher.describeRunning(a.capacity)
 	if a.dispatcher.Runtime != nil {
 		info, err := a.dispatcher.Runtime.Describe(ctx)
 		if err != nil {
@@ -863,10 +869,12 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 	// What each container ran, read before they go, so the attempts of the
 	// ones removed are released (resume/design.md §26.7).
 	var own []OwnContainer
+	unlisted := false
 	if lister, ok := a.dispatcher.Runtime.(ownContainerLister); ok && a.dispatcher.Claims != nil {
 		listed, err := lister.OwnContainers(ctx, a.dispatcher.OrkerID)
 		if err != nil {
 			a.dispatcher.logger().Warn("own containers could not be listed; their attempts are not released", "error", err)
+			unlisted = true
 		}
 		own = listed
 	}
@@ -888,6 +896,7 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 		// capacity starts with it reserved, until a later reap removes it.
 		// Either way it is tried again while this Orker runs, not left for its
 		// next boot.
+		a.keepReaped(own, unlisted, partial.Containers)
 		for _, id := range partial.Containers {
 			if a.capacity != nil {
 				a.capacity.seed(id)
@@ -898,6 +907,24 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 		return nil
 	default:
 		return fmt.Errorf("reap orphaned containers: %w", err)
+	}
+}
+
+// keepReaped lists, as still running, the attempts of the containers a reap
+// left; one that cannot be named makes every list of this process incomplete.
+func (a *Activities) keepReaped(own []OwnContainer, unlisted bool, stayed []ContainerID) {
+	byID := make(map[ContainerID]OwnContainer, len(own))
+	for _, c := range own {
+		byID[ContainerID(c.ID)] = c
+	}
+	for _, id := range stayed {
+		c, listed := byID[id]
+		if ref, ok := reapedAttempt(c); ok {
+			a.dispatcher.attempts.orphan(ref, id)
+		} else if unlisted || !listed || c.RunID+c.TaskID+c.Item+c.Attempt != "" {
+			// A container with no attempt's label, such as a probe's, ran none.
+			a.dispatcher.attempts.incomplete()
+		}
 	}
 }
 
