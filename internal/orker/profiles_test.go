@@ -92,6 +92,7 @@ func TestParseProfiles_Refused(t *testing.T) {
 		name, doc, want string
 	}{
 		{"probe image by tag", strings.Replace(validProfilesDoc, "orker@"+testDigest, "orker:0.4.0", 1), "probe_image"},
+		{"probe image written empty", strings.Replace(validProfilesDoc, "ghcr.io/orkstack/orker@"+testDigest, `""`, 1), "probe_image"},
 		{"unknown top key", "orkers: {}\n", "orkers"},
 		{"second document", validProfilesDoc + "---\nprofiles: {}\n", "second YAML document"},
 		{"anchor", gpu("  a: &x\n    kind: gpu\n    cdi:\n      kind: amd.com/gpu\n      units:\n        - \"0\"\n  b: *x\n"), "alias"},

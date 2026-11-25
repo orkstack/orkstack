@@ -1,8 +1,10 @@
 package authn
 
 import (
+	"net/url"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 func TestSafeReturnPath(t *testing.T) {
@@ -27,10 +29,49 @@ func TestSafeReturnPath(t *testing.T) {
 		"///evil.example":         "/",
 		"/\t/evil.example":        "/",
 		"http:/evil.example":      "/",
+		// Dot segments are read decoded, as a browser reads them.
+		"/%2e%2e/x":         "/",
+		"/%2E":              "/",
+		"/.%2e/":            "/",
+		"/%2e%2e//evil.com": "/",
+		// What is kept is escaped once, and never again.
+		"/a b":    "/a%20b",
+		"/é":      "/%C3%A9",
+		"/[":      "/[",
+		"/[ ":     "/%5B%20",
+		"/a%7Eb":  "/a%7Eb",
+		"/a%252f": "/a%252f",
+		"/x?a b":  "/x?a b",
+		"/%zz":    "/",
 	} {
-		if got := SafeReturnPath(in); got != want {
+		got := SafeReturnPath(in)
+		if got != want {
 			t.Errorf("SafeReturnPath(%q) = %q; want %q", in, got, want)
 		}
+		if again := SafeReturnPath(got); again != got {
+			t.Errorf("SafeReturnPath is not stable: %q -> %q -> %q", in, got, again)
+		}
+	}
+}
+
+// The bound is on the path a sign-in returns to, which escaping can make
+// three times as long as the path asked for: one that fits only before it is
+// escaped gives "/", as one too long to begin with does.
+func TestSafeReturnPath_BoundsTheEscapedPath(t *testing.T) {
+	fits := (MaxReturnPathBytes - len("/")) / len("%5B")
+	for _, tt := range []struct {
+		name, in, want string
+	}{
+		{"as long as the bound, nothing to escape", "/" + strings.Repeat("a", MaxReturnPathBytes-1), "/" + strings.Repeat("a", MaxReturnPathBytes-1)},
+		{"one byte over it", "/" + strings.Repeat("a", MaxReturnPathBytes), "/"},
+		{"fits once escaped", "/" + strings.Repeat("[", fits-1) + " ", "/" + strings.Repeat("%5B", fits-1) + "%20"},
+		{"fits only before it is escaped", "/" + strings.Repeat("[", fits) + " ", "/"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SafeReturnPath(tt.in); got != tt.want {
+				t.Fatalf("SafeReturnPath of %d bytes is %d bytes, want %d", len(tt.in), len(got), len(tt.want))
+			}
+		})
 	}
 }
 
@@ -39,9 +80,31 @@ func FuzzSafeReturnPath(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
-		// Properties: the answer is always a path of this origin, and
-		// answering again changes nothing.
+		// Properties: the answer is always a path of this origin, resolves
+		// against it without leaving it, is within the bound, and answering
+		// again changes nothing.
 		got := SafeReturnPath(in)
+		if len(got) > MaxReturnPathBytes {
+			t.Fatalf("SafeReturnPath of %d bytes is %d bytes, over the bound", len(in), len(got))
+		}
+		if strings.ContainsFunc(got, func(r rune) bool {
+			return unicode.IsControl(r) || r == '\\' || r == '#' || r == unicode.ReplacementChar
+		}) {
+			t.Fatalf("SafeReturnPath(%q) = %q holds a character it refuses", in, got)
+		}
+		for _, refused := range []string{"%2f", "%5c", "%00"} {
+			if strings.Contains(strings.ToLower(got), refused) {
+				t.Fatalf("SafeReturnPath(%q) = %q holds %s", in, got, refused)
+			}
+		}
+		origin := &url.URL{Scheme: "https", Host: "ork.example.test"}
+		ref, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("SafeReturnPath(%q) = %q does not parse: %v", in, got, err)
+		}
+		if to := origin.ResolveReference(ref); to.Scheme != origin.Scheme || to.Host != origin.Host || to.User != nil {
+			t.Fatalf("SafeReturnPath(%q) = %q resolves to %s", in, got, to)
+		}
 		if got == "" || got[0] != '/' || (len(got) > 1 && (got[1] == '/' || got[1] == '\\')) {
 			t.Fatalf("SafeReturnPath(%q) = %q leaves the origin", in, got)
 		}

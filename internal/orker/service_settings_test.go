@@ -34,6 +34,7 @@ func TestSourceHostSettings_Table(t *testing.T) {
 		"bad address":                   {map[string]string{ServicesProbeAddressesVar: "10.0.0.1"}, "", ServicesProbeAddressesVar},
 		"a named port":                  {map[string]string{ServicesProbeAddressesVar: "node:http"}, "", ServicesProbeAddressesVar},
 		"port zero":                     {map[string]string{ServicesProbeAddressesVar: "node:0"}, "", ServicesProbeAddressesVar},
+		"a signed port":                 {map[string]string{ServicesProbeAddressesVar: "node:+80"}, "", ServicesProbeAddressesVar},
 		"probe image by tag":            {map[string]string{ServicesProbeImageVar: "mirror.example/probe:1"}, "", ServicesProbeImageVar},
 	} {
 		if _, err := SourceHostSettingsFromEnv(env(tc.kv), tc.url); err == nil || !strings.Contains(err.Error(), tc.want) {

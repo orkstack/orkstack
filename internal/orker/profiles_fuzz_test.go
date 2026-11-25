@@ -10,13 +10,16 @@ import (
 // FuzzParseOrkerProfiles holds ParseProfiles to what it claims for any input:
 // it never panics; what it accepts is sorted by unique name, every name is a
 // slug, every profile has exactly its own kind's body and
-// an identity, the one-per-Orker limits hold, and a profile is never accepted
-// without a digest-pinned probe image. Parsing is deterministic.
+// an identity, the one-per-Orker limits hold, and a probe image it accepts is
+// digest-pinned (unset means this release's own image, which boot resolves
+// and checks: probe_image.go). Parsing is deterministic.
 func FuzzParseOrkerProfiles(f *testing.F) {
 	f.Add([]byte(validProfilesDoc))
 	f.Add([]byte(""))
 	f.Add([]byte("profiles: {}\n"))
 	f.Add([]byte("profiles:\n  probe_image: ghcr.io/orkstack/orker@" + testDigest + "\n  x:\n    kind: gpu\n    cdi:\n      kind: amd.com/gpu\n      units:\n        - \"0\"\n"))
+	f.Add([]byte("profiles:\n  probe_image: \"\"\n"))
+	f.Add([]byte("profiles:\n  probe_image: ghcr.io/orkstack/orker:0.4.0\n"))
 	f.Add([]byte("profiles:\n  a: &x\n    kind: gpu\n  b: *x\n"))
 	f.Add([]byte("profiles:\n  x:\n    kind: devices\n    devices:\n      - path: /dev/../etc/shadow\n        container_path: /dev/s\n        permissions: r\n"))
 	f.Add([]byte("profiles: !!map\n  <<: {}\n"))
@@ -29,9 +32,9 @@ func FuzzParseOrkerProfiles(f *testing.F) {
 		if err != nil || len(again.List) != len(got.List) {
 			t.Fatalf("not deterministic: %v", err)
 		}
-		if len(got.List) > 0 {
+		if got.ProbeImage != "" {
 			if err := digestPinned(got.ProbeImage); err != nil {
-				t.Fatalf("profiles accepted without a pinned probe image: %q", got.ProbeImage)
+				t.Fatalf("probe image accepted without a digest pin: %q", got.ProbeImage)
 			}
 		}
 		if got.AuditInterval < minProfileInterval || got.RecoveryInterval < minProfileInterval {

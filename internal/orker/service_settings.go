@@ -128,7 +128,7 @@ func SourceHostSettingsFromEnv(getenv func(string) string, engineURL string) (So
 		}
 		host, port, err := net.SplitHostPort(a)
 		n, perr := strconv.Atoi(port)
-		if err != nil || host == "" || perr != nil || n < 1 || n > 65535 || strings.ContainsAny(a, ", ") {
+		if err != nil || host == "" || perr != nil || strconv.Itoa(n) != port || n < 1 || n > 65535 || strings.ContainsAny(a, ", ") {
 			errs = append(errs, fmt.Errorf("%s: %q is not host:port, with a port of 1 to 65535", ServicesProbeAddressesVar, a))
 			continue
 		}

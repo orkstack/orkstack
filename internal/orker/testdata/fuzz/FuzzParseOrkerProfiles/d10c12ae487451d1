@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("profiles:\n a0:\n    kind: gpu\n    cdi:\n      kind: 0/0\n      units:\n      - \"0\" ")

@@ -14,7 +14,10 @@ FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5
 # zlib~1.4: zlib 1.4 fixes CVE-2026-4738, and alpine 3.24.4, the newest 3.24
 # base, still ships 1.3.2, so the package is upgraded here. Drop it once the
 # pinned base carries zlib 1.4.
-RUN apk add --no-cache 'zlib~1.4' jq
+# libcrypto3 and libssl3: 3.5.9-r1 fixes CVE-2026-88823, CVE-2026-95691,
+# CVE-2026-95692 and CVE-2026-107496, and the same base still ships 3.5.9-r0.
+# Drop them once the pinned base carries 3.5.9-r1.
+RUN apk add --no-cache 'zlib~1.4' 'libcrypto3>=3.5.9-r1' 'libssl3>=3.5.9-r1' jq
 
 COPY entry.sh /usr/local/bin/entry.sh
 RUN chmod 0555 /usr/local/bin/entry.sh

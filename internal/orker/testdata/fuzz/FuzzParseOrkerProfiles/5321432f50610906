@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("profiles:\n a:\n    kind: devices\n    devices:\n      - path: /dev/0\n        container_path: /dev/0\n        permissions: r")

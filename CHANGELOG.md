@@ -160,6 +160,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - **BREAKING:** webhooks now refuse loopback, link-local (cloud metadata), private and other non-public addresses, at registration and delivery; list receivers' networks in `webhooks.allowed_networks` ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#where-a-delivery-may-go)).
 - A webhook's URL is no longer written into Temporal with its deliveries, and attempt errors are now a code and a short sentence; rotate a URL that holds a credential ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#what-the-cluster-holds)).
 - Any Orker can write results every namespace reads: give each trust zone its own deployment and bucket, and set `ORK_ORKER_NAMESPACES` so an honest Orker refuses other namespaces' tasks ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#trust-zones-a-deployment-per-zone)).
+- The six first-party activity images now carry OpenSSL 3.5.9-r1, which fixes CVE-2026-88823, CVE-2026-95691, CVE-2026-95692 and CVE-2026-107496.
 
 ## [0.3.1] - 2026-11-12
 
