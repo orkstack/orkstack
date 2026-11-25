@@ -191,11 +191,13 @@ func fetchProviderMetadata(ctx context.Context, client *http.Client, issuer stri
 	return CheckProviderMetadata(raw, issuer)
 }
 
-// MaxReturnPathBytes bounds a sign-in's return path.
+// MaxReturnPathBytes bounds a sign-in's return path, as asked for and as
+// returned to.
 const MaxReturnPathBytes = 2048
 
-// SafeReturnPath is where a sign-in returns to: raw when it is a path of
-// this origin, else "/" (authn-authz.md §8). It is parsed, not
+// SafeReturnPath is where a sign-in returns to: raw, its path escaped where
+// it needs it and its query as written, when it is a path of this origin,
+// else "/" (authn-authz.md §8). It is parsed, not
 // pattern-matched: once parsed it must have no scheme and no authority,
 // begin with exactly one "/", hold no backslash, no control character and
 // no escaped slash or backslash, and its path must equal its own cleaned
@@ -225,5 +227,10 @@ func SafeReturnPath(raw string) string {
 	if clean != p {
 		return "/"
 	}
-	return u.RequestURI()
+	// Escaping can make the path three times as long as raw: the bound is on
+	// what is kept and sent, so it is checked again on that.
+	if out := u.RequestURI(); len(out) <= MaxReturnPathBytes {
+		return out
+	}
+	return "/"
 }

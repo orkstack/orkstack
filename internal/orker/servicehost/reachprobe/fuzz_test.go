@@ -3,6 +3,7 @@ package reachprobe
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,8 @@ func FuzzParseTarget(f *testing.F) {
 			t.Fatalf("ParseTarget(%q) accepted %q", s, got)
 		}
 		host, port, err := net.SplitHostPort(tg.Addr)
-		if err != nil || host == "" || port == "" || len(tg.Addr) > maxAddr || strings.Contains(tg.Addr, ",") {
+		if n, perr := strconv.Atoi(port); err != nil || host == "" || perr != nil || strconv.Itoa(n) != port ||
+			len(tg.Addr) > maxAddr || strings.Contains(tg.Addr, ",") {
 			t.Fatalf("ParseTarget(%q) accepted a bad address %q", s, tg.Addr)
 		}
 	})

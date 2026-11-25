@@ -40,6 +40,7 @@ runs:
     # the host name resolves inside containers through the daemon's DNS.
     # The Orker never adds --add-host (AGENTS.md §6, §11.1).
     - name: host.docker.internal
+      id: hostname
       shell: bash
       run: |
         set -euo pipefail
@@ -49,15 +50,23 @@ runs:
         echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
         sudo mkdir -p /etc/systemd/resolved.conf.d
         printf '[Resolve]\nDNSStubListenerExtra=172.17.0.1\n' | sudo tee /etc/systemd/resolved.conf.d/20-docker-dns.conf
-        # Merged into daemon.json, never written over it: the job's
-        # registry-mirror step set the Docker Hub mirror there first.
-        current='{}'
-        if sudo test -s /etc/docker/daemon.json; then current="$(sudo cat /etc/docker/daemon.json)"; fi
-        jq '.dns = ["172.17.0.1"]' <<<"$current" | sudo tee /etc/docker/daemon.json.new >/dev/null
-        sudo mv /etc/docker/daemon.json.new /etc/docker/daemon.json
         sudo systemctl restart systemd-resolved
-        sudo systemctl restart docker
-        # The one container this action runs that is not the stack's: the
+        echo "dns=172.17.0.1" >>"$GITHUB_OUTPUT"
+
+    # The daemon's DNS and its Docker Hub mirror, in the one restart of the
+    # daemon a job makes, before anything here drives it.
+    - name: docker daemon
+      uses: ./.github/actions/registry-mirror
+      with:
+        dns: ${{ steps.hostname.outputs.dns }}
+
+    - name: host.docker.internal in a container
+      if: steps.hostname.outputs.dns != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The daemon's DNS took effect when a container resolves the name. The
+        # one container this action runs that is not the stack's: the
         # first-party images' alpine, pinned by its index digest (which
         # TestBindProbeImage_IsTheFirstPartyImagesBase holds to theirs),
         # pulled from Docker Hub and so bounded like a fetch is.

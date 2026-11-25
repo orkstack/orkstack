@@ -9,7 +9,9 @@ import (
 
 // FuzzPoolMetricsFromEnv: whatever the operator writes, the parser either
 // refuses it or answers at most engine.MaxPoolMetricsPools valid pool names
-// and an interval within its bounds.
+// and an interval within its bounds. It drives the parser, not the process
+// environment, which can hold no NUL byte, so the input is never refused
+// before it is parsed.
 func FuzzPoolMetricsFromEnv(f *testing.F) {
 	for _, seed := range [][2]string{
 		{"", ""}, {" gpu, build ,", "5m"}, {"gpu,Not_A_Pool", ""}, {"", "4s"}, {"", "6m"}, {"", "often"},
@@ -17,9 +19,7 @@ func FuzzPoolMetricsFromEnv(f *testing.F) {
 		f.Add(seed[0], seed[1])
 	}
 	f.Fuzz(func(t *testing.T, pools, interval string) {
-		t.Setenv("ORK_POOL_METRICS_POOLS", pools)
-		t.Setenv("ORK_POOL_METRICS_INTERVAL", interval)
-		got, err := poolMetricsFromEnv()
+		got, err := parsePoolMetrics(pools, interval)
 		if err != nil {
 			return
 		}

@@ -101,7 +101,7 @@ func auditGPUSpecs(dirs []string, kind string, units []string, h cdiHost) (gpuSp
 			path := filepath.Join(dir, e.Name())
 			spec, err := cdi.ReadSpec(path, 0)
 			if err != nil {
-				return gpuSpecAudit{}, fmt.Errorf("%s: %w", DetailCDISpecInvalid, err)
+				return gpuSpecAudit{}, fmt.Errorf("%s: %s: %w", DetailCDISpecInvalid, path, err)
 			}
 			if spec.Kind != kind {
 				continue

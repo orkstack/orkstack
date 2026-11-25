@@ -199,6 +199,35 @@ func TestAuditGPUSpecs_UntrustedDirectory(t *testing.T) {
 	}
 }
 
+// TestAuditGPUSpecs_RefusesNullEdits: a spec with an empty entry in an edits
+// list, which the library's own version check would dereference, is refused
+// naming the list, on a device and at the spec's level, and in a file of
+// another kind too, since every file in the directory is read.
+func TestAuditGPUSpecs_RefusesNullEdits(t *testing.T) {
+	for _, list := range []string{"deviceNodes", "netDevices", "hooks", "mounts"} {
+		device := "devices:\n  - name: amd\n    containerEdits:\n      " + list + ":\n        -\n"
+		spec := "devices:\n  - name: amd\n    containerEdits:\n      env:\n        - A=b\ncontainerEdits:\n  " + list + ":\n    -\n"
+		for name, body := range map[string]string{
+			"device":       "cdiVersion: 0.7.0\nkind: " + testKind + "\n" + device,
+			"spec":         "cdiVersion: 0.7.0\nkind: " + testKind + "\n" + spec,
+			"another kind": "cdiVersion: 0.7.0\nkind: other.example/gpu\n" + device,
+		} {
+			t.Run(list+" "+name, func(t *testing.T) {
+				dir := specDir(t, map[string]string{"gpu.yaml": amdSpec, "null.yaml": body})
+				_, err := auditGPUSpecs([]string{dir}, testKind, []string{"amd", "intel"}, testCDIHost())
+				if err == nil {
+					t.Fatal("auditGPUSpecs accepted a spec with an empty edit")
+				}
+				for _, want := range []string{DetailCDISpecInvalid, "null.yaml", list + " has an empty entry"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("auditGPUSpecs = %v, which does not say %q", err, want)
+					}
+				}
+			})
+		}
+	}
+}
+
 // FuzzAuditGPUSpecs: whatever a spec file holds, the audit never panics; it
 // either refuses with an error or accepts a unit whose every node is of a gpu
 // class, passed with r, w or rw, and whose every group owns one of them.
