@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -103,41 +102,73 @@ func TestEachContinue_SucceedsWhenNoItemFails(t *testing.T) {
 	}
 }
 
+// recordedEvent is closed once runID has published an event match is true of:
+// what that event says is then in the run's state, which an activity's own
+// start or return does not say.
+func (h *eachHarness) recordedEvent(t *testing.T, runID string, match func(*orkstackv1.Event) bool) <-chan struct{} {
+	events, cancel, _, _ := h.bus.Subscribe(runID, 0)
+	t.Cleanup(cancel)
+	recorded := make(chan struct{})
+	go func() {
+		for ev := range events {
+			if match(ev) {
+				close(recorded)
+				return
+			}
+		}
+	}()
+	return recorded
+}
+
 // TestEachContinue_TheRunKeepsStartingTasks: while a continue fan-out's items
 // still run after one failed, the run is not failing: a task that becomes
-// ready then still starts. The last item waits for it, so the node is
-// RUNNING when it does.
+// ready then still starts. slow makes late ready once item 0's failure is
+// recorded, and the last item ends once late's success is, so the node is
+// RUNNING in between.
 func TestEachContinue_TheRunKeepsStartingTasks(t *testing.T) {
-	itemFailed, lateRan := make(chan struct{}), make(chan struct{})
-	var failOnce, lateOnce sync.Once
-	wait := func(ctx context.Context, ch chan struct{}, what string) error {
+	const runID = "run-continue-late"
+	itemFailed := func(ev *orkstackv1.Event) bool {
+		return ev.GetTaskId() == "convert" && ev.Item != nil && ev.GetItem() == 0 && ev.GetStatus() == orkstackv1.Status_STATUS_FAILED
+	}
+	ofLate := func(typ orkstackv1.EventType) func(*orkstackv1.Event) bool {
+		return func(ev *orkstackv1.Event) bool { return ev.GetType() == typ && ev.GetTaskId() == "late" }
+	}
+	lateSucceeded := ofLate(orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED)
+	var failed, succeeded <-chan struct{}
+	// A wait can outlive the test: the test environment leaves the goroutine
+	// of a canceled activity running. It names what it waited for here, and
+	// only the test's own goroutine fails the test.
+	timedOut := make(chan string, 2)
+	wait := func(ctx context.Context, ch <-chan struct{}, what string) error {
 		select {
 		case <-ch:
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
-			return errors.New(what + " never happened")
+			select {
+			case timedOut <- what:
+			default:
+			}
+			return errors.New(what + " was not recorded")
 		}
 	}
 	h := newEachHarness(t, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		switch {
 		case in.GetEach() != nil && in.GetEach().GetIndex() == 0:
-			failOnce.Do(func() { close(itemFailed) })
 			return nil, itemFailure("ZERO")
 		case in.GetEach() != nil && in.GetEach().GetIndex() == 4:
-			if err := wait(ctx, lateRan, "late"); err != nil {
+			if err := wait(ctx, succeeded, "late's success"); err != nil {
 				return nil, err
 			}
 		case in.GetTaskId() == "slow":
-			if err := wait(ctx, itemFailed, "item 0's failure"); err != nil {
+			if err := wait(ctx, failed, "item 0's failure"); err != nil {
 				return nil, err
 			}
-		case in.GetTaskId() == "late":
-			lateOnce.Do(func() { close(lateRan) })
 		}
 		return itemResult(in), nil
 	})
+	failed, succeeded = h.recordedEvent(t, runID, itemFailed), h.recordedEvent(t, runID, lateSucceeded)
 	rest := `  - id: slow
     uses: shell
     with: {op: exec}
@@ -146,12 +177,19 @@ func TestEachContinue_TheRunKeepsStartingTasks(t *testing.T) {
     needs: [slow]
     with: {op: exec}
 `
-	run := h.run(t, "run-continue-late", continueDocument(", on_item_failure: continue", rest), map[string]any{"parts": guardItems(5)})
+	run := h.run(t, runID, continueDocument(", on_item_failure: continue", rest), map[string]any{"parts": guardItems(5)})
+	for len(timedOut) > 0 {
+		t.Errorf("%s was not recorded within 10 s", <-timedOut)
+	}
 	if got := taskRunOf(t, run, "late").GetStatus(); got != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("late = %v; a task ready after a continue item failed must still start", got)
 	}
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || taskRunOf(t, run, "convert").GetError().GetCode() != "ZERO" {
 		t.Fatalf("run %v, convert %v; want the run FAILED by item 0", run.GetStatus(), taskRunOf(t, run, "convert").GetError())
+	}
+	events := h.bus.Events(runID, 0)
+	if at, then := slices.IndexFunc(events, itemFailed), slices.IndexFunc(events, ofLate(orkstackv1.EventType_EVENT_TYPE_TASK_STARTED)); at < 0 || then < at {
+		t.Fatalf("item 0's failure is event %d and late's start %d; want late to start after it", at, then)
 	}
 }
 

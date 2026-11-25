@@ -3,7 +3,9 @@ package identity
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -21,6 +23,10 @@ type admissionReader interface {
 type attemptCoords struct {
 	Namespace, RunID, TaskID, AdmissionSHA256 string
 	Item                                      artifacts.Item
+	// Scopes are the resume scopes the attempt names; none in this build,
+	// whose API refuses a request that names one, so a run that was resumed
+	// is refused at every attempt after.
+	Scopes Scopes
 }
 
 func attemptOf(namespace, runID, taskID, admissionSHA256 string, item artifacts.Item) attemptCoords {
@@ -74,55 +80,77 @@ type attemptChecks struct {
 	Follows  FollowsChecker
 }
 
+// heldAttempt is an attempt checkAttempt found held: as the cluster reports
+// it, and the artifacts of its run's start it stages.
+type heldAttempt struct {
+	PendingAttempt
+	Received []*orkstackv1.ArtifactRef
+}
+
 // checkAttempt is steps 4 to 6a: the attempt is pending, started, at that
 // number, on the caller's Orker, in a describe made after the request
 // arrived; this execution is the run the admission was written for; the
 // task's spec digest is the admitted one; and each task the admission
 // says this one follows has its record (a build without that check
 // refuses an admission that names any).
-func checkAttempt(ctx context.Context, ck attemptChecks, adm artifacts.Admission, c attemptCoords, attempt int32, taskSpecSHA256 string, caller Caller) (PendingAttempt, error) {
+func checkAttempt(ctx context.Context, ck attemptChecks, adm artifacts.Admission, c attemptCoords, attempt int32, taskSpecSHA256 string, caller Caller) (heldAttempt, error) {
 	// Step 4: the attempt.
 	facts, err := ck.Describe(ctx, c.RunID)
 	if errors.Is(err, ErrNoSuchExecution) {
-		return PendingAttempt{}, refuse(ReasonAttemptNotHeld, false, "run %q is not executing", c.RunID)
+		return heldAttempt{}, refuse(ReasonAttemptNotHeld, false, "run %q is not executing", c.RunID)
 	}
 	if err != nil {
-		return PendingAttempt{}, unavailableMint("run %q could not be described: %v", c.RunID, err)
+		return heldAttempt{}, unavailableMint("run %q could not be described: %v", c.RunID, err)
 	}
 	pending, verdict := HeldAttempt(facts, c.RunID, AttemptAsk{TaskID: c.TaskID, Item: c.Item, Attempt: attempt, OrkerID: caller.OrkerID})
 	switch verdict {
 	case AttemptHeld:
 	case AttemptNotHeld:
-		return PendingAttempt{}, refuse(ReasonAttemptNotHeld, false, "attempt %d of task %q is not held by Orker %q", attempt, c.TaskID, caller.OrkerID)
+		return heldAttempt{}, refuse(ReasonAttemptNotHeld, false, "attempt %d of task %q is not held by Orker %q", attempt, c.TaskID, caller.OrkerID)
 	default:
-		return PendingAttempt{}, unavailableMint("the cluster's describe of run %q did not say who holds the attempt", c.RunID)
+		return heldAttempt{}, unavailableMint("the cluster's describe of run %q did not say who holds the attempt", c.RunID)
 	}
 	// Step 5: the start.
 	switch start := CheckStart(ctx, ck.Starts, adm, c.AdmissionSHA256, facts); start.Verdict {
 	case StartAdmitted:
 	case StartNotAdmitted:
-		return PendingAttempt{}, refuse(ReasonNotAdmitted, true, "%s", start.Reason)
+		return heldAttempt{}, refuse(ReasonNotAdmitted, true, "%s", start.Reason)
 	default:
-		return PendingAttempt{}, unavailableMint("%s", start.Reason)
+		return heldAttempt{}, start.unavailableMint()
 	}
 	// Step 6: the task binding.
 	if why, ok := CheckBinding(adm, c.TaskID, taskSpecSHA256); !ok {
 		e := refuse(ReasonTaskNotAsAdmitted, true, "%s", why)
 		e.EngineBuild = adm.EngineBuild
-		return PendingAttempt{}, e
+		return heldAttempt{}, e
 	}
-	// Step 6a: what the task follows.
-	if len(adm.Follows[c.TaskID]) > 0 {
-		if ck.Follows == nil {
-			return PendingAttempt{}, refuse(ReasonEngineRefused, false, "task %q follows other tasks, and this engine cannot check them", c.TaskID)
+	// The scope, then step 6a: what the task follows.
+	if ck.Follows == nil {
+		if c.Scopes != (Scopes{}) || len(FollowedBy(adm, c.TaskID)) > 0 || len(adm.Tasks[c.TaskID].Inputs) > 0 {
+			return heldAttempt{}, refuse(ReasonEngineRefused, false, "task %q follows other tasks, receives artifacts or names a resume, and this engine cannot check them", c.TaskID)
 		}
-		if err := ck.Follows.CheckFollows(ctx, adm, c.TaskID, c.Item); err != nil {
-			var me *MintError
-			if errors.As(err, &me) {
-				return PendingAttempt{}, me
-			}
-			return PendingAttempt{}, unavailableMint("what task %q follows could not be checked: %v", c.TaskID, err)
-		}
+		return heldAttempt{PendingAttempt: pending}, nil
 	}
-	return pending, nil
+	if err := ck.Follows.CheckScope(ctx, adm, c.TaskID, c.Scopes); err != nil {
+		return heldAttempt{}, asMintError(err, "the resume scope of task %q could not be checked", c.TaskID)
+	}
+	if _, err := ck.Follows.CheckFollows(ctx, adm, c.AdmissionSHA256, c.TaskID, c.Scopes.ofRoot(adm)); err != nil {
+		return heldAttempt{}, asMintError(err, "what task %q follows could not be checked", c.TaskID)
+	}
+	// What the task stages of its run's start.
+	received, err := ck.Follows.CheckReceived(ctx, adm, c.AdmissionSHA256, c.TaskID, c.Scopes.ofRoot(adm))
+	if err != nil {
+		return heldAttempt{}, asMintError(err, "what task %q receives could not be checked", c.TaskID)
+	}
+	return heldAttempt{PendingAttempt: pending, Received: received}, nil
+}
+
+// asMintError is err when it is a refusal or a step that could not ask, and
+// otherwise one that could not ask.
+func asMintError(err error, format string, args ...any) *MintError {
+	var me *MintError
+	if errors.As(err, &me) {
+		return me
+	}
+	return unavailableMint("%s: %v", fmt.Sprintf(format, args...), err)
 }

@@ -417,7 +417,7 @@ the credential names (`GetSigninResponse.orker_id`: its issuer's
 `orker_id_claim`, a service account's `orker_id`, a certificate's SAN), and
 an Orker whose `orker.id` differs refuses to start, naming both. A credential
 that names no Orker, shared by a pool bound with `orker_ids: any`, lets the
-Orker keep its own id.
+Orker keep its own id, and serves no task identity and no event source.
 
 ## Who am I
 

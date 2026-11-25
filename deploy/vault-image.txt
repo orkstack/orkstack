@@ -1,0 +1,6 @@
+# The HashiCorp Vault image the "vault" provider type's integration tests run
+# as a development server (internal/testsupport/vaulttest), pinned by its
+# multi-arch index digest. It is a test image only: no release ships or runs
+# it, and OrkStack links no Vault code. A bump is a pull request that proves
+# it with internal/provider/vault's integration tests.
+hashicorp/vault:2.2.2@sha256:dfa48c2fa2b0099ccb47681ec5c4804bf5aec9d6879ecfee07ad4b92a5427ad6

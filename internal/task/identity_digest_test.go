@@ -106,6 +106,47 @@ func equalMembers(a, b map[string]string) bool {
 	return true
 }
 
+// TestIdentitySpecDigest_EveryGrantFieldIsBound: what a run was admitted
+// with of each grant a task uses moves the grants member alone, and none is
+// the empty list the golden fixture has.
+func TestIdentitySpecDigest_EveryGrantFieldIsBound(t *testing.T) {
+	with := func(edit func(*orkstackv1.IdentityGrant)) map[string]string {
+		t.Helper()
+		in := digestFixture(t)
+		g := &orkstackv1.IdentityGrant{Name: "pki", Provider: "vault", Principal: "payments-app", Audience: "vault.internal"}
+		if edit != nil {
+			edit(g)
+		}
+		in.Identity.Grants = []*orkstackv1.IdentityGrant{g}
+		_, members, err := IdentitySpecDigest(1, IdentitySpecOfInput(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return members
+	}
+	_, none, err := IdentitySpecDigest(1, IdentitySpecOfInput(digestFixture(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := with(nil)
+	if base["grants"] == none["grants"] {
+		t.Error("a task that uses a grant hashes as one that uses none")
+	}
+	for name, edit := range map[string]func(*orkstackv1.IdentityGrant){
+		"name":      func(g *orkstackv1.IdentityGrant) { g.Name = "other" },
+		"provider":  func(g *orkstackv1.IdentityGrant) { g.Provider = "other" },
+		"principal": func(g *orkstackv1.IdentityGrant) { g.Principal = "admin" },
+		"audience":  func(g *orkstackv1.IdentityGrant) { g.Audience = "other" },
+	} {
+		got := with(edit)
+		for member, d := range got {
+			if changed := d != base[member]; changed != (member == "grants") {
+				t.Errorf("editing a grant's %s: member %s changed = %v", name, member, changed)
+			}
+		}
+	}
+}
+
 // TestIdentitySpecDigest_EveryCredentialFieldIsBound: each field of a
 // credential that version 1 lists moves the credentials member, and the
 // order of its params' keys does not.
@@ -146,7 +187,7 @@ func TestIdentitySpecOfTask_IsTheInputsProjection(t *testing.T) {
 		Secrets: in.GetSecrets(), Network: in.GetNetwork(), RunAsOrkerUser: in.GetRunAsOrkerUser(),
 		Identities: in.GetIdentity().GetIdentities(), Credentials: in.GetIdentity().GetCredentials(), TimeoutSeconds: 99,
 		Devices: []string{"gpu-a", "fpga"}, DeviceContracts: map[string]string{"gpu-a": "v2"}}
-	a, _, err := IdentitySpecDigest(1, IdentitySpecOfTask(task))
+	a, _, err := IdentitySpecDigest(1, IdentitySpecOfTask(task, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

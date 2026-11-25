@@ -33,7 +33,7 @@ func (s *stubPolicies) NamespacePolicy(context.Context, string, time.Time) (arti
 // nothing reads no policy; a policy that cannot be read refuses.
 func TestCheckIdentityPolicy(t *testing.T) {
 	ns := &orkstackv1.Namespace{Name: "payments"}
-	role := &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{{Id: "apply", Identities: []*orkstackv1.IdentityRef{{Name: "t", Audience: "sts"}}}}}
+	role := &orkstackv1.Orkflow{Name: "deploy", Tasks: []*orkstackv1.Task{{Id: "apply", Identities: []*orkstackv1.IdentityRef{{Name: "t", Audience: "sts"}}}}}
 	plain := &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{{Id: "plain"}}}
 
 	allows := &stubPolicies{policy: artifacts.NamespacePolicy{Audiences: []string{"sts"}}}

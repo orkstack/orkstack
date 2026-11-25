@@ -63,6 +63,39 @@ func openFailureWith(scope *payloadcrypt.Scope, err error) error {
 	return opened
 }
 
+// getLocal reads a local activity's result into ptr. Its result, which the
+// payload interceptor sealed for the run, is opened with the run's key, and
+// so is its failure before anything reads or classifies it.
+func (s *runState) getLocal(ctx workflow.Context, f workflow.Future, ptr any) error {
+	return getLocal(ctx, s.scope, f, ptr)
+}
+
+// getLocal is the method of that name, with scope.
+func getLocal(ctx workflow.Context, scope *payloadcrypt.Scope, f workflow.Future, ptr any) error {
+	if ptr == nil || !scope.Sealed() {
+		return openFailureWith(scope, f.Get(ctx, ptr))
+	}
+	// The SDK reads it with the root converter, which opens nothing.
+	var raw converter.RawValue
+	if err := f.Get(ctx, &raw); err != nil {
+		return openFailureWith(scope, err)
+	}
+	// Plaintext is refused too: only a process that seals answers one.
+	if _, err := payloadcrypt.OpenRaw(scope, DataConverter(), raw, ptr); err != nil {
+		// Not the error: what a decode says may quote what it read.
+		workflow.GetLogger(ctx).Error("a local activity's result recorded in an encrypted run's history could not be read",
+			"sealed", payloadcrypt.IsSealed(raw.Payload()))
+		return payloadUnreadable("a result recorded in this run's history could not be read")
+	}
+	return nil
+}
+
+// unreadableLocal reports that err is getLocal's of a result that could not
+// be read: permanent, as what a history holds does not change.
+func unreadableLocal(err error) bool {
+	return categoryOf(err).reasonCode() == PayloadUnreadableCode
+}
+
 // PayloadUnreadableCode is the reason a task fails with when a payload it
 // sent back does not open as this run's (payload-encryption.md §4.1 rule 2).
 const PayloadUnreadableCode = "PAYLOAD_UNREADABLE"
@@ -101,27 +134,17 @@ func plainMemo(ctx workflow.Context, m map[string]any) map[string]any {
 // plainActivities are the activities a run schedules whose worker reads its
 // input with no run key, so their arguments are written plaintext in a sealed
 // run too: the SDK's own session activities, which carry a session id, and
-// the Orker's pin release and line index, which an Orker runs as typed
-// activities (opening them is the Orker's side of P20b).
+// the Orker's pin release, which carries ids, a pin's name and a bound.
 var plainActivities = map[string]bool{
-	sessionCreationActivity:     true,
-	sessionCompletionActivity:   true,
-	task.ActivityReleasePin:     true,
-	task.ActivityIndexEachLines: true,
+	sessionCreationActivity:   true,
+	sessionCompletionActivity: true,
+	task.ActivityReleasePin:   true,
 }
 
 const sessionCompletionActivity = "internalSessionCompletionActivity"
 
-// plainActivityInterceptor marks the arguments of plainActivities Plain, on
-// every run worker (RunWorkerInterceptors).
-type plainActivityInterceptor struct {
-	interceptor.WorkerInterceptorBase
-}
-
-func (*plainActivityInterceptor) InterceptWorkflow(_ workflow.Context, next interceptor.WorkflowInboundInterceptor) interceptor.WorkflowInboundInterceptor {
-	return &plainActivityInbound{WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{Next: next}}
-}
-
+// plainActivityInbound marks the arguments of plainActivities Plain
+// (PayloadInterceptor).
 type plainActivityInbound struct {
 	interceptor.WorkflowInboundInterceptorBase
 }

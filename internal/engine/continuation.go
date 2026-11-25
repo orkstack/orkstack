@@ -138,8 +138,8 @@ func (s *runState) endUnrestorable(
 		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
 	})
 	var snapshotURI string
-	if err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteFailedRunSnapshot,
-		namespace, s.runID, base, s.snapshot(), sequence).Get(localCtx, &snapshotURI); err != nil {
+	if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityWriteFailedRunSnapshot,
+		namespace, s.runID, base, s.snapshot(), sequence), &snapshotURI); err != nil {
 		// Object storage is down: the event is not published, and the reader
 		// synthesizes the run's end from the execution's own close, mapped to
 		// the same code (closedExecution).
@@ -575,8 +575,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		Events:        s.genEvents,
 	}
 	var segmentObj *orkstackv1.ContinuationObject
-	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteEventSegment, segment, namespace, obs).
-		Get(writeCtx, &segmentObj); err != nil {
+	if err := s.getLocal(writeCtx, workflow.ExecuteLocalActivity(writeCtx, ActivityWriteEventSegment, segment, namespace, obs), &segmentObj); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -588,8 +587,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	// the writes must never encode the live rows fail() would then change.
 	run := proto.Clone(s.snapshot()).(*orkstackv1.Run)
 	var switchSnapshot *orkstackv1.ContinuationObject
-	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteSwitchSnapshot, run, namespace, s.generation, obs).
-		Get(writeCtx, &switchSnapshot); err != nil {
+	if err := s.getLocal(writeCtx, workflow.ExecuteLocalActivity(writeCtx, ActivityWriteSwitchSnapshot, run, namespace, s.generation, obs), &switchSnapshot); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -599,8 +597,8 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	// history (AGENTS.md §2.2).
 	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
-	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.chainAdmission()).Get(writeCtx, &checkpoint); err != nil {
+	if err := s.getLocal(writeCtx, workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
+		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.chainAdmission()), &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}

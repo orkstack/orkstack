@@ -13,7 +13,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
+	"unsafe"
 
 	"github.com/orkstack/orkstack/internal/orker/servicehost"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -24,6 +26,7 @@ import (
 // answers each poll from its queue of messages (or quietly), applies each
 // verdict and writes settled.json.
 type fakeSource struct {
+	t           *testing.T
 	ask, answer string
 	queue       []string
 	mu          sync.Mutex
@@ -45,11 +48,17 @@ type fakeSource struct {
 	mute atomic.Bool
 }
 
+// placeStep writes body at path the way a container that keeps the contract
+// does. A step that could not be written is told: a lane that waits for it would
+// otherwise read as one that stalled.
+func placeStep(t *testing.T, tmp, path string, body []byte) {
+	if err := errors.Join(os.WriteFile(tmp, body, 0o644), os.MkdirAll(filepath.Dir(path), 0o755), os.Rename(tmp, path)); err != nil {
+		t.Errorf("the fake container could not write a step: %v", err)
+	}
+}
+
 func (f *fakeSource) rename(name string, body []byte) {
-	tmp := filepath.Join(f.answer, "tmp", filepath.Base(name)+".tmp")
-	_ = os.WriteFile(tmp, body, 0o644)
-	_ = os.MkdirAll(filepath.Dir(filepath.Join(f.answer, name)), 0o755)
-	_ = os.Rename(tmp, filepath.Join(f.answer, name))
+	placeStep(f.t, filepath.Join(f.answer, "tmp", filepath.Base(name)+".tmp"), filepath.Join(f.answer, name), body)
 }
 
 func (f *fakeSource) run(ctx context.Context) {
@@ -134,6 +143,8 @@ func (r *memRecorder) Record(_ context.Context, _ HandedMessage, _ int64, rc Rec
 	return nil
 }
 
+// newDriverFixture is a lane over real files, to be used in a synctest bubble:
+// its waits are the bubble's clock, which a loaded host cannot run past.
 func newDriverFixture(t *testing.T, door Door, queue ...string) (*LaneDriver, *fakeSource, *memRecorder) {
 	t.Helper()
 	root := t.TempDir()
@@ -154,7 +165,7 @@ func newDriverFixture(t *testing.T, door Door, queue ...string) (*LaneDriver, *f
 	}
 	t.Cleanup(func() { _ = steps.Close() })
 	rec := &memRecorder{}
-	src := &fakeSource{ask: ask, answer: answer, queue: queue}
+	src := &fakeSource{t: t, ask: ask, answer: answer, queue: queue}
 	ctx, cancel := context.WithCancel(context.Background())
 	ran := make(chan struct{})
 	// The fake container stops writing before the test's directories are
@@ -169,60 +180,71 @@ func newDriverFixture(t *testing.T, door Door, queue ...string) (*LaneDriver, *f
 }
 
 func TestLane_ReceiptBeforeVerdict(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
-	d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	ex, err := d.Poll(ctx, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ex.Kind != ExchangeSettled || !ex.Settled.OK || len(rec.receipts) != 1 || rec.receipts[0].Outcome != artifacts.ReceiptAccepted {
-		t.Fatalf("exchange %+v, receipts %+v", ex, rec.receipts)
-	}
-	src.mu.Lock()
-	v := src.verdicts
-	src.mu.Unlock()
-	if len(v) != 1 || v[0].Action != ActionAck || v[0].Seq != 1 {
-		t.Fatalf("verdicts %+v", v)
-	}
-	quiet, err := d.Poll(ctx, 0)
-	if err != nil || quiet.Kind != ExchangeQuiet || d.Lane.Seq() != 2 {
-		t.Fatalf("second exchange %+v, %v", quiet, err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+		d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		began := time.Now()
+		ex, err := d.Poll(ctx, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ex.Kind != ExchangeSettled || !ex.Settled.OK || len(rec.receipts) != 1 || rec.receipts[0].Outcome != artifacts.ReceiptAccepted {
+			t.Fatalf("exchange %+v, receipts %+v", ex, rec.receipts)
+		}
+		// Each of the container's two steps is taken at the first look after it.
+		if took := time.Since(began); took > 2*lookEvery {
+			t.Fatalf("the exchange took %v of the lane's own waits; want two looks", took)
+		}
+		src.mu.Lock()
+		v := src.verdicts
+		src.mu.Unlock()
+		if len(v) != 1 || v[0].Action != ActionAck || v[0].Seq != 1 {
+			t.Fatalf("verdicts %+v", v)
+		}
+		quiet, err := d.Poll(ctx, 0)
+		if err != nil || quiet.Kind != ExchangeQuiet || d.Lane.Seq() != 2 {
+			t.Fatalf("second exchange %+v, %v", quiet, err)
+		}
+	})
 }
 
 func TestLane_RequiredReceiptHoldsTheVerdict(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
-	d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
-	rec.fail = true
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	ex, err := d.Poll(ctx, 0)
-	if !errors.Is(err, ErrReceiptRequired) || ex.Kind != ExchangeHeld {
-		t.Fatalf("exchange %+v, %v", ex, err)
-	}
-	// The driver writes a verdict synchronously, so none on disk once Poll
-	// returned means none was given.
-	if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
-		t.Fatalf("a verdict was given before its required receipt was written (%v)", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
+		d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		rec.fail = true
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ex, err := d.Poll(ctx, 0)
+		if !errors.Is(err, ErrReceiptRequired) || ex.Kind != ExchangeHeld {
+			t.Fatalf("exchange %+v, %v", ex, err)
+		}
+		// The driver writes a verdict synchronously, so none on disk once Poll
+		// returned means none was given.
+		if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
+			t.Fatalf("a verdict was given before its required receipt was written (%v)", err)
+		}
+	})
 }
 
 func TestLane_AWaitIsHeldWithNoVerdict(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}}
-	d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	ex, err := d.Poll(ctx, 0)
-	if err != nil || ex.Kind != ExchangeHeld || ex.Decision.Disposition != Wait || len(rec.receipts) != 0 || d.Lane.CanBegin() {
-		t.Fatalf("exchange %+v, %v: a wait holds the message and its lane", ex, err)
-	}
-	release := Decision{Disposition: Wait, Action: ActionRelease, Delay: 30, Receipt: Receipt{Outcome: artifacts.ReceiptReleased}}
-	settled, err := d.Verdict(ctx, ex.Message, release)
-	if err != nil || settled.Kind != ExchangeSettled || !d.Lane.CanBegin() {
-		t.Fatalf("release %+v, %v", settled, err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}}
+		d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ex, err := d.Poll(ctx, 0)
+		if err != nil || ex.Kind != ExchangeHeld || ex.Decision.Disposition != Wait || len(rec.receipts) != 0 || d.Lane.CanBegin() {
+			t.Fatalf("exchange %+v, %v: a wait holds the message and its lane", ex, err)
+		}
+		release := Decision{Disposition: Wait, Action: ActionRelease, Delay: 30, Receipt: Receipt{Outcome: artifacts.ReceiptReleased}}
+		settled, err := d.Verdict(ctx, ex.Message, release)
+		if err != nil || settled.Kind != ExchangeSettled || !d.Lane.CanBegin() {
+			t.Fatalf("release %+v, %v", settled, err)
+		}
+	})
 }
 
 // TestLane_SettledBeforeAVerdictIsAViolation: an image that settles a
@@ -230,41 +252,45 @@ func TestLane_AWaitIsHeldWithNoVerdict(t *testing.T) {
 // breaks the contract, and the Orker writes neither a receipt nor a verdict
 // for it.
 func TestLane_SettledBeforeAVerdictIsAViolation(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
-	d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
-	src.settleFirst = true
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var v *servicehost.ViolationError
-	if _, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), "without a verdict") {
-		t.Fatalf("a settle before any verdict: %v", err)
-	}
-	if len(rec.receipts) != 0 {
-		t.Fatalf("receipts were written for it: %+v", rec.receipts)
-	}
-	if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
-		t.Fatalf("a verdict was written for it (%v)", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+		d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		src.settleFirst = true
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var v *servicehost.ViolationError
+		if _, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), "without a verdict") {
+			t.Fatalf("a settle before any verdict: %v", err)
+		}
+		if len(rec.receipts) != 0 {
+			t.Fatalf("receipts were written for it: %+v", rec.receipts)
+		}
+		if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
+			t.Fatalf("a verdict was written for it (%v)", err)
+		}
+	})
 }
 
 // TestLane_ASettleMustNameItsVerdict: a settle answers the verdict it names
 // (verdictId), so one that names another, or none, is recognised whenever it
 // lands, and ends the attempt rather than being recorded as the verdict's.
 func TestLane_ASettleMustNameItsVerdict(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
-	d, src, _ := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
-	src.wrongVerdict = true
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var v *servicehost.ViolationError
-	if _, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), "verdict") {
-		t.Fatalf("a settle naming another verdict: %v", err)
-	}
-	src.mu.Lock()
-	defer src.mu.Unlock()
-	if len(src.verdicts) != 1 || src.verdicts[0].VerdictID == "" {
-		t.Fatalf("the verdict carried no id: %+v", src.verdicts)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+		d, src, _ := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		src.wrongVerdict = true
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var v *servicehost.ViolationError
+		if _, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), "verdict") {
+			t.Fatalf("a settle naming another verdict: %v", err)
+		}
+		src.mu.Lock()
+		defer src.mu.Unlock()
+		if len(src.verdicts) != 1 || src.verdicts[0].VerdictID == "" {
+			t.Fatalf("the verdict carried no id: %+v", src.verdicts)
+		}
+	})
 }
 
 const holdExpired = `"ok":false,"error":{"kind":"hold_expired"}`
@@ -295,29 +321,31 @@ func TestLane_ACloseBeforeTheHoldBoundIsAViolation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var clock laterClock
-			door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){
-				func(Start) (Answer, error) {
-					clock.by.Store(int64(tt.later))
-					return startAnswer(AnswerAccepted)(Start{})
-				}}}
-			d, src, rec := newDriverFixture(t, door)
-			d.Now = clock.now
-			src.mu.Lock()
-			src.settleFirstAs = holdExpired
-			tt.set(src)
-			src.queue = []string{`{"status":"PAID","id":"o-1"}`}
-			src.mu.Unlock()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			var v *servicehost.ViolationError
-			if ex, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), tt.want) {
-				t.Fatalf("exchange %+v, %v; want a violation holding %q", ex, err, tt.want)
-			}
-			_, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict)))
-			if (err == nil) != tt.verdict || (len(rec.receipts) == 1) != tt.verdict {
-				t.Fatalf("verdict %v, receipts %+v; want both %v", err, rec.receipts, tt.verdict)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				var clock laterClock
+				door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){
+					func(Start) (Answer, error) {
+						clock.by.Store(int64(tt.later))
+						return startAnswer(AnswerAccepted)(Start{})
+					}}}
+				d, src, rec := newDriverFixture(t, door)
+				d.Now = clock.now
+				src.mu.Lock()
+				src.settleFirstAs = holdExpired
+				tt.set(src)
+				src.queue = []string{`{"status":"PAID","id":"o-1"}`}
+				src.mu.Unlock()
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				var v *servicehost.ViolationError
+				if ex, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), tt.want) {
+					t.Fatalf("exchange %+v, %v; want a violation holding %q", ex, err, tt.want)
+				}
+				_, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict)))
+				if (err == nil) != tt.verdict || (len(rec.receipts) == 1) != tt.verdict {
+					t.Fatalf("verdict %v, receipts %+v; want both %v", err, rec.receipts, tt.verdict)
+				}
+			})
 		})
 	}
 }
@@ -351,121 +379,164 @@ func TestLane_ACloseAtTheHoldBoundIsNoVerdictsOutcome(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var clock laterClock
-			d, src, rec := newDriverFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}})
-			d.Now, d.Judge.AtMostOnce = clock.now, tt.atMostOnce
-			src.mu.Lock()
-			src.settleFirstAs = holdExpired
-			src.closeOnVerdict = tt.afterward
-			src.queue = []string{`{"status":"PAID","id":"o-1"}`}
-			src.mu.Unlock()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			held, err := d.Poll(ctx, 0)
-			if err != nil || held.Kind != ExchangeHeld {
-				t.Fatalf("%+v, %v; want it held", held, err)
-			}
-			clock.by.Store(int64(d.Limits.Hold))
-			if !tt.afterward {
-				src.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":1,`+holdExpired+`}`))
-			}
-			ex, err := d.Verdict(ctx, held.Message, Decision{Disposition: Reject, Action: ActionReject, Receipt: tt.decided})
-			if err != nil || ex.Kind != ExchangeHoldExpired || !d.Lane.CanBegin() {
-				t.Fatalf("%+v, %v; want the exchange closed at its hold bound", ex, err)
-			}
-			if !slices.Equal(rec.receipts, tt.want) {
-				t.Fatalf("receipts %+v; want %+v", rec.receipts, tt.want)
-			}
-			if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); (err == nil) != tt.afterward {
-				t.Fatalf("verdict written: %v; want %v", err == nil, tt.afterward)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				var clock laterClock
+				d, src, rec := newDriverFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}})
+				d.Now, d.Judge.AtMostOnce = clock.now, tt.atMostOnce
+				src.mu.Lock()
+				src.settleFirstAs = holdExpired
+				src.closeOnVerdict = tt.afterward
+				src.queue = []string{`{"status":"PAID","id":"o-1"}`}
+				src.mu.Unlock()
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				held, err := d.Poll(ctx, 0)
+				if err != nil || held.Kind != ExchangeHeld {
+					t.Fatalf("%+v, %v; want it held", held, err)
+				}
+				clock.by.Store(int64(d.Limits.Hold))
+				if !tt.afterward {
+					src.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":1,`+holdExpired+`}`))
+				}
+				ex, err := d.Verdict(ctx, held.Message, Decision{Disposition: Reject, Action: ActionReject, Receipt: tt.decided})
+				if err != nil || ex.Kind != ExchangeHoldExpired || !d.Lane.CanBegin() {
+					t.Fatalf("%+v, %v; want the exchange closed at its hold bound", ex, err)
+				}
+				if !slices.Equal(rec.receipts, tt.want) {
+					t.Fatalf("receipts %+v; want %+v", rec.receipts, tt.want)
+				}
+				if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); (err == nil) != tt.afterward {
+					t.Fatalf("verdict written: %v; want %v", err == nil, tt.afterward)
+				}
+			})
 		})
 	}
 }
 
 // TestLane_HoldExpired: a held message's close is taken at the bound and
-// refused before it, and an exchange's age is the longer of the two clocks'
-// readings, so a suspended host never makes a close at the bound look early.
+// refused before it.
 func TestLane_HoldExpired(t *testing.T) {
-	var clock laterClock
-	d, src, rec := newDriverFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}}, `{"status":"PAID","id":"o-1"}`)
-	d.Now = clock.now
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	held, err := d.Poll(ctx, 0)
-	if err != nil || held.Kind != ExchangeHeld {
-		t.Fatalf("%+v, %v; want it held", held, err)
+	synctest.Test(t, func(t *testing.T) {
+		var clock laterClock
+		d, src, rec := newDriverFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}}, `{"status":"PAID","id":"o-1"}`)
+		d.Now = clock.now
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		held, err := d.Poll(ctx, 0)
+		if err != nil || held.Kind != ExchangeHeld {
+			t.Fatalf("%+v, %v; want it held", held, err)
+		}
+		src.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":1,`+holdExpired+`}`))
+		var v *servicehost.ViolationError
+		if _, err := d.HoldExpired(ctx, held.Message); !errors.As(err, &v) || !strings.Contains(v.Error(), "before its hold bound") {
+			t.Fatalf("an early close: %v", err)
+		}
+		// At the bound (which clock says so: TestLane_AgeIsTheLongerClocks).
+		clock.by.Store(int64(d.Limits.Hold))
+		if expired, err := d.HoldExpired(ctx, held.Message); err != nil || !expired || len(rec.receipts) != 1 || !d.Lane.CanBegin() {
+			t.Fatalf("a close at the bound: %v, %v, receipts %+v", expired, err, rec.receipts)
+		}
+	})
+}
+
+// apart is at as a host reads it once its wall clock has moved by wall and its
+// monotonic one by mono, which no constructor of time gives: it moves the
+// monotonic reading of a time.Time itself.
+func apart(t *testing.T, at time.Time, wall, mono time.Duration) time.Time {
+	t.Helper()
+	later := at.Add(wall)
+	(*struct {
+		wall uint64
+		ext  int64
+		loc  *time.Location
+	})(unsafe.Pointer(&later)).ext += int64(mono - wall)
+	if later.Sub(at) != mono || later.Round(0).Sub(at.Round(0)) != wall {
+		t.Fatalf("time.Time is not laid out as this test reads it: %v and %v", later.Sub(at), later.Round(0).Sub(at.Round(0)))
 	}
-	src.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":1,`+holdExpired+`}`))
-	var v *servicehost.ViolationError
-	if _, err := d.HoldExpired(ctx, held.Message); !errors.As(err, &v) || !strings.Contains(v.Error(), "before its hold bound") {
-		t.Fatalf("an early close: %v", err)
-	}
-	// Suspended past the bound: the wall clock moved, the monotonic did not.
-	d.Now = func() time.Time { return time.Now().Round(0).Add(d.Limits.Hold) }
-	if expired, err := d.HoldExpired(ctx, held.Message); err != nil || !expired || len(rec.receipts) != 1 || !d.Lane.CanBegin() {
-		t.Fatalf("a close at the bound: %v, %v, receipts %+v", expired, err, rec.receipts)
+	return later
+}
+
+// TestLane_AgeIsTheLongerClocks: a suspended host moves the wall clock alone,
+// and one whose clock was set back the monotonic alone; an exchange is as old as
+// the longer says.
+func TestLane_AgeIsTheLongerClocks(t *testing.T) {
+	polled := time.Now()
+	for name, tc := range map[string]struct{ wall, mono time.Duration }{
+		"both": {time.Hour, time.Hour}, "suspended": {time.Hour, time.Second}, "set back": {time.Second, time.Hour},
+	} {
+		d := &LaneDriver{polled: polled, Now: func() time.Time { return apart(t, polled, tc.wall, tc.mono) }}
+		if got := d.age(); got != time.Hour {
+			t.Errorf("%s: age %v, want an hour", name, got)
+		}
 	}
 }
 
 func TestLane_AStepNobodyAskedForEndsTheAttempt(t *testing.T) {
-	door := &fakeDoor{}
-	d, src, _ := newDriverFixture(t, door)
-	src.mute.Store(true)
-	src.rename(LanePath(0, StepEmpty), []byte(`{"schemaVersion":1,"seq":5}`))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	var v *servicehost.ViolationError
-	if _, err := d.Poll(ctx, 0); !errors.As(err, &v) {
-		t.Fatalf("an answer ahead of the lane's seq: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{}
+		d, src, _ := newDriverFixture(t, door)
+		src.mute.Store(true)
+		src.rename(LanePath(0, StepEmpty), []byte(`{"schemaVersion":1,"seq":5}`))
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var v *servicehost.ViolationError
+		if _, err := d.Poll(ctx, 0); !errors.As(err, &v) {
+			t.Fatalf("an answer ahead of the lane's seq: %v", err)
+		}
+	})
 }
 
 // TestLane_AStaleFilteredVerdictIsHeld: a FILTERED decision whose
 // confirmation aged while it waited is not written.
 func TestLane_AStaleFilteredVerdictIsHeld(t *testing.T) {
-	door := &fakeDoor{confirm: []func() (Confirmation, error){func() (Confirmation, error) { return Confirmation{}, errors.New("timeout") }}}
-	d, src, _ := newDriverFixture(t, door)
-	d.Lane.Begin()
-	stale := Decision{Disposition: Settle, Action: ActionAck, ConfirmedAt: time.Now().Add(-time.Minute),
-		Receipt: Receipt{Outcome: artifacts.ReceiptFiltered}}
-	ex, err := d.Verdict(context.Background(), HandedMessage{ID: "m"}, stale)
-	if err != nil || ex.Kind != ExchangeHeld {
-		t.Fatalf("%+v, %v", ex, err)
-	}
-	if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
-		t.Fatal("a stale FILTERED verdict was written")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{confirm: []func() (Confirmation, error){func() (Confirmation, error) { return Confirmation{}, errors.New("timeout") }}}
+		d, src, _ := newDriverFixture(t, door)
+		d.Lane.Begin()
+		stale := Decision{Disposition: Settle, Action: ActionAck, ConfirmedAt: time.Now().Add(-time.Minute),
+			Receipt: Receipt{Outcome: artifacts.ReceiptFiltered}}
+		ex, err := d.Verdict(context.Background(), HandedMessage{ID: "m"}, stale)
+		if err != nil || ex.Kind != ExchangeHeld {
+			t.Fatalf("%+v, %v", ex, err)
+		}
+		if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
+			t.Fatal("a stale FILTERED verdict was written")
+		}
+	})
 }
 
 func TestLane_AReceiptFailureIsReported(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
-	d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
-	rec.fail = true
-	var reported []string
-	d.Failed = func(kind string, _ error) { reported = append(reported, kind) }
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if ex, err := d.Poll(ctx, 0); err != nil || ex.Kind != ExchangeSettled || len(reported) != 1 || reported[0] != "receipt" {
-		t.Fatalf("%+v, %v, reported %v: a best-effort receipt that failed is told, and the message settles", ex, err, reported)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+		d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		rec.fail = true
+		var reported []string
+		d.Failed = func(kind string, _ error) { reported = append(reported, kind) }
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if ex, err := d.Poll(ctx, 0); err != nil || ex.Kind != ExchangeSettled || len(reported) != 1 || reported[0] != "receipt" {
+			t.Fatalf("%+v, %v, reported %v: a best-effort receipt that failed is told, and the message settles", ex, err, reported)
+		}
+	})
 }
 
 func TestLane_WedgedPastTheHoldEndsTheAttempt(t *testing.T) {
-	d, _, _ := newDriverFixture(t, &fakeDoor{})
-	now := time.Now()
-	d.Now = func() time.Time { return now }
-	d.Limits.Hold = time.Second
-	d.Lane.Begin()
-	d.Lane.Await(now, time.Millisecond)
-	now = now.Add(10 * time.Millisecond)
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("wedged, within the hold: %v", err)
-	}
-	now = now.Add(2 * time.Second)
-	if err := d.tick(context.Background()); !errors.Is(err, ErrUnresponsive) {
-		t.Fatalf("wedged past the hold: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d, _, _ := newDriverFixture(t, &fakeDoor{})
+		now := time.Now()
+		d.Now = func() time.Time { return now }
+		d.Limits.Hold = time.Second
+		d.Lane.Begin()
+		d.Lane.Await(now, time.Millisecond)
+		now = now.Add(10 * time.Millisecond)
+		if err := d.tick(context.Background()); err != nil {
+			t.Fatalf("wedged, within the hold: %v", err)
+		}
+		now = now.Add(2 * time.Second)
+		if err := d.tick(context.Background()); !errors.Is(err, ErrUnresponsive) {
+			t.Fatalf("wedged past the hold: %v", err)
+		}
+	})
 }
 
 // TestNewVerdictID: a verdict id is the lane's exchange and 128 random bits

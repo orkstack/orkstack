@@ -35,11 +35,12 @@ const (
 	ConcurrencyGrantSignal = "ork-concurrency-grant"
 )
 
-// The gate's local activities (§5.1.8). Both run on the engine worker that
+// The gate's local activities (§5.1.8). All run on the engine worker that
 // runs the workflow task, never on ork-tasks.
 const (
 	ActivityDescribeConcurrencyEntries = "DescribeConcurrencyEntries"
 	ActivityListConcurrencyEntries     = "ListConcurrencyEntries"
+	ActivityReportConcurrencyGate      = "ReportConcurrencyGate"
 )
 
 // The gate's error types, as an acquiring run reads them.
@@ -110,11 +111,20 @@ type DescribeConcurrencyEntriesInput struct {
 	GateID   string   `json:"gate_id"`
 	Runs     []string `json:"runs"`
 	Parallel int      `json:"parallel"`
+	// Namespace and Limits (each run's limit labels) label the count of the
+	// runs that could not be checked; nothing decides from them.
+	Namespace string              `json:"namespace,omitempty"`
+	Limits    map[string][]string `json:"limits,omitempty"`
 }
 
 type ListConcurrencyEntriesInput struct {
 	GateID    string `json:"gate_id"`
 	PageToken []byte `json:"page_token,omitempty"`
+	// Namespace, Seen (the entries of the pages before this one) and
+	// MaxEntries count the attempt this page ends; nothing decides from them.
+	Namespace  string `json:"namespace,omitempty"`
+	Seen       int    `json:"seen,omitempty"`
+	MaxEntries int    `json:"max_entries,omitempty"`
 }
 
 type ListConcurrencyEntriesResult struct {
@@ -139,6 +149,8 @@ type gateRun struct {
 	// ordinal is the concurrency-gate-ordinal decision, asked the first time
 	// an acquire or a release carries a slot ordinal: 0 until then.
 	ordinal workflow.Version
+	// reclaimed is what this execution took back and has not reported yet.
+	reclaimed map[gateReclaimKey]int
 }
 
 // GateOrdinalChange marks the first decision a gate makes on a slot
@@ -369,16 +381,18 @@ func (w *gateRun) loop(ctx workflow.Context) (GateResult, error) {
 		if w.g.Rebuild.State == gateRebuildSettling && !w.g.settling(now) {
 			w.g.Rebuild.State = gateRebuildNone // the settle is over
 		}
-		w.g.dropExpiredQueued(now)
+		w.reclaim(w.g.dropExpiredQueued(now))
 		w.grant(ctx, w.g.admitHeads(now))
 		if err := w.syncPhase(ctx); err != nil {
 			return GateResult{}, err
 		}
 		if w.passDue(now) {
 			w.pass(ctx)
+			w.sendReport(ctx)
 			continue
 		}
 		if w.continueDue(ctx) {
+			w.sendReport(ctx)
 			return GateResult{}, w.continueAsNew(ctx)
 		}
 		if w.g.empty() {
@@ -386,6 +400,7 @@ func (w *gateRun) loop(ctx workflow.Context) (GateResult, error) {
 				w.emptySince = now
 			}
 			if !now.Before(w.emptySince.Add(w.g.Tunables.Linger)) {
+				w.sendReport(ctx)
 				result, closed, err := w.close(ctx)
 				if err != nil {
 					return GateResult{}, err
@@ -486,6 +501,7 @@ func (w *gateRun) pass(ctx workflow.Context) {
 		var got []gateRunFinding
 		if err := workflow.ExecuteLocalActivity(lctx, ActivityDescribeConcurrencyEntries, DescribeConcurrencyEntriesInput{
 			GateID: w.in.GateID, Runs: batch, Parallel: w.g.Tunables.VerifyParallel,
+			Namespace: w.in.Namespace, Limits: w.g.limitsOf(batch),
 		}).Get(lctx, &got); err != nil {
 			failed += len(batch)
 			workflow.GetLogger(ctx).Warn("a concurrency gate could not check a batch of its entries; the next pass retries them",
@@ -496,7 +512,8 @@ func (w *gateRun) pass(ctx workflow.Context) {
 	}
 	now := workflow.Now(ctx)
 	out := w.g.applyFindings(findings, now)
-	w.g.dropExpiredQueued(now)
+	w.reclaim(out.Reclaimed)
+	w.reclaim(w.g.dropExpiredQueued(now))
 	if out.Errors > 0 || failed > 0 {
 		first := ""
 		for _, f := range findings {
@@ -705,6 +722,7 @@ func (w *gateRun) listAll(ctx workflow.Context) ([]gateRunRecord, error) {
 		var page ListConcurrencyEntriesResult
 		if err := workflow.ExecuteLocalActivity(lctx, ActivityListConcurrencyEntries, ListConcurrencyEntriesInput{
 			GateID: w.in.GateID, PageToken: token,
+			Namespace: w.in.Namespace, Seen: entries, MaxEntries: w.g.Tunables.MaxEntries,
 		}).Get(lctx, &page); err != nil {
 			return nil, err
 		}

@@ -320,8 +320,8 @@ func (s *runState) readChunkBefore(
 		},
 	}
 	var data []byte
-	err := workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, lao),
-		ActivityReadContinuationChunk, loc, size, off, length, obs).Get(ctx, &data)
+	err := s.getLocal(ctx, workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, lao),
+		ActivityReadContinuationChunk, loc, size, off, length, obs), &data)
 	// The chunk's marker is part of this workflow task's commands, success
 	// or failure: counted so the guard and the hold line see it.
 	s.noteCommand(ctx, 1, int64(len(data))+limit.Reserve.CommandBytes)
@@ -330,7 +330,7 @@ func (s *runState) readChunkBefore(
 		return nil, restoreCanceled // the cancel cancelled the read, whatever err says
 	case err == nil:
 		return data, ""
-	case categoryOf(err).appType() == RunStateCorruptCode:
+	case categoryOf(err).appType() == RunStateCorruptCode, unreadableLocal(err):
 		s.restoreErr = err
 		return nil, RunStateCorruptCode
 	default:
@@ -417,7 +417,7 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 		}
 	}
 	// Pins: every pin starts unopened, so one with a started member must
-	// have every member terminal.
+	// have every member terminal. A skipped member opened nothing.
 	for _, name := range s.pinOrder {
 		p := s.pins[name]
 		started, unfinished := false, false
@@ -426,7 +426,7 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 				continue
 			}
 			status := rows[i].GetStatus()
-			if status != orkstackv1.Status_STATUS_PENDING {
+			if status != orkstackv1.Status_STATUS_PENDING && status != orkstackv1.Status_STATUS_SKIPPED {
 				started = true
 			}
 			if !isTerminal(status) {
@@ -518,6 +518,11 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 		case orkstackv1.Status_STATUS_RUNNING:
 			if !row.GetEach().GetExpanded() {
 				return fmt.Sprintf("fan-out %q is RUNNING but not expanded", id)
+			}
+		case orkstackv1.Status_STATUS_SKIPPED:
+			// One whose condition, or a need, skipped it: it never expanded.
+			if row.GetEach().GetExpanded() || len(row.GetItems()) > 0 {
+				return fmt.Sprintf("fan-out %q is SKIPPED and expanded", id)
 			}
 		default:
 			return fmt.Sprintf("task %q is %s", id, statusWord(status))

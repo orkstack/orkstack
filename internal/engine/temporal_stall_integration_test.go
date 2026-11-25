@@ -62,7 +62,7 @@ func newStallStack(t *testing.T, ctx context.Context) *stallStack {
 
 	address := startPrivateTemporal(t, ctx)
 	namespace := privateNamespaceForCommitE2E(t)
-	direct, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+	direct, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -74,7 +74,7 @@ func newStallStack(t *testing.T, ctx context.Context) *stallStack {
 
 	s := &stallStack{t: t, ctx: ctx, proxy: faultproxy.New(t, address),
 		orkflows: newDurableOrkflowStore(t)}
-	proxied, err := client.DialContext(ctx, client.Options{HostPort: s.proxy.Addr(), Namespace: namespace})
+	proxied, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: s.proxy.Addr(), Namespace: namespace}, nil))
 	must.OKf(t, err, "dial temporal through the proxy")
 	t.Cleanup(proxied.Close)
 

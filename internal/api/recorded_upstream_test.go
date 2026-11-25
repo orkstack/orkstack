@@ -7,9 +7,12 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -30,11 +33,19 @@ func (pullStops) LoadLayout(context.Context, string, string) (orker.PullInfo, er
 	return orker.PullInfo{}, errPulled
 }
 
-// orkerSignin asks the service who an Orker is, as the Orker's self-check.
-type orkerSignin struct{ svc *Service }
+// orkerSignin asks the service who an Orker is, as the Orker's self-check;
+// who is anOrker unless it is set.
+type orkerSignin struct {
+	svc *Service
+	who *authn.Principal
+}
 
 func (s orkerSignin) Whoami(context.Context) (*orkstackv1.GetSigninResponse, error) {
-	resp, err := authHandler{svc: s.svc}.GetSignin(asOrker(authn.ModeEnforce, anOrker), connect.NewRequest(&orkstackv1.GetSigninRequest{}))
+	who := s.who
+	if who == nil {
+		who = anOrker
+	}
+	resp, err := authHandler{svc: s.svc}.GetSignin(asOrker(authn.ModeEnforce, who), connect.NewRequest(&orkstackv1.GetSigninRequest{}))
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +87,7 @@ func TestCommitResult_ADependentStagesFromItsAnswer(t *testing.T) {
 	policy, idCfg := orker.DefaultSecurityPolicy(), orker.DefaultIdentityConfig()
 	acts := orker.NewActivitiesWithOptions(store, orker.Options{WorkRoot: t.TempDir(), Commits: commits, Refs: artifacts.MemoryRefPredictor{},
 		Runtime: pullStops{}, Policy: &policy, OrkerID: "orker-1", BuildID: "b7", Pool: "main", Identity: &idCfg})
-	support := orker.NewIdentitySupport(orkerSignin{s}, "orker-1", "main",
+	support := orker.NewIdentitySupport(orkerSignin{svc: s}, "orker-1", "main",
 		func() orkstackv1.StoreScope { return orkstackv1.StoreScope_STORE_SCOPE_SCOPED }, nil, nil)
 	support.Step(ctx)
 	if ok, why := support.Report(); !ok {
@@ -111,5 +122,40 @@ func TestCommitResult_ADependentStagesFromItsAnswer(t *testing.T) {
 	if _, err := acts.Dispatcher().Execute(ctx, dispatched(root+"/"+req.GetCommitKey())); err == nil ||
 		!strings.Contains(err.Error(), orker.ReasonUpstreamNotRecorded) || strings.Contains(err.Error(), errPulled.Error()) {
 		t.Fatalf("the dependent of the key an Orker commits at = %v; want %s", err, orker.ReasonUpstreamNotRecorded)
+	}
+}
+
+// TestOrkerIDsAny_ServesNoIdentity: a credential a pool's Orkers share, bound
+// to the orker role by orker_ids: any, names no Orker, so the mint, the
+// preflight, the commit and the Orker's own check all refuse it, whatever the
+// role holds; a credential that names its Orker is served under the same
+// binding.
+func TestOrkerIDsAny_ServesNoIdentity(t *testing.T) {
+	shared := &authn.Principal{Kind: authn.KindService, ID: "serviceaccount:orker-1", Issuer: "serviceaccount", Method: authn.MethodServiceAccount}
+	binding := &orkstackv1.Binding{Name: "b", Role: authz.RoleOrker, Scope: "pool:main", Subjects: []string{"serviceaccount:orker-1"}, OrkerIdsAny: true}
+	for _, who := range []*authn.Principal{shared, anOrker} {
+		ctx, named := asOrker(authn.ModeEnforce, who), who == anOrker
+		refused := func(what string, err error) {
+			t.Helper()
+			if got := connect.CodeOf(err) == connect.CodeFailedPrecondition && strings.Contains(errString(err), identity.ReasonEngineRefused); got == named {
+				t.Errorf("%s of a credential that names an Orker %v = %v", what, named, err)
+			}
+		}
+		m, mint, _ := mintService(t, nil, binding)
+		_, err := m.MintAttemptTokens(ctx, connect.NewRequest(mint))
+		refused("a mint", err)
+		c, commit, _ := commitService(t, nil, binding)
+		preflight := proto.Clone(commit).(*orkstackv1.CommitResultRequest)
+		preflight.Preflight, preflight.Commit, preflight.CommitKey = true, nil, ""
+		_, err = c.CommitResult(ctx, connect.NewRequest(preflight))
+		refused("a preflight", err)
+		_, err = c.CommitResult(ctx, connect.NewRequest(commit))
+		refused("a commit", err)
+		support := orker.NewIdentitySupport(orkerSignin{svc: c, who: who}, "orker-1", "main",
+			func() orkstackv1.StoreScope { return orkstackv1.StoreScope_STORE_SCOPE_SCOPED }, nil, nil)
+		support.Step(context.Background())
+		if ok, why := support.Report(); ok != named {
+			t.Errorf("the self-check of a credential that names an Orker %v = %v, %s", named, ok, why)
+		}
 	}
 }

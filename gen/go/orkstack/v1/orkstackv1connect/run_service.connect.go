@@ -70,6 +70,8 @@ const (
 	// RunServiceExportRunEvidenceProcedure is the fully-qualified name of the RunService's
 	// ExportRunEvidence RPC.
 	RunServiceExportRunEvidenceProcedure = "/orkstack.v1.RunService/ExportRunEvidence"
+	// RunServiceResumeRunProcedure is the fully-qualified name of the RunService's ResumeRun RPC.
+	RunServiceResumeRunProcedure = "/orkstack.v1.RunService/ResumeRun"
 )
 
 // RunServiceClient is a client for the orkstack.v1.RunService service.
@@ -230,6 +232,18 @@ type RunServiceClient interface {
 	// terms as ReadArtifact. The bundle layout and manifest schema are
 	// docs/RUN_EVIDENCE.md.
 	ExportRunEvidence(context.Context, *connect.Request[v1.ExportRunEvidenceRequest]) (*connect.ServerStreamForClient[v1.EvidenceChunk], error)
+	// ResumeRun resumes a failed run from its failed tasks, or retries it from
+	// a chosen task, keeping the results of the tasks that need not run again.
+	// The run keeps its id, and its event stream continues after RUN_RESUMED.
+	//
+	// dry_run previews the plan and changes nothing (run.read). A confirm
+	// (run.resume and run.submit) must send the preview's terminal_sequence
+	// and plan_digest; if the run or the plan changed since, it is refused and
+	// nothing is done. A refusal is FailedPrecondition with a ResumeRefusal
+	// detail naming its RUN_NOT_RESUMABLE sub-reason and its class: permanent,
+	// wait (try again after retry_after_seconds) or replan (preview again).
+	// docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason.
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -339,6 +353,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("ExportRunEvidence")),
 			connect.WithClientOptions(opts...),
 		),
+		resumeRun: connect.NewClient[v1.ResumeRunRequest, v1.ResumeRunResponse](
+			httpClient,
+			baseURL+RunServiceResumeRunProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ResumeRun")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -360,6 +380,7 @@ type runServiceClient struct {
 	inspectRun            *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
 	diffRuns              *connect.Client[v1.DiffRunsRequest, v1.DiffRunsResponse]
 	exportRunEvidence     *connect.Client[v1.ExportRunEvidenceRequest, v1.EvidenceChunk]
+	resumeRun             *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -440,6 +461,11 @@ func (c *runServiceClient) DiffRuns(ctx context.Context, req *connect.Request[v1
 // ExportRunEvidence calls orkstack.v1.RunService.ExportRunEvidence.
 func (c *runServiceClient) ExportRunEvidence(ctx context.Context, req *connect.Request[v1.ExportRunEvidenceRequest]) (*connect.ServerStreamForClient[v1.EvidenceChunk], error) {
 	return c.exportRunEvidence.CallServerStream(ctx, req)
+}
+
+// ResumeRun calls orkstack.v1.RunService.ResumeRun.
+func (c *runServiceClient) ResumeRun(ctx context.Context, req *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return c.resumeRun.CallUnary(ctx, req)
 }
 
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
@@ -600,6 +626,18 @@ type RunServiceHandler interface {
 	// terms as ReadArtifact. The bundle layout and manifest schema are
 	// docs/RUN_EVIDENCE.md.
 	ExportRunEvidence(context.Context, *connect.Request[v1.ExportRunEvidenceRequest], *connect.ServerStream[v1.EvidenceChunk]) error
+	// ResumeRun resumes a failed run from its failed tasks, or retries it from
+	// a chosen task, keeping the results of the tasks that need not run again.
+	// The run keeps its id, and its event stream continues after RUN_RESUMED.
+	//
+	// dry_run previews the plan and changes nothing (run.read). A confirm
+	// (run.resume and run.submit) must send the preview's terminal_sequence
+	// and plan_digest; if the run or the plan changed since, it is refused and
+	// nothing is done. A refusal is FailedPrecondition with a ResumeRefusal
+	// detail naming its RUN_NOT_RESUMABLE sub-reason and its class: permanent,
+	// wait (try again after retry_after_seconds) or replan (preview again).
+	// docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason.
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -705,6 +743,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("ExportRunEvidence")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceResumeRunHandler := connect.NewUnaryHandler(
+		RunServiceResumeRunProcedure,
+		svc.ResumeRun,
+		connect.WithSchema(runServiceMethods.ByName("ResumeRun")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -739,6 +783,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceDiffRunsHandler.ServeHTTP(w, r)
 		case RunServiceExportRunEvidenceProcedure:
 			runServiceExportRunEvidenceHandler.ServeHTTP(w, r)
+		case RunServiceResumeRunProcedure:
+			runServiceResumeRunHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -810,4 +856,8 @@ func (UnimplementedRunServiceHandler) DiffRuns(context.Context, *connect.Request
 
 func (UnimplementedRunServiceHandler) ExportRunEvidence(context.Context, *connect.Request[v1.ExportRunEvidenceRequest], *connect.ServerStream[v1.EvidenceChunk]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ExportRunEvidence is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ResumeRun is not implemented"))
 }

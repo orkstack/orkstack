@@ -124,7 +124,7 @@ func TestIntegration_EngineWritesSnapshotOverlaysWhenConfigured(t *testing.T) {
 		t.Fatalf("the boot log does not report snapshot_overlays=true:\n%s", log.String())
 	}
 	pid := engines["engine-overlays"].cmd.Process.Pid
-	control, err := client.DialContext(ctx, client.Options{HostPort: temporal, Namespace: ns, Identity: "overlay-control"})
+	control, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: temporal, Namespace: ns, Identity: "overlay-control"}, nil))
 	must.OK(t, err)
 	defer control.Close()
 	ours := func(p *taskqueuepb.PollerInfo) bool {

@@ -23,8 +23,9 @@ func (a *Activities) RegisterTaskActivities(w TaskRegistrar) {
 	w.RegisterActivityWithOptions(a.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
 	// The line indexer of a fan-out over an artifact's lines, scheduled on
 	// the fan-out's pool channel (docs/DSL.md, "Fan-out over an artifact's
-	// lines"). It starts no container.
-	w.RegisterActivityWithOptions(a.IndexEachLines, activity.RegisterOptions{Name: task.ActivityIndexEachLines})
+	// lines"). It starts no container. Raw, as a task is: its request names an
+	// artifact of the run.
+	w.RegisterActivityWithOptions(a.IndexEachLinesRaw, activity.RegisterOptions{Name: task.ActivityIndexEachLines})
 	// Registered unconditionally, on the ordinary worker. The engine schedules
 	// it on the pin's own SESSION context, which is what routes it to the host
 	// that owns the directory (§6.4); an Orker with no pins registers a name

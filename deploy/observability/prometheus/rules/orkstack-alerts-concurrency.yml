@@ -47,6 +47,17 @@ groups:
       description: The oldest run waiting for limit "{{ $labels.ork_concurrency_limit }}" of namespace "{{ $labels.ork_namespace }}" has used over half its queue_timeout.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyqueuedtoolong
       summary: A run has waited over half its queue timeout.
+  - alert: OrkStackConcurrencyQueueExitsUnstarted
+    expr: sum by (ork_deployment, ork_namespace, ork_concurrency_limit) (rate(ork_concurrency_exits_total{ork_concurrency_outcome=~"timed_out|full|unavailable|unsupported|fenced"}[15m])) > 0
+    for: 15m
+    labels:
+      component: concurrency
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: Waits in the line of limit "{{ $labels.ork_concurrency_limit }}" of namespace "{{ $labels.ork_namespace }}" have ended without the run or task starting for 15 minutes.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyqueueexitsunstarted
+      summary: Runs waiting in a concurrency limit's line end without starting.
   - alert: OrkStackConcurrencyQueueFillsMaxRunning
     expr: max by (ork_deployment, ork_namespace) (last_over_time(ork_concurrency_queued_runs[10m])) > 0 and on (ork_deployment, ork_namespace) sum by (ork_deployment, ork_namespace) (rate(ork_runs_refused_total{ork_refusal_reason="max_running_reached"}[15m])) > 0
     for: 15m
@@ -69,6 +80,17 @@ groups:
       description: A holder of limit "{{ $labels.ork_concurrency_limit }}" of namespace "{{ $labels.ork_namespace }}" has made no progress for over engine.concurrency.stalled_after.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyholderstalled
       summary: A run holding a concurrency slot makes no progress.
+  - alert: OrkStackConcurrencySlotsNotReclaimed
+    expr: sum by (ork_deployment, ork_namespace, ork_concurrency_limit) (rate(ork_concurrency_verify_errors_total[15m])) > 0 and on (ork_deployment, ork_namespace, ork_concurrency_limit) max by (ork_deployment, ork_namespace, ork_concurrency_limit) (last_over_time(ork_concurrency_keys_full[10m])) > 0
+    for: 30m
+    labels:
+      component: concurrency
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: Limit "{{ $labels.ork_concurrency_limit }}" of namespace "{{ $labels.ork_namespace }}" has a full key, and its checks of the runs holding or waiting for it have failed for 30 minutes.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyslotsnotreclaimed
+      summary: A full concurrency limit cannot check who holds it.
   - alert: OrkStackConcurrencyRebuildFailing
     expr: max by (ork_deployment, ork_namespace) (last_over_time(ork_concurrency_rebuilding{ork_concurrency_state="failing"}[10m])) > 0
     for: 10m

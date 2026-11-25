@@ -96,28 +96,9 @@ func (d *OCIDispatcher) setupIdentities(ctx context.Context, in *orkstackv1.Exec
 	if f != nil {
 		return nil, f
 	}
-	ids := &identityAttempt{base: wsRoot}
-	choice := d.identityStorage.Load()
-	if choice == nil {
-		d.logger().Warn("no identity storage was chosen at boot; this attempt's identity files go under its work root",
-			"run", in.GetRunId(), "task", in.GetTaskId())
-	}
-	if choice != nil && choice.Dir != "" {
-		d.identityDirMu.Lock()
-		own, made, err := ensureOwnIdentityDir(choice.Dir, d.OrkerID, false)
-		d.identityDirMu.Unlock()
-		if made {
-			d.logger().Warn("this Orker's identity directory was gone and was made again; something on the host cleared it",
-				"dir", own)
-		}
-		if err != nil {
-			d.logger().Warn("this Orker's identity directory is not usable", "run", in.GetRunId(), "task", in.GetTaskId(), "error", err)
-			return nil, FailCause(ReasonWorkdirFailed, err, "task %q: this Orker's identity directory is not usable: %s", in.GetTaskId(), errorKind(err))
-		}
-		ids.base, ids.ownBase = filepath.Join(own, filepath.Base(wsRoot)), true
-		if err := os.Mkdir(ids.base, 0o700); err != nil {
-			return nil, FailCause(ReasonWorkdirFailed, err, "task %q: the attempt's identity directory could not be made: %s", in.GetTaskId(), errorKind(err))
-		}
+	ids := &identityAttempt{}
+	if ids.base, ids.ownBase, f = d.attemptIdentityBase(in, wsRoot); f != nil {
+		return nil, f
 	}
 	ids.dir = filepath.Join(ids.base, "identity")
 	if f := d.writeFirstIdentities(ctx, in, req, ids, mask); f != nil {
@@ -128,6 +109,36 @@ func (d *OCIDispatcher) setupIdentities(ctx context.Context, in *orkstackv1.Exec
 		return nil, f
 	}
 	return ids, nil
+}
+
+// attemptIdentityBase makes the attempt's own directory in the storage the
+// boot chose, which own says is the attempt's to remove, or answers the
+// workspace root, which the workspace removes.
+func (d *OCIDispatcher) attemptIdentityBase(in *orkstackv1.ExecuteTaskInput, wsRoot string) (base string, own bool, f *Failure) {
+	choice := d.identityStorage.Load()
+	if choice == nil {
+		d.logger().Warn("no identity storage was chosen at boot; this attempt's identity files go under its work root",
+			"run", in.GetRunId(), "task", in.GetTaskId())
+	}
+	if choice != nil && choice.Dir != "" {
+		d.identityDirMu.Lock()
+		dir, made, err := ensureOwnIdentityDir(choice.Dir, d.OrkerID, false)
+		d.identityDirMu.Unlock()
+		if made {
+			d.logger().Warn("this Orker's identity directory was gone and was made again; something on the host cleared it",
+				"dir", dir)
+		}
+		if err != nil {
+			d.logger().Warn("this Orker's identity directory is not usable", "run", in.GetRunId(), "task", in.GetTaskId(), "error", err)
+			return "", false, FailCause(ReasonWorkdirFailed, err, "task %q: this Orker's identity directory is not usable: %s", in.GetTaskId(), errorKind(err))
+		}
+		base = filepath.Join(dir, filepath.Base(wsRoot))
+		if err := os.Mkdir(base, 0o700); err != nil {
+			return "", false, FailCause(ReasonWorkdirFailed, err, "task %q: the attempt's identity directory could not be made: %s", in.GetTaskId(), errorKind(err))
+		}
+		return base, true, nil
+	}
+	return wsRoot, false, nil
 }
 
 func (d *OCIDispatcher) writeFirstIdentities(ctx context.Context, in *orkstackv1.ExecuteTaskInput, req *orkstackv1.MintAttemptTokensRequest,
@@ -262,4 +273,31 @@ func errorKind(err error) string {
 		return "no error"
 	}
 	return "an error of the host's filesystem"
+}
+
+// identitySetupDeadline is when the attempt's setup budget ends: what its
+// identities and its logins share.
+func (d *OCIDispatcher) identitySetupDeadline() time.Time {
+	budget := time.Duration(DefaultIdentitySetupBudget)
+	if d.identityConfig != nil {
+		budget = d.identityConfig.SetupBudget
+	}
+	return time.Now().Add(budget)
+}
+
+// stoppedByIdentity is why a token or a credential that could not be kept
+// stopped the attempt, or nil. Only a stop that came before the container
+// started, or while it ran, is the attempt's failure: one that ended by
+// itself first keeps its own outcome, whatever the watchdog found after, and
+// so does an attempt that was itself stopped.
+func stoppedByIdentity(ctx, runCtx context.Context, capture *runCapture, failure *Failure) *Failure {
+	var by errIdentityStopped
+	if ctx.Err() != nil || !errors.As(context.Cause(runCtx), &by) {
+		return nil
+	}
+	var before errIdentityStopped
+	if (capture != nil && capture.cancelled) || (failure != nil && errors.As(failure, &before)) {
+		return by.f
+	}
+	return nil
 }

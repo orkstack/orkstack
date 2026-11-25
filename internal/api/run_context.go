@@ -12,7 +12,7 @@ import (
 )
 
 // RunContextWriter is where a run tree's run-context object is written: the
-// run snapshot store (artifacts.BlobRunSnapshotStore).
+// run-context store (artifacts.RunContextStore).
 type RunContextWriter interface {
 	WriteRunContext(ctx context.Context, namespace, rootRunID string, data []byte) error
 }

@@ -36,6 +36,7 @@ var plainSites = map[string]string{
 	"schedule_fire.go:completeNotStarted (memo)":                  "a fire's skip code, a closed vocabulary, and its message: fixed words",
 	"resume_holder.go:loadResumeAtR (memo)":                       "the run's created_at memo field: a time",
 	"schedule_fire.go:ScheduleFireWorkflow":                       "a fire's run start: never under the schedule's key (P20b hands a sealed start on)",
+	"payload_start.go:keylessEnding":                              "a keyless run's one event: fixed words, and its memo's plaintext",
 	"continuation.go:(*runState).endUnrestorable":                 "an event publish's dedupe key: the run id and a sequence",
 	"payload_signals.go:(*plainActivityOutbound).ExecuteActivity": "plainActivities: their workers read their input with no run key",
 	"workflow.go:(*runState).emitTaskEvent":                       "an event publish's dedupe key: the run id and a sequence",
@@ -67,15 +68,7 @@ func TestPayloads_EveryValueSiteDecides(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			name := fn.Name.Name
-			if fn.Recv != nil && len(fn.Recv.List) == 1 {
-				switch r := fn.Recv.List[0].Type.(type) {
-				case *ast.StarExpr:
-					name = "(*" + r.X.(*ast.Ident).Name + ")." + name
-				case *ast.Ident:
-					name = r.Name + "." + name
-				}
-			}
+			name := siteName(fn)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
@@ -117,7 +110,7 @@ func TestPayloads_EveryValueSiteDecides(t *testing.T) {
 // The activities whose arguments a sealed run writes plaintext are exactly
 // these.
 func TestPayloads_plainActivitiesAreTheListed(t *testing.T) {
-	want := []string{"IndexEachLines", "ReleasePin", "internalSessionCompletionActivity", "internalSessionCreationActivity"}
+	want := []string{"ReleasePin", "internalSessionCompletionActivity", "internalSessionCreationActivity"}
 	var got []string
 	for a := range plainActivities {
 		got = append(got, a)
@@ -167,13 +160,13 @@ var crossSites = map[string]string{
 	"concurrency_gate.go:(*gateRun).grant SignalExternalWorkflow":             "the gate is not sealed: it writes plaintext",
 	"workflow.go:(*runState).schedule ExecuteActivity":                        "ExecuteTask: a raw payload, sealed by the dispatch",
 	"each.go:(*runState).scheduleItem ExecuteActivity":                        "ExecuteTask: a raw payload, sealed by the dispatch",
-	"each_lines.go:(*runState).startEachLines ExecuteActivity":                "IndexEachLines: plainActivities",
+	"each_lines.go:(*runState).startEachLines ExecuteActivity":                "IndexEachLines: sealed; the Orker opens it with the run's key",
 	"workflow.go:(*runState).hostPin ExecuteActivity":                         "ReleasePin: plainActivities",
 	"workflow.go:(*runState).emitTaskEvent ExecuteActivity":                   "PublishEvent: sealed; the engine opens it with the run's key",
 	"lean_events.go:(*runState).publishDetached ExecuteActivity":              "PublishEvent: sealed; the engine opens it with the run's key",
 	"each.go:(*runState).emitItem ExecuteActivity":                            "PublishEvent: sealed; the engine opens it with the run's key",
 	"continuation.go:(*runState).endUnrestorable ExecuteActivity":             "PublishEvent: sealed; the engine opens it with the run's key",
-	"payload_start.go:keylessEnding ExecuteActivity":                          "PublishEvent of a keyless run: not sealed, holds the memo's plaintext only",
+	"payload_start.go:keylessEnding ExecuteActivity":                          "PublishEvent of a keyless run: Plain, since no reader is given its key",
 	"webhook_delivery.go:WebhookDeliveryWorkflow ExecuteActivity":             "a webhook delivery is not a sealed run",
 }
 
@@ -254,4 +247,180 @@ func TestPayloads_EveryCrossWorkflowWriteDecides(t *testing.T) {
 	if len(unlisted) > 0 || len(stale) > 0 {
 		t.Fatalf("the cross-workflow write list is out of step: unlisted %v; stale %v", unlisted, stale)
 	}
+}
+
+// localReads is every engine function that reads a local activity's result
+// itself, unopened, and why. Every other reads it through getLocal, which
+// opens a sealed failure before anything classifies it.
+var localReads = map[string]string{
+	"payload_start.go:keylessEnding":                   "a run that holds no key: nothing would open",
+	"concurrency_census.go:ConcurrencyCensusWorkflow":  "the census is no run, and is never sealed",
+	"concurrency_gate.go:(*gateRun).pass":              "a gate is no run, and is never sealed",
+	"concurrency_gate.go:(*gateRun).listAll":           "a gate is no run, and is never sealed",
+	"concurrency_gate_report.go:(*gateRun).sendReport": "a gate is no run, and is never sealed",
+}
+
+// TestPayloads_EveryLocalActivityReadOpens: a local activity's failure is
+// written through the failure converter, sealed in a sealed run, so every
+// read of one goes through getLocal or is listed.
+func TestPayloads_EveryLocalActivityReadOpens(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	opened := 0
+	fset := token.NewFileSet()
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			inGetLocal := map[ast.Node]bool{}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fun := call.Fun.(type) {
+				case *ast.Ident:
+					if fun.Name == "getLocal" {
+						for _, a := range call.Args {
+							inGetLocal[a] = true
+						}
+					}
+				case *ast.SelectorExpr:
+					if fun.Sel.Name == "getLocal" {
+						for _, a := range call.Args {
+							inGetLocal[a] = true
+						}
+					}
+					if fun.Sel.Name == "ExecuteLocalActivity" {
+						if pkg, ok := fun.X.(*ast.Ident); !ok || pkg.Name != "workflow" {
+							return true
+						}
+						if inGetLocal[call] {
+							opened++
+						} else {
+							found[f+":"+siteName(fn)] = true
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	if opened == 0 {
+		t.Fatal("no read through getLocal was found")
+	}
+	for site := range found {
+		if _, ok := localReads[site]; !ok {
+			t.Errorf("%s reads a local activity's result without getLocal", site)
+		}
+	}
+	for site := range localReads {
+		if !found[site] {
+			t.Errorf("%s is listed and reads none", site)
+		}
+	}
+}
+
+// unsealedDoors are the workflow calls and options whose values the SDK
+// writes, or answers, with a converter that holds no run's key, and which no
+// run's workflow code uses: nothing here would seal what they were given.
+var unsealedDoors = map[string]bool{
+	"SideEffect": true, "SideEffectWithOptions": true, "MutableSideEffect": true, "MutableSideEffectWithOptions": true,
+	"SetUpdateHandler": true, "SetUpdateHandlerWithOptions": true, "SetQueryHandler": true, "SetQueryHandlerWithOptions": true,
+	"SetCurrentDetails": true, "NewTimerWithOptions": true, "AwaitWithOptions": true, "NewNexusClient": true,
+	"UpsertSearchAttributes": true, "WithDataConverter": true, "SetDetails": true,
+	"Summary": true, "Details": true, "StaticSummary": true, "StaticDetails": true, "EventGroups": true,
+}
+
+// otherDoors is every engine file that uses one, and why: a workflow that is
+// no run, and is never sealed.
+var otherDoors = map[string]string{
+	"claim.go":            "an idempotency claim is no run: it holds a run id and a fingerprint",
+	"concurrency_gate.go": "a gate is no run: it holds ids, sequences and its limit's own terms",
+}
+
+// TestPayloads_NoRunUsesADoorNothingSeals: a new use of one needs a decision
+// here, and a test that feeds it run data.
+func TestPayloads_NoRunUsesADoorNothingSeals(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := map[string]bool{}
+	fset := token.NewFileSet()
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		use := func(n ast.Node, name string) {
+			used[f] = true
+			if _, ok := otherDoors[f]; !ok {
+				t.Errorf("%s: workflow.%s writes what nothing seals", fset.Position(n.Pos()), name)
+			}
+		}
+		ofWorkflow := func(e ast.Expr) (string, bool) {
+			sel, ok := e.(*ast.SelectorExpr)
+			if !ok {
+				return "", false
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			return sel.Sel.Name, ok && pkg.Name == "workflow"
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.CallExpr:
+				if name, ok := ofWorkflow(n.Fun); ok && unsealedDoors[name] {
+					use(n, name)
+				}
+			case *ast.CompositeLit:
+				name, ok := ofWorkflow(n.Type)
+				if !ok || !strings.HasSuffix(name, "Options") {
+					return true
+				}
+				for _, el := range n.Elts {
+					if kv, ok := el.(*ast.KeyValueExpr); ok {
+						if key, ok := kv.Key.(*ast.Ident); ok && unsealedDoors[key.Name] {
+							use(kv, name+"."+key.Name)
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	for f := range otherDoors {
+		if !used[f] {
+			t.Errorf("%s is listed and uses none", f)
+		}
+	}
+}
+
+// siteName is fn's name with its receiver's type.
+func siteName(fn *ast.FuncDecl) string {
+	name := fn.Name.Name
+	if fn.Recv != nil && len(fn.Recv.List) == 1 {
+		switch r := fn.Recv.List[0].Type.(type) {
+		case *ast.StarExpr:
+			return "(*" + r.X.(*ast.Ident).Name + ")." + name
+		case *ast.Ident:
+			return r.Name + "." + name
+		}
+	}
+	return name
 }

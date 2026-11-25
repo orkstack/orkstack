@@ -603,8 +603,8 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 	}
 	metrics := newLatencyHandler()
 	identity := engine.EngineIdentity(fmt.Sprintf("%d@soak-replica-a@", os.Getpid()))
-	c, err := client.DialContext(ctx, client.Options{HostPort: s.address, Namespace: s.namespace, Identity: identity,
-		Logger: s.logs.logger("replica-a"), MetricsHandler: metrics.handler})
+	c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: s.address, Namespace: s.namespace, Identity: identity,
+		Logger: s.logs.logger("replica-a"), MetricsHandler: metrics.handler}, nil))
 	must.OKf(t, err, "dial the replica's client")
 	t.Cleanup(c.Close)
 	s.startReplica("replica-a", replicaOptions{client: c, identity: identity})

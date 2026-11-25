@@ -119,6 +119,11 @@ const (
 	DispositionSleepUntil
 )
 
+// Proto is the disposition on the wire; none for a unit left as checkpointed.
+func (d ResumeDisposition) Proto() orkstackv1.ResumeDisposition {
+	return wireDispositions[d]
+}
+
 var dispositionNames = [...]string{"NONE", "RERUN", "ADOPT", "SETTLE", "KEEP_SKIPPED", "WAIT", "SLEEP_UNTIL"}
 
 func (d ResumeDisposition) String() string {
@@ -285,6 +290,7 @@ const (
 	RefuseChildRun            ResumeRefusalCode = "CHILD_RUN"
 	RefuseTooManyResumes      ResumeRefusalCode = "TOO_MANY_RESUMES"
 	RefuseCheckUnavailable    ResumeRefusalCode = "RESUME_CHECK_UNAVAILABLE"
+	RefuseTooLarge            ResumeRefusalCode = "RESUME_TOO_LARGE"
 )
 
 // ResumeRefusalClass says what a caller can do about a refusal.
@@ -344,6 +350,16 @@ var resumableRunEndings = map[string]bool{
 	"RUN_CONCURRENCY_UNAVAILABLE": true,
 	"RUN_CONCURRENCY_FENCED":      true,
 	"RUN_CONCURRENCY_UNSUPPORTED": true,
+	// A resume whose plan could not be run left its base as it was.
+	ReasonResumePlanInvalid:    true,
+	ReasonResumePlanUnreadable: true,
+}
+
+// ResumePlanNeverRan reports whether code is the ending of a resume whose plan
+// could not be run: its run ended as the one before it had, with nothing run
+// again.
+func ResumePlanNeverRan(code string) bool {
+	return code == ReasonResumePlanInvalid || code == ReasonResumePlanUnreadable
 }
 
 // ---------------------------------------------------------------- the plan
@@ -477,27 +493,37 @@ func planOnce(in ResumePlanInput, action ResumeAction, from string) (*ResumePlan
 	return p.solve(action, from)
 }
 
-// refuseBase refuses a base the resume cannot start from, before any task
-// is looked at.
-func refuseBase(in ResumePlanInput) *ResumeRefusal {
-	status := in.Base.GetStatus()
-	code := in.Base.GetError().GetCode()
-	switch in.Class {
+// RefuseResumeState refuses a run that is not in a state class resumes, from
+// its status alone, so ResumeRun answers a running run before it reads its
+// history.
+func RefuseResumeState(base *orkstackv1.Run, class ResumeBaseClass) *ResumeRefusal {
+	status := base.GetStatus()
+	switch class {
 	case ResumeBaseFailed:
 		if status != orkstackv1.Status_STATUS_FAILED {
 			return refuse(RefuseStateNotResumable, RefusalPermanent,
 				"run %s is %s; only failed or force-cancelled runs can be resumed. Run again starts a fresh run",
-				in.Base.GetId(), resumeStatusWord(status))
+				base.GetId(), resumeStatusWord(status))
 		}
 	case ResumeBaseForceCanceled:
-		if status != orkstackv1.Status_STATUS_CANCELED || code != forceCanceledReason {
+		if status != orkstackv1.Status_STATUS_CANCELED || base.GetError().GetCode() != forceCanceledReason {
 			return refuse(RefuseStateNotResumable, RefusalPermanent,
 				"run %s is %s and was not force-cancelled; only failed or force-cancelled runs can be resumed. Run again starts a fresh run",
-				in.Base.GetId(), resumeStatusWord(status))
+				base.GetId(), resumeStatusWord(status))
 		}
 	default:
-		return refuse(RefuseStateNotResumable, RefusalPermanent, "run %s is in a state that can't be resumed", in.Base.GetId())
+		return refuse(RefuseStateNotResumable, RefusalPermanent, "run %s is in a state that can't be resumed", base.GetId())
 	}
+	return nil
+}
+
+// refuseBase refuses a base the resume cannot start from, before any task
+// is looked at.
+func refuseBase(in ResumePlanInput) *ResumeRefusal {
+	if r := RefuseResumeState(in.Base, in.Class); r != nil {
+		return r
+	}
+	code := in.Base.GetError().GetCode()
 	if in.ResumesUsed >= MaxResumesPerRun {
 		return refuse(RefuseTooManyResumes, RefusalPermanent,
 			"run %s has been resumed %d times, counting resumes that ended waiting for a concurrency slot. Run again",

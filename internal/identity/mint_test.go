@@ -5,9 +5,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +31,7 @@ type mintWorld struct {
 	sha     string
 	facts   ExecutionFacts
 	allowed []string
+	grants  map[string]artifacts.Grant
 	now     time.Time
 }
 
@@ -58,10 +62,12 @@ func newMintWorld(t *testing.T) *mintWorld {
 		Pending: []PendingAttempt{{ActivityID: "ork/build", Started: true, Attempt: 1, LastWorker: "orker-1", StartedAt: started}}}
 	jti := 0
 	w.minter = &Minter{Stores: store, Starts: w.starts,
-		Describe:  func(context.Context, string) (ExecutionFacts, error) { return w.facts, nil },
-		Audiences: func(context.Context, string, string) ([]string, error) { return w.allowed, nil },
-		Signer:    func() (*jwt.Signer, error) { return signer, nil },
-		Issuer:    "https://ork.example", Deployment: "prod",
+		Describe: func(context.Context, string) (ExecutionFacts, error) { return w.facts, nil },
+		Policy: func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+			return artifacts.NamespacePolicy{Audiences: w.allowed, Grants: w.grants}, nil
+		},
+		Signer: func() (*jwt.Signer, error) { return signer, nil },
+		Issuer: "https://ork.example", Deployment: "prod",
 		TTL:            TTLBounds{Default: time.Hour, Min: 10 * time.Minute, Max: 12 * time.Hour},
 		Skew:           time.Minute,
 		RecordIssuance: true,
@@ -101,7 +107,8 @@ func (w *mintWorld) mint(req MintRequest) ([]IssuedToken, error) {
 	if err != nil {
 		return nil, err
 	}
-	return w.minter.Issue(context.Background(), a, req, Caller{Principal: "orker:orker-1", OrkerID: "orker-1"})
+	issued, err := w.minter.Issue(context.Background(), a, req, Caller{Principal: "orker:orker-1", OrkerID: "orker-1"})
+	return issued.Tokens, err
 }
 
 func reasonOf(err error) string {
@@ -138,6 +145,52 @@ func TestMint_Grants(t *testing.T) {
 	}
 }
 
+// TestMint_TagsWhatTheAdmissionPinned: the signed token carries the tags the
+// run was admitted with, and a run admitted with none carries none.
+func TestMint_TagsWhatTheAdmissionPinned(t *testing.T) {
+	for name, tags := range map[string]map[string]artifacts.SessionTagging{
+		"none":                      nil,
+		"tags":                      {"sts": {}},
+		"tags, one of them follows": {"sts": {Transitive: []string{"ork_task"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newMintWorld(t)
+			adm := w.adm
+			adm.SessionTags = tags
+			w.sha = w.write(adm)
+			w.starts.chains["ork-1"] = found(artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: w.sha})
+			tokens, err := w.mint(w.request())
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := base64.RawURLEncoding.DecodeString(strings.Split(tokens[0].Token, ".")[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var claims struct {
+				Tags *struct {
+					Principal  map[string][]string `json:"principal_tags"`
+					Transitive []string            `json:"transitive_tag_keys"`
+				} `json:"https://aws.amazon.com/tags"`
+			}
+			if err := json.Unmarshal(payload, &claims); err != nil {
+				t.Fatal(err)
+			}
+			if tags == nil {
+				if claims.Tags != nil {
+					t.Fatalf("an untagged run's token carries %+v", claims.Tags)
+				}
+				return
+			}
+			if claims.Tags == nil || claims.Tags.Principal["ork_task"][0] != "build" || claims.Tags.Principal["ork_namespace"][0] != "ns" ||
+				claims.Tags.Principal["ork_namespace_id"][0] != "ns_1" || claims.Tags.Transitive == nil ||
+				!slices.Equal(claims.Tags.Transitive, tags["sts"].Transitive) {
+				t.Fatalf("the token carries %s", payload)
+			}
+		})
+	}
+}
+
 // TestMint_Refuses: each step's refusal, and each step that could not ask
 // answering unavailable, issue nothing.
 func TestMint_Refuses(t *testing.T) {
@@ -151,8 +204,9 @@ func TestMint_Refuses(t *testing.T) {
 		{"another namespace", func(w *mintWorld, r *MintRequest) { r.Namespace = "other" }, ReasonNotAdmitted, true},
 		{"a task not admitted", func(w *mintWorld, r *MintRequest) { r.TaskID = "deploy" }, ReasonNotAdmitted, true},
 		{"an identity not declared", func(w *mintWorld, r *MintRequest) { r.Tokens[0].Audience = "vault" }, ReasonNotAdmitted, true},
-		{"a grant", func(w *mintWorld, r *MintRequest) { r.Tokens[0].Name = "grant:deployer" }, ReasonNotAdmitted, true},
+		{"a grant not admitted", func(w *mintWorld, r *MintRequest) { r.Tokens[0].Name = "grant:deployer" }, ReasonNotAdmitted, true},
 		{"an item of a task that is no fan-out", func(w *mintWorld, r *MintRequest) { r.Item = artifacts.Item{Index: 1, Set: true} }, ReasonNotAdmitted, true},
+		{"one identity twice", func(w *mintWorld, r *MintRequest) { r.Tokens = append(r.Tokens, r.Tokens[0]) }, ReasonNotAdmitted, true},
 		{"too many tokens", func(w *mintWorld, r *MintRequest) { r.Tokens = make([]TokenAsk, MaxMintTokens+1) }, ReasonNotAdmitted, false},
 		{"another Orker", func(w *mintWorld, r *MintRequest) { w.facts.Pending[0].LastWorker = "orker-2" }, ReasonAttemptNotHeld, false},
 		{"another attempt", func(w *mintWorld, r *MintRequest) { r.Attempt = 2 }, ReasonAttemptNotHeld, false},
@@ -174,11 +228,15 @@ func TestMint_Refuses(t *testing.T) {
 		}, ReasonEngineRefused, false},
 		{"an audience no longer allowed", func(w *mintWorld, r *MintRequest) { w.allowed = []string{"other"} }, ReasonRevoked, true},
 		{"a policy that cannot be read", func(w *mintWorld, r *MintRequest) {
-			w.minter.Audiences = func(context.Context, string, string) ([]string, error) { return nil, errors.New("bucket unreachable") }
+			w.minter.Policy = func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+				return artifacts.NamespacePolicy{}, errors.New("bucket unreachable")
+			}
 		}, ReasonUnavailable, false},
 		{"another issuer", func(w *mintWorld, r *MintRequest) { w.minter.Issuer = "https://other.example" }, ReasonEngineRefused, false},
 		{"a namespace that is gone", func(w *mintWorld, r *MintRequest) {
-			w.minter.Audiences = func(context.Context, string, string) ([]string, error) { return nil, ErrNamespaceGone }
+			w.minter.Policy = func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+				return artifacts.NamespacePolicy{}, ErrNamespaceGone
+			}
 		}, ReasonRevoked, true},
 		{"a run no longer executing", func(w *mintWorld, r *MintRequest) {
 			w.minter.Describe = func(context.Context, string) (ExecutionFacts, error) { return ExecutionFacts{}, ErrNoSuchExecution }
@@ -200,6 +258,156 @@ func TestMint_Refuses(t *testing.T) {
 				t.Fatalf("a refused mint left %d records of issue", len(recs))
 			}
 		})
+	}
+}
+
+// grantWorld is a mint of a run admitted with grant deployer, which its task
+// uses, and with grant other, which it does not.
+func grantWorld(t *testing.T, edit func(*artifacts.Admission)) (*mintWorld, MintRequest) {
+	t.Helper()
+	w := newMintWorld(t)
+	adm := w.adm
+	adm.Grants = map[string]artifacts.GrantSelection{
+		"deployer": {Provider: "aws", Principal: "role/deploy", Audience: "sts"},
+		"other":    {Provider: "aws", Principal: "role/other", Audience: "sts"}}
+	adm.Tasks = map[string]artifacts.AdmittedTask{
+		"build": {Set: 1, Pool: "main", SpecSHA256: strings.Repeat("a", 64), IdentitySlots: 2, AttemptDeadline: 3600, Grants: []string{"deployer"}},
+		"lint":  {Pool: "main", SpecSHA256: strings.Repeat("b", 64), IdentitySlots: 1, AttemptDeadline: 3600, Grants: []string{"other"}}}
+	if edit != nil {
+		edit(&adm)
+	}
+	w.adm, w.sha = adm, w.write(adm)
+	w.starts.chains["ork-1"] = found(artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: w.sha})
+	w.allowed = nil // a grant's audience is its own, not one a task may ask for
+	w.grants = map[string]artifacts.Grant{"deployer": {Provider: "aws", Principal: "role/deploy", Orkflows: []string{"deploy", "platform/deploy"}, Origins: []string{"submit"}}}
+	req := w.request()
+	req.AdmissionSHA256 = w.sha
+	req.Tokens = []TokenAsk{{Name: "grant:deployer", Audience: "sts"}}
+	return w, req
+}
+
+// TestMint_AGrantsLogin: a task is issued a token for a login through a grant
+// it uses, whose subject ends in the grant, with the run's own life, for the
+// grant's audience though its namespace lists none.
+func TestMint_AGrantsLogin(t *testing.T) {
+	w, req := grantWorld(t, nil)
+	tokens, err := w.mint(req)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].Name != "grant:deployer" || tokens[0].Audience != "sts" || tokens[0].ExpiresIn != time.Hour {
+		t.Fatalf("tokens = %+v", tokens)
+	}
+	recs, _, err := w.store.ListIssued(context.Background(), artifacts.IssuedQuery{Namespace: "ns", RunID: "ork-1"})
+	if err != nil || len(recs) != 1 || len(recs[0].Value.Tokens) != 1 || recs[0].Value.Tokens[0].Name != "grant:deployer" ||
+		recs[0].Value.Tokens[0].Subject != "ork:namespace:ns:orkflow:deploy:task:build:grant:deployer" {
+		t.Fatalf("issued records = %+v, %v", recs, err)
+	}
+
+	// Beside an identity, each is its own token.
+	w, req = grantWorld(t, nil)
+	w.allowed = []string{"sts"}
+	req.Tokens = append(req.Tokens, TokenAsk{Name: "aws", Audience: "sts"})
+	if tokens, err = w.mint(req); err != nil || len(tokens) != 2 || tokens[0].Name != "aws" || tokens[1].Name != "grant:deployer" || tokens[0].Token == tokens[1].Token {
+		t.Fatalf("an identity and a grant: %+v, %v", tokens, err)
+	}
+}
+
+// TestMint_AGrantsLoginNamesItsGrantInTheTags: the one tag that is no claim's
+// is the grant's own name, and a declared identity beside it has none.
+func TestMint_AGrantsLoginNamesItsGrantInTheTags(t *testing.T) {
+	w, req := grantWorld(t, func(a *artifacts.Admission) { a.SessionTags = map[string]artifacts.SessionTagging{"sts": {}} })
+	w.allowed = []string{"sts"}
+	req.Tokens = append(req.Tokens, TokenAsk{Name: "aws", Audience: "sts"})
+	tokens, err := w.mint(req)
+	if err != nil || len(tokens) != 2 {
+		t.Fatalf("tokens = %+v, %v", tokens, err)
+	}
+	for _, token := range tokens {
+		payload, err := base64.RawURLEncoding.DecodeString(strings.Split(token.Token, ".")[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var claims struct {
+			Tags struct {
+				Principal map[string][]string `json:"principal_tags"`
+			} `json:"https://aws.amazon.com/tags"`
+		}
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string][]string{"grant:deployer": {"deployer"}}[token.Name]
+		if got := claims.Tags.Principal["ork_grant"]; !slices.Equal(got, want) || claims.Tags.Principal["ork_task"] == nil {
+			t.Errorf("%s: ork_grant = %v of %v, want %v", token.Name, got, claims.Tags.Principal, want)
+		}
+	}
+}
+
+// TestMint_RefusesAGrant: a grant the task does not use, or the run was not
+// admitted with, or that was admitted for another audience is not admitted;
+// one the namespace's policy no longer gives as it did is revoked. Nothing is
+// issued, whatever else the request asks.
+func TestMint_RefusesAGrant(t *testing.T) {
+	shared := func(a *artifacts.Admission) { a.OrkflowNamespace = "platform" }
+	grant := func(edit func(*artifacts.Grant)) func(*mintWorld, *MintRequest) {
+		return func(w *mintWorld, _ *MintRequest) {
+			g := w.grants["deployer"]
+			edit(&g)
+			w.grants = map[string]artifacts.Grant{"deployer": g}
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		admission func(*artifacts.Admission)
+		edit      func(*mintWorld, *MintRequest)
+		want      string
+	}{
+		{"one the run has not", nil, func(_ *mintWorld, r *MintRequest) { r.Tokens[0].Name = "grant:admin" }, ReasonNotAdmitted},
+		{"one another task uses", nil, func(_ *mintWorld, r *MintRequest) { r.Tokens[0].Name = "grant:other" }, ReasonNotAdmitted},
+		{"another audience", nil, func(_ *mintWorld, r *MintRequest) { r.Tokens[0].Audience = "vault" }, ReasonNotAdmitted},
+		{"twice", nil, func(_ *mintWorld, r *MintRequest) { r.Tokens = append(r.Tokens, r.Tokens[0]) }, ReasonNotAdmitted},
+		{"no name", nil, func(_ *mintWorld, r *MintRequest) { r.Tokens[0].Name = "grant:" }, ReasonNotAdmitted},
+		{"beside one that is admitted", nil, func(_ *mintWorld, r *MintRequest) {
+			r.Tokens = append(r.Tokens, TokenAsk{Name: "grant:other", Audience: "sts"})
+		}, ReasonNotAdmitted},
+		{"gone", nil, func(w *mintWorld, _ *MintRequest) { w.grants = nil }, ReasonRevoked},
+		{"another principal", nil, grant(func(g *artifacts.Grant) { g.Principal = "role/admin" }), ReasonRevoked},
+		{"another provider", nil, grant(func(g *artifacts.Grant) { g.Provider = "gcp" }), ReasonRevoked},
+		{"no longer listed", nil, grant(func(g *artifacts.Grant) { g.Orkflows = []string{"report"} }), ReasonRevoked},
+		{"another start", nil, grant(func(g *artifacts.Grant) { g.Origins = []string{"trigger"} }), ReasonRevoked},
+		{"a shared Orkflow under *", shared, grant(func(g *artifacts.Grant) { g.Orkflows = []string{"*", "deploy", "ns/deploy"} }), ReasonRevoked},
+		{"a policy that cannot be read", nil, func(w *mintWorld, _ *MintRequest) {
+			w.minter.Policy = func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+				return artifacts.NamespacePolicy{}, errors.New("bucket unreachable")
+			}
+		}, ReasonUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, req := grantWorld(t, tc.admission)
+			tc.edit(w, &req)
+			tokens, err := w.mint(req)
+			if len(tokens) != 0 || reasonOf(err) != tc.want {
+				t.Fatalf("tokens = %d, err = %v; want %s", len(tokens), err, tc.want)
+			}
+			if recs, _, _ := w.store.ListIssued(context.Background(), artifacts.IssuedQuery{Namespace: "ns", RunID: "ork-1"}); len(recs) != 0 {
+				t.Fatalf("a refused mint left %d records of issue", len(recs))
+			}
+		})
+	}
+	for name, edit := range map[string]func(*mintWorld, *MintRequest){
+		"every Orkflow of its own": grant(func(g *artifacts.Grant) { g.Orkflows = []string{"*"} }),
+		"every start":              grant(func(g *artifacts.Grant) { g.Origins = nil }),
+		"not the current version":  grant(func(g *artifacts.Grant) { g.CurrentOnly = true }),
+	} {
+		w, req := grantWorld(t, nil)
+		edit(w, &req)
+		if tokens, err := w.mint(req); err != nil || len(tokens) != 1 {
+			t.Errorf("%s: %d tokens, %v", name, len(tokens), err)
+		}
+	}
+	w, req := grantWorld(t, shared)
+	if tokens, err := w.mint(req); err != nil || len(tokens) != 1 {
+		t.Errorf("a shared Orkflow listed by its owner: %d tokens, %v", len(tokens), err)
 	}
 }
 
@@ -257,12 +465,14 @@ func TestMint_APolicyOutageSpendsNoSlot(t *testing.T) {
 	adm.Tasks["build"] = row
 	w.sha = w.write(adm)
 	w.starts.chains["ork-1"] = found(artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: w.sha})
-	good := w.minter.Audiences
-	w.minter.Audiences = func(context.Context, string, string) ([]string, error) { return nil, errors.New("bucket unreachable") }
+	good := w.minter.Policy
+	w.minter.Policy = func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+		return artifacts.NamespacePolicy{}, errors.New("bucket unreachable")
+	}
 	if _, err := w.mint(w.request()); reasonOf(err) != ReasonUnavailable {
 		t.Fatalf("outage: %v", err)
 	}
-	w.minter.Audiences = good
+	w.minter.Policy = good
 	w.facts.Pending[0].Attempt, w.facts.Pending[0].StartedAt = 2, started.Add(time.Second)
 	req := w.request()
 	req.Attempt = 2

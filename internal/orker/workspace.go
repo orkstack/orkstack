@@ -834,9 +834,9 @@ type taskJSON struct {
 	Paths          taskJSONPaths    `json:"paths"`
 	Inputs         taskJSONInputs   `json:"inputs"`
 	Secrets        []taskJSONSecret `json:"secrets"`
-	// Trace is present ONLY when this deployment exports traces. It is
-	// additive and informational, never ABI: it does not bump SchemaVersion,
-	// and a workload that ignores it loses nothing (internal/telemetry is the
+	// Trace is present ONLY when this deployment exports traces and the
+	// attempt has a span: that span's context. It is part of the ABI and
+	// optional, so a workload that ignores it loses nothing (internal/telemetry is the
 	// only OpenTelemetry-aware code in the repository; this package never
 	// imports it, and fills the field from a plain func the caller supplies).
 	Trace *taskJSONTrace `json:"trace,omitzero"`
@@ -848,6 +848,9 @@ type taskJSON struct {
 	// Identities is present ONLY for a task that declares an identity: each
 	// one's name, audience and the file its token is read from.
 	Identities []taskJSONIdentity `json:"identities,omitzero"`
+	// Credentials is present ONLY for a task that declares a credential:
+	// where each one's files are, never a value.
+	Credentials []taskJSONCredential `json:"credentials,omitzero"`
 	// Join is present ONLY for a failure handler, absent as a key otherwise
 	// — the precedent of task.pin and each: an added optional key keeps
 	// SchemaVersion at 1 and costs a workload that never heard of joins
@@ -959,6 +962,62 @@ type taskJSONRun struct {
 	ID        string          `json:"id"`
 	Namespace string          `json:"namespace"`
 	Orkflow   taskJSONOrkflow `json:"orkflow"`
+	// Context is the run-context marker (run_context.go): available, cached
+	// or unavailable. Every key below it is present only when it applies.
+	Context   string             `json:"context"`
+	CreatedAt string             `json:"createdAt,omitzero"`
+	StartedAt string             `json:"startedAt,omitzero"`
+	Deadline  string             `json:"deadline,omitzero"`
+	Origin    *taskJSONRunOrigin `json:"origin,omitzero"`
+	Parent    *taskJSONRunParent `json:"parent,omitzero"`
+	Root      *taskJSONRunRoot   `json:"root,omitzero"`
+}
+
+// taskJSONRunContext is what the run context adds to task.json's run.
+type taskJSONRunContext struct {
+	Context   string
+	CreatedAt string
+	StartedAt string
+	Deadline  string
+	Origin    *taskJSONRunOrigin
+	Parent    *taskJSONRunParent
+	Root      *taskJSONRunRoot
+}
+
+// taskJSONTaskContext is what the run context adds to task.json's task.
+type taskJSONTaskContext struct {
+	OwnAttempt       int32
+	MaxAttempts      int32
+	ScheduledAt      string
+	AttemptStartedAt string
+}
+
+// taskJSONRunOrigin is what started a run: the root's origin as submit
+// decided it, or for a child run the run that started it.
+type taskJSONRunOrigin struct {
+	Kind        string `json:"kind"`
+	ID          string `json:"id,omitzero"`
+	Reference   string `json:"reference,omitzero"`
+	Description string `json:"description,omitzero"`
+	// Principal is who the request was from, asserted by a gateway unless
+	// PrincipalVerified says OrkStack verified it (AGENTS.md §7, "Principal").
+	Principal         string `json:"principal,omitzero"`
+	PrincipalVerified bool   `json:"principalVerified,omitzero"`
+}
+
+// taskJSONRunParent is the run that started a child run, and its task.
+type taskJSONRunParent struct {
+	RunID   string          `json:"runId"`
+	TaskID  string          `json:"taskId"`
+	Orkflow taskJSONOrkflow `json:"orkflow"`
+}
+
+// taskJSONRunRoot is the run at the top of a composed chain: the run itself
+// for a top-level run.
+type taskJSONRunRoot struct {
+	RunID   string            `json:"runId"`
+	Orkflow taskJSONOrkflow   `json:"orkflow"`
+	Origin  taskJSONRunOrigin `json:"origin"`
 }
 
 type taskJSONOrkflow struct {
@@ -975,6 +1034,15 @@ type taskJSONTask struct {
 	// image's own USER, so a workload can see WHY its uid is not the one its
 	// image declared. omitempty is the "absent = false" the table specifies.
 	RunAsOrkerUser bool `json:"runAsOrkerUser,omitzero"`
+	// OwnAttempt and MaxAttempts are the task's own attempt, interruptions
+	// excluded, and the attempts its retry: declares; the last attempt is
+	// ownAttempt == maxAttempts. ScheduledAt is when the task became ready,
+	// AttemptStartedAt when this attempt started. Each is present only when
+	// the run context gives it (run_context.go).
+	OwnAttempt       int32  `json:"ownAttempt,omitzero"`
+	MaxAttempts      int32  `json:"maxAttempts,omitzero"`
+	ScheduledAt      string `json:"scheduledAt,omitzero"`
+	AttemptStartedAt string `json:"attemptStartedAt,omitzero"`
 	// Pin is present ONLY for a pinned task, absent as a key rather than
 	// written empty — which is what makes the addition additive under the rule
 	// above (a major version may only ADD optional fields), keeps
@@ -1033,6 +1101,9 @@ type taskJSONPaths struct {
 	// Identity is /orkstack/identity, present only for a task that declares
 	// an identity, as the mount is.
 	Identity string `json:"identity,omitempty"`
+	// Credentials is /orkstack/credentials, present only for a task that
+	// declares a credential.
+	Credentials string `json:"credentials,omitempty"`
 }
 
 // taskJSONIdentity is one identity a task holds, as task.json names it:
@@ -1041,6 +1112,15 @@ type taskJSONIdentity struct {
 	Name     string `json:"name"`
 	Audience string `json:"audience"`
 	Path     string `json:"path"`
+}
+
+// taskJSONCredential is one credential a task holds, as task.json names it:
+// never a value.
+type taskJSONCredential struct {
+	Name     string   `json:"name"`
+	Provider string   `json:"provider"`
+	Path     string   `json:"path"`
+	Files    []string `json:"files"`
 }
 
 type taskJSONInputs struct {
@@ -1082,9 +1162,16 @@ type taskJSONSecret struct {
 
 // TaskContext is everything the workspace needs that is not on the wire.
 type TaskContext struct {
+	// RunContext and TaskContext are what the run context adds to task.json
+	// (runContextTaskJSON). A zero RunContext writes the unavailable marker.
+	RunContext  taskJSONRunContext
+	TaskContext taskJSONTaskContext
 	// Identities are the identities the attempt holds, whose files are
 	// bound at /orkstack/identity; nil for a task that declares none.
-	Identities     []*orkstackv1.IdentityRef
+	Identities []*orkstackv1.IdentityRef
+	// Credentials are the credentials the attempt holds, whose files are
+	// under /orkstack/credentials.
+	Credentials    []taskJSONCredential
 	Attempt        int32
 	Pool           string
 	Namespace      string
@@ -1136,12 +1223,23 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 				Version:          in.GetOrkflowVersion(),
 				DefinitionDigest: in.GetOrkflowDefinitionDigest(),
 			},
+			Context:   tc.RunContext.Context,
+			CreatedAt: tc.RunContext.CreatedAt,
+			StartedAt: tc.RunContext.StartedAt,
+			Deadline:  tc.RunContext.Deadline,
+			Origin:    tc.RunContext.Origin,
+			Parent:    tc.RunContext.Parent,
+			Root:      tc.RunContext.Root,
 		},
 		Task: taskJSONTask{
-			ID:             in.GetTaskId(),
-			Attempt:        tc.Attempt,
-			Pool:           tc.Pool,
-			RunAsOrkerUser: tc.RunAsOrkerUser,
+			ID:               in.GetTaskId(),
+			Attempt:          tc.Attempt,
+			Pool:             tc.Pool,
+			RunAsOrkerUser:   tc.RunAsOrkerUser,
+			OwnAttempt:       tc.TaskContext.OwnAttempt,
+			MaxAttempts:      tc.TaskContext.MaxAttempts,
+			ScheduledAt:      tc.TaskContext.ScheduledAt,
+			AttemptStartedAt: tc.TaskContext.AttemptStartedAt,
 		},
 		Image: taskJSONImage{
 			Reference:      tc.Image.GetReference(),
@@ -1207,6 +1305,11 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 				Path: identityMountPath + "/" + id.GetName() + "/token"})
 		}
 	}
+	// paths.credentials and credentials likewise, for a task that declares a
+	// credential.
+	if len(tc.Credentials) > 0 {
+		doc.Paths.Credentials, doc.Credentials = credentialsMountPath, tc.Credentials
+	}
 	// each exists only for an item of a fan-out (§3.2), as task.pin does.
 	if e := tc.Each; e != nil {
 		item := tc.EachItem
@@ -1232,6 +1335,15 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 	}
 	if doc.Secrets == nil {
 		doc.Secrets = []taskJSONSecret{}
+	}
+	if doc.Run.Context == "" {
+		// Only an input that carries no run context may leave the marker to
+		// this default; one that does and lost it is an Orker bug, never a
+		// task told its context is unavailable.
+		if in.GetRunContext() != nil {
+			return errors.New("task.json: the input carries a run context but no marker was decided for it")
+		}
+		doc.Run.Context = RunContextUnavailable
 	}
 	return w.writeInputFile("task.json", doc)
 }

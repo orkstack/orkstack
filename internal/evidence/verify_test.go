@@ -197,12 +197,12 @@ func TestVerify_FailsByName(t *testing.T) {
 		}
 	})
 
-	t.Run("schema version 2", func(t *testing.T) {
+	t.Run("a later schema version", func(t *testing.T) {
 		entries := fixtureEntries(t, f)
-		entries[0].body = bytes.Replace(entries[0].body, []byte(`"schema_version": 1`), []byte(`"schema_version": 2`), 1)
+		entries[0].body = bytes.Replace(entries[0].body, []byte(`"schema_version": 3`), []byte(`"schema_version": 4`), 1)
 		_, err := Verify(bytes.NewReader(buildTar(t, entries)))
-		if err == nil || !strings.Contains(err.Error(), "schema_version 2") {
-			t.Fatalf("Verify = %v, want an error naming schema_version 2", err)
+		if err == nil || !strings.Contains(err.Error(), "schema_version 4") {
+			t.Fatalf("Verify = %v, want an error naming schema_version 4", err)
 		}
 	})
 }

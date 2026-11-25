@@ -229,7 +229,7 @@ func TestValidateOrkflow_CachedTaskWithSecretsWarns(t *testing.T) {
 	yaml := strings.Replace(cachedYAML, "    cache: {enabled: true, ttl_seconds: 86400}",
 		"    cache: {enabled: true, ttl_seconds: 86400}\n    secrets: [{name: db, source: 'env:DB'}]", 1)
 	issue := issueAt(warningsFor(t, svc, yaml), "tasks[0].secrets")
-	want := `task "featurize": a cached task's key covers its secrets' names and sources, never their values — ` +
+	want := `task "featurize": a cached task's key covers its secrets' names, sources, grants and ciphertexts, never their values — ` +
 		`rotating a secret does not invalidate its memos; purge them with orkctl cache purge --orkflow cached-pipeline --task featurize`
 	if issue == nil || issue.GetMessage() != want || issue.GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING {
 		t.Fatalf("issue = %v\nwant %s", issue, want)

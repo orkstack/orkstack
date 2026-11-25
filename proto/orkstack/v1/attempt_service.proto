@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package orkstack.v1;
 
+import "orkstack/v1/common.proto";
 import "orkstack/v1/activity.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -58,4 +59,7 @@ message CommitResultResponse {
   bool created = 2;
   // existing is that record, set when created is false.
   ActivityCommit existing = 3;
+  // input_artifacts is set on a preflight's answer, as
+  // MintAttemptTokensResponse.input_artifacts is.
+  repeated ArtifactRef input_artifacts = 4;
 }

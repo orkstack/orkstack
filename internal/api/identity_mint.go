@@ -85,14 +85,14 @@ func (s *Service) MintAttemptTokens(ctx context.Context, req *connect.Request[or
 		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New(identity.ReasonUnavailable+": this attempt has asked for its tokens too often; ask again"))
 	}
 	// Steps 4 to 8.
-	tokens, err := s.minter.Issue(ctx, admitted, mreq, identity.Caller{Principal: caller.ID, OrkerID: caller.OrkerID})
+	issued, err := s.minter.Issue(ctx, admitted, mreq, identity.Caller{Principal: caller.ID, OrkerID: caller.OrkerID})
 	if err != nil {
 		attemptSpend.Refund()
 		return nil, s.mintRefused(ctx, msg, caller, err)
 	}
 	granted = true
-	out := &orkstackv1.MintAttemptTokensResponse{}
-	for _, t := range tokens {
+	out := &orkstackv1.MintAttemptTokensResponse{InputArtifacts: issued.Received}
+	for _, t := range issued.Tokens {
 		out.Tokens = append(out.Tokens, &orkstackv1.IssuedToken{Name: t.Name, Audience: t.Audience, Token: t.Token,
 			ExpiresInSeconds: int32(t.ExpiresIn.Seconds()), IssuedAt: timestamppb.New(t.IssuedAt), Jti: t.JTI, Kid: t.KID})
 	}

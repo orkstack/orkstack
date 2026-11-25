@@ -35,24 +35,24 @@ func TestCheckIdentityAtSubmit(t *testing.T) {
 	v2, _ := store.Get(ctx, "payments", "deploy", "2")
 	allows := &stubPolicies{policy: artifacts.NamespacePolicy{Audiences: []string{"sts"}}}
 	s := &Service{orkflows: store, namespacePolicies: allows}
-	if err := s.checkIdentityAtSubmit(ctx, ns, v1, "payments"); err != nil {
+	if _, err := s.checkIdentityAtSubmit(ctx, ns, v1, "payments", "submit"); err != nil {
 		t.Fatalf("allowed: %v", err)
 	}
 	allows.policy.IdentitiesCurrentOnly = true
-	if err := s.checkIdentityAtSubmit(ctx, ns, v1, "payments"); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+	if _, err := s.checkIdentityAtSubmit(ctx, ns, v1, "payments", "submit"); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
 		!strings.Contains(err.Error(), "not current") {
 		t.Fatalf("an old version under current_only: %v", err)
 	}
-	if err := s.checkIdentityAtSubmit(ctx, ns, v2, "payments"); err != nil {
+	if _, err := s.checkIdentityAtSubmit(ctx, ns, v2, "payments", "submit"); err != nil {
 		t.Fatalf("the current version: %v", err)
 	}
 	allows.policy = artifacts.NamespacePolicy{Audiences: []string{"other"}}
-	if err := s.checkIdentityAtSubmit(ctx, ns, v2, "payments"); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+	if _, err := s.checkIdentityAtSubmit(ctx, ns, v2, "payments", "submit"); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
 		!strings.Contains(err.Error(), identity.ReasonNotPermitted) {
 		t.Fatalf("an audience no longer allowed: %v", err)
 	}
 	reads := allows.reads
-	if err := s.checkIdentityAtSubmit(ctx, ns, &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{{Id: "plain"}}}, "payments"); err != nil || allows.reads != reads {
+	if _, err := s.checkIdentityAtSubmit(ctx, ns, &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{{Id: "plain"}}}, "payments", "submit"); err != nil || allows.reads != reads {
 		t.Fatalf("a plain definition: %v, %d reads", err, allows.reads-reads)
 	}
 }

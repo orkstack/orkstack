@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
 var policyEpoch = time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
@@ -311,5 +313,24 @@ func TestNamespacePolicy_APolicyTooLargeIsRefusedAndTheIDStaysReadable(t *testin
 	}
 	if got, ok, err := s.NamespaceID(ctx, "payments", policyEpoch); err != nil || !ok || got != id {
 		t.Fatalf("the id after = %q, %v, %v", got, ok, err)
+	}
+}
+
+// TestCheckNamespacePolicy_AGrantServesOnlyStartsARunCanHave: a grant's
+// origins are the words runs are recorded with. event-source is one only
+// once a run an event source starts is recorded as that: until then a grant
+// that names it is refused, not kept to serve nothing.
+func TestCheckNamespacePolicy_AGrantServesOnlyStartsARunCanHave(t *testing.T) {
+	_, eventSource := orkstackv1.RunOriginKind_value["RUN_ORIGIN_KIND_EVENT_SOURCE"]
+	for word, want := range map[string]bool{
+		"submit": true, "schedule": true, "trigger": true, "parent-run": true, "run-again": true,
+		"event-source": eventSource,
+		"unspecified":  false, "": false, "SUBMIT": false, "run_again": false, "RUN_ORIGIN_KIND_SUBMIT": false,
+	} {
+		err := CheckNamespacePolicy(NamespacePolicy{Grants: map[string]Grant{
+			"g": {Provider: "aws", Principal: "p", Orkflows: []string{"*"}, Origins: []string{word}}}})
+		if (err == nil) != want || (err != nil && !errors.Is(err, ErrInvalidPolicy)) {
+			t.Errorf("a grant for %q: %v; accepted should be %v", word, err, want)
+		}
 	}
 }

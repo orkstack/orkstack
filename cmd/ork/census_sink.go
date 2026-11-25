@@ -41,3 +41,21 @@ func (o arrivalObserver) ObserveArrival(ctx context.Context, namespace, orkflow,
 	o.m.Arrival(ctx, telemetry.ConcurrencyArrival{Namespace: namespace, Orkflow: orkflow, Limit: limit, Level: level,
 		Strategy: strategy, Outcome: outcome})
 }
+
+// gateReportObserver hands what the gates report to their metrics (E88
+// §9.9.2).
+type gateReportObserver struct{ m *telemetry.ConcurrencyMetrics }
+
+func (o gateReportObserver) ObserveGateReport(ctx context.Context, r engine.ConcurrencyGateReport) {
+	out := telemetry.ConcurrencyGateReport{Namespace: r.Namespace, Started: r.Started}
+	for _, c := range r.Reclaimed {
+		out.Reclaimed = append(out.Reclaimed, telemetry.ConcurrencyReclaim{Limit: c.Limit, Outcome: c.Outcome, Entries: c.Entries})
+	}
+	for _, c := range r.VerifyErrors {
+		out.VerifyErrors = append(out.VerifyErrors, telemetry.ConcurrencyVerifyErrors{Limit: c.Limit, Calls: c.Calls})
+	}
+	for _, c := range r.Rebuilt {
+		out.Rebuilt = append(out.Rebuilt, telemetry.ConcurrencyRebuild{Outcome: c.Outcome, Times: c.Times})
+	}
+	o.m.Report(ctx, out)
+}

@@ -22,6 +22,7 @@ import (
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/procguard"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -215,6 +216,12 @@ var Schema = []Var{
 	{Path: "engine.continuation.events", Env: "ORK_CONTINUATION_EVENTS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultContinuationEvents)},
 	{Path: "engine.continuation.bytes", Env: "ORK_CONTINUATION_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultContinuationBytes)},
 	{Path: "engine.continuation.restore_timeout", Env: "ORK_CONTINUATION_RESTORE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultContinuationRestoreTimeout)},
+	// engine.resume.* (E85): what ResumeRun waits for and bounds, read at each
+	// request; each default is the engine's.
+	{Path: "engine.resume.confirm_timeout", Env: "ORK_RESUME_CONFIRM_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultResumeConfirmTimeout)},
+	{Path: "engine.resume.visibility_lag_floor", Env: "ORK_RESUME_VISIBILITY_LAG_FLOOR", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultResumeVisibilityLagFloor)},
+	{Path: "engine.resume.max_seq_gap", Env: "ORK_RESUME_MAX_SEQ_GAP", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultResumeMaxSequenceGap)},
+	{Path: "engine.resume.confirm_per_run", Env: "ORK_RESUME_CONFIRM_PER_RUN", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultResumeConfirmsPerRun))},
 	// ORK_DEFINITION_BY_REFERENCE's fallback is
 	// engine.DefaultDefinitionByReference — on, when unset, only where
 	// continuation is on (cmd/ork's definitionByReferenceFromEnv).
@@ -426,6 +433,7 @@ var Schema = []Var{
 	{Path: "telemetry.pprof_enabled", Env: "ORK_PPROF_ENABLED", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.high_cardinality", Env: "ORK_TELEMETRY_HIGH_CARDINALITY", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.orkflow_label", Env: telemetry.OrkflowLabelVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultOrkflowLabel)},
+	{Path: "telemetry.trust_inbound_trace", Env: telemetry.TrustInboundTraceVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultTrustInboundTrace)},
 	{Path: "telemetry.object_labels", Env: telemetry.ObjectLabelsVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultObjectLabels)},
 	{Path: "telemetry.metric_cardinality_limit", Env: telemetry.MetricCardinalityLimitVar, Binaries: usesBoth, Kind: KindInt, Default: formatInt(int64(telemetry.DefaultMetricCardinalityLimit))},
 	{Path: "telemetry.census_requests_per_minute", Env: telemetry.CensusRequestsPerMinuteVar, Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(telemetry.DefaultCensusRequestsPerMinute))},
@@ -465,6 +473,13 @@ var Schema = []Var{
 	// whatever it is named.
 	{Path: "telemetry.sinks", Env: "ORK_TELEMETRY_SINKS", Binaries: usesBoth, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no named sinks"},
 
+	// providers is the deployment's credential and secret providers
+	// (docs/PROVIDERS.md). It is set identically on ork and orker, as
+	// telemetry.sinks is: the engine validates references against it and
+	// the Orker does the work. It holds no secret: a provider authenticates
+	// with the attempt's identity token alone.
+	{Path: "providers", Env: provider.Var, Binaries: usesBoth, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no providers"},
+
 	// orker.engine.* is how an Orker reaches the engine's API as itself
 	// (docs/AUTHENTICATION.md, "An Orker's credential"); empty, it reaches
 	// none.
@@ -482,6 +497,10 @@ var Schema = []Var{
 	{Path: "orker.identity.retry_min", Env: orker.IdentityRetryMinVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentityRetryMin)},
 	{Path: "orker.identity.max_concurrent", Env: orker.IdentityMaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultIdentityMaxConcurrent)},
 	{Path: "orker.identity.max_clock_skew", Env: orker.IdentityMaxClockSkewVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultIdentityMaxClockSkew)},
+	// orker.providers.* are how an Orker calls the deployment's providers
+	// (docs/PROVIDERS.md).
+	{Path: "orker.providers.call_timeout", Env: orker.ProvidersCallTimeoutVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(provider.DefaultCallTimeout)},
+	{Path: "orker.providers.max_concurrent", Env: orker.ProvidersMaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(provider.DefaultMaxConcurrent)},
 	{Path: "orker.log.mask_grace", Env: orker.LogMaskGraceVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultLogMaskGrace)},
 
 	// auth.* is the engine's alone (docs/AUTHENTICATION.md). auth.issuers is

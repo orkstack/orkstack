@@ -218,7 +218,7 @@ func slots() map[string]slot {
 	plainTask := map[string]string{
 		"needs": "[b]", "condition": "'{{ true }}'", "timeout_seconds": "10", "retry": "{maximum_attempts: 2}",
 		"pool": "p", "command": "[x]", "env": "{A: b}", "secrets": "[{name: s, source: 'env:S'}]",
-		"resources": "{cpu: '1'}", "network": "none", "cancellation_grace_period_seconds": "5", "run_as_orker_user": "true", "identities": "[{name: i, audience: a}]",
+		"resources": "{cpu: '1'}", "network": "none", "cancellation_grace_period_seconds": "5", "run_as_orker_user": "true", "identities": "[{name: i, audience: a}]", "credentials": "[{name: c, grant: g}]",
 		"cache": "{enabled: true}", "with": "{}", "description_unused": "",
 	}
 	delete(plainTask, "description_unused")
@@ -263,6 +263,25 @@ func slots() map[string]slot {
 		out["tasks[].identities[]."+key] = slot{doc: taskDoc("    identities: [{name: i, audience: a, " + key + ": @V@}]\n"), field: "tasks[0].identities[0]." + key,
 			baseline: baseline, absent: taskDoc("    identities: [{name: i, audience: a}]\n")}
 	}
+	out["tasks[].credentials[]"] = slot{doc: taskDoc("    credentials: [@V@]\n"), field: "tasks[0].credentials[0]", baseline: "{name: c, grant: g}"}
+	for key, baseline := range map[string]string{"name": "c", "grant": "g"} {
+		other := map[string]string{"name": "grant: g", "grant": "name: c"}[key]
+		out["tasks[].credentials[]."+key] = slot{doc: taskDoc("    credentials: [{" + other + ", " + key + ": @V@}]\n"), field: "tasks[0].credentials[0]." + key,
+			baseline: baseline, absent: taskDoc("    credentials: [{" + other + "}]\n")}
+	}
+	for key, baseline := range map[string]string{"path": "creds/x", "refresh": "best_effort", "params": "{ttl: 1h}"} {
+		extra := ""
+		if key == "params" {
+			extra = ", path: creds/x"
+		}
+		out["tasks[].credentials[]."+key] = slot{doc: taskDoc("    credentials: [{name: c, grant: g" + extra + ", " + key + ": @V@}]\n"), field: "tasks[0].credentials[0]." + key,
+			baseline: baseline, absent: taskDoc("    credentials: [{name: c, grant: g" + extra + "}]\n")}
+	}
+	out["tasks[].credentials[].params.*"] = slot{doc: taskDoc("    credentials: [{name: c, grant: g, path: creds/x, params: {ttl: @V@}}]\n"), field: "tasks[0].credentials[0].params.ttl", baseline: "1h"}
+	out["tasks[].secrets[].grant"] = slot{doc: taskDoc("    secrets: [{name: s, source: 'kv:a/b', grant: @V@}]\n"), field: "tasks[0].secrets[0].grant",
+		baseline: "g", absent: taskDoc("    secrets: [{name: s, source: 'env:S'}]\n")}
+	out["tasks[].secrets[].ciphertext"] = slot{doc: taskDoc("    secrets: [{name: s, source: 'kv:a/b', grant: g, ciphertext: @V@}]\n"), field: "tasks[0].secrets[0].ciphertext",
+		baseline: "QUJD", absent: taskDoc("    secrets: [{name: s, source: 'kv:a/b', grant: g}]\n")}
 	out["tasks[].secrets[].mask"] = slot{doc: taskDoc("    secrets: [{name: s, source: 'env:S', mask: @V@}]\n"), field: "tasks[0].secrets[0].mask",
 		baseline: "false", absent: taskDoc("    secrets: [{name: s, source: 'env:S'}]\n")}
 	for key, baseline := range map[string]string{"maximum_attempts": "2", "initial_interval_seconds": "1", "backoff_coefficient": "2.0", "maximum_interval_seconds": "10", "max_interruptions": "2"} {

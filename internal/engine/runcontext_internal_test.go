@@ -296,7 +296,7 @@ func TestIdempotencyKey_UnchangedByRunContext(t *testing.T) {
 func TestChildStartPlan_CopiesTheRunContext(t *testing.T) {
 	s, _ := runContextState(t, nil)
 	planned := &ChildRunPlan{Plan: RunPlan{RunContextIndex: 3}}
-	got := s.childStartPlan(planned)
+	got := s.childStartPlan("release", planned)
 	if got.RunContextSHA256 != testRunContextSHA || got.RunContextMaxBytes != DefaultRunContextMaxBytes || got.RunContextIndex != 3 {
 		t.Fatalf("child start plan's run context = %q, %d, %d", got.RunContextSHA256, got.RunContextMaxBytes, got.RunContextIndex)
 	}

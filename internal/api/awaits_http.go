@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -48,7 +49,26 @@ func (s *Service) doorFault(ctx context.Context, msg string, args ...any) {
 	if ctx.Err() != nil {
 		return
 	}
-	s.doorFaults.Do(func() { s.logger.Warn(msg, args...) })
+	s.doorFaults.Do(msg, func(dropped int) { s.logger.Warn(msg, append(args, "more_not_logged", dropped)...) })
+}
+
+// reasonCodeAt is the reason code a message begins with (docs/REASONS.md).
+var reasonCodeAt = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+\b`)
+
+// doorMessage is what a door tells the sender that holds its token. What a
+// sender can mend, a 4xx, is said as the API says it. A fault, a 5xx, is
+// words, with the reason code it has: its cause names this deployment's
+// hosts, buckets and paths, and is the log's. A sender is a system outside
+// the deployment, whose token grants one start or one resolution.
+func (s *Service) doorMessage(ctx context.Context, status int, err error, said, words string, args ...any) string {
+	if status < http.StatusInternalServerError {
+		return said
+	}
+	s.doorFault(ctx, "a door could not serve its sender", append(args, "error", err)...)
+	if code := reasonCodeAt.FindString(connectMessage(err)); code != "" {
+		return code + ": " + words
+	}
+	return words
 }
 
 // NewAwaitHandler serves both routes against svc.
@@ -140,9 +160,11 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 
 	// 6. The definition's own word that the task is a callback await: read
 	//    from object storage for a definition passed by reference, only now.
+	again := fmt.Sprintf("the resolution of run %q could not be recorded now; send it again", runID)
 	start, err = resolvedStart(ctx, binding, runID, start)
 	if err != nil {
-		writeTriggerError(w, http.StatusServiceUnavailable, "unavailable", connectMessage(err))
+		status := http.StatusServiceUnavailable
+		writeTriggerError(w, status, "unavailable", svc.doorMessage(ctx, status, err, "", again, "run_id", runID, "task_id", taskID))
 		return
 	}
 	callback := false
@@ -195,7 +217,7 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 			return
 		}
 		status, code := awaitDoorStatus(err)
-		writeTriggerError(w, status, code, err.Error())
+		writeTriggerError(w, status, code, svc.doorMessage(ctx, status, err, err.Error(), again, "run_id", runID, "task_id", taskID))
 		return
 	}
 
@@ -212,10 +234,11 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 		// The callback door verifies nobody: outside asserted mode the
 		// resolution says it came by callback, and no header is read.
 		principal: boundOriginAssertion(authn.Recorded(r.Context(), r.Header).ID),
+		who:       authn.Recorded(r.Context(), r.Header),
 	})
 	if err != nil {
 		status, code := awaitDoorStatus(err)
-		writeTriggerError(w, status, code, connectMessage(err))
+		writeTriggerError(w, status, code, svc.doorMessage(ctx, status, err, connectMessage(err), again, "run_id", runID, "task_id", taskID))
 		return
 	}
 
@@ -224,8 +247,13 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 	//    it already had and the digest of what it sent.
 	encoded, err := MarshalJSON(response)
 	if err != nil {
-		writeTriggerError(w, http.StatusInternalServerError, "internal", err.Error())
+		status := http.StatusInternalServerError
+		writeTriggerError(w, status, "internal", svc.doorMessage(ctx, status, err, "",
+			fmt.Sprintf("the resolution of run %q was recorded; the answer could not be encoded", runID), "run_id", runID, "task_id", taskID))
 		return
+	}
+	if start.Plan.Identity != nil {
+		setAwaitDelivery(w.Header(), response)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -264,6 +292,8 @@ func awaitDoorStatus(err error) (int, string) {
 		return http.StatusConflict, code.String()
 	case connect.CodeUnavailable:
 		return http.StatusServiceUnavailable, code.String()
+	case connect.CodeResourceExhausted:
+		return http.StatusTooManyRequests, code.String()
 	default:
 		return http.StatusInternalServerError, "internal"
 	}

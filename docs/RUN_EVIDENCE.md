@@ -55,8 +55,7 @@ Each item's members use the per-task layout above under
 `artifacts/{member-name}`, `attempts/{n}.json`, `attempts/{n}/stdout.log`,
 `attempts/{n}/stderr.log`), items ascending, and every such member entry
 carries `"item": i`; `scope` carries `item` when the export was narrowed to
-one. These keys are additive, so `schema_version` stays `1` and `verify`
-reads bundles with and without items.
+one. `verify` reads bundles with and without items.
 A fan-out over an artifact's lines (`each.over_artifact`) exports the same way:
 one entry per item, and a batch is one item. Its line index is a record of the
 run, not a member; its source is the producing task's own `artifact` member,
@@ -66,8 +65,7 @@ A child run's received artifacts (`docs/DSL.md` "Passing artifacts to a child
 run") follow every task, as `artifact` members with `task_id` `_inputs` under
 `tasks/_inputs/artifacts/`; there is no `tasks[]` entry for `_inputs`. A
 composed task's artifacts are the ones its child returned, listed like any
-task's. Both carry `source_run_id`, `source_task_id` and `source_name`. The
-keys are additive, so `schema_version` is unchanged. A scope of one task
+task's. Both carry `source_run_id`, `source_task_id` and `source_name`. A scope of one task
 carries that task's members only; `_inputs` is the scope of the received ones.
 
 A `SKIPPED` task has no members and one `tasks[]` entry. A `FAILED` or
@@ -102,7 +100,7 @@ digest, keeps the `sha256:` prefix the run recorded.
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "run_id": "ork-…",
   "namespace": "payments",
   "orkflow_name": "payments-reconcile",
@@ -156,11 +154,19 @@ task (the run's own members are always included), `logs: false` drops every
 `stdout.log`/`stderr.log`, `artifacts: false` drops the output artifacts and the received ones.
 `values.json`, `commit.json` and attempt records are never excluded.
 
-A change a version-1 reader could misread bumps `schema_version` (additive
-keys, like the fan-out `item`, do not); `verify` refuses a version it does not
-know rather than guessing.
+### Versions
 
-### Version 2: a run whose stream has a gap
+Every bundle is written with `schema_version: 3`, and `verify` reads only that.
+A bundle of another version, earlier or later, is refused rather than guessed
+at: the message names its version and the one this `orkctl` reads. The `orkctl`
+that exported a bundle verifies it, so keep that release for bundles an engine
+before 0.4.0 exported (versions 1 and 2). A change an older reader could misread
+bumps the version.
+
+Version 3 may carry `event_gaps`, the `withheld` state, `orkflow_namespace` and
+an artifact's `source_*` keys.
+
+### A run whose stream has a gap
 
 A run that carries on into a fresh history reads the events of its earlier
 histories from immutable event segments in object storage. When one of them
@@ -172,8 +178,7 @@ are recorded as never published, with the reason `the run's history holds no
 event under these numbers` (`docs/DEPLOY.md` §6). A run whose definition could
 not be used and whose `RUN_CREATED` was refused is one: its stream starts at its
 terminal event, at 2, and 1 is recorded.
-The bundle of such a run is written with `schema_version: 2` and one more
-key:
+The bundle of such a run has one more key:
 
 ```json
   "event_gaps": [
@@ -184,14 +189,9 @@ key:
 `orkctl` names each gap for its cause: events "lost from object storage before
 it was archived", or "never published".
 
-Every member is exactly what version 1 would list — `run.jsonl` is still the
+Every member is exactly what it would be without one — `run.jsonl` is still the
 archive body verbatim, gap lines included, and still `present` — so the
-bundle is exactly what the archive holds. A version-2 manifest must carry a
-non-empty `event_gaps`, and a version-1 manifest must not carry one. It is a
-new version rather than an additive key on purpose: a tool older than it
-refuses the bundle with its own `schema_version` message, instead of
-verifying it while ignoring the gap. Every bundle of a run whose archive
-records no gap stays version 1.
+bundle is exactly what the archive holds.
 
 ## States
 
@@ -255,7 +255,9 @@ a workload artifact named `commit.json` collides with nothing.
    its end and once object storage answers (`docs/DEPLOY.md` §1, "The archive
    sweep"), and its export can be retried then.
 3. Every member is resolved from the **archived** run snapshot, never from a
-   coordinate the caller supplied.
+   coordinate the caller supplied. An export is a read of the run:
+   `run.evidence.export` gives its whole archived record, its trace context
+   (`traceparent`) included, with no `run.read` asked.
 4. The definition is read by the run's name and version, in the namespace that
    owns it (a shared Orkflow's child run pinned its owner's document), and
    attested by recomputing its definition digest; a document that does not hash
@@ -295,8 +297,7 @@ string. Its rules:
    order`, and verification continues.
 6. An absolute name, a `..` segment or a NUL is `unsafe path`; a non-regular
    entry is `not a regular file`.
-7. A `schema_version` other than 1 or 2 is refused, and so is a version 2
-   without `event_gaps` or a version 1 with them.
+7. A `schema_version` other than 3 is refused ("Versions", above).
 8. The manifest must agree with itself: a member whose `state` is not one of
    `present`, `reclaimed`, `unrecorded`, `rejected` or `withheld` is `unknown
    state`, and
@@ -307,7 +308,7 @@ string. Its rules:
 Reclaimed, unrecorded, rejected and withheld members are findings, not
 failures: the command exits 0 and lists each under its own state with its
 reason, and never among the verified. So is each event gap of a
-version-2 bundle, printed as a notice:
+bundle, printed as a notice:
 
 ```text
   event gaps      events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)
@@ -337,7 +338,7 @@ FAILED: 1 member does not match MANIFEST.json
 `--json` prints the report as one document — the manifest embedded, then the
 `verified`, `reclaimed`, `unrecorded`, `rejected` and `failures` lists,
 `withheld` when a member is, and
-`event_gaps` for a version-2 bundle.
+`event_gaps` for a bundle that names some.
 
 ## verify --against-store
 

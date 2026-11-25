@@ -163,10 +163,17 @@ func namespaceOrDefault(ns string) string {
 // reasonCodeOf is the reason code a run's own failure carries, its
 // application type, for the plaintext message of a sealed failure.
 func reasonCodeOf(err error) string {
-	if app := categoryOf(err).app; app != nil {
-		return app.Type()
+	failure := categoryOf(err)
+	code := failure.appType()
+	// The details are sealed, and a schedule's fire, which holds no run's
+	// key, must tell a run a limit kept from starting from one that ran.
+	if fireLimitCodes[code] {
+		var ending ConcurrencyRunNotStarted
+		if failure.appDetails(&ending) && ending.NotStarted {
+			return code + notStartedSuffix
+		}
 	}
-	return ""
+	return code
 }
 
 // keylessEnding ends a run whose start cannot be read, at once, having read
@@ -230,7 +237,7 @@ func keylessEnding(ctx workflow.Context, continued bool, cause string) (any, err
 		FinishedAt: now,
 	}
 	const sequence = int64(1)
-	localCtx := workflow.WithLocalActivityOptions(ectx, workflow.LocalActivityOptions{
+	localCtx := workflow.WithLocalActivityOptions(payloadcrypt.PlainLocalResult(ectx), workflow.LocalActivityOptions{
 		StartToCloseTimeout:    snapshotAttemptTimeout,
 		ScheduleToCloseTimeout: snapshotActivityTimeout,
 		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
@@ -254,10 +261,12 @@ func keylessEnding(ctx workflow.Context, continued bool, cause string) (any, err
 		Timestamp: now,
 	}
 	activityCtx := workflow.WithActivityOptions(ectx, eventActivityOptions())
-	// A keyless run is not sealed, so nothing it writes is: its one event
-	// is built from its memo's plaintext alone.
-	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event,
-		snapshotURI, fmt.Sprintf("%s#%d", runID, sequence)).Get(ectx, nil); err != nil {
+	// Plain, also where the memo's key opens and only the start does not (a
+	// borrowed key): no reader is given a keyless run's key, so a sealed event
+	// could be read by none. It is built from the memo's plaintext alone.
+	scope := runScope(ctx)
+	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, payloadcrypt.PlainIn(scope, event),
+		payloadcrypt.PlainIn(scope, snapshotURI), payloadcrypt.PlainIn(scope, fmt.Sprintf("%s#%d", runID, sequence))).Get(ectx, nil); err != nil {
 		workflow.GetLogger(ctx).Error("publish event failed",
 			"run_id", runID, "event", event.GetType().String(), "error", err)
 	}

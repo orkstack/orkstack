@@ -16,6 +16,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -30,6 +31,31 @@ func awaitPlanForTest() RunPlan {
 		Awaits: map[string]AwaitCredential{
 			"gate": {Salt: "00112233445566778899aabbccddeeff", Digest: strings.Repeat("ab", 32)},
 		},
+	}
+}
+
+// TestTemporalRunReader_RunStartDecodesTheInputOfAnAdmittedRun: the input is
+// read for a run whose results the engine records, whose records are bound to
+// it, and for no other.
+func TestTemporalRunReader_RunStartDecodesTheInputOfAnAdmittedRun(t *testing.T) {
+	data, err := structpb.NewStruct(map[string]any{"env": "prod"})
+	must.OK(t, err)
+	for _, admitted := range []bool{true, false} {
+		plan := awaitPlanForTest()
+		if admitted {
+			plan.Identity = &IdentityPlan{AdmissionSHA256: strings.Repeat("c", 64)}
+		}
+		started := &historypb.HistoryEvent{EventId: 1, EventTime: timestamppb.New(readerEpoch), EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
+			Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
+				WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{
+					WorkflowType: &commonpb.WorkflowType{Name: RunWorkflowType},
+					Input:        payloadsOf(t, "ork-in-1", &orkstackv1.Orkflow{Name: "w"}, &orkstackv1.Payload{Data: data}, plan)}}}
+		reader, _ := readerOver([]*historypb.HistoryEvent{started}, "ork-in-1")
+		record, err := reader.RunStart(context.Background(), "ork-in-1")
+		must.OKf(t, err, "RunStart")
+		if got := record.Input.GetData().GetFields()["env"].GetStringValue(); (got == "prod") != admitted {
+			t.Fatalf("admitted %v: input %v", admitted, record.Input)
+		}
 	}
 }
 

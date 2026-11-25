@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/typeid"
@@ -29,14 +30,16 @@ func newMinter(ctx context.Context, cfg config, issuer *identity.Issuer, tempora
 		return nil, nil, fmt.Errorf("the identity mint's record store: %w", err)
 	}
 	starts := identity.ClusterStarts{RecordStore: records, Temporal: temporal, Plans: engine.NewTemporalRunReader(temporal)}
+	admissions := identity.NewAdmissionCache(records, int64(cfg.identity.admissionCacheBytes))
 	return &identity.Minter{
-		Stores: identity.NewAdmissionCache(records, int64(cfg.identity.admissionCacheBytes)),
-		Starts: starts,
+		Stores:  admissions,
+		Starts:  starts,
+		Follows: &identity.FollowsCheck{Store: followsStore{RecordStore: records, admissions: admissions}},
 		Describe: func(ctx context.Context, runID string) (identity.ExecutionFacts, error) {
 			return starts.Describe(ctx, runID, "")
 		},
-		Audiences: func(ctx context.Context, namespace, namespaceID string) ([]string, error) {
-			return namespaceAudiences(ctx, namespaces, policies, namespace, namespaceID)
+		Policy: func(ctx context.Context, namespace, namespaceID string) (artifacts.NamespacePolicy, error) {
+			return namespacePolicy(ctx, namespaces, policies, namespace, namespaceID)
 		},
 		Signer:         issuer.Signer,
 		Issuer:         cfg.identity.issuer,
@@ -49,34 +52,72 @@ func newMinter(ctx context.Context, cfg config, issuer *identity.Issuer, tempora
 	}, records, nil
 }
 
-// namespaceAudiences reads the audiences a namespace's identity policy
-// allows now, for the mint's step 7, for the incarnation whose id the run
-// was admitted with. A namespace or a policy that cannot be read is an
-// error, never "allows nothing"; one that is gone or made again is
-// identity.ErrNamespaceGone.
-func namespaceAudiences(ctx context.Context, namespaces engine.NamespaceReader, policies *artifacts.IncarnationStore, name, admittedID string) ([]string, error) {
+// followsStore reads admissions through the mint's cache, and every other
+// record from the record store.
+type followsStore struct {
+	*artifacts.RecordStore
+	admissions *identity.AdmissionCache
+}
+
+func (s followsStore) ReadAdmission(ctx context.Context, namespace, runID, sha256Hex string) (artifacts.RecordRead[artifacts.Admission], error) {
+	return s.admissions.ReadAdmission(ctx, namespace, runID, sha256Hex)
+}
+
+// awaitRecords is what the await doors read and write for a run whose
+// results the engine records: admissions through the mint's cache, every
+// other record from the record store. nil when the engine issues no task
+// identity, so such a run's await answers unavailable.
+func awaitRecords(minter *identity.Minter, records *artifacts.RecordStore) api.AwaitRecords {
+	if minter == nil || records == nil {
+		return nil
+	}
+	return awaitStore{RecordStore: records, admissions: minter.Stores}
+}
+
+type awaitStore struct {
+	*artifacts.RecordStore
+	admissions identity.MintStores
+}
+
+func (s awaitStore) ReadAdmission(ctx context.Context, namespace, runID, sha256Hex string) (artifacts.RecordRead[artifacts.Admission], error) {
+	return s.admissions.ReadAdmission(ctx, namespace, runID, sha256Hex)
+}
+
+// awaitChecks is the mint's own check of what a task follows.
+func awaitChecks(minter *identity.Minter) api.AwaitChecks {
+	if minter == nil {
+		return nil
+	}
+	if checks, ok := minter.Follows.(api.AwaitChecks); ok {
+		return checks
+	}
+	return nil
+}
+
+// namespacePolicy reads a namespace's identity policy as it is now, for the
+// mint's step 7, for the incarnation whose id the run was admitted with. A
+// namespace or a policy that cannot be read is an error, never "allows
+// nothing"; one that is gone or made again is identity.ErrNamespaceGone.
+func namespacePolicy(ctx context.Context, namespaces engine.NamespaceReader, policies *artifacts.IncarnationStore, name, admittedID string) (artifacts.NamespacePolicy, error) {
 	ns, err := namespaces.Get(ctx, name)
 	if errors.Is(err, artifacts.ErrNotFound) {
-		return nil, identity.ErrNamespaceGone
+		return artifacts.NamespacePolicy{}, identity.ErrNamespaceGone
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read namespace %q: %w", name, err)
+		return artifacts.NamespacePolicy{}, fmt.Errorf("read namespace %q: %w", name, err)
 	}
 	// The run was admitted in one incarnation of the namespace; a namespace
 	// deleted and made again under its name is another, and its policy
 	// grants nothing to the old one's runs.
 	id, found, err := policies.NamespaceID(ctx, name, createdAt(ns))
 	if err != nil {
-		return nil, fmt.Errorf("read namespace %q's id: %w", name, err)
+		return artifacts.NamespacePolicy{}, fmt.Errorf("read namespace %q's id: %w", name, err)
 	}
 	if !found || id != admittedID {
-		return nil, identity.ErrNamespaceGone
+		return artifacts.NamespacePolicy{}, identity.ErrNamespaceGone
 	}
 	p, _, err := policies.NamespacePolicy(ctx, name, createdAt(ns))
-	if err != nil {
-		return nil, err
-	}
-	return p.Audiences, nil
+	return p, err
 }
 
 // createdAt is the incarnation a namespace's policy is bound to, read

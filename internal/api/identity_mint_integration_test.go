@@ -131,9 +131,11 @@ func newMintRig(t *testing.T, o mintRigOptions) *mintRig {
 		Describe: func(ctx context.Context, runID string) (identity.ExecutionFacts, error) {
 			return r.starts.Describe(ctx, runID, "")
 		},
-		Audiences: func(context.Context, string, string) ([]string, error) { return []string{"sts"}, nil },
-		Signer:    func() (*jwt.Signer, error) { return signer, nil },
-		Issuer:    mintIssuer, Deployment: "mint-test",
+		Policy: func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+			return artifacts.NamespacePolicy{Audiences: []string{"sts"}}, nil
+		},
+		Signer: func() (*jwt.Signer, error) { return signer, nil },
+		Issuer: mintIssuer, Deployment: "mint-test",
 		TTL:            identity.TTLBounds{Default: time.Hour, Min: 10 * time.Minute, Max: 12 * time.Hour},
 		Skew:           time.Minute,
 		RecordIssuance: true,
@@ -524,7 +526,7 @@ func mintTemporal(ctx context.Context, t *testing.T, namespace string) client.Cl
 	if address == "" {
 		address = client.DefaultHostPort
 	}
-	bootstrap, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
+	bootstrap, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: client.DefaultNamespace}, nil))
 	if err != nil {
 		mintInfraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -540,7 +542,7 @@ func mintTemporal(ctx context.Context, t *testing.T, namespace string) client.Cl
 	// found.
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 		if err == nil {
 			_, err = c.DescribeWorkflow(ctx, "mint-namespace-probe", "")
 			var missing *serviceerror.NotFound

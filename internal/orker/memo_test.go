@@ -483,6 +483,12 @@ func TestMemoKey_EveryComponentChangesTheKey(t *testing.T) {
 		"secret unmasked": func(in *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
 			in.Secrets[0].Unmasked = true
 		},
+		"secret grant": func(in *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
+			in.Secrets[0].Grant = "reader"
+		},
+		"secret ciphertext": func(in *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
+			in.Secrets[0].Ciphertext = "QUJD"
+		},
 		"network": func(in *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
 			in.Network = orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT
 		},
@@ -1438,5 +1444,28 @@ func TestMemoKey_ASharedDefinitionsOwnerChangesTheKey(t *testing.T) {
 		string(componentsJSON) + `}`
 	if want := sha256Hex([]byte(document)); sharedKey.Key != want {
 		t.Fatalf("key = %s, want %s (document %s)", sharedKey.Key, want, document)
+	}
+}
+
+// TestMemoKey_AProviderSecretsGrantAndCiphertextAreTheirOwnKeys: two
+// grants, or two ciphertexts, of one source are two keys; and the same
+// grant and ciphertext give the same key.
+func TestMemoKey_AProviderSecretsGrantAndCiphertextAreTheirOwnKeys(t *testing.T) {
+	config, run := []byte("{}\n"), []byte("{}\n")
+	keyWith := func(grant, ciphertext string) string {
+		in, staged := pinnedKeyInput()
+		in.Secrets[0].Source = "aws:kms:alias/payments"
+		in.Secrets[0].Grant, in.Secrets[0].Ciphertext = grant, ciphertext
+		return keyOf(t, in, config, run, staged, nil).Key
+	}
+	first, again := keyWith("reader", "QUJD"), keyWith("reader", "QUJD")
+	if first != again {
+		t.Fatal("one grant and one ciphertext gave two keys")
+	}
+	if first == keyWith("deployer", "QUJD") {
+		t.Error("two grants of one source share a key")
+	}
+	if first == keyWith("reader", "REVG") {
+		t.Error("two ciphertexts of one source share a key")
 	}
 }

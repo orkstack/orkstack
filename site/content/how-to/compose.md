@@ -88,7 +88,7 @@ A composed task is never retried. Its child's tasks have their own retries. Canc
 ## Find the child run
 
 - `orkctl run get <run-id> --tree` prints every child run under its parent.
-- A child has its own run ID, logs and events. Read it with `orkctl run get <child-run-id>`.
+- A child has its own run ID, logs and events. Read it with `orkctl run get <child-run-id>`. It says which task started it, and what started the run at the top.
 - `orkctl orkflow callers <name>` lists what in the namespace starts or composes the Orkflow.
 - A child's awaits send their tokens to nobody. Resolve them with `orkctl run resolve <child-run-id> -t <task>`.
 

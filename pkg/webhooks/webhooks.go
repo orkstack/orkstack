@@ -107,6 +107,14 @@ const (
 	EventRunFailed Event = "RUN_FAILED"
 	// EventRunCanceled is RUNNING → CANCELED.
 	EventRunCanceled Event = "RUN_CANCELED"
+	// EventRunResumed is a run that had ended and runs again under its own
+	// id, FAILED → RUNNING. An empty subscription selects it: a receiver that
+	// keeps a run's final state would otherwise keep an ending that no longer
+	// stands.
+	EventRunResumed Event = "RUN_RESUMED"
+	// EventRunResultsKept is a resumed run that has read back the results it
+	// keeps (resultsKept says how many). Its status is RUNNING. Opt-in.
+	EventRunResultsKept Event = "RUN_RESULTS_KEPT"
 )
 
 // KnownEvents lists every subscribable event, in lifecycle order. The task
@@ -115,7 +123,8 @@ const (
 // order of the run transitions what it always was; an await's two events sit
 // where an awaited task reaches them, before its outcome. A wait for a
 // concurrency slot sits before what it waits for: RUN_QUEUED before
-// RUN_STARTED, TASK_QUEUED before TASK_SCHEDULED.
+// RUN_STARTED, TASK_QUEUED before TASK_SCHEDULED. A resume's two follow the
+// endings, because they follow one.
 func KnownEvents() []Event {
 	return []Event{
 		EventRunQueued, EventRunStarted,
@@ -123,12 +132,15 @@ func KnownEvents() []Event {
 		EventTaskSleeping, EventTaskSucceeded, EventTaskFailed,
 		EventRunPaused, EventRunUnpaused,
 		EventRunSucceeded, EventRunFailed, EventRunCanceled,
+		EventRunResumed, EventRunResultsKept,
 	}
 }
 
-// RunEvents lists the run's own transitions: what an empty subscription means.
+// RunEvents lists the run's lifecycle, its start, its endings and the resume
+// that re-opens an ended run: what an empty subscription means. A transition
+// inside an open run is opt-in.
 func RunEvents() []Event {
-	return []Event{EventRunStarted, EventRunSucceeded, EventRunFailed, EventRunCanceled}
+	return []Event{EventRunStarted, EventRunSucceeded, EventRunFailed, EventRunCanceled, EventRunResumed}
 }
 
 func isRunEvent(event Event) bool {
@@ -192,8 +204,8 @@ type Webhook struct {
 	ID string `json:"id"`
 	// URL receives the POST.
 	URL string `json:"url"`
-	// Events selects transitions. Empty means every run transition; task
-	// outcome events are delivered only to a subscription that names them.
+	// Events selects transitions. Empty means the run's lifecycle (RunEvents);
+	// every other event is delivered only to a subscription that names it.
 	Events []Event `json:"events,omitempty"`
 	// Secret signs the body. It is returned once, by Register, and never
 	// again: List and Get answer with Public copies.
@@ -202,7 +214,8 @@ type Webhook struct {
 	CreatedAt time.Time `json:"createdAt"`
 	// Namespace, OrkflowName and TaskID are the subscription's scope. Each is
 	// an exact match and empty means every; all three empty is a
-	// deployment-wide subscription. TaskID is consulted only for task
+	// deployment-wide subscription. OrkflowName is an Orkflow of the
+	// namespace the run ran in, never another's shared one. TaskID is consulted only for task
 	// outcome events.
 	Namespace   string `json:"namespace,omitempty"`
 	OrkflowName string `json:"orkflowName,omitempty"`
@@ -237,7 +250,10 @@ type Match struct {
 	Event       Event
 	Namespace   string
 	OrkflowName string
-	TaskID      string
+	// OrkflowNamespace owns the Orkflow when that is not Namespace: a shared
+	// Orkflow's child run. Empty for a namespace's own.
+	OrkflowNamespace string
+	TaskID           string
 }
 
 // Matches reports whether w wants this event. Each scope field is an equality
@@ -251,7 +267,9 @@ func (w Webhook) Matches(m Match) bool {
 	if w.Namespace != "" && w.Namespace != m.Namespace {
 		return false
 	}
-	if w.OrkflowName != "" && w.OrkflowName != m.OrkflowName {
+	// A name in a scope is the run's own namespace's Orkflow: another
+	// namespace's shared one of that name is another Orkflow.
+	if w.OrkflowName != "" && (w.OrkflowName != m.OrkflowName || m.OrkflowNamespace != "") {
 		return false
 	}
 	if w.TaskID != "" && isTaskEvent(m.Event) && w.TaskID != m.TaskID {

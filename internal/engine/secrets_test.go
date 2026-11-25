@@ -108,3 +108,26 @@ func TestCheckAllowedSecrets_TraversalSentence(t *testing.T) {
 		}
 	}
 }
+
+// TestSecretsReadByAGrant_AreTheGrantsToJudge: a secret read from a provider
+// through a grant is skipped here, where its whole source would be judged;
+// one that names the Orker's own source is judged whatever grant it names,
+// and one with no grant as ever. The same holds of a shared Orkflow's.
+func TestSecretsReadByAGrant_AreTheGrantsToJudge(t *testing.T) {
+	for _, tc := range []struct {
+		secret  *orkstackv1.SecretRef
+		skipped bool
+	}{
+		{&orkstackv1.SecretRef{Name: "s", Source: "vault:secret/db#url", Grant: "reader"}, true},
+		{&orkstackv1.SecretRef{Name: "s", Source: "vault:secret/db#url"}, false},
+		{&orkstackv1.SecretRef{Name: "s", Source: "env:DB", Grant: "reader"}, false},
+		{&orkstackv1.SecretRef{Name: "s", Source: "file:/run/db", Grant: "reader"}, false},
+	} {
+		wf := &orkstackv1.Orkflow{Name: "deploy", Version: "1", Tasks: []*orkstackv1.Task{{Id: "t", Secrets: []*orkstackv1.SecretRef{tc.secret}}}}
+		bounded := engine.CheckAllowedSecrets(&orkstackv1.Namespace{Name: "payments", AllowedSecrets: []string{"env:OTHER"}}, wf)
+		foreign := engine.CheckForeignSecrets(&orkstackv1.Namespace{Name: "payments"}, "platform", wf)
+		if (bounded == nil) != tc.skipped || (foreign == nil) != tc.skipped {
+			t.Errorf("%s with grant %q: allowed_secrets %v, shared %v; skipped should be %v", tc.secret.GetSource(), tc.secret.GetGrant(), bounded, foreign, tc.skipped)
+		}
+	}
+}

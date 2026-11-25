@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/jwt"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -22,6 +24,9 @@ const (
 	ReasonAttemptsExhausted = "IDENTITY_ATTEMPTS_EXHAUSTED"
 	ReasonAttemptExpired    = "IDENTITY_ATTEMPT_EXPIRED"
 	ReasonRevoked           = "IDENTITY_REVOKED"
+	// ReasonRequiredResultNotRecorded is the mint's and the commit's: a task
+	// the attempt's own follows has no record of success.
+	ReasonRequiredResultNotRecorded = "REQUIRED_RESULT_NOT_RECORDED"
 )
 
 // ErrNamespaceGone is the namespace a run executes in, read and found no
@@ -72,7 +77,14 @@ type MintError struct {
 	Unavailable bool
 	Audit       bool
 	EngineBuild string
+
+	cause error
+	// invalid says the step was answered with a record that cannot be used.
+	invalid bool
 }
+
+// Unwrap is what a step that could not ask was answered, if anything.
+func (e *MintError) Unwrap() error { return e.cause }
 
 func (e *MintError) Error() string { return e.Reason + ": " + e.Message }
 
@@ -100,6 +112,8 @@ var publicSentences = map[string]string{
 	ReasonAttemptsExhausted: "every attempt that may hold the task's identities is spent",
 	ReasonAttemptExpired:    "the attempt outlived its deadline",
 	ReasonRevoked:           "the namespace no longer allows what the run was admitted with",
+	// What a task follows (follows_check.go).
+	ReasonRequiredResultNotRecorded: "a task this one follows has no result on record",
 	// The commit's own (commit_record.go).
 	ReasonCommitIdentityMismatch: "the result is not of the attempt the request names",
 }
@@ -109,7 +123,17 @@ func refuse(reason string, audit bool, format string, args ...any) *MintError {
 }
 
 func unavailableMint(format string, args ...any) *MintError {
-	return &MintError{Reason: ReasonUnavailable, Unavailable: true, Message: fmt.Sprintf(format, args...)}
+	return &MintError{Reason: ReasonUnavailable, Unavailable: true, Message: fmt.Sprintf(format, args...), cause: firstError(args)}
+}
+
+// firstError is the first error among a message's arguments: what it is about.
+func firstError(args []any) error {
+	for _, a := range args {
+		if err, ok := a.(error); ok {
+			return err
+		}
+	}
+	return nil
 }
 
 // Admitted is a request that passed step 2: the run's admission, the
@@ -118,7 +142,18 @@ type Admitted struct {
 	Admission  artifacts.Admission
 	Task       artifacts.AdmittedTask
 	Identities []artifacts.AdmittedIdentity
+	// Grants are the grants the request asks a login's token of, as admitted.
+	Grants []AdmittedGrant
 }
+
+// AdmittedGrant is a grant of the run, as its admission selects it.
+type AdmittedGrant struct {
+	Name string
+	artifacts.GrantSelection
+}
+
+// grantTokenPrefix begins the name of a token a grant's login is made with.
+const grantTokenPrefix = "grant:"
 
 // MintStores is what the mint reads and writes in object storage.
 type MintStores interface {
@@ -127,11 +162,14 @@ type MintStores interface {
 	WriteIssued(ctx context.Context, r artifacts.IssuedRecord) (string, error)
 }
 
-// FollowsChecker is step 6a: each task the admission says this one follows
-// has its record of success. nil is a build without it, and refuses an
-// admission that names any (fail closed).
+// FollowsChecker is step 6a and the scope it begins at: the resume scope an
+// attempt names is its root's newest, and each task the admission says this
+// one follows has its record of success there. nil is a build without it,
+// and refuses a scope and an admission that names any follow (fail closed).
 type FollowsChecker interface {
-	CheckFollows(ctx context.Context, adm artifacts.Admission, taskID string, item artifacts.Item) error
+	CheckScope(ctx context.Context, adm artifacts.Admission, taskID string, scopes Scopes) error
+	CheckFollows(ctx context.Context, adm artifacts.Admission, admissionSHA256, taskID string, rootScope uint64) ([]FollowedRecord, error)
+	CheckReceived(ctx context.Context, adm artifacts.Admission, admissionSHA256, taskID string, rootScope uint64) ([]*orkstackv1.ArtifactRef, error)
 }
 
 // Minter is the mint's steps 2 and 4 to 8; the API holds steps 1 and 3,
@@ -141,13 +179,13 @@ type Minter struct {
 	Starts StartReader
 	// Describe is a describe of the run, made after the request arrived.
 	Describe func(ctx context.Context, runID string) (ExecutionFacts, error)
-	// Audiences is the namespace's identity policy's audiences now (step 7),
-	// for the incarnation whose id the run was admitted with: a namespace
-	// made again under the name answers ErrNamespaceGone.
-	Audiences func(ctx context.Context, namespace, namespaceID string) ([]string, error)
-	Follows   FollowsChecker
-	Signer    func() (*jwt.Signer, error)
-	Issuer    string
+	// Policy is the namespace's identity policy now (step 7), for the
+	// incarnation whose id the run was admitted with: a namespace made again
+	// under the name answers ErrNamespaceGone.
+	Policy  func(ctx context.Context, namespace, namespaceID string) (artifacts.NamespacePolicy, error)
+	Follows FollowsChecker
+	Signer  func() (*jwt.Signer, error)
+	Issuer  string
 	// Deployment is ORK_DEPLOYMENT_NAME.
 	Deployment string
 	TTL        TTLBounds
@@ -176,11 +214,21 @@ func (m *Minter) Admit(ctx context.Context, req MintRequest) (Admitted, error) {
 	}
 	declared := adm.SetOf(req.TaskID)
 	out := Admitted{Admission: adm, Task: row}
+	asked := make(map[string]bool, len(req.Tokens))
 	for _, ask := range req.Tokens {
-		if strings.HasPrefix(ask.Name, "grant:") {
-			// A grant's login lands with the provider framework; until
-			// then no task can name a grant.
-			return Admitted{}, refuse(ReasonNotAdmitted, true, "task %q asks for %q, and no grant can be used in this build", req.TaskID, ask.Name)
+		if asked[ask.Name] {
+			return Admitted{}, refuse(ReasonNotAdmitted, true, "task %q asks for %q twice", req.TaskID, ask.Name)
+		}
+		asked[ask.Name] = true
+		if name, ok := strings.CutPrefix(ask.Name, grantTokenPrefix); ok {
+			// A grant the run was admitted with and this task uses, for the
+			// audience it was admitted for.
+			g, admitted := adm.Grants[name]
+			if !admitted || !slices.Contains(row.Grants, name) || g.Audience != ask.Audience {
+				return Admitted{}, refuse(ReasonNotAdmitted, true, "task %q was not admitted grant %q for audience %q", req.TaskID, name, ask.Audience)
+			}
+			out.Grants = append(out.Grants, AdmittedGrant{Name: name, GrantSelection: g})
+			continue
 		}
 		found := false
 		for _, id := range declared {
@@ -196,46 +244,62 @@ func (m *Minter) Admit(ctx context.Context, req MintRequest) (Admitted, error) {
 	return out, nil
 }
 
+// Issued is what a mint answers: its tokens, and the artifacts of the run's
+// start the task names, as the engine's records have them.
+type Issued struct {
+	Tokens   []IssuedToken
+	Received []*orkstackv1.ArtifactRef
+}
+
 // Issue is steps 4 to 8 for a request Admit passed and the caller's
 // permissions allowed: the attempt held by the caller's Orker, the run's
 // start, the task's binding, what it follows, the attempt cap, the policy
 // still allowing each audience, and the signing, with the record of what
 // was issued written before any token is returned.
-func (m *Minter) Issue(ctx context.Context, a Admitted, req MintRequest, caller Caller) ([]IssuedToken, error) {
+func (m *Minter) Issue(ctx context.Context, a Admitted, req MintRequest, caller Caller) (Issued, error) {
 	adm := a.Admission
 	// A run is issued tokens only by the issuer it was admitted under: one
 	// whose keys its relying parties were told to trust.
 	if adm.Issuer != m.Issuer {
-		return nil, refuse(ReasonEngineRefused, false, "run %q was admitted under issuer %q, and this engine issues as %q", req.RunID, adm.Issuer, m.Issuer)
+		return Issued{}, refuse(ReasonEngineRefused, false, "run %q was admitted under issuer %q, and this engine issues as %q", req.RunID, adm.Issuer, m.Issuer)
 	}
 	// Steps 4 to 6a: the attempt, the start, the binding, what it follows.
-	pending, err := checkAttempt(ctx, attemptChecks{Describe: m.Describe, Starts: m.Starts, Follows: m.Follows}, adm,
+	held, err := checkAttempt(ctx, attemptChecks{Describe: m.Describe, Starts: m.Starts, Follows: m.Follows}, adm,
 		attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item), req.Attempt, req.TaskSpecSHA256, caller)
 	if err != nil {
-		return nil, err
+		return Issued{}, err
 	}
 	// Step 7's read comes before the slot, so an outage of the policy
 	// spends no attempt; its check stays after 6b, the spec's order.
-	allowed, err := m.Audiences(ctx, req.Namespace, adm.NamespaceID)
+	policy, err := m.Policy(ctx, req.Namespace, adm.NamespaceID)
 	switch {
 	case errors.Is(err, ErrNamespaceGone):
-		return nil, refuse(ReasonRevoked, true, "namespace %q is gone", req.Namespace)
+		return Issued{}, refuse(ReasonRevoked, true, "namespace %q is gone", req.Namespace)
 	case err != nil:
-		return nil, unavailableMint("namespace %q's identity policy could not be read: %v", req.Namespace, err)
+		return Issued{}, unavailableMint("namespace %q's identity policy could not be read: %v", req.Namespace, err)
 	}
 	// Step 6b: the attempt cap.
 	now := m.Now().UTC()
-	if err := m.takeSlot(ctx, a, req, pending, now); err != nil {
-		return nil, err
+	if err := m.takeSlot(ctx, a, req, held.PendingAttempt, now); err != nil {
+		return Issued{}, err
 	}
 	// Step 7: still allowed now.
 	for _, id := range a.Identities {
-		if !AudienceAllowed(allowed, id.Audience) {
-			return nil, refuse(ReasonRevoked, true, "namespace %q no longer allows audience %q", req.Namespace, id.Audience)
+		if !AudienceAllowed(policy.Audiences, id.Audience) {
+			return Issued{}, refuse(ReasonRevoked, true, "namespace %q no longer allows audience %q", req.Namespace, id.Audience)
+		}
+	}
+	for _, g := range a.Grants {
+		if why := grantWithdrawn(policy, adm, g); why != "" {
+			return Issued{}, refuse(ReasonRevoked, true, "namespace %q: grant %q %s", req.Namespace, g.Name, why)
 		}
 	}
 	// Step 8: sign, record, answer.
-	return m.sign(ctx, a, req, caller, now)
+	tokens, err := m.sign(ctx, a, req, caller, now)
+	if err != nil {
+		return Issued{}, err
+	}
+	return Issued{Tokens: tokens, Received: held.Received}, nil
 }
 
 func (m *Minter) takeSlot(ctx context.Context, a Admitted, req MintRequest, pending PendingAttempt, now time.Time) error {
@@ -274,27 +338,38 @@ func (m *Minter) sign(ctx context.Context, a Admitted, req MintRequest, caller C
 	}
 	record := artifacts.IssuedRecord{Namespace: req.Namespace, RunID: req.RunID, TaskID: req.TaskID, Item: req.Item,
 		Attempt: req.Attempt, Principal: caller.Principal, OrkerID: caller.OrkerID, IssuedAt: now}
-	out := make([]IssuedToken, 0, len(a.Identities))
-	for _, id := range a.Identities {
-		asked := time.Duration(id.TTLSeconds) * time.Second
+	out := make([]IssuedToken, 0, len(a.Identities)+len(a.Grants))
+	one := func(name, grant, audience string, ttlSeconds int32) error {
+		asked := time.Duration(ttlSeconds) * time.Second
 		if asked == 0 {
 			asked = time.Duration(a.Admission.TokenTTL) * time.Second
 		}
 		life := m.TTL.Clamp(asked)
 		jti := m.NewJTI()
 		claims, err := BuildClaims(ClaimsInput{Issuer: m.Issuer, Deployment: m.Deployment, Admission: a.Admission, TaskID: req.TaskID,
-			Item: req.Item, Attempt: req.Attempt, Identity: id.Name, Audience: id.Audience, Pool: a.Task.Pool, Orker: caller.OrkerID,
+			Item: req.Item, Attempt: req.Attempt, Identity: name, Grant: grant, Audience: audience, Pool: a.Task.Pool, Orker: caller.OrkerID,
 			Now: now, Lifetime: life, JTI: jti})
 		if err != nil {
-			return nil, refuse(ReasonEngineRefused, false, "the claims of identity %q: %v", id.Name, err)
+			return refuse(ReasonEngineRefused, false, "the claims of identity %q: %v", name, err)
 		}
 		token, err := signer.Sign("JWT", claims)
 		if err != nil {
-			return nil, refuse(ReasonEngineRefused, false, "sign identity %q: %v", id.Name, err)
+			return refuse(ReasonEngineRefused, false, "sign identity %q: %v", name, err)
 		}
-		out = append(out, IssuedToken{Name: id.Name, Audience: id.Audience, Token: token, JTI: jti, KID: signer.KeyID(), IssuedAt: now, ExpiresIn: life})
-		record.Tokens = append(record.Tokens, artifacts.IssuedEntry{Name: id.Name, Audience: id.Audience, Subject: claims["sub"].(string),
+		out = append(out, IssuedToken{Name: name, Audience: audience, Token: token, JTI: jti, KID: signer.KeyID(), IssuedAt: now, ExpiresIn: life})
+		record.Tokens = append(record.Tokens, artifacts.IssuedEntry{Name: name, Audience: audience, Subject: claims["sub"].(string),
 			JTI: jti, KID: signer.KeyID(), IssuedAtUnix: now.Unix(), ExpiresAtUnix: now.Add(life).Unix()})
+		return nil
+	}
+	for _, id := range a.Identities {
+		if err := one(id.Name, "", id.Audience, id.TTLSeconds); err != nil {
+			return nil, err
+		}
+	}
+	for _, g := range a.Grants {
+		if err := one(grantTokenPrefix+g.Name, g.Name, g.Audience, 0); err != nil {
+			return nil, err
+		}
 	}
 	// The record of what was issued is written before any token leaves.
 	if !m.RecordIssuance {

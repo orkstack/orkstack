@@ -4,6 +4,8 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { ArtifactRef } from "./common_pb";
+import { file_orkstack_v1_common } from "./common_pb";
 import type { ActivityCommit, CommitRef } from "./activity_pb";
 import { file_orkstack_v1_activity } from "./activity_pb";
 import type { Message } from "@bufbuild/protobuf";
@@ -12,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/attempt_service.proto.
  */
 export const file_orkstack_v1_attempt_service: GenFile = /*@__PURE__*/
-  fileDesc("CiFvcmtzdGFjay92MS9hdHRlbXB0X3NlcnZpY2UucHJvdG8SC29ya3N0YWNrLnYxIqUDChNDb21taXRSZXN1bHRSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHdGFza19pZBgDIAEoCRIRCgRpdGVtGAQgASgFSACIAQESDwoHYXR0ZW1wdBgFIAEoBRIUCgxyZXN1bWVfc2NvcGUYBiABKAQSEgoKcm9vdF9zY29wZRgHIAEoBBIYChB0YXNrX3NwZWNfc2hhMjU2GAggASgJEhgKEGFkbWlzc2lvbl9zaGEyNTYYCSABKAkSRwoMc3BlY19tZW1iZXJzGAogAygLMjEub3Jrc3RhY2sudjEuQ29tbWl0UmVzdWx0UmVxdWVzdC5TcGVjTWVtYmVyc0VudHJ5EhIKCmNvbW1pdF9rZXkYCyABKAkSKwoGY29tbWl0GAwgASgLMhsub3Jrc3RhY2sudjEuQWN0aXZpdHlDb21taXQSEQoJcHJlZmxpZ2h0GA0gASgIGjIKEFNwZWNNZW1iZXJzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIHCgVfaXRlbSJ+ChRDb21taXRSZXN1bHRSZXNwb25zZRImCgZjb21taXQYASABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSDwoHY3JlYXRlZBgCIAEoCBItCghleGlzdGluZxgDIAEoCzIbLm9ya3N0YWNrLnYxLkFjdGl2aXR5Q29tbWl0MmUKDkF0dGVtcHRTZXJ2aWNlElMKDENvbW1pdFJlc3VsdBIgLm9ya3N0YWNrLnYxLkNvbW1pdFJlc3VsdFJlcXVlc3QaIS5vcmtzdGFjay52MS5Db21taXRSZXN1bHRSZXNwb25zZUKvAQoPY29tLm9ya3N0YWNrLnYxQhNBdHRlbXB0U2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_orkstack_v1_activity]);
+  fileDesc("CiFvcmtzdGFjay92MS9hdHRlbXB0X3NlcnZpY2UucHJvdG8SC29ya3N0YWNrLnYxIqUDChNDb21taXRSZXN1bHRSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHdGFza19pZBgDIAEoCRIRCgRpdGVtGAQgASgFSACIAQESDwoHYXR0ZW1wdBgFIAEoBRIUCgxyZXN1bWVfc2NvcGUYBiABKAQSEgoKcm9vdF9zY29wZRgHIAEoBBIYChB0YXNrX3NwZWNfc2hhMjU2GAggASgJEhgKEGFkbWlzc2lvbl9zaGEyNTYYCSABKAkSRwoMc3BlY19tZW1iZXJzGAogAygLMjEub3Jrc3RhY2sudjEuQ29tbWl0UmVzdWx0UmVxdWVzdC5TcGVjTWVtYmVyc0VudHJ5EhIKCmNvbW1pdF9rZXkYCyABKAkSKwoGY29tbWl0GAwgASgLMhsub3Jrc3RhY2sudjEuQWN0aXZpdHlDb21taXQSEQoJcHJlZmxpZ2h0GA0gASgIGjIKEFNwZWNNZW1iZXJzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIHCgVfaXRlbSKxAQoUQ29tbWl0UmVzdWx0UmVzcG9uc2USJgoGY29tbWl0GAEgASgLMhYub3Jrc3RhY2sudjEuQ29tbWl0UmVmEg8KB2NyZWF0ZWQYAiABKAgSLQoIZXhpc3RpbmcYAyABKAsyGy5vcmtzdGFjay52MS5BY3Rpdml0eUNvbW1pdBIxCg9pbnB1dF9hcnRpZmFjdHMYBCADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZjJlCg5BdHRlbXB0U2VydmljZRJTCgxDb21taXRSZXN1bHQSIC5vcmtzdGFjay52MS5Db21taXRSZXN1bHRSZXF1ZXN0GiEub3Jrc3RhY2sudjEuQ29tbWl0UmVzdWx0UmVzcG9uc2VCrwEKD2NvbS5vcmtzdGFjay52MUITQXR0ZW1wdFNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_orkstack_v1_common, file_orkstack_v1_activity]);
 
 /**
  * @generated from message orkstack.v1.CommitResultRequest
@@ -139,6 +141,14 @@ export type CommitResultResponse = Message<"orkstack.v1.CommitResultResponse"> &
    * @generated from field: orkstack.v1.ActivityCommit existing = 3;
    */
   existing?: ActivityCommit | undefined;
+
+  /**
+   * input_artifacts is set on a preflight's answer, as
+   * MintAttemptTokensResponse.input_artifacts is.
+   *
+   * @generated from field: repeated orkstack.v1.ArtifactRef input_artifacts = 4;
+   */
+  inputArtifacts: ArtifactRef[];
 };
 
 /**

@@ -230,7 +230,7 @@ test('P1 the Evidence dialog shows the manifest before the bytes', async ({ page
 	await toggle.click();
 	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 	const manifest = page.getByTestId('run-evidence-manifest');
-	await expect(manifest).toContainText('"schema_version": 1');
+	await expect(manifest).toContainText('"schema_version": 3');
 	await expect(manifest).toContainText(completedRun);
 	await expect(page.getByTestId('run-evidence-download')).toBeEnabled();
 	await shot(page, 'screenshot-run-evidence-dialog.png');

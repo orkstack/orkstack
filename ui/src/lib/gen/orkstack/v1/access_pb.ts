@@ -122,10 +122,11 @@ export type Binding = Message<"orkstack.v1.Binding"> & {
   pinnedAt?: Timestamp | undefined;
 
   /**
-   * orker_ids_any lets a binding to the `orker` role accept the Orker id
-   * the request's attempt names, for a pool whose Orkers share one
-   * credential. One stolen Orker of that pool can then claim to be any
-   * other, and such a binding hosts no event source.
+   * orker_ids_any says a binding to the `orker` role is for a credential
+   * that a pool's Orkers share, which names no Orker. Such a credential
+   * serves no task identity, has no result of a run that holds one
+   * recorded, and hosts no event source: an Orker that does any of them
+   * needs a credential of its own.
    *
    * @generated from field: bool orker_ids_any = 8;
    */

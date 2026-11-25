@@ -44,15 +44,17 @@ X-Ork-Signature: sha256=…
 | `TASK_FAILED` | A task fails for good, after its retries. |
 | `RUN_PAUSED` | A run is paused, by a person or by its parent run. |
 | `RUN_UNPAUSED` | A paused run continues. |
+| `RUN_RESUMED` | A run that had failed is resumed and runs again under the same id. |
+| `RUN_RESULTS_KEPT` | A resumed run has read back the results it keeps. |
 
-The four run events are the default. `RUN_QUEUED`, the task events and the two pause events are opt-in: name each one with `--event`. A task event adds `taskId`, and `attempt` when the engine has numbered the attempt. Task events are hints with a short retry budget. A receiver that must not miss one reads the run again through the API (`GetRun`).
+No build resumes runs yet, so `RUN_RESUMED` and `RUN_RESULTS_KEPT` are never sent. `RUN_STARTED`, the three endings and `RUN_RESUMED` are the default. `RUN_QUEUED`, the task events, the two pause events and `RUN_RESULTS_KEPT` are opt-in: name each one with `--event`. A task event adds `taskId`, and `attempt` when the engine has numbered the attempt. Task events are hints with a short retry budget. A receiver that must not miss one reads the run again through the API (`GetRun`).
 
 ## Limit the scope
 
 | Flag | Narrows the webhook to |
 |---|---|
 | `-n NS` | One namespace. Without it, every namespace. |
-| `--orkflow NAME` | Runs of one Orkflow. |
+| `--orkflow NAME` | Runs of the namespace's own Orkflow of that name, not of another namespace's shared one. |
 | `--task ID` | One task's events. It needs at least one `TASK_*` event. |
 
 Only an explicit `-n` narrows the namespace. The namespace in `ORK_NAMESPACE`, or the one you saved, does not apply.

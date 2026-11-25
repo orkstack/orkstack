@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"connectrpc.com/connect"
 
@@ -125,6 +126,11 @@ type awaitResolution struct {
 	values    []byte // exact bytes; empty means {}
 	via       orkstackv1.AwaitResolvedVia
 	principal string // bounded, never authenticated
+	// redeliver tells the run of the resolution on record; it carries no
+	// decision of its own (a run whose results the engine records).
+	redeliver bool
+	// who is the caller as authentication found it.
+	who authn.RecordedPrincipal
 }
 
 // isTerminalRunStatus is a run status nothing moves on from.
@@ -206,6 +212,13 @@ func (s *Service) resolveAwait(ctx context.Context, r awaitResolution) (*orkstac
 		TaskId:    r.taskID,
 		Reject:    r.reject,
 	}
+	// A run whose results the engine records keeps a record of each
+	// resolution, which says who may be told that an answer repeats it.
+	recorded := r.start.Plan.Identity != nil
+	if r.redeliver && !recorded {
+		return nil, connect.NewError(connect.CodeFailedPrecondition,
+			fmt.Errorf("run %q keeps no record of its resolutions, so there is none to deliver again", runID))
+	}
 	digest := sha256.Sum256(r.values)
 	valuesSHA := hex.EncodeToString(digest[:])
 
@@ -218,13 +231,20 @@ func (s *Service) resolveAwait(ctx context.Context, r awaitResolution) (*orkstac
 	if status == orkstackv1.Status_STATUS_UNSPECIFIED {
 		status = orkstackv1.Status_STATUS_PENDING
 	}
+	repeatable := !r.redeliver
+	if recorded && repeatable && (status == orkstackv1.Status_STATUS_SUCCEEDED || status == orkstackv1.Status_STATUS_FAILED) {
+		var err error
+		if repeatable, err = s.repeatsRecord(ctx, r, taskRun, valuesSHA); err != nil {
+			return nil, err
+		}
+	}
 	switch {
-	case status == orkstackv1.Status_STATUS_SUCCEEDED && !r.reject &&
+	case repeatable && status == orkstackv1.Status_STATUS_SUCCEEDED && !r.reject &&
 		taskRun.GetValuesRef().GetSha256() == valuesSHA:
 		response.ValuesSha256 = valuesSHA
 		response.Repeat = true
 		return response, nil
-	case status == orkstackv1.Status_STATUS_FAILED && r.reject &&
+	case repeatable && status == orkstackv1.Status_STATUS_FAILED && r.reject &&
 		taskRun.GetError().GetCode() == engine.AwaitRejectedCode &&
 		taskRun.GetError().GetMessage() == engine.AwaitRejectedMessage(r.taskID, r.reason):
 		response.Repeat = true
@@ -254,6 +274,9 @@ func (s *Service) resolveAwait(ctx context.Context, r awaitResolution) (*orkstac
 	}
 
 	// 3. The request.
+	if r.redeliver {
+		return s.resolveRecorded(ctx, r, taskRun, valuesSHA, response)
+	}
 	if r.reject {
 		if err := checkAwaitReason(r.reason); err != nil {
 			return nil, err
@@ -267,6 +290,11 @@ func (s *Service) resolveAwait(ctx context.Context, r awaitResolution) (*orkstac
 
 	if r.binding.Starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("no run starter configured"))
+	}
+	// A run whose results the engine records takes a resolution from its
+	// record, which this door writes.
+	if recorded {
+		return s.resolveRecorded(ctx, r, taskRun, valuesSHA, response)
 	}
 	signal := &orkstackv1.AwaitSignal{
 		TaskId:    r.taskID,
@@ -282,36 +310,11 @@ func (s *Service) resolveAwait(ctx context.Context, r awaitResolution) (*orkstac
 	//    for a container's values.json, so it lands in the same
 	//    content-addressed key family with the same provenance.
 	if !r.reject {
-		if s.artifactStore == nil {
-			return nil, connect.NewError(connect.CodeFailedPrecondition,
-				errors.New("this engine has no artifact store configured"))
-		}
-		meta := artifacts.Provenance{
-			Orkflow: r.start.Orkflow.GetName(),
-			TaskID:  r.taskID,
-			RunID:   runID,
-		}.Metadata(nil)
-		meta["artifact"] = "values.json"
-		ref, err := s.artifactStore.Put(ctx, "values.json", bytes.NewReader(r.values), artifacts.PutOptions{
-			ContentType: "application/json",
-			Metadata:    meta,
-		})
+		ref, err := s.storeAwaitValues(ctx, r, valuesSHA)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeUnavailable,
-				fmt.Errorf("store the resolution's values: %v", err))
+			return nil, err
 		}
-		if ref.SHA256 != valuesSHA {
-			return nil, connect.NewError(connect.CodeInternal,
-				fmt.Errorf("the store recorded the resolution's values as sha256 %s, but their bytes hash to %s",
-					ref.SHA256, valuesSHA))
-		}
-		signal.Values = &orkstackv1.ArtifactRef{
-			Name:        ref.Name,
-			Uri:         ref.URI,
-			ContentType: ref.ContentType,
-			SizeBytes:   ref.SizeBytes,
-			Sha256:      ref.SHA256,
-		}
+		signal.Values = ref
 		if len(r.values) <= awaitInlineValuesLimit {
 			signal.ValuesJson = r.values
 		}
@@ -329,6 +332,40 @@ func (s *Service) resolveAwait(ctx context.Context, r awaitResolution) (*orkstac
 			fmt.Errorf("deliver the resolution to run %q: %v", runID, err))
 	}
 	return response, nil
+}
+
+// storeAwaitValues stores a completion's exact bytes and answers where.
+func (s *Service) storeAwaitValues(ctx context.Context, r awaitResolution, valuesSHA string) (*orkstackv1.ArtifactRef, error) {
+	if s.artifactStore == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition,
+			errors.New("this engine has no artifact store configured"))
+	}
+	meta := artifacts.Provenance{
+		Orkflow: r.start.Orkflow.GetName(),
+		TaskID:  r.taskID,
+		RunID:   r.run.GetId(),
+	}.Metadata(nil)
+	meta["artifact"] = "values.json"
+	ref, err := s.artifactStore.Put(ctx, "values.json", bytes.NewReader(r.values), artifacts.PutOptions{
+		ContentType: "application/json",
+		Metadata:    meta,
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("store the resolution's values: %v", err))
+	}
+	if ref.SHA256 != valuesSHA {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("the store recorded the resolution's values as sha256 %s, but their bytes hash to %s",
+				ref.SHA256, valuesSHA))
+	}
+	return &orkstackv1.ArtifactRef{
+		Name:        ref.Name,
+		Uri:         ref.URI,
+		ContentType: ref.ContentType,
+		SizeBytes:   ref.SizeBytes,
+		Sha256:      ref.SHA256,
+	}, nil
 }
 
 // awaitStartOf reads what a run was started with, from its own start event.
@@ -383,6 +420,22 @@ func (s *Service) ResolveAwait(
 	if msg.GetTaskId() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("task_id is required"))
 	}
+	if msg.GetRedeliver() {
+		var also []string
+		if msg.GetValuesJson() != "" {
+			also = append(also, "values_json")
+		}
+		if msg.GetReject() {
+			also = append(also, "reject")
+		}
+		if msg.GetReason() != "" {
+			also = append(also, "reason")
+		}
+		if len(also) > 0 {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+				"redeliver carries no decision: leave out %s", strings.Join(also, ", ")))
+		}
+	}
 	if msg.GetReject() && msg.GetValuesJson() != "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("values_json and reject are exclusive"))
 	}
@@ -411,6 +464,8 @@ func (s *Service) ResolveAwait(
 		values:    []byte(msg.GetValuesJson()),
 		via:       orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API,
 		principal: boundOriginAssertion(authn.Recorded(ctx, req.Header()).ID),
+		redeliver: msg.GetRedeliver(),
+		who:       authn.Recorded(ctx, req.Header()),
 	})
 	if err != nil {
 		return nil, err

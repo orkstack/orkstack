@@ -168,5 +168,5 @@ telemetry:
         DD-API-KEY:
           source: env:DD_API_KEY
 
-# OTEL_BSP_*, OTEL_BLRP_*, and OTEL_PROPAGATORS have no keys here — they
-# remain environment only (docs/DEPLOY.md §1).
+# OTEL_BSP_* and OTEL_BLRP_* have no keys here — they remain environment only
+# (docs/DEPLOY.md §1). OTEL_PROPAGATORS is not read.

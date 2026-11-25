@@ -28,7 +28,7 @@ func TestManifest_JSONKeysAndDialectAreTheContract(t *testing.T) {
 		t.Fatalf("MANIFEST.json differs from %s:\n%s", golden, got)
 	}
 	text := string(got)
-	for _, key := range []string{`"schema_version": 1`, `"run_status": "SUCCEEDED"`, `"definition_digest": "sha256:9f2c`,
+	for _, key := range []string{`"schema_version": 3`, `"run_status": "SUCCEEDED"`, `"definition_digest": "sha256:9f2c`,
 		`"bytes_present"`, `"size_bytes"`, `"outcome_attempt"`, `"stored_definition_digest"`} {
 		if !strings.Contains(text, key) {
 			t.Errorf("manifest lacks %s", key)
@@ -55,8 +55,8 @@ func TestManifest_JSONKeysAndDialectAreTheContract(t *testing.T) {
 		t.Fatal("ReadManifest of a written bundle does not round-trip")
 	}
 
-	if _, err := ParseManifest(bytes.Replace(got, []byte(`"schema_version": 1`), []byte(`"schema_version": 2`), 1)); err == nil ||
-		!strings.Contains(err.Error(), "schema_version 2") {
-		t.Fatalf("schema_version 2 = %v, want a refusal naming the version", err)
+	if _, err := ParseManifest(bytes.Replace(got, []byte(`"schema_version": 3`), []byte(`"schema_version": 4`), 1)); err == nil ||
+		!strings.Contains(err.Error(), "schema_version 4") {
+		t.Fatalf("schema_version 4 = %v, want a refusal naming the version", err)
 	}
 }

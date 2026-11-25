@@ -96,6 +96,11 @@ type SealedFailure struct {
 
 func (e *SealedFailure) Error() string { return e.f.GetMessage() }
 
+// Reason is the reason code a sealed failure carries in plaintext: all a
+// reader with no key has of it. It is not authenticated, as nothing in
+// plaintext is.
+func (e *SealedFailure) Reason() string { return e.f.GetMessage() }
+
 // FailureConverter wraps the SDK's default failure converter. It seals an
 // error that carries a key, every level of its cause chain and every detail;
 // it reads a sealed failure back as a SealedFailure. With sealing off, an
@@ -154,12 +159,35 @@ func (c *FailureConverter) ErrorToFailure(err error) *failurepb.Failure {
 	switch {
 	case leadUnsealed, leadKeyless, !c.sealing:
 		return f
+	case sf != nil && sealedWhole(f):
+		// Another run's failure, handed on still sealed: ciphertext and its
+		// reason, as the cluster already holds it. The text of what wraps it is
+		// not in f.
+		return f
 	case sdkOwn(top):
 		stripSDKOwn(f)
 		return f
 	}
 	withhold(f)
 	return f
+}
+
+// sealedWhole reports that every level of f, and every detail, is sealed.
+func sealedWhole(f *failurepb.Failure) bool {
+	for l := f; l != nil; l = l.GetCause() {
+		if !IsSealed(l.GetEncodedAttributes()) || l.GetStackTrace() != "" || l != f && l.GetMessage() != sealedMessage ||
+			l == f && l.GetMessage() != sealedMessage && !reasonShape.MatchString(l.GetMessage()) {
+			return false
+		}
+		for _, ps := range detailsOf(l) {
+			for _, p := range ps.GetPayloads() {
+				if !IsSealed(p) {
+					return false
+				}
+			}
+		}
+	}
+	return f != nil
 }
 
 // keyedWithScope is the first keyed error in err's chain that carries a

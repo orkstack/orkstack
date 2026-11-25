@@ -413,6 +413,41 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail:    "reason=" + in.GetReason(),
 		}
 	},
+	// A preview is recorded too: it is how a resume was decided (E85 §12.1).
+	orkstackv1connect.RunServiceResumeRunProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.ResumeRunRequest)
+		entry := auditEntry{
+			Action:    "run.resume",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetRunId(),
+			Detail: fmt.Sprintf("dry_run=%t from=%q reason=%q",
+				in.GetDryRun(), in.GetFromTaskId(), in.GetReason()),
+		}
+		// What only run.resume.accept_gap may accept is an action of its own.
+		if !in.GetDryRun() && in.GetAcceptSequenceGap() {
+			entry.Action = "run.resume.sequence_gap_accepted"
+			entry.Detail += fmt.Sprintf(" accepted_highest_seq=%d", in.GetAcceptedHighestSeq())
+		}
+		if !in.GetDryRun() && in.GetAcceptUnverifiedStop() {
+			if !in.GetAcceptSequenceGap() {
+				entry.Action = "run.resume.unverified_stop_accepted"
+			}
+			entry.Detail += " accept_unverified_stop"
+		}
+		if n := len(in.GetAcknowledgedUnknownAttempts()); n > 0 {
+			entry.Detail += fmt.Sprintf(" acknowledged_unknown_attempts=%d", n)
+		}
+		if out, ok := resp.(*orkstackv1.ResumeRunResponse); ok && out != nil {
+			entry.Detail += fmt.Sprintf(" already=%t plan=%s seq_base=%d", out.GetAlreadyResumed(), out.GetPlanDigest(), out.GetSeqBase())
+			if r := out.GetResume(); r != nil {
+				entry.Detail += fmt.Sprintf(" record_principal=%q scope=%d", r.GetPrincipal(), r.GetScope())
+			}
+			if kinds := resumeWarningKinds(out.GetWarnings()); kinds != "" {
+				entry.Detail += " warnings=" + kinds
+			}
+		}
+		return entry
+	},
 	// The values themselves are never recorded — only their digest — and the
 	// callback door is outside Connect and not audited, on the trigger door's
 	// grounds: its fact is the run's own record (TaskRun.await.resolved_via).

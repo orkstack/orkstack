@@ -59,4 +59,5 @@ Each token's subject is then a SPIFFE ID, and the issuer also serves a SPIFFE bu
 - [TASK_IDENTITY.md, "When a key signs"](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#when-a-key-signs): the activation rule
 - [TASK_IDENTITY.md, "Rotation, with no outage"](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#rotation-with-no-outage): every step of a rotation
 - [TASK_IDENTITY.md, "SPIFFE"](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#spiffe): the SPIFFE ID's form and changing format
+- [PROVIDERS.md, "Declaring providers"](https://github.com/orkstack/orkstack/blob/main/docs/PROVIDERS.md#declaring-providers): the `providers` setting, where credentials and secrets will come from
 - [TASK_IDENTITY.md, "Administering the issuer"](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#administering-the-issuer): every `orkctl admin identity` command

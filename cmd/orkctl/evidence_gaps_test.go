@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/evidence"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -35,7 +38,7 @@ func TestEvidenceVerifyCommand_PrintsTheGap(t *testing.T) {
 	sum := sha256.Sum256(body)
 	at := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	manifest := &evidence.Manifest{
-		SchemaVersion: evidence.SchemaVersionEventGaps, RunID: "ork-gap", Namespace: "default",
+		SchemaVersion: evidence.SchemaVersion, RunID: "ork-gap", Namespace: "default",
 		OrkflowName: "deploy", OrkflowVersion: "1.0.0", RunStatus: "SUCCEEDED",
 		RunCreatedAt: at, RunFinishedAt: at, ExportedAt: at, EngineVersion: "v0.9.3",
 		Definition: evidence.Definition{State: evidence.StateReclaimed, Reason: evidence.ReasonDefinitionDeleted},
@@ -86,7 +89,7 @@ func TestEvidenceVerifyCommand_NamesANeverPublishedGap(t *testing.T) {
 	sum := sha256.Sum256(body)
 	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	manifest := &evidence.Manifest{
-		SchemaVersion: evidence.SchemaVersionEventGaps, RunID: "ork-unpublished", Namespace: "default",
+		SchemaVersion: evidence.SchemaVersion, RunID: "ork-unpublished", Namespace: "default",
 		OrkflowName: "deploy", OrkflowVersion: "1.0.0", RunStatus: "FAILED",
 		RunCreatedAt: at, RunFinishedAt: at, ExportedAt: at, EngineVersion: "v0.9.3",
 		Definition: evidence.Definition{State: evidence.StateReclaimed, Reason: evidence.ReasonDefinitionDeleted},
@@ -110,4 +113,55 @@ func TestEvidenceVerifyCommand_NamesANeverPublishedGap(t *testing.T) {
 		t.Fatalf("verify output does not name the gap as never published, under a causeless label:\n%s", res.stdout)
 	}
 	t.Logf("verify:\n%s", res.stdout)
+}
+
+// TestRunEvidence_AnEngineOfAnotherSchema: an engine that writes another
+// schema_version is named as the reason, on an export and on a live
+// comparison; neither is told to use the orkctl that exported the bundle,
+// which is this one or none. The export leaves no file.
+func TestRunEvidence_AnEngineOfAnotherSchema(t *testing.T) {
+	t.Setenv(serverEnvVar, "")
+	t.Setenv(namespaceEnvVar, "")
+	t.Setenv(configEnvVar, filepath.Join(t.TempDir(), "config.json"))
+	body := []byte(`{"kind":"run","run":{"id":"ork-x"}}` + "\n")
+	sum := sha256.Sum256(body)
+	bundleOf := func(version int) ([]byte, []byte) {
+		manifest := &evidence.Manifest{SchemaVersion: version, RunID: "ork-x", Namespace: "default", Tasks: []evidence.TaskEntry{},
+			Definition: evidence.Definition{State: evidence.StateReclaimed, Reason: evidence.ReasonDefinitionDeleted},
+			Members: []evidence.Member{{Path: "run.jsonl", Kind: evidence.KindRun, Origin: "metadata/runs/ork-x.jsonl",
+				SizeBytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:]), State: evidence.StatePresent}}}
+		manifest.Counts = evidence.CountMembers(manifest.Members)
+		var bundle bytes.Buffer
+		must.OK(t, evidence.Write(context.Background(), &bundle, manifest, runJSONLSource(body)))
+		document, err := manifest.MarshalJSON()
+		must.OK(t, err)
+		return bundle.Bytes(), document
+	}
+	for _, version := range []int{2, 4} {
+		bundle, document := bundleOf(version)
+		ours, _ := bundleOf(evidence.SchemaVersion)
+		serve := func(data []byte) string {
+			return startEvidenceStub(t, evidenceStub{export: func(stream *connect.ServerStream[orkstackv1.EvidenceChunk]) error {
+				return stream.Send(&orkstackv1.EvidenceChunk{Data: data, Last: true})
+			}})
+		}
+		dir := inTempDir(t)
+		want := fmt.Sprintf("this engine writes evidence bundles of schema_version %d, and this orkctl reads only %d: use an orkctl of the engine's release",
+			version, evidence.SchemaVersion)
+		check := func(args ...string) {
+			t.Helper()
+			var stdout, stderr bytes.Buffer
+			code := Execute(args, &stdout, &stderr)
+			if code == exitOK || !strings.Contains(stderr.String(), want) || strings.Contains(stderr.String(), "exported it") {
+				t.Errorf("schema %d, %v: exit %d stderr %q", version, args[:3], code, stderr.String())
+			}
+		}
+		check("run", "evidence", "export", "ork-x", "--output", filepath.Join(dir, "out.tar.gz"), "--server", serve(bundle))
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+			t.Errorf("a refused export left %v, %v", entries, err)
+		}
+		held := filepath.Join(t.TempDir(), "held.tar.gz")
+		must.OK(t, os.WriteFile(held, ours, 0o644))
+		check("run", "evidence", "verify", held, "--against-store", "--server", serve(document))
+	}
 }

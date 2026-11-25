@@ -832,6 +832,34 @@ func (f *deliveryFixture) failedOriginal(t *testing.T) (*orkstackv1.Delivery, *o
 	return listed[0], run, hook
 }
 
+// A delivery of a shared Orkflow's child run says whose Orkflow it ran: in its
+// record, and in a redelivery's body and record.
+func TestDelivery_NamesASharedOrkflowsOwner(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusBadGateway)
+	f.register(t, webhooks.EventRunFailed)
+	run := f.sampleRun(t, "ork-shared-child", orkstackv1.Status_STATUS_FAILED)
+	run = proto.Clone(run).(*orkstackv1.Run)
+	run.OrkflowNamespace = "platform"
+	f.runs.Save(run)
+	f.announce(t, run, orkstackv1.EventType_EVENT_TYPE_RUN_FAILED, orkstackv1.Status_STATUS_FAILED, "")
+	listed := f.list(t, &orkstackv1.ListDeliveriesRequest{}).GetDeliveries()
+	if len(listed) != 1 || listed[0].GetOrkflowNamespace() != "platform" || listed[0].GetOrkflowName() != "reconcile" {
+		t.Fatalf("record = %v; want it to name platform", listed)
+	}
+	f.receiver.answer(http.StatusOK)
+	before := f.receiver.count()
+	resp, err := f.svc.RedeliverWebhook(context.Background(), connect.NewRequest(&orkstackv1.RedeliverWebhookRequest{Id: listed[0].GetId()}))
+	must.OKf(t, err, "RedeliverWebhook")
+	body, _ := f.receiver.request(before)
+	var payload struct {
+		OrkflowNamespace string `json:"orkflowNamespace"`
+	}
+	must.OK(t, json.Unmarshal(body, &payload))
+	if payload.OrkflowNamespace != "platform" || resp.Msg.GetDelivery().GetOrkflowNamespace() != "platform" {
+		t.Fatalf("redelivery body names %q, record %v; want platform", payload.OrkflowNamespace, resp.Msg.GetDelivery())
+	}
+}
+
 func TestRedeliverWebhook_PostsOnceSignedWithTheCurrentSecretAndRecordsANewDelivery(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusBadGateway)
 	original, run, _ := f.failedOriginal(t)

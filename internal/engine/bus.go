@@ -113,8 +113,14 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 		}
 		b.seen[runID][dedupeKey] = stored.GetSequence()
 	}
-	if isTerminalRunEvent(stored) {
+	switch {
+	case isTerminalRunEvent(stored):
 		b.retention.mark(runID)
+	case stored.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED && b.lastSequenceLocked(runID) == stored.GetSequence():
+		// The run is not finished after all: its log and dedupe keys are kept
+		// until its next ending, as any live run's. Only its newest event says
+		// so; a resume older than an ending already held does not.
+		b.retention.unmark(runID)
 	}
 	// enqueue only appends to each subscriber's private queue. Holding b.mu
 	// through enqueue preserves the same order for sequence assignment, the
@@ -124,6 +130,11 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 	}
 	b.mu.Unlock()
 	return proto.Clone(stored).(*orkstackv1.Event), true
+}
+
+// lastSequenceLocked is the highest sequence this run holds, 0 for none.
+func (b *EventBus) lastSequenceLocked(runID string) int64 {
+	return b.nextSequenceLocked(runID) - 1
 }
 
 // nextSequenceLocked is one past the highest sequence this run holds, so a bus
@@ -255,7 +266,9 @@ func isRunLevelEvent(event *orkstackv1.Event) bool {
 		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_PAUSED,
-		orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED:
+		orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_RESULTS_KEPT:
 		return true
 	default:
 		return false

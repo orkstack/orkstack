@@ -86,6 +86,10 @@ func decimal(s string) bool {
 	return true
 }
 
+// IsResumePlanDigest reports whether s is shaped as a plan digest: the
+// lowercase hex SHA-256 a plan record is named by.
+func IsResumePlanDigest(s string) bool { return lowerHexDigest(s) }
+
 func lowerHexDigest(s string) bool {
 	if len(s) != 64 {
 		return false

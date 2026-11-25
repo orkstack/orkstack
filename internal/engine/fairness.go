@@ -141,7 +141,7 @@ func withPinCreationPriority(ctx workflow.Context, priority temporal.Priority) w
 // workflow. A worker built without it opens every pin with no fairness key and
 // changes nothing else.
 func RunWorkerInterceptors() []interceptor.WorkerInterceptor {
-	return []interceptor.WorkerInterceptor{&pinCreationInterceptor{}, &plainActivityInterceptor{}}
+	return []interceptor.WorkerInterceptor{&pinCreationInterceptor{}}
 }
 
 type pinCreationInterceptor struct {

@@ -434,6 +434,12 @@ func FuzzCompile_Orkflow(f *testing.F) {
 	// A task's identities, refused in this build, and malformed ones.
 	f.Add([]byte(identitySource(twoIdentities)))
 	f.Add([]byte(identitySource("    identities: [{name: A, audience: ''}, {name: a, audience: 'x y', ttl_seconds: -1, refresh: no}]\n")))
+	// Provider secrets, refused in this build, and malformed ones.
+	f.Add([]byte(identitySource("    secrets: [{name: s, source: 'vault:secret/data/db#url', grant: vault-app}, {name: k, source: 'aws:kms:alias/k', grant: r, ciphertext: QUJD}]\n")))
+	f.Add([]byte(identitySource("    secrets: [{name: s, source: 'env:S', grant: g}, {name: k, source: 'kv:a/../b', grant: G, ciphertext: '!!'}]\n")))
+	// A task's credentials, refused in this build, and malformed ones.
+	f.Add([]byte(identitySource(twoCredentials)))
+	f.Add([]byte(identitySource("    credentials: [{name: A, grant: ''}, {name: a, grant: g, path: 'a/../b', params: {K: '{{ x }}'}, refresh: no}]\n")))
 	for _, merge := range []string{"timeout_seconds: !!merge 3", "timeout_seconds: <<", "needs: <<", "!!merge needs: []", "with: {a: <<}"} {
 		f.Add([]byte("apiVersion: ! orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    " + merge + "\n"))
 	}

@@ -2199,8 +2199,11 @@ func cloneTime(ts *timestamppb.Timestamp) *timestamppb.Timestamp {
 // start carried — name, version, namespace and digest, no tasks — and
 // ByReference is set; RunDefinition resolves it.
 type RunStartRecord struct {
-	Orkflow     *orkstackv1.Orkflow
-	Plan        RunPlan
+	Orkflow *orkstackv1.Orkflow
+	Plan    RunPlan
+	// Input is the run's start input, nil when it has none. It is read only
+	// for a run whose results the engine records.
+	Input       *orkstackv1.Payload
 	ByReference bool
 }
 
@@ -2245,6 +2248,11 @@ func (r *TemporalRunReader) RunStart(ctx context.Context, runID string) (*RunSta
 	}
 	if err := r.converter.FromPayload(payloads[3], &record.Plan); err != nil {
 		return nil, fmt.Errorf("engine: run %s: decode the started plan: %w", runID, err)
+	}
+	if record.Plan.Identity != nil {
+		if err := r.converter.FromPayload(payloads[2], &record.Input); err != nil {
+			return nil, fmt.Errorf("engine: run %s: decode the started input: %w", runID, err)
+		}
 	}
 	record.ByReference = record.Plan.Definition != nil
 	return record, nil

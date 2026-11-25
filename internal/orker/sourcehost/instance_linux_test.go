@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/orker/servicehost"
@@ -24,6 +25,7 @@ import (
 // for unit tests of the Orker's side; the real fixtures (test/fixtures,
 // against real brokers) prove the contract end to end.
 type laneSource struct {
+	t           *testing.T
 	ask, answer string
 	lanes       int
 	status      string
@@ -40,9 +42,7 @@ type laneSource struct {
 func (f *laneSource) rename(name string, body []byte) {
 	dir := filepath.Join(f.answer, "tmp")
 	tmp := filepath.Join(dir, filepath.Base(name)+"."+itoa(time.Now().UnixNano())+".tmp")
-	_ = os.WriteFile(tmp, body, 0o644)
-	_ = os.MkdirAll(filepath.Dir(filepath.Join(f.answer, name)), 0o755)
-	_ = os.Rename(tmp, filepath.Join(f.answer, name))
+	placeStep(f.t, tmp, filepath.Join(f.answer, name), body)
 }
 
 func (f *laneSource) run(ctx context.Context) {
@@ -91,6 +91,8 @@ func (f *laneSource) run(ctx context.Context) {
 
 const readyStatus = `{"schemaVersion":1,"ready":true,"check":{"ok":true},"broker":{"object":"dir:q","maxDeliveries":5,"messageLimitBytes":1048576}}`
 
+// newInstanceFixture is an instance over real files, to be used in a synctest
+// bubble, as newDriverFixture is.
 func newInstanceFixture(t *testing.T, door Door, lanes int, status string, queue ...string) (*Instance, *laneSource, *memRecorder) {
 	t.Helper()
 	root := t.TempDir()
@@ -113,7 +115,7 @@ func newInstanceFixture(t *testing.T, door Door, lanes int, status string, queue
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = steps.Close() })
-	src := &laneSource{ask: ask, answer: answer, lanes: lanes, status: status, queue: queue, verdicts: map[string]int{}}
+	src := &laneSource{t: t, ask: ask, answer: answer, lanes: lanes, status: status, queue: queue, verdicts: map[string]int{}}
 	ctx, cancel := context.WithCancel(context.Background())
 	ran := make(chan struct{})
 	// The fake container stops writing before the test's directories are
@@ -149,58 +151,66 @@ func acceptingDoor() *fakeDoor {
 }
 
 func TestInstance_AcceptsAcrossLanesAndBeats(t *testing.T) {
-	in, src, rec := newInstanceFixture(t, acceptingDoor(), 2, readyStatus,
-		`{"status":"PAID","id":"1"}`, `{"status":"PAID","id":"2"}`, `{"status":"PAID","id":"3"}`, `{"status":"PAID","id":"4"}`)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan Ending, 1)
-	go func() { done <- in.Run(ctx) }()
-	waitFor(t, "four settled messages", func() bool { return src.settled.Load() == 4 })
-	if _, err := os.Stat(filepath.Join(src.ask, "alive.json")); err != nil {
-		t.Fatalf("no beat: %v", err)
-	}
-	cancel()
-	if e := <-done; e.Reason != "" {
-		t.Fatalf("a stop ended %+v", e)
-	}
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if len(rec.receipts) != 4 || src.verdicts[ActionAck] != 4 {
-		t.Fatalf("receipts %d, verdicts %v", len(rec.receipts), src.verdicts)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		in, src, rec := newInstanceFixture(t, acceptingDoor(), 2, readyStatus,
+			`{"status":"PAID","id":"1"}`, `{"status":"PAID","id":"2"}`, `{"status":"PAID","id":"3"}`, `{"status":"PAID","id":"4"}`)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan Ending, 1)
+		go func() { done <- in.Run(ctx) }()
+		waitFor(t, "four settled messages", func() bool { return src.settled.Load() == 4 })
+		if _, err := os.Stat(filepath.Join(src.ask, "alive.json")); err != nil {
+			t.Fatalf("no beat: %v", err)
+		}
+		cancel()
+		if e := <-done; e.Reason != "" {
+			t.Fatalf("a stop ended %+v", e)
+		}
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if len(rec.receipts) != 4 || src.verdicts[ActionAck] != 4 {
+			t.Fatalf("receipts %d, verdicts %v", len(rec.receipts), src.verdicts)
+		}
+	})
 }
 
 func TestInstance_NoStatusIsNotReady(t *testing.T) {
-	in, _, _ := newInstanceFixture(t, acceptingDoor(), 1, "")
-	if e := in.Run(context.Background()); e.Reason != eventsources.ReasonServiceNotReady {
-		t.Fatalf("ending %+v", e)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		in, _, _ := newInstanceFixture(t, acceptingDoor(), 1, "")
+		if e := in.Run(context.Background()); e.Reason != eventsources.ReasonServiceNotReady {
+			t.Fatalf("ending %+v", e)
+		}
+	})
 }
 
 func TestInstance_FatalIsConfigRejected(t *testing.T) {
-	in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, `{"schemaVersion":1,"fatal":true,"check":{"ok":false,"reason":"CONFIG_INVALID","field":"stream"}}`,
-		`{"status":"PAID","id":"1"}`)
-	if e := in.Run(context.Background()); e.Reason != eventsources.ReasonServiceConfigRejected || src.settled.Load() != 0 {
-		t.Fatalf("ending %+v, settled %d", e, src.settled.Load())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, `{"schemaVersion":1,"fatal":true,"check":{"ok":false,"reason":"CONFIG_INVALID","field":"stream"}}`,
+			`{"status":"PAID","id":"1"}`)
+		if e := in.Run(context.Background()); e.Reason != eventsources.ReasonServiceConfigRejected || src.settled.Load() != 0 {
+			t.Fatalf("ending %+v, settled %d", e, src.settled.Load())
+		}
+	})
 }
 
 func TestInstance_UnhealthyPollsNothing(t *testing.T) {
-	in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, `{"schemaVersion":1,"ready":true,"check":{"ok":false,"reason":"UNREACHABLE"}}`,
-		`{"status":"PAID","id":"1"}`)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan Ending, 1)
-	go func() { done <- in.Run(ctx) }()
-	// Positive control: the instance runs (it beats) and has read several
-	// statuses, each of which its lanes saw before they could poll.
-	waitFor(t, "a beat and three statuses", func() bool {
-		_, err := os.Stat(filepath.Join(src.ask, "alive.json"))
-		return err == nil && src.statuses.Load() >= 3
+	synctest.Test(t, func(t *testing.T) {
+		in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, `{"schemaVersion":1,"ready":true,"check":{"ok":false,"reason":"UNREACHABLE"}}`,
+			`{"status":"PAID","id":"1"}`)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan Ending, 1)
+		go func() { done <- in.Run(ctx) }()
+		// Positive control: the instance runs (it beats) and has read several
+		// statuses, each of which its lanes saw before they could poll.
+		waitFor(t, "a beat and three statuses", func() bool {
+			_, err := os.Stat(filepath.Join(src.ask, "alive.json"))
+			return err == nil && src.statuses.Load() >= 3
+		})
+		if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepPoll))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("an unhealthy service was polled (%v)", err)
+		}
+		cancel()
+		<-done
 	})
-	if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepPoll))); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("an unhealthy service was polled (%v)", err)
-	}
-	cancel()
-	<-done
 }
 
 // A delivery limit the Orker does not accept is OBJECT_INVALID (06 §5): an
@@ -209,41 +219,45 @@ func TestInstance_UnhealthyPollsNothing(t *testing.T) {
 // is the one releases are judged against.
 func TestInstance_DeliveryLimitFromTheStatus(t *testing.T) {
 	t.Run("a billion is refused", func(t *testing.T) {
-		in, src, _ := newInstanceFixture(t, acceptingDoor(), 1,
-			`{"schemaVersion":1,"ready":true,"check":{"ok":true},"broker":{"maxDeliveries":1000000000,"messageLimitBytes":1048576}}`,
-			`{"status":"PAID","id":"1"}`)
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan Ending, 1)
-		go func() { done <- in.Run(ctx) }()
-		// Positive control: the instance read several statuses.
-		waitFor(t, "three statuses", func() bool { return src.statuses.Load() >= 3 })
-		if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepPoll))); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("a service reporting a billion deliveries was polled (%v)", err)
-		}
-		in.mu.Lock()
-		st, _ := in.status.Last()
-		limit, _ := in.limit.Limit()
-		in.mu.Unlock()
-		if st.OK || st.Reason != "OBJECT_INVALID" || st.Field != "broker.maxDeliveries" || limit != 0 {
-			t.Fatalf("status ok %v reason %q field %q, limit %d", st.OK, st.Reason, st.Field, limit)
-		}
-		cancel()
-		<-done
+		synctest.Test(t, func(t *testing.T) {
+			in, src, _ := newInstanceFixture(t, acceptingDoor(), 1,
+				`{"schemaVersion":1,"ready":true,"check":{"ok":true},"broker":{"maxDeliveries":1000000000,"messageLimitBytes":1048576}}`,
+				`{"status":"PAID","id":"1"}`)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan Ending, 1)
+			go func() { done <- in.Run(ctx) }()
+			// Positive control: the instance read several statuses.
+			waitFor(t, "three statuses", func() bool { return src.statuses.Load() >= 3 })
+			if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepPoll))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a service reporting a billion deliveries was polled (%v)", err)
+			}
+			in.mu.Lock()
+			st, _ := in.status.Last()
+			limit, _ := in.limit.Limit()
+			in.mu.Unlock()
+			if st.OK || st.Reason != "OBJECT_INVALID" || st.Field != "broker.maxDeliveries" || limit != 0 {
+				t.Fatalf("status ok %v reason %q field %q, limit %d", st.OK, st.Reason, st.Field, limit)
+			}
+			cancel()
+			<-done
+		})
 	})
 	t.Run("an accepted limit is kept", func(t *testing.T) {
-		in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, readyStatus, `{"status":"PAID","id":"1"}`)
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan Ending, 1)
-		go func() { done <- in.Run(ctx) }()
-		waitFor(t, "a settled message", func() bool { return src.settled.Load() == 1 })
-		in.mu.Lock()
-		limit, _ := in.limit.Limit()
-		in.mu.Unlock()
-		if limit != 5 {
-			t.Fatalf("limit = %d; want the status's 5", limit)
-		}
-		cancel()
-		<-done
+		synctest.Test(t, func(t *testing.T) {
+			in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, readyStatus, `{"status":"PAID","id":"1"}`)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan Ending, 1)
+			go func() { done <- in.Run(ctx) }()
+			waitFor(t, "a settled message", func() bool { return src.settled.Load() == 1 })
+			in.mu.Lock()
+			limit, _ := in.limit.Limit()
+			in.mu.Unlock()
+			if limit != 5 {
+				t.Fatalf("limit = %d; want the status's 5", limit)
+			}
+			cancel()
+			<-done
+		})
 	})
 }
 
@@ -252,22 +266,24 @@ func TestInstance_DeliveryLimitFromTheStatus(t *testing.T) {
 // row end the instance SERVICE_UNRESPONSIVE, retried, never a container
 // left running that polls nothing.
 func TestInstance_AStaleStatusEndsTheInstance(t *testing.T) {
-	in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, readyStatus)
-	src.statusOnce.Store(true)
-	in.Config.Limits.StatusSeconds = 1
-	done := make(chan Ending, 1)
-	go func() { done <- in.Run(context.Background()) }()
-	select {
-	case e := <-done:
-		if e.Reason != eventsources.ReasonServiceUnresponsive || !e.Retried {
-			t.Fatalf("a stale status ended %+v", e)
+	synctest.Test(t, func(t *testing.T) {
+		in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, readyStatus)
+		src.statusOnce.Store(true)
+		in.Config.Limits.StatusSeconds = 1
+		done := make(chan Ending, 1)
+		go func() { done <- in.Run(context.Background()) }()
+		select {
+		case e := <-done:
+			if e.Reason != eventsources.ReasonServiceUnresponsive || !e.Retried {
+				t.Fatalf("a stale status ended %+v", e)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("an instance whose status went stale is still running")
 		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("an instance whose status went stale is still running")
-	}
-	if src.statuses.Load() != 1 {
-		t.Fatalf("the fixture refreshed its status (%d)", src.statuses.Load())
-	}
+		if src.statuses.Load() != 1 {
+			t.Fatalf("the fixture refreshed its status (%d)", src.statuses.Load())
+		}
+	})
 }
 
 // TestInstance_ARequiredReceiptTheStoreRefusesHoldsTheVerdict: a verdict
@@ -275,68 +291,74 @@ func TestInstance_AStaleStatusEndsTheInstance(t *testing.T) {
 // refuses it, and is given once it is written (01 §5); the attempt does not
 // end, so no message in hand spends a delivery for an outage.
 func TestInstance_ARequiredReceiptTheStoreRefusesHoldsTheVerdict(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
-	in, src, rec := newInstanceFixture(t, door, 1, readyStatus, `{"status":"PAID","id":"1"}`)
-	rec.mu.Lock()
-	rec.failTimes = 1
-	rec.mu.Unlock()
-	// A park long enough for the retry within it (wait.go's first back-off).
-	in.Config.Park = 10 * time.Second
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan Ending, 1)
-	go func() { done <- in.Run(ctx) }()
-	waitFor(t, "the verdict, once the receipt is written", func() bool { return src.settled.Load() == 1 })
-	select {
-	case e := <-done:
-		t.Fatalf("the attempt ended while the store refused a receipt: %+v", e)
-	default:
-	}
-	cancel()
-	<-done
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if len(rec.receipts) != 1 || rec.receipts[0].Outcome != artifacts.ReceiptRejected || rec.failTimes != 0 {
-		t.Fatalf("receipts %+v, refusals left %d", rec.receipts, rec.failTimes)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
+		in, src, rec := newInstanceFixture(t, door, 1, readyStatus, `{"status":"PAID","id":"1"}`)
+		rec.mu.Lock()
+		rec.failTimes = 1
+		rec.mu.Unlock()
+		// A park long enough for the retry within it (wait.go's first back-off).
+		in.Config.Park = 10 * time.Second
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan Ending, 1)
+		go func() { done <- in.Run(ctx) }()
+		waitFor(t, "the verdict, once the receipt is written", func() bool { return src.settled.Load() == 1 })
+		select {
+		case e := <-done:
+			t.Fatalf("the attempt ended while the store refused a receipt: %+v", e)
+		default:
+		}
+		cancel()
+		<-done
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if len(rec.receipts) != 1 || rec.receipts[0].Outcome != artifacts.ReceiptRejected || rec.failTimes != 0 {
+			t.Fatalf("receipts %+v, refusals left %d", rec.receipts, rec.failTimes)
+		}
+	})
 }
 
 func TestInstance_RejectBreakerAsksForAPause(t *testing.T) {
-	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
-	in, _, _ := newInstanceFixture(t, door, 1, readyStatus, `{"status":"PAID","id":"1"}`, `{"status":"PAID","id":"2"}`)
-	in.Config.RejectBreaker = 2
-	e := in.Run(context.Background())
-	door.mu.Lock()
-	defer door.mu.Unlock()
-	if e.Paused != BreakerAllRejected || len(door.paused) != 1 || door.paused[0] != BreakerAllRejected {
-		t.Fatalf("ending %+v, pauses asked %v", e, door.paused)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
+		in, _, _ := newInstanceFixture(t, door, 1, readyStatus, `{"status":"PAID","id":"1"}`, `{"status":"PAID","id":"2"}`)
+		in.Config.RejectBreaker = 2
+		e := in.Run(context.Background())
+		door.mu.Lock()
+		defer door.mu.Unlock()
+		if e.Paused != BreakerAllRejected || len(door.paused) != 1 || door.paused[0] != BreakerAllRejected {
+			t.Fatalf("ending %+v, pauses asked %v", e, door.paused)
+		}
+	})
 }
 
 func TestInstance_AShortWaitSpendsNothing(t *testing.T) {
-	var offers atomic.Int64
-	door := &fakeDoor{
-		offers: []func(Offer) (Answer, error){func(Offer) (Answer, error) {
-			if offers.Add(1) <= 2 {
-				return Answer{}, errors.New("engine unreachable")
-			}
-			return Answer{Kind: AnswerProceed}, nil
-		}},
-		starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)},
-	}
-	in, src, _ := newInstanceFixture(t, door, 1, readyStatus, `{"status":"PAID","id":"1"}`)
-	in.Config.Park = 10 * time.Second
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan Ending, 1)
-	go func() { done <- in.Run(ctx) }()
-	waitFor(t, "the message settled after the engine came back", func() bool { return src.settled.Load() == 1 })
-	cancel()
-	<-done
-	src.mu.Lock()
-	defer src.mu.Unlock()
-	if src.verdicts[ActionAck] != 1 || src.verdicts[ActionRelease] != 0 {
-		t.Fatalf("verdicts %v: a wait within the park releases nothing", src.verdicts)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		var offers atomic.Int64
+		door := &fakeDoor{
+			offers: []func(Offer) (Answer, error){func(Offer) (Answer, error) {
+				if offers.Add(1) <= 2 {
+					return Answer{}, errors.New("engine unreachable")
+				}
+				return Answer{Kind: AnswerProceed}, nil
+			}},
+			starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)},
+		}
+		in, src, _ := newInstanceFixture(t, door, 1, readyStatus, `{"status":"PAID","id":"1"}`)
+		in.Config.Park = 10 * time.Second
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan Ending, 1)
+		go func() { done <- in.Run(ctx) }()
+		waitFor(t, "the message settled after the engine came back", func() bool { return src.settled.Load() == 1 })
+		cancel()
+		<-done
+		src.mu.Lock()
+		defer src.mu.Unlock()
+		if src.verdicts[ActionAck] != 1 || src.verdicts[ActionRelease] != 0 {
+			t.Fatalf("verdicts %v: a wait within the park releases nothing", src.verdicts)
+		}
+	})
 }
 
 // TestInstance_AHoldBoundCloseCountsNoSettlement: an exchange its container

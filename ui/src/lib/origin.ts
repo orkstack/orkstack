@@ -1,3 +1,4 @@
+import type { OrkflowRef } from './gen/orkstack/v1/orkflow_pb';
 import { RunOriginKind, RunOriginKindSchema, type RunOrigin } from './gen/orkstack/v1/run_pb';
 
 // The user-facing spelling of an origin kind in a rendered row: the proto
@@ -76,6 +77,31 @@ export function originLinkPath(origin: RunOrigin | undefined, orkflowName: strin
 export function originRootRunPath(origin: RunOrigin | undefined): string | null {
 	if (!origin?.rootRunId || origin.rootRunId === origin.id) return null;
 	return `/runs/${encodeURIComponent(origin.rootRunId)}`;
+}
+
+/** An Orkflow an origin names: name@version, or namespace/name@version for another namespace's. */
+function originOrkflow(ref: OrkflowRef | undefined): string {
+	if (!ref?.name) return '';
+	const label = `${ref.name}@${ref.version}`;
+	return ref.namespace ? `${ref.namespace}/${label}` : label;
+}
+
+/** The composed task that started a child run, and the Orkflow it is of; null for any other run. */
+export function originParentTask(origin: RunOrigin | undefined): { task: string; orkflow: string } | null {
+	if (!origin?.parentTaskId) return null;
+	return { task: origin.parentTaskId, orkflow: originOrkflow(origin.parentOrkflow) };
+}
+
+/**
+ * The root of a child run's chain: its Orkflow when the root is not the parent
+ * (whose Orkflow the parent task already names), and what started it.
+ */
+export function originRoot(origin: RunOrigin | undefined): { orkflow: string; startedBy: string } {
+	const root = origin?.rootOrigin;
+	return {
+		orkflow: origin && origin.rootRunId !== origin.id ? originOrkflow(origin.rootOrkflow) : '',
+		startedBy: root && originKindSlug(root.kind) ? originLabel(root) : ''
+	};
 }
 
 /** The caption on an unrecorded origin. */

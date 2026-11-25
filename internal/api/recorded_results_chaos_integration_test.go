@@ -194,7 +194,7 @@ func newChaosRig(t *testing.T, o chaosOptions) *chaosRig {
 		Image:   &orkstackv1.ImageRef{Reference: e2eImageTag, Pinned: pinned, IndexDigest: indexDigest},
 		Command: []string{"/bin/sh", "-c", `printf '{"ok":true}' > /orkstack/output/values.json`},
 		Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE}
-	spec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(tk))
+	spec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(tk, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func newChaosRig(t *testing.T, o chaosOptions) *chaosRig {
 	depTask := &orkstackv1.Task{Id: chaosDependent, Pool: "main", Needs: []string{mintTask}, Image: tk.GetImage(), Network: tk.GetNetwork(),
 		Command: []string{"/bin/sh", "-c", `cp /orkstack/input/upstream/` + mintTask + `/values.json /orkstack/output/values.json`}}
 	if o.dependent {
-		depSpec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(depTask))
+		depSpec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(depTask, nil))
 		if err != nil {
 			t.Fatal(err)
 		}

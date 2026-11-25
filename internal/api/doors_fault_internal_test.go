@@ -130,8 +130,8 @@ func TestDoors_AFaultSaysNothingOfWhy(t *testing.T) {
 	}
 }
 
-// However often anyone asks during a fault, the doors log at most a line a
-// second between them, with the cause, and none for a caller that left.
+// However often anyone asks during a fault, each door logs at most a line a
+// second, with the cause, and none for a caller that left.
 func TestDoors_AFaultCannotFillTheLog(t *testing.T) {
 	var log bytes.Buffer
 	s := NewService(Config{Orkflows: engine.NewMemoryOrkflowStore(), Runs: engine.NewRunStore(), Bus: engine.NewEventBus(),
@@ -154,11 +154,75 @@ func TestDoors_AFaultCannotFillTheLog(t *testing.T) {
 		ask(context.Background(), "/v1/runs/ork-1/awaits/gate")
 		ask(context.Background(), "/v1/triggers/trg-0000000000000000")
 	}
-	most := 2 + int(time.Since(begin)/time.Second)
+	most := 2 * (1 + int(time.Since(begin)/time.Second)) // a line a second of each door
 	if n := strings.Count(log.String(), "\n"); n < 1 || n > most {
 		t.Fatalf("400 faults logged %d lines, want 1 to %d", n, most)
 	}
 	if !strings.Contains(log.String(), "10.0.0.7") || strings.Contains(log.String(), "hunter2") {
 		t.Fatalf("the log has no cause, or the caller's credential: %s", &log)
+	}
+}
+
+// Nor do the refusals anyone can provoke at will: an upgrade from a foreign
+// origin, and a sign-in's callback with no sign-in in progress.
+func TestDoors_RefusalsCannotFillTheLog(t *testing.T) {
+	var log bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&log, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	engineURL := "https://ork.example.test"
+	env := signintest.New(t, engineURL, oidctest.Options{})
+	public, err := url.Parse(engineURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := accessFor(t, authn.ModeEnforce, nil)
+	a.Authenticator = &authn.Authenticator{Issuers: env.Issuers, Keys: env.Keys}
+	a.Signins = env.Signins(public, nil)
+	a.Signins.Logger = logger
+	s := NewService(Config{Orkflows: engine.NewMemoryOrkflowStore(), Runs: engine.NewRunStore(), Bus: engine.NewEventBus(),
+		Reader: downReader{}, Logger: logger})
+	signins, sockets := NewMux(s, MuxOptions{Access: a}), NewMux(s, MuxOptions{})
+	// An issuer whose keys cannot be read: a well-formed credential of its
+	// cannot be checked.
+	down := signintest.New(t, engineURL, oidctest.Options{})
+	credential, err := down.Provider.IDToken(signintest.CLIClientID, oidctest.User{Subject: "u", Email: "u@example.test"}, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	down.IDP.Close()
+	b, _ := accessFor(t, authn.ModeEnforce, nil)
+	b.Authenticator, b.Logger = &authn.Authenticator{Issuers: down.Issuers, Keys: down.Keys}, logger
+	unreachable := NewMux(s, MuxOptions{Access: b})
+	for name, c := range map[string]struct {
+		mux    http.Handler
+		path   string
+		origin string
+		line   string
+	}{
+		"callback":        {signins, "/v1/auth/callback/" + strings.Repeat("i", 5000) + "?code=x", "", "sign-in refused"},
+		"a credential":    {unreachable, "/orkstack.v1.RunService/" + strings.Repeat("p", 5000), "", "could not be checked now"},
+		"run socket":      {sockets, "/ws/runs/ork-1", "https://" + strings.Repeat("e", 5000) + ".test", "websocket upgrade refused"},
+		"task log socket": {sockets, "/ws/runs/ork-1/tasks/build/logs", "https://" + strings.Repeat("e", 5000) + ".test", "websocket upgrade refused"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			log.Reset()
+			begin := time.Now()
+			for range 100 {
+				req := httptest.NewRequest(http.MethodGet, engineURL+c.path, nil)
+				if name == "a credential" {
+					req.Header.Set("Authorization", "Bearer "+credential)
+				}
+				if c.origin != "" {
+					req.Header.Set("Origin", c.origin)
+				}
+				c.mux.ServeHTTP(httptest.NewRecorder(), req)
+			}
+			n, most := strings.Count(log.String(), c.line), 1+int(time.Since(begin)/time.Second)
+			if n < 1 || n > most {
+				t.Fatalf("100 refusals logged %d lines, want 1 to %d: %s", n, most, &log)
+			}
+			if log.Len() > n*2000 {
+				t.Fatalf("%d lines hold %d bytes of a caller's text", n, log.Len())
+			}
+		})
 	}
 }

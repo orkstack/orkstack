@@ -56,7 +56,7 @@ func TestIntegration_TemporalStall_ClientFailureMetricAndCodes(t *testing.T) {
 
 	address := startPrivateTemporal(t, ctx)
 	namespace := privateNamespaceForCommitE2E(t)
-	direct, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+	direct, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -82,7 +82,7 @@ func TestIntegration_TemporalStall_ClientFailureMetricAndCodes(t *testing.T) {
 	proxy := faultproxy.New(t, address)
 	options, err := telemetry.ClientOptions(proxy.Addr(), namespace, providers, slog.Default(), temporalconn.Security{})
 	must.OKf(t, err, "the engine's client options")
-	engineClient, err := client.DialContext(ctx, options)
+	engineClient, err := client.DialContext(ctx, engine.ClientOptions(options, nil))
 	must.OKf(t, err, "dial temporal through the proxy")
 	t.Cleanup(engineClient.Close)
 

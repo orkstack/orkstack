@@ -420,10 +420,11 @@ type Binding struct {
 	Pin BindingPin `protobuf:"varint,6,opt,name=pin,proto3,enum=orkstack.v1.BindingPin" json:"pin,omitempty"`
 	// pinned_at is when the binding was last pinned. Output only.
 	PinnedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=pinned_at,json=pinnedAt,proto3" json:"pinned_at,omitempty"`
-	// orker_ids_any lets a binding to the `orker` role accept the Orker id
-	// the request's attempt names, for a pool whose Orkers share one
-	// credential. One stolen Orker of that pool can then claim to be any
-	// other, and such a binding hosts no event source.
+	// orker_ids_any says a binding to the `orker` role is for a credential
+	// that a pool's Orkers share, which names no Orker. Such a credential
+	// serves no task identity, has no result of a run that holds one
+	// recorded, and hosts no event source: an Orker that does any of them
+	// needs a credential of its own.
 	OrkerIdsAny bool `protobuf:"varint,8,opt,name=orker_ids_any,json=orkerIdsAny,proto3" json:"orker_ids_any,omitempty"`
 	// from_configuration is true for a binding that comes from configuration
 	// (auth.admins, auth.orkers), not from the document; it is shown, never

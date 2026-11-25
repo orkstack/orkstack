@@ -122,8 +122,10 @@ func listedReasons(doc string) []string {
 
 // literalPackages are the directories whose string literals may spell a reason
 // that no constant declares: the reason packages, plus the API that sets an
-// Error.code and the CLI that prints one.
-var literalPackages = append(append([]string{}, reasonPackages...), "internal/api", "cmd/orkctl")
+// Error.code and the CLI that prints one. internal/provider is here and not a
+// reason package until every one of its reasons is emitted: no submit asks
+// yet which providers a pool serves (POOL_NO_PROVIDER).
+var literalPackages = append(append([]string{}, reasonPackages...), "internal/api", "cmd/orkctl", "internal/provider")
 
 // eventPackage is where the run-event types live. Its Event* constants are
 // event types, not failures; an Event* name anywhere else is a reason like

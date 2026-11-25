@@ -70,11 +70,14 @@ const (
 	PermRunCancel         Permission = "run.cancel"
 	PermRunAwaitResolve   Permission = "run.await.resolve"
 	PermRunResume         Permission = "run.resume"
-	PermRunPause          Permission = "run.pause"
-	PermRunCancelForce    Permission = "run.cancel.force"
-	PermRunCancelBulk     Permission = "run.cancel.bulk"
-	PermRunHistoryDecode  Permission = "run.history.decode"
-	PermConcurrencyReset  Permission = "concurrency.reset"
+	// PermRunResumeAcceptGap lets a resume go past a sequence gap or an
+	// unverified stop (resume design §28.15, §28.17 C): admin only.
+	PermRunResumeAcceptGap Permission = "run.resume.accept_gap"
+	PermRunPause           Permission = "run.pause"
+	PermRunCancelForce     Permission = "run.cancel.force"
+	PermRunCancelBulk      Permission = "run.cancel.bulk"
+	PermRunHistoryDecode   Permission = "run.history.decode"
+	PermConcurrencyReset   Permission = "concurrency.reset"
 
 	PermScheduleRead    Permission = "schedule.read"
 	PermScheduleWrite   Permission = "schedule.write"
@@ -146,19 +149,20 @@ var catalogue = map[Permission]entry{
 	PermOrkflowPromote:  {kindO, "move an Orkflow's current version"},
 	PermOrkflowDelete:   {kindO, "delete an Orkflow"},
 
-	PermRunSubmit:         {kindO, "start a run of an Orkflow"},
-	PermRunRead:           {kindO, "read a run, its events, attempts, values and input"},
-	PermRunLogsRead:       {kindO, "read a task's logs, live or stored"},
-	PermRunArtifactsRead:  {kindO, "read a task's artifact bytes"},
-	PermRunEvidenceExport: {kindO, "export a run's evidence bundle"},
-	PermRunCancel:         {kindO, "cancel a run"},
-	PermRunAwaitResolve:   {kindO, "complete or reject an awaited task"},
-	PermRunResume:         {kindO, "resume a run that ended, with run.submit"},
-	PermRunPause:          {kindO, "pause and unpause a run"},
-	PermRunCancelForce:    {kindO, "force-cancel a run; held at a namespace, with its descendants"},
-	PermRunCancelBulk:     {kindN, "cancel many runs of a namespace in one request"},
-	PermRunHistoryDecode:  {kindO, "decode a run's history through the codec endpoint"},
-	PermConcurrencyReset:  {kindN, "reset who holds a namespace's concurrency limits"},
+	PermRunSubmit:          {kindO, "start a run of an Orkflow"},
+	PermRunRead:            {kindO, "read a run, its events, attempts, values and input"},
+	PermRunLogsRead:        {kindO, "read a task's logs, live or stored"},
+	PermRunArtifactsRead:   {kindO, "read a task's artifact bytes"},
+	PermRunEvidenceExport:  {kindO, "export a run's evidence bundle"},
+	PermRunCancel:          {kindO, "cancel a run"},
+	PermRunAwaitResolve:    {kindO, "complete or reject an awaited task"},
+	PermRunResume:          {kindO, "resume a run that ended, with run.submit"},
+	PermRunResumeAcceptGap: {kindO, "resume a run past a gap in its events or an unverified stop"},
+	PermRunPause:           {kindO, "pause and unpause a run"},
+	PermRunCancelForce:     {kindO, "force-cancel a run; held at a namespace, with its descendants"},
+	PermRunCancelBulk:      {kindN, "cancel many runs of a namespace in one request"},
+	PermRunHistoryDecode:   {kindO, "decode a run's history through the codec endpoint"},
+	PermConcurrencyReset:   {kindN, "reset who holds a namespace's concurrency limits"},
 
 	PermScheduleRead:    {kindO, "read schedules"},
 	PermScheduleWrite:   {kindO, "create, change and delete schedules, with run.submit"},

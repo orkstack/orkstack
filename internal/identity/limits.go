@@ -61,6 +61,15 @@ func NewCommitLimits(now func() time.Time) *MintLimits {
 	return l
 }
 
+// NewResolveLimits builds the await doors' buckets on clock now (nil is
+// time.Now): a caller's requests that make no record, ten a minute, as its
+// audited denials are.
+func NewResolveLimits(now func() time.Time) *MintLimits {
+	l := NewMintLimits(now)
+	l.principalRate, l.principalBurst = rate.Every(time.Minute/10), 10
+	return l
+}
+
 // Spend is a reservation of a mint's tokens: Refund it when the mint is
 // refused or unavailable, so only a granted mint spends.
 type Spend struct {

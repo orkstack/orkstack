@@ -36,7 +36,7 @@ config.json  (201 bytes)
     "payload": "/orkstack/input/artifacts/produce/payload.txt",
     "target": "staging"
   }
-task.json    (2030 bytes)
+task.json    (2060 bytes)
   {
     "schemaVersion": 1,
     "idempotencyKey": "default/local-<id>/consume",
@@ -47,7 +47,8 @@ task.json    (2030 bytes)
         "name": "task-run-fixture",
         "version": "1",
         "definitionDigest": "sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa"
-      }
+      },
+      "context": "unavailable"
     },
     "task": {
       "id": "consume",

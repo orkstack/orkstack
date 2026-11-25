@@ -149,7 +149,7 @@ func (s *runState) sendAcquire(ctx workflow.Context, slot *ConcurrencySlotPlan, 
 			Key: slot.Key, Tunables: c.plan.Gate},
 	}
 	var res AcquireConcurrencyResult
-	err := workflow.ExecuteLocalActivity(lctx, ActivityAcquireConcurrency, in).Get(lctx, &res)
+	err := getLocal(lctx, runScope(ctx), workflow.ExecuteLocalActivity(lctx, ActivityAcquireConcurrency, in), &res)
 	if err == nil {
 		return res, nil
 	}

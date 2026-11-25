@@ -18,14 +18,20 @@ test('a scope is positional, with * for each unset component', () => {
 	expect(webhookScope({ namespace: 'analytics', orkflowName: '', taskId: 'extract' })).toBe('analytics/*/extract');
 });
 
-test('the offered events are the fifteen subscribable ones in lifecycle order, never TASK_LOG', () => {
+test('the offered events are the seventeen subscribable ones in lifecycle order, never TASK_LOG', () => {
 	expect(RUN_EVENTS).toEqual([
 		EventType.RUN_STARTED,
 		EventType.RUN_SUCCEEDED,
 		EventType.RUN_FAILED,
-		EventType.RUN_CANCELED
+		EventType.RUN_CANCELED,
+		EventType.RUN_RESUMED
 	]);
-	expect(OPT_IN_RUN_EVENTS).toEqual([EventType.RUN_QUEUED, EventType.RUN_PAUSED, EventType.RUN_UNPAUSED]);
+	expect(OPT_IN_RUN_EVENTS).toEqual([
+		EventType.RUN_QUEUED,
+		EventType.RUN_PAUSED,
+		EventType.RUN_UNPAUSED,
+		EventType.RUN_RESULTS_KEPT
+	]);
 	expect(TASK_EVENTS).toEqual([
 		EventType.TASK_QUEUED,
 		EventType.TASK_SCHEDULED,
@@ -36,7 +42,7 @@ test('the offered events are the fifteen subscribable ones in lifecycle order, n
 		EventType.TASK_SUCCEEDED,
 		EventType.TASK_FAILED
 	]);
-	expect([...RUN_EVENTS, ...OPT_IN_RUN_EVENTS, ...TASK_EVENTS]).toHaveLength(15);
+	expect([...RUN_EVENTS, ...OPT_IN_RUN_EVENTS, ...TASK_EVENTS]).toHaveLength(17);
 	expect([...RUN_EVENTS, ...OPT_IN_RUN_EVENTS, ...TASK_EVENTS]).not.toContain(EventType.TASK_LOG);
 });
 

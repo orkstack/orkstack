@@ -46,6 +46,7 @@ Each member has a state:
 | `reclaimed` | The store no longer has the object, because cleanup or a lifecycle rule removed it. The recorded hash is kept. |
 | `unrecorded` | A try with no record. Its Orker died before it filed one, or the record was reclaimed. |
 | `rejected` | The stored definition does not match the digest the run pinned. |
+| `withheld` | The run ran another namespace's shared Orkflow, and whoever exported the bundle may not read it there. |
 
 ## Verify it offline
 
@@ -57,7 +58,8 @@ orkctl run evidence verify run.tar.gz --against-store   # also compare with the 
 `verify` needs no server and no credentials. It writes nothing to disk. It hashes every member and compares it with the manifest.
 
 - A member whose bytes do not match is named, and the command exits `1`.
-- A `reclaimed`, `unrecorded` or `rejected` member is a finding. The command still exits `0` and lists it.
+- A `reclaimed`, `unrecorded`, `rejected` or `withheld` member is a finding. The command still exits `0` and lists it.
+- It reads bundles of `schema_version` 3 only, and refuses any other by name. Verify a bundle of an older release with that release's `orkctl`.
 - `--against-store` asks the engine for the run's live manifest, and reports any member that differs.
 
 ## What a gap means
@@ -73,7 +75,8 @@ A bundle proves that the bytes match their hashes. It does not prove who made it
 ## See also
 
 - [docs/RUN_EVIDENCE.md, "Layout"](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#layout): the members, their order and the fan-out layout
-- [docs/RUN_EVIDENCE.md, "States"](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#states): the four member states
+- [docs/RUN_EVIDENCE.md, "States"](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#states): the member states
+- [docs/RUN_EVIDENCE.md, "Versions"](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#versions): which bundles an `orkctl` reads
 - [docs/RUN_EVIDENCE.md, "verify"](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#verify): every rule `verify` checks
 - [docs/RUN_EVIDENCE.md, "verify --against-store"](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#verify---against-store): the live comparison
 - [docs/RUN_EVIDENCE.md, "What a bundle is not"](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#what-a-bundle-is-not): the limits of the format

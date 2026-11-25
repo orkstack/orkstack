@@ -359,3 +359,36 @@ func TestRunSubmitWatchJSON_NoCallbacksLeavesStderrEmpty(t *testing.T) {
 func (r *awaitReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
 	return start.Orkflow, nil
 }
+
+// TestRenderResolved_OfARecordedResolution: what stands on record is said
+// apart from what the run was told, and nothing says it was applied.
+func TestRenderResolved_OfARecordedResolution(t *testing.T) {
+	told := timestamppb.New(time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC))
+	for _, tc := range []struct {
+		name        string
+		resp        *orkstackv1.ResolveAwaitResponse
+		redelivered bool
+		want        []string
+	}{
+		{"pending", &orkstackv1.ResolveAwaitResponse{DeliveryPending: true}, false, []string{"on record", "could not be told", "--redeliver"}},
+		{"past the deadline", &orkstackv1.ResolveAwaitResponse{DeadlinePassed: true, ToldAt: told}, false, []string{"deadline has passed", "the run decides"}},
+		{"delivered again", &orkstackv1.ResolveAwaitResponse{ToldAt: told}, true, []string{"the run was told at"}},
+		{"a repeat", &orkstackv1.ResolveAwaitResponse{ToldAt: told, Repeat: true}, false, []string{"the run was told at"}},
+		{"a first answer", &orkstackv1.ResolveAwaitResponse{ToldAt: told, ValuesSha256: "ab"}, false, []string{"Resolution delivered"}},
+		{"a repeat of one applied", &orkstackv1.ResolveAwaitResponse{Repeat: true}, false, []string{"already resolved with these values"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.resp.RunId, tc.resp.TaskId = "ork-1", "gate"
+			var out strings.Builder
+			must.OK(t, renderResolved(&out, "", tc.resp, "", tc.redelivered))
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("%q does not say %q", out.String(), want)
+				}
+			}
+			if strings.Contains(out.String(), "applied") {
+				t.Errorf("%q says it was applied", out.String())
+			}
+		})
+	}
+}

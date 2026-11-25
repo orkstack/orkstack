@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -57,6 +58,11 @@ func CheckForeignSecrets(ns *orkstackv1.Namespace, owner string, wf *orkstackv1.
 	}
 	for _, t := range wf.GetTasks() {
 		for _, secret := range t.GetSecrets() {
+			// A granted secret is bounded by its grant, which names the
+			// owner's Orkflow (identity.CheckGrants).
+			if provider.ReadByGrant(secret.GetSource(), secret.GetGrant()) {
+				continue
+			}
 			return &ForeignSecretsUnboundedError{
 				Namespace: artifacts.ResolveNamespace(ns.GetName()), Owner: artifacts.ResolveNamespace(owner),
 				Orkflow: wf.GetName() + "@" + wf.GetVersion(), Task: t.GetId(), Secret: secret.GetName(),

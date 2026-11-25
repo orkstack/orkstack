@@ -298,10 +298,17 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 		// Unmasked only when set: a secret that says mask: false is not
 		// looked for in values.json, so its results are a key of their own.
 		Unmasked bool `json:"unmasked,omitzero"`
+		// Grant and Ciphertext only when set, so a secret from the Orker's
+		// own sources keeps its key. A provider's secret read as another
+		// grant is another principal's value, and another ciphertext is
+		// another plaintext: neither may hit the other's memo.
+		Grant      string `json:"grant,omitzero"`
+		Ciphertext string `json:"ciphertext,omitzero"`
 	}
 	secrets := make([]secret, 0, len(in.GetSecrets()))
 	for _, s := range in.GetSecrets() {
-		secrets = append(secrets, secret{Name: s.GetName(), Source: s.GetSource(), Unmasked: s.GetUnmasked()})
+		secrets = append(secrets, secret{Name: s.GetName(), Source: s.GetSource(), Unmasked: s.GetUnmasked(),
+			Grant: s.GetGrant(), Ciphertext: s.GetCiphertext()})
 	}
 	network := "default"
 	if in.GetNetwork() == orkstackv1.NetworkMode_NETWORK_MODE_NONE {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/provider"
 )
 
 // The settings of an Orker's task identity (docs/DEPLOY.md §1).
@@ -21,6 +23,12 @@ const (
 	// IdentityMaxConcurrentVar is orker.identity.max_concurrent: how many
 	// mints this Orker has in flight at once.
 	IdentityMaxConcurrentVar = "ORK_ORKER_IDENTITY_MAX_CONCURRENT"
+	// ProvidersCallTimeoutVar is orker.providers.call_timeout: how long one
+	// call to a provider may take.
+	ProvidersCallTimeoutVar = "ORK_ORKER_PROVIDERS_CALL_TIMEOUT"
+	// ProvidersMaxConcurrentVar is orker.providers.max_concurrent: how many
+	// calls this Orker has in flight to one provider.
+	ProvidersMaxConcurrentVar = "ORK_ORKER_PROVIDERS_MAX_CONCURRENT"
 	// IdentityMaxClockSkewVar is orker.identity.max_clock_skew: how far
 	// apart the engine's issued_at and this Orker's clock may be.
 	IdentityMaxClockSkewVar = "ORK_ORKER_IDENTITY_MAX_CLOCK_SKEW"
@@ -47,6 +55,10 @@ type IdentityConfig struct {
 	MaxConcurrent int
 	MaxClockSkew  time.Duration
 	MaskGrace     time.Duration
+	// ProviderCallTimeout bounds one call to a provider, and
+	// ProviderMaxConcurrent the calls this Orker has in flight to one.
+	ProviderCallTimeout   time.Duration
+	ProviderMaxConcurrent int
 }
 
 // DefaultIdentityConfig is every setting at its default.
@@ -54,6 +66,7 @@ func DefaultIdentityConfig() IdentityConfig {
 	return IdentityConfig{
 		Dir: DefaultIdentityDir, SetupBudget: DefaultIdentitySetupBudget, RetryMin: DefaultIdentityRetryMin,
 		MaxConcurrent: DefaultIdentityMaxConcurrent, MaxClockSkew: DefaultIdentityMaxClockSkew, MaskGrace: DefaultLogMaskGrace,
+		ProviderCallTimeout: provider.DefaultCallTimeout, ProviderMaxConcurrent: provider.DefaultMaxConcurrent,
 	}
 }
 
@@ -72,6 +85,10 @@ func (c IdentityConfig) Validate() error {
 		return fmt.Errorf("%s=%s: want 1s to 1h", IdentityMaxClockSkewVar, c.MaxClockSkew)
 	case c.MaskGrace < 0 || c.MaskGrace > 24*time.Hour:
 		return fmt.Errorf("%s=%s: want 0 to 24h", LogMaskGraceVar, c.MaskGrace)
+	case c.ProviderCallTimeout < time.Second || c.ProviderCallTimeout > 5*time.Minute:
+		return fmt.Errorf("%s=%s: want 1s to 5m", ProvidersCallTimeoutVar, c.ProviderCallTimeout)
+	case c.ProviderMaxConcurrent < 1 || c.ProviderMaxConcurrent > 256:
+		return fmt.Errorf("%s=%d: want 1 to 256", ProvidersMaxConcurrentVar, c.ProviderMaxConcurrent)
 	}
 	return nil
 }
@@ -90,6 +107,7 @@ func IdentityConfigFromEnv(getenv func(string) string) (IdentityConfig, error) {
 	}{
 		{IdentitySetupBudgetVar, &c.SetupBudget}, {IdentityRetryMinVar, &c.RetryMin},
 		{IdentityMaxClockSkewVar, &c.MaxClockSkew}, {LogMaskGraceVar, &c.MaskGrace},
+		{ProvidersCallTimeoutVar, &c.ProviderCallTimeout},
 	} {
 		if v := getenv(d.name); v != "" {
 			parsed, err := time.ParseDuration(v)
@@ -99,12 +117,17 @@ func IdentityConfigFromEnv(getenv func(string) string) (IdentityConfig, error) {
 			*d.to = parsed
 		}
 	}
-	if v := getenv(IdentityMaxConcurrentVar); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			return c, fmt.Errorf("%s=%q is not a whole number", IdentityMaxConcurrentVar, v)
+	for _, d := range []struct {
+		name string
+		to   *int
+	}{{IdentityMaxConcurrentVar, &c.MaxConcurrent}, {ProvidersMaxConcurrentVar, &c.ProviderMaxConcurrent}} {
+		if v := getenv(d.name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return c, fmt.Errorf("%s=%q is not a whole number", d.name, v)
+			}
+			*d.to = n
 		}
-		c.MaxConcurrent = n
 	}
 	return c, c.Validate()
 }

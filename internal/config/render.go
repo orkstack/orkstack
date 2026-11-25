@@ -70,6 +70,7 @@ var alwaysCommentedEnv = map[string]bool{
 	"ORK_AUTH_ISSUERS":     true,
 	"ORK_AUTH_ORKERS":      true,
 	"ORK_ORKER_PROFILES":   true,
+	"ORK_PROVIDERS":        true,
 	"ORK_ORKER_ID":         true,
 	"ORK_ORKER_WORKDIR":    true,
 	"ORK_DOCKER_BIN":       true,

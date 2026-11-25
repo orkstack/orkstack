@@ -26,17 +26,21 @@ function withCounts(m: Manifest, counts: Partial<Manifest['counts']>): Manifest 
 
 test('U1 parseManifest accepts the engine golden and refuses another schema', () => {
 	const m = parseManifest(goldenBytes);
-	expect(m.schema_version).toBe(1);
+	expect(m.schema_version).toBe(3);
 	expect(m.run_id).toBe('ork-20260910-1');
 	expect(m.members.length).toBe(13);
-	const next = new TextEncoder().encode(golden.replace('"schema_version": 1', '"schema_version": 2'));
+	const next = new TextEncoder().encode(golden.replace('"schema_version": 3', '"schema_version": 4'));
 	let refusal = '';
 	try {
 		parseManifest(next);
 	} catch (err) {
 		refusal = String(err);
 	}
-	expect(refusal).toContain('schema_version 2');
+	expect(refusal).toContain('schema_version 4');
+	// A run whose stream has a gap is read like any other.
+	const gapped = JSON.parse(golden);
+	gapped.event_gaps = [{ first: 2, last: 5, reason: 'segment object missing' }];
+	expect(parseManifest(new TextEncoder().encode(JSON.stringify(gapped))).run_id).toBe('ork-20260910-1');
 });
 
 test('U1 evidenceSummary counts, sizes and omits zeros', () => {

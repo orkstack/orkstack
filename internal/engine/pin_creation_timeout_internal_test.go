@@ -64,14 +64,14 @@ func TestLegacyPinCreationTimeout_IsFiveMinutes(t *testing.T) {
 func TestChildStartPlan_CarriesTheRunTreesPinCreationTimeout(t *testing.T) {
 	parent := &runState{runID: "ork-parent", plan: RunPlan{PinCreationTimeoutSeconds: 45}}
 	planned := &ChildRunPlan{Plan: RunPlan{Namespace: "default"}}
-	if got := parent.childStartPlan(planned).PinCreationTimeoutSeconds; got != 45 {
+	if got := parent.childStartPlan("release", planned).PinCreationTimeoutSeconds; got != 45 {
 		t.Errorf("child plan PinCreationTimeoutSeconds = %d, want the parent's 45", got)
 	}
 
 	// A plan built before the field has none, and its children start with
 	// none: byte-identical to what that build sent.
 	old := &runState{runID: "ork-old", plan: RunPlan{}}
-	if got := old.childStartPlan(planned).PinCreationTimeoutSeconds; got != 0 {
+	if got := old.childStartPlan("release", planned).PinCreationTimeoutSeconds; got != 0 {
 		t.Errorf("child plan PinCreationTimeoutSeconds = %d, want unset under a plan without it", got)
 	}
 	if planned.Plan.PinCreationTimeoutSeconds != 0 {

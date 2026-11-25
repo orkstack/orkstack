@@ -148,7 +148,7 @@ func TestRunWorkflow_LoadsAndVerifiesTheDefinitionReference(t *testing.T) {
 
 // TestRunWorkflow_DefinitionIdentityMismatchFailsCorrupt: an object that
 // verifies by its SHA-256 but is not the definition the stub names — another
-// version, another namespace, another digest — is never used: the run ends
+// version, another namespace, another owner, another digest — is never used: the run ends
 // RUN_DEFINITION_CORRUPT, ContractViolation, before any task, with
 // RUN_CREATED and RUN_FAILED published at sequences 1 and 2 (implementer
 // note 8). So does an object whose bytes were altered.
@@ -160,6 +160,7 @@ func TestRunWorkflow_DefinitionIdentityMismatchFailsCorrupt(t *testing.T) {
 	}{
 		{name: "another version", object: func(wf *orkstackv1.Orkflow) { wf.Version = "9.9.9" }},
 		{name: "another namespace", object: func(wf *orkstackv1.Orkflow) { wf.Namespace = "team-b" }},
+		{name: "another owner", object: func(wf *orkstackv1.Orkflow) { wf.DefinitionNamespace = "platform" }},
 		{name: "another digest", object: func(wf *orkstackv1.Orkflow) { wf.DefinitionDigest = strings.Repeat("ef", 32) }},
 		{name: "altered bytes", alter: true},
 	} {

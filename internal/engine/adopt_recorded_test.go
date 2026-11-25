@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/testsuite"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -270,5 +273,43 @@ func TestAdoptRecorded_ACanceledCallIsRetryable(t *testing.T) {
 	var app *temporal.ApplicationError
 	if !errors.As(err, &app) || app.NonRetryable() || app.Type() != ReasonCommitReadFailed {
 		t.Fatalf("error = %v, want a retryable COMMIT_READ_FAILED", err)
+	}
+}
+
+// readBackCalls records the tries each read-back call was reported with.
+type readBackCalls struct{ calls []string }
+
+func (*readBackCalls) ObserveResumeAnomaly(context.Context, string, string) {}
+func (r *readBackCalls) ObserveReadBackCall(_ context.Context, namespace string, attempts int) {
+	r.calls = append(r.calls, fmt.Sprintf("%s:%d", namespace, attempts))
+}
+
+// A call that answered or failed for good reports its tries once; one that
+// will be tried again reports nothing.
+func TestAdoptRecorded_ReportsTheTriesOfACallThatIsOver(t *testing.T) {
+	for name, tc := range map[string]struct {
+		setup func(*adoptFixture)
+		want  []string
+	}{
+		"answered":            {func(f *adoptFixture) { f.commit(t, "mem://c/build", `{}`) }, []string{"default:1"}},
+		"failed for good":     {func(*adoptFixture) {}, []string{"default:1"}},
+		"will be tried again": {func(f *adoptFixture) { f.acts.commits = unansweringCommits{} }, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newAdoptFixture(t)
+			tc.setup(f)
+			seen := &readBackCalls{}
+			f.acts.WithObserver(seen)
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestActivityEnvironment()
+			env.RegisterActivity(f.acts.AdoptRecorded)
+			_, err := env.ExecuteActivity(f.acts.AdoptRecorded, adoptInput(entry("mem://c/build", adoptExpected)))
+			if (err == nil) != (name == "answered") {
+				t.Fatalf("error = %v", err)
+			}
+			if !slices.Equal(seen.calls, tc.want) {
+				t.Fatalf("reported %v, want %v", seen.calls, tc.want)
+			}
+		})
 	}
 }

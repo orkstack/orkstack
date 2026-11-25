@@ -5,7 +5,9 @@ import {
 	originKindSlug,
 	originLabel,
 	originLinkPath,
+	originParentTask,
 	originReferenceURL,
+	originRoot,
 	originRootRunPath
 } from '../src/lib/origin';
 import { FilterOperator, specFor } from '../src/lib/listFilter';
@@ -66,6 +68,24 @@ test('the root run links only when it is not the parent the row already links', 
 	expect(originRootRunPath(create(RunOriginSchema, { kind: RunOriginKind.SUBMIT }))).toBeNull();
 	expect(originRootRunPath(undefined)).toBeNull();
 	expect(originRootRunPath(child('ork-mid', 'ork/a b'))).toBe('/runs/ork%2Fa%20b');
+});
+
+test('a child run names its parent task, and its root where that adds something', () => {
+	const child = create(RunOriginSchema, {
+		kind: RunOriginKind.PARENT_RUN, id: 'ork-mid', rootRunId: 'ork-root', parentTaskId: 'ship',
+		parentOrkflow: { name: 'deploy', version: '2.1.0', namespace: 'platform' },
+		rootOrkflow: { name: 'release', version: '1.0.0' },
+		rootOrigin: { kind: RunOriginKind.TRIGGER, id: 'trg-1' }
+	});
+	expect(originParentTask(child)).toEqual({ task: 'ship', orkflow: 'platform/deploy@2.1.0' });
+	expect(originRoot(child)).toEqual({ orkflow: 'release@1.0.0', startedBy: 'trigger trg-1' });
+	// Its parent is its root: the Orkflow is already named once.
+	child.rootRunId = 'ork-mid';
+	expect(originRoot(child)).toEqual({ orkflow: '', startedBy: 'trigger trg-1' });
+	for (const none of [undefined, create(RunOriginSchema, { kind: RunOriginKind.SUBMIT })]) {
+		expect(originParentTask(none)).toBeNull();
+		expect(originRoot(none)).toEqual({ orkflow: '', startedBy: '' });
+	}
 });
 
 test('the runs list filters by origin kind, and by origin id only within a kind', () => {

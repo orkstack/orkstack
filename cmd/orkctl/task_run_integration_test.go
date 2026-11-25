@@ -200,17 +200,33 @@ func between(t *testing.T, text, tag string) string {
 	return text[start+len("<<<"+tag+"\n") : end]
 }
 
-func withoutIdentity(t *testing.T, raw []byte) map[string]any {
+// withoutOwn is task.json without the members a local run has of its own, and
+// nothing else (docs/OCI_ACTIVITY_CONTRACT.md §10.4): its id, the idempotency
+// key made of it, and when its attempt started, which is returned.
+func withoutOwn(t *testing.T, raw []byte) (map[string]any, time.Time) {
 	t.Helper()
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("task.json: %v\n%s", err, raw)
 	}
-	delete(doc, "idempotencyKey")
-	if run, ok := doc["run"].(map[string]any); ok {
-		delete(run, "id")
+	own := func(in map[string]any, member string) string {
+		v, ok := in[member].(string)
+		if !ok || v == "" {
+			t.Fatalf("task.json has no %s:\n%s", member, raw)
+		}
+		delete(in, member)
+		return v
 	}
-	return doc
+	run, _ := doc["run"].(map[string]any)
+	task, _ := doc["task"].(map[string]any)
+	if run["context"] != orker.RunContextAvailable {
+		t.Fatalf("task.json's run.context = %v, want %s:\n%s", run["context"], orker.RunContextAvailable, raw)
+	}
+	own(doc, "idempotencyKey")
+	own(run, "id")
+	started, err := time.Parse(time.RFC3339Nano, own(task, "attemptStartedAt"))
+	must.OK(t, err)
+	return doc, started
 }
 
 func fileSHA(t *testing.T, path string) string {
@@ -247,13 +263,17 @@ func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) []string {
 
 	keptTask, err := os.ReadFile(filepath.Join(session, "input", "task.json"))
 	must.OK(t, err)
-	local, remote := withoutIdentity(t, keptTask), withoutIdentity(t, []byte(between(t, production, "TASK")))
+	local, localStarted := withoutOwn(t, keptTask)
+	remote, remoteStarted := withoutOwn(t, []byte(between(t, production, "TASK")))
 	localJSON, _ := stablejson.Marshal(local)
 	remoteJSON, _ := stablejson.Marshal(remote)
 	if !bytes.Equal(localJSON, remoteJSON) {
-		t.Fatalf("task.json differs beyond run.id and idempotencyKey\nlocal:  %s\nremote: %s", localJSON, remoteJSON)
+		t.Fatalf("task.json differs beyond run.id, idempotencyKey and task.attemptStartedAt\nlocal:  %s\nremote: %s", localJSON, remoteJSON)
 	}
-	t.Logf("EVIDENCE task.json equal to the production attempt's after removing run.id and idempotencyKey")
+	if !localStarted.After(remoteStarted) {
+		t.Fatalf("the local attempt started at %s, not after the recorded one at %s", localStarted, remoteStarted)
+	}
+	t.Logf("EVIDENCE task.json equal to the production attempt's, run context included, after removing run.id, idempotencyKey and task.attemptStartedAt")
 
 	produce := taskRunNamed(run, "produce")
 	if got := fileSHA(t, filepath.Join(session, "input", "upstream", "produce", "values.json")); got != produce.GetValuesRef().GetSha256() {

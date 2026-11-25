@@ -4,19 +4,20 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // TestIdentitySpecDigest_FromTheInterpreterInput is the second of the spec
 // digest's three ways (docs/TASK_IDENTITY.md, "Which run a token is for"):
 // each task's digest computed from the input this interpreter builds for it
 // is the one the engine computes from its definition at submit, so an Orker
-// that hashes its input agrees with the admission. The identities and
-// credentials reach the input in its identity context, which dispatch sets
-// from the task; they are set from the task here.
+// that hashes its input agrees with the admission. The identities, the
+// credentials and the grants reach it in its identity context.
 func TestIdentitySpecDigest_FromTheInterpreterInput(t *testing.T) {
 	with, err := structpb.NewStruct(map[string]any{"count": 3, "ratio": 0.5, "dry": false, "targets": []any{"a", "b"},
 		"nested": map[string]any{"k": "v", "empty": map[string]any{}}, "none": nil})
@@ -43,11 +44,16 @@ func TestIdentitySpecDigest_FromTheInterpreterInput(t *testing.T) {
 		ProfileContracts: map[string]map[string]ProfileContracts{"payments": {
 			"gpu-a": {Declared: map[string][]string{"v2": {strings.Repeat("c", 64)}}},
 			"fpga":  {Set: []ContractPin{{Label: "v1"}}}}}}}
+	s.plan.Identity = &IdentityPlan{AdmissionSHA256: strings.Repeat("c", 64), Issuer: "https://ork.example", SpecVersion: 1,
+		Grants: map[string]artifacts.GrantSelection{
+			"db":    {Provider: "vault", Principal: "payments-app", Audience: "vault.internal"},
+			"pki":   {Provider: "vault", Principal: "pki", Audience: "vault.internal"},
+			"other": {Provider: "aws", Principal: "role/x", Audience: "sts"}}}
 	for _, tk := range tasks {
 		s.tasks[tk.GetId()] = tk
 	}
 	for _, tk := range tasks {
-		want, _, err := task.IdentitySpecDigest(1, task.IdentitySpecOfTask(tk))
+		want, _, err := task.IdentitySpecDigest(1, task.IdentitySpecOfTask(tk, IdentityGrants(tk, s.plan.Identity.Grants)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,13 +62,12 @@ func TestIdentitySpecDigest_FromTheInterpreterInput(t *testing.T) {
 		if in.Devices, err = s.deviceRefs(tk.GetPool(), tk); err != nil {
 			t.Fatal(err)
 		}
-		in.Identity = &orkstackv1.IdentityContext{Identities: tk.GetIdentities(), Credentials: tk.GetCredentials()}
 		got, gotMembers, err := task.IdentitySpecDigest(1, task.IdentitySpecOfInput(in))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got != want {
-			_, wantMembers, _ := task.IdentitySpecDigest(1, task.IdentitySpecOfTask(tk))
+			_, wantMembers, _ := task.IdentitySpecDigest(1, task.IdentitySpecOfTask(tk, IdentityGrants(tk, s.plan.Identity.Grants)))
 			var differs []string
 			for _, m := range task.IdentitySpecMembers {
 				if gotMembers[m] != wantMembers[m] {
@@ -74,11 +79,12 @@ func TestIdentitySpecDigest_FromTheInterpreterInput(t *testing.T) {
 	}
 }
 
-// TestExecuteTaskInput_IdentityContext: a task that declares identities or
-// credentials, in a run its plan admitted, is dispatched with what its
-// attempt needs to ask for its tokens, its identities and credentials copied
-// verbatim; every other task, and every task of a run with no admission, is
-// dispatched with none.
+// TestExecuteTaskInput_IdentityContext: every task of a run its plan admitted
+// is dispatched with what its attempt needs of the engine: the admission, the
+// spec's version and the wait at its commit, which a task that holds no
+// identity needs too, since the engine records its result; and its own
+// identities and credentials, copied verbatim. A task of a run with no
+// admission is dispatched with none.
 func TestExecuteTaskInput_IdentityContext(t *testing.T) {
 	ids := []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts"}}
 	creds := []*orkstackv1.CredentialRef{{Name: "cert", Grant: "pki", Path: "pki/issue/x"}}
@@ -86,20 +92,30 @@ func TestExecuteTaskInput_IdentityContext(t *testing.T) {
 		{Id: "holds", Identities: ids},
 		{Id: "creds", Credentials: creds},
 		{Id: "plain"},
+		{Id: "reads", Secrets: []*orkstackv1.SecretRef{{Name: "own", Source: "env:OWN"}, {Name: "db", Source: "vault:secret/db#url", Grant: "db"}}},
 	}
 	plan := RunPlan{Namespace: "default", Identity: &IdentityPlan{AdmissionSHA256: strings.Repeat("c", 64), Issuer: "https://ork.example",
-		TokenTTLSeconds: 900, SpecVersion: 1}}
+		TokenTTLSeconds: 900, SpecVersion: 1, CommitWaitSeconds: 60, Grants: map[string]artifacts.GrantSelection{
+			"db":  {Provider: "vault", Principal: "payments-app", Audience: "vault.internal"},
+			"pki": {Provider: "vault", Principal: "pki", Audience: "vault.internal"}}}}
+	wantGrants := map[string]*orkstackv1.IdentityGrant{
+		"creds": {Name: "pki", Provider: "vault", Principal: "pki", Audience: "vault.internal"},
+		"reads": {Name: "db", Provider: "vault", Principal: "payments-app", Audience: "vault.internal"},
+	}
 	s := &runState{runID: "ork-id", wf: &orkstackv1.Orkflow{Name: "w", Version: "1", Tasks: tasks}, tasks: map[string]*orkstackv1.Task{}, plan: plan}
-	got := s.executeTaskInput(tasks[0], "holds", "", nil).GetIdentity()
-	if got.GetIssuer() != "https://ork.example" || got.GetAdmissionSha256() != strings.Repeat("c", 64) || got.GetDigestVersion() != 1 ||
-		len(got.GetIdentities()) != 1 || got.GetIdentities()[0].GetName() != "aws" || got.GetRootScope() != 0 || got.GetResumeScope() != 0 {
-		t.Fatalf("a task with an identity: %v", got)
-	}
-	if got := s.executeTaskInput(tasks[1], "creds", "", nil).GetIdentity(); len(got.GetCredentials()) != 1 {
-		t.Fatalf("a task with a credential: %v", got)
-	}
-	if got := s.executeTaskInput(tasks[2], "plain", "", nil).GetIdentity(); got != nil {
-		t.Fatalf("a task with neither: %v", got)
+	for _, tk := range tasks {
+		got := s.executeTaskInput(tk, tk.GetId(), "", nil).GetIdentity()
+		if got.GetIssuer() != "https://ork.example" || got.GetAdmissionSha256() != strings.Repeat("c", 64) || got.GetDigestVersion() != 1 ||
+			got.GetCommitWaitSeconds() != 60 || got.GetRootScope() != 0 || got.GetResumeScope() != 0 ||
+			len(got.GetIdentities()) != len(tk.GetIdentities()) || len(got.GetCredentials()) != len(tk.GetCredentials()) {
+			t.Errorf("task %q: %v", tk.GetId(), got)
+		}
+		switch want := wantGrants[tk.GetId()]; {
+		case want == nil && len(got.GetGrants()) != 0:
+			t.Errorf("task %q uses no grant and has %v", tk.GetId(), got.GetGrants())
+		case want != nil && (len(got.GetGrants()) != 1 || !proto.Equal(got.GetGrants()[0], want)):
+			t.Errorf("task %q's grants = %v; want only %v", tk.GetId(), got.GetGrants(), want)
+		}
 	}
 	s.plan.Identity = nil
 	if got := s.executeTaskInput(tasks[0], "holds", "", nil).GetIdentity(); got != nil {

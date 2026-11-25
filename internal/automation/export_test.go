@@ -303,7 +303,7 @@ func TestRender_Golden(t *testing.T) {
 		"telemetry: " + renderTelemetry(&orkstackv1.TelemetryPolicy{Sink: "datadog", Attributes: map[string]string{"b": "2", "a": "1"}}),
 		"telemetry unset: " + renderTelemetry(nil),
 		"events: " + renderEvents([]webhooks.Event{webhooks.EventTaskSucceeded, webhooks.EventRunFailed}),
-		"events every run transition: " + renderEvents(nil),
+		"events the run's lifecycle: " + renderEvents(nil),
 		"schedule summary: " + scheduleSummary("reconcile", "", &orkstackv1.ScheduleSpec{Cron: []string{"0 2 * * *"}, Timezone: "Europe/Lisbon"}),
 		"schedule summary interval: " + scheduleSummary("sync", "2", &orkstackv1.ScheduleSpec{Cron: []string{"@daily"}, Interval: durationpb.New(time.Hour)}),
 		"trigger summary: " + triggerSummary("deploy", ""),

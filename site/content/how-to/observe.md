@@ -21,12 +21,27 @@ To try this on a laptop first, run `make up-observability`: it starts OrkStack w
 | Signal | Turn it on with | What you get |
 |---|---|---|
 | Metrics | `OTEL_METRICS_EXPORTER=otlp`, or `prometheus` | Counts and durations of runs, tasks and refusals. |
-| Traces | `OTEL_TRACES_EXPORTER=otlp` | One trace per run, across `ork` and every Orker that ran its tasks. |
+| Traces | `OTEL_TRACES_EXPORTER=otlp` | One trace per run and its child runs, across `ork` and every Orker that ran their tasks. |
 | Logs | `OTEL_LOGS_EXPORTER=otlp` | Process logs. |
 | Task output | `ORK_ORKER_TASK_LOG_EXPORT=true` on each Orker, with logs on | Each line of task stdout and stderr, as a log record. |
 | Process log format | `ORK_LOG_FORMAT=json` | JSON lines. The default is text. |
 
 With `OTEL_METRICS_EXPORTER=prometheus`, set `ORK_ADMIN_ADDR` and let Prometheus scrape `/metrics` on it.
+
+## Follow a run in a trace
+
+A run's trace starts with the request that submitted it, or with the schedule that fired it. Its child runs join it. Each run has an `ork.run` span, made when the run ends. Each attempt has an `ork.task.attempt` span.
+
+- To find a run and everything below it, match `ork.run_id` or `ork.root_run_id` with the run's ID.
+- `Run.trace_id` in the API is the run's trace.
+- A task reads its own span under `trace` in `task.json`. Pass `traceparent` on to what you call, to see your own work in the same trace.
+- A run's spans go to the destination its namespace chose.
+
+A request that carries a `traceparent` starts a trace of its own, linked to the caller's. To join the caller's trace instead, set this on every `ork`, and only if you trust whoever sends it:
+
+```bash
+export ORK_TELEMETRY_TRUST_INBOUND_TRACE=true
+```
 
 ## The admin listener
 
@@ -38,8 +53,8 @@ The listener answers only names it knows in a request's `Host`: an IP address, `
 
 | Metric | Labels | Counts |
 |---|---|---|
-| `ork.runs` | `status` | Each run, once, when it reaches a final state. |
-| `ork.run.duration` | `status` | Time from start to finish of each run. |
+| `ork.runs` | `status`, `ork.run.resumption` | Each run when it reaches a final state, and a resumed run again at each later ending, labelled `ork.run.resumption="true"`. Leave those out to count runs. |
+| `ork.run.duration` | `status`, `ork.run.resumption` | Time from start to finish of each run, recorded at the same endings. |
 | `ork.tasks` | `ork.pool`, `status`, `failure_category` | Each task, once, when it reaches a final state. |
 | `ork.task.duration` | `ork.pool`, `status` | Time from dispatch to finish of each task. |
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Each attempt, on the Orker that ran it. |
@@ -74,6 +89,7 @@ orkctl namespace update payments --telemetry-sink tenant-collector
 ## See also
 
 - [DEPLOY.md, “7. Telemetry”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#7-telemetry): the admin listener, exporters and recipes
+- [DEPLOY.md, “Traces”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#traces): where a trace starts, every span's attributes, and when a span is missing
 - [DEPLOY.md, “Lifecycle metrics”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics): every run and task metric, with its labels
 - [DEPLOY.md, “Declaring an Orker's capacity”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#declaring-an-orkers-capacity): the capacity metrics
 - [deploy/observability/README.md](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md): the local observability stack and its example queries

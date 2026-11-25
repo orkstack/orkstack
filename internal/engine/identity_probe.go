@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -15,6 +17,41 @@ import (
 // ReasonPoolNoIdentitySupport refuses a run that holds an identity on a pool
 // one of whose Orkers does not serve task identity (docs/REASONS.md).
 const ReasonPoolNoIdentitySupport = "POOL_NO_IDENTITY_SUPPORT"
+
+// ReasonPoolNoProvider refuses a run whose task logs in through a grant on a
+// pool one of whose Orkers does not declare the grant's provider
+// (docs/REASONS.md).
+const ReasonPoolNoProvider = "POOL_NO_PROVIDER"
+
+// ProviderNeed is the provider a grant is for: the name a deployment declares
+// it under, and its type as this engine's declaration says.
+type ProviderNeed struct {
+	Name, Type string
+}
+
+// PoolNoProviderError names the pool, the tasks that need the provider there,
+// and the first of the pool's Orkers that does not declare it as this engine
+// does.
+type PoolNoProviderError struct {
+	Namespace, Pool string
+	Tasks           []string
+	OrkerID         string
+	BuildID         string
+	Provider, Type  string
+	// Declared is the type the Orker declares under the name, "" when it
+	// declares none.
+	Declared string
+}
+
+func (e *PoolNoProviderError) Error() string {
+	what := fmt.Sprintf("does not declare provider %q, or predates providers", e.Provider)
+	if e.Declared != "" {
+		what = fmt.Sprintf("declares provider %q as type %q, and this engine as type %q", e.Provider, boundedOrkerText(e.Declared), e.Type)
+	}
+	return fmt.Sprintf("%s: pool %q (namespace %q, tasks: %s) is served by Orker %q (build %q), which %s: "+
+		"every Orker of a pool declares the providers its tasks use (ORK_PROVIDERS; docs/PROVIDERS.md, \"Declaring providers\")",
+		ReasonPoolNoProvider, e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID, what)
+}
 
 // maxOrkerReason bounds the Orker's own reason in a refusal: it is the
 // Orker's text, and a submit's answer carries it.
@@ -56,14 +93,21 @@ func (e *PoolNoIdentitySupportError) Error() string {
 // tasks. planned is a definition Plan returned, its tasks' pools resolved.
 // It is asked of the run and of every child it plans.
 //
+// needs is, by grant, the provider each of the definition's grants is for. A
+// pool a task runs on that names one of them is refused POOL_NO_PROVIDER when
+// an Orker of it does not declare that provider; only the name and the type
+// are compared, and one that declares it for another audience refuses the
+// task at dispatch (PROVIDER_NOT_CONFIGURED).
+//
 // Where another Orker of the pool answers, an Orker that polls the pool's
 // channel and does not answer on its own is refused too: it may be the one
 // the task lands on. A pool none of whose Orkers answers, and a silent
 // Orker whose pool cannot be told, are logged and not refused (AGENTS.md
 // §7.2): nothing was measured, and an Orker that does not serve task
 // identity refuses such a task at dispatch.
-func (r *PoolResolver) CheckIdentitySupport(ctx context.Context, ns *orkstackv1.Namespace, planned *orkstackv1.Orkflow) error {
+func (r *PoolResolver) CheckIdentitySupport(ctx context.Context, ns *orkstackv1.Namespace, planned *orkstackv1.Orkflow, needs map[string]ProviderNeed) error {
 	tasksByPool := map[string][]string{}
+	needing := map[string]map[ProviderNeed][]string{}
 	var order []string
 	for _, t := range planned.GetTasks() {
 		if t.GetAwait() != nil || t.GetSleep() != nil || t.GetOrkflow() != nil {
@@ -73,6 +117,18 @@ func (r *PoolResolver) CheckIdentitySupport(ctx context.Context, ns *orkstackv1.
 			order = append(order, t.GetPool())
 		}
 		tasksByPool[t.GetPool()] = append(tasksByPool[t.GetPool()], t.GetId())
+		for _, grant := range TaskGrants(t) {
+			need, ok := needs[grant]
+			if !ok {
+				continue
+			}
+			if needing[t.GetPool()] == nil {
+				needing[t.GetPool()] = map[ProviderNeed][]string{}
+			}
+			if tasks := needing[t.GetPool()][need]; !slices.Contains(tasks, t.GetId()) {
+				needing[t.GetPool()][need] = append(tasks, t.GetId())
+			}
+		}
 	}
 	if r.Fleet == nil {
 		if len(order) > 0 {
@@ -91,12 +147,40 @@ func (r *PoolResolver) CheckIdentitySupport(ctx context.Context, ns *orkstackv1.
 			return &PoolNoIdentitySupportError{Namespace: namespaceName(ns), Pool: pool, Tasks: tasksByPool[pool],
 				OrkerID: old.GetOrkerId(), BuildID: old.GetBuildId(), Reason: old.GetIdentityUnsupportedReason()}
 		}
+		if err := lackingProvider(answered, needing[pool]); err != nil {
+			err.Namespace, err.Pool = namespaceName(ns), pool
+			return err
+		}
 		if len(answered) == 0 || census.unansweredCount() == 0 {
 			continue
 		}
 		if silent := r.silentOrkerOf(ctx, census, ns, planned, pool); silent != "" {
 			return &PoolNoIdentitySupportError{Namespace: namespaceName(ns), Pool: pool, Tasks: tasksByPool[pool],
 				OrkerID: silent, Unanswered: true}
+		}
+	}
+	return nil
+}
+
+// lackingProvider is the first of orkers that does not declare one of needs,
+// with the tasks that need it, or nil. Needs are asked in name order, so a
+// refusal is the same on every submit.
+func lackingProvider(orkers []*orkstackv1.DescribeOrkerResult, needs map[ProviderNeed][]string) *PoolNoProviderError {
+	ordered := slices.SortedFunc(maps.Keys(needs), func(a, b ProviderNeed) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Type, b.Type))
+	})
+	for _, need := range ordered {
+		for _, o := range orkers {
+			declared := ""
+			for _, p := range o.GetProviders() {
+				if p.GetName() == need.Name {
+					declared = p.GetType()
+				}
+			}
+			if declared != need.Type {
+				return &PoolNoProviderError{Tasks: needs[need], OrkerID: o.GetOrkerId(), BuildID: o.GetBuildId(),
+					Provider: need.Name, Type: need.Type, Declared: declared}
+			}
 		}
 	}
 	return nil
@@ -161,14 +245,19 @@ func reasonOrUnsaid(r string) string {
 	if r == "" {
 		return "it gives no reason: it may predate task identity"
 	}
-	if len(r) > maxOrkerReason {
-		cut := maxOrkerReason
-		for cut > 0 && !utf8.RuneStart(r[cut]) {
-			cut--
-		}
-		r = r[:cut] + "…"
+	return fmt.Sprintf("it says %q", boundedOrkerText(r))
+}
+
+// boundedOrkerText is an Orker's own text as a refusal carries it.
+func boundedOrkerText(s string) string {
+	if len(s) <= maxOrkerReason {
+		return s
 	}
-	return fmt.Sprintf("it says %q", r)
+	cut := maxOrkerReason
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 var _ PoolPollers = (*TemporalPoolProbe)(nil)

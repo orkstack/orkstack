@@ -144,7 +144,7 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 			o.BaseEndpoint = aws.String(cfg.S3Endpoint)
 		}
 		o.UsePathStyle = cfg.S3PathStyle
-		o.APIOptions = append(o.APIOptions, observeRequests)
+		o.APIOptions = append(o.APIOptions, observeRequests, observeAnswerClock)
 	})
 	return client, bucket, nil
 }

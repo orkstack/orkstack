@@ -414,6 +414,11 @@ func IsSubscribableEvent(event *orkstackv1.Event) bool {
 	case orkstackv1.EventType_EVENT_TYPE_RUN_PAUSED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED:
 		return true
+	// A resume's two (rule W): neither is an ending, so never
+	// IsRunTransitionEvent, which also decides archiving.
+	case orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_RESULTS_KEPT:
+		return true
 	}
 	return IsRunTransitionEvent(event)
 }
