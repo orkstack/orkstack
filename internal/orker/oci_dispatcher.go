@@ -230,7 +230,10 @@ type OCIDispatcher struct {
 	// (run_context.go); nil fails a task whose input carries a run context
 	// RUN_CONTEXT_UNAVAILABLE. runContexts is the process's copy of the
 	// objects it read, built on first use.
-	RunContexts         RunContextReader
+	RunContexts RunContextReader
+	// LocalRunContext, of a local run of a recorded run's task, is read in
+	// place of the object. Nil on an Orker.
+	LocalRunContext     *LocalRunContext
 	runContextCacheOnce sync.Once
 	runContexts         *eachIndexCache
 	// runAsOrker is the boot probe's finding about the §3.1 escape hatch on
@@ -1307,7 +1310,8 @@ func (d *OCIDispatcher) execute(
 	// a commit nor a hit is ever refused for it, and before the image, so a
 	// read that fails pulls nothing.
 	var runContext *artifacts.RunContextObject
-	if !cached {
+	contextCached := cached || (d.LocalRunContext != nil && d.LocalRunContext.Cached)
+	if !contextCached && d.LocalRunContext == nil {
 		if runContext, failure = d.runContextObject(ctx, in); failure != nil {
 			return nil, failure
 		}
@@ -1400,7 +1404,11 @@ func (d *OCIDispatcher) execute(
 	if d.TraceContext != nil {
 		traceCarrier = d.TraceContext(ctx)
 	}
-	contextRun, contextTask, failure := runContextTaskJSON(in, runContext, cached, attempt, attemptStart(ctx, startedAt))
+	lineage := objectLineage(in, runContext)
+	if d.LocalRunContext != nil {
+		lineage = fixedLineage(d.LocalRunContext.Lineage)
+	}
+	contextRun, contextTask, failure := runContextTaskJSON(in, lineage, contextCached, attempt, attemptStart(ctx, startedAt))
 	if failure != nil {
 		return nil, failure
 	}

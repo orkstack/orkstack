@@ -14,6 +14,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -322,6 +323,7 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	}
 	plan := parityPlan(c.wf)
 	plan.Children = parityChildren(t, c.wf)
+	plan.RunContextSHA256, plan.RunContextMaxBytes = strings.Repeat("c", 64), engine.DefaultRunContextMaxBytes
 	if c.continued {
 		budget := engine.DefaultContinuationBudget(engine.DefaultContinuationEvents, engine.DefaultContinuationBytes,
 			engine.DefaultContinuationRestoreTimeout)
@@ -497,9 +499,20 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 					}
 					continue
 				}
+				// Its run context is read off the run's record; only the
+				// object's name is the interpreter's alone. A time far from
+				// the run's, so a scheduled time that is not the record's own
+				// shows.
+				local.RunContext = engine.RunContextFromRun(run, c.wf, want.GetTaskId(), local.Item, time.Unix(1, 0))
+				if want.GetRunContext() == nil || local.RunContext == nil {
+					t.Errorf("%s/%s: run context: recorded %v, local %v", c.name, want.GetTaskId(), want.GetRunContext(), local.RunContext)
+				}
 				got, err := engine.LocalTaskInput(local)
 				must.OKf(t, err, "%s/%s: LocalTaskInput", c.name, want.GetTaskId())
 				cleared := proto.Clone(want).(*orkstackv1.ExecuteTaskInput)
+				if cleared.RunContext != nil {
+					cleared.RunContext.ObjectSha256 = ""
+				}
 				cleared.CommitUri = ""
 				cleared.Pin = nil
 				cleared.Telemetry = nil
@@ -543,6 +556,63 @@ func taskPin(wf *orkstackv1.Orkflow, id string) string {
 		}
 	}
 	return ""
+}
+
+// TestRunContextFromRun: what a local run is given of a recorded run's times,
+// and nothing for a run whose tasks were given no context.
+func TestRunContextFromRun(t *testing.T) {
+	at := func(s int64) *timestamppb.Timestamp { return &timestamppb.Timestamp{Seconds: s} }
+	wf := &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{
+		{Id: "plain", Retry: &orkstackv1.RetryPolicy{MaximumAttempts: 3}},
+		{Id: "fan", Each: &orkstackv1.EachSpec{}},
+		{Id: "never"},
+	}}
+	recorded := func() *orkstackv1.Run {
+		return &orkstackv1.Run{Id: "ork-child", CreatedAt: at(10), StartedAt: at(11),
+			RunContext: &orkstackv1.RunContextState{Status: orkstackv1.RunContextStatus_RUN_CONTEXT_STATUS_AVAILABLE},
+			Timeout:    &orkstackv1.RunTimeout{Seconds: 60, Deadline: at(71)},
+			Origin:     &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root"},
+			TaskRuns: []*orkstackv1.TaskRun{
+				{TaskId: "plain", ScheduledAt: at(20), Attempt: 2},
+				{TaskId: "fan", ScheduledAt: at(30), Items: []*orkstackv1.TaskRun{
+					{TaskId: "fan", Item: proto.Int32(0), ScheduledAt: at(31)}, {TaskId: "fan", Item: proto.Int32(1), ScheduledAt: at(32)}, {TaskId: "fan", Item: proto.Int32(2)}}},
+				{TaskId: "never"},
+			}}
+	}
+	want := func(scheduled int64, attempts int32) *orkstackv1.RunContext {
+		return &orkstackv1.RunContext{CreatedAt: at(10), StartedAt: at(11), TaskScheduledAt: at(scheduled),
+			DeclaredMaxAttempts: attempts, RunDeadline: at(71), ParentRunId: "ork-mid", RootRunId: "ork-root"}
+	}
+	now := time.Unix(99, 0)
+	for _, tc := range []struct {
+		task string
+		item *int32
+		want *orkstackv1.RunContext
+	}{
+		{"plain", nil, want(20, 3)},
+		{"fan", proto.Int32(1), want(32, 1)},
+		{"fan", proto.Int32(2), want(99, 1)}, // an item the run never scheduled
+		{"never", nil, want(99, 1)},
+		{"absent", nil, nil},
+	} {
+		if got := engine.RunContextFromRun(recorded(), wf, tc.task, tc.item, now); !proto.Equal(got, tc.want) {
+			t.Errorf("%s %v:\n got %v\nwant %v", tc.task, tc.item, got, tc.want)
+		}
+	}
+	for name, drop := range map[string]func(*orkstackv1.Run){
+		"no run context": func(r *orkstackv1.Run) { r.RunContext = nil },
+		"never started":  func(r *orkstackv1.Run) { r.StartedAt = nil },
+		"no created":     func(r *orkstackv1.Run) { r.CreatedAt = nil },
+	} {
+		run := recorded()
+		drop(run)
+		if got := engine.RunContextFromRun(run, wf, "plain", nil, now); got != nil {
+			t.Errorf("%s: %v, want none", name, got)
+		}
+	}
+	if got := engine.RunContextFromRun(nil, wf, "plain", nil, now); got != nil {
+		t.Errorf("no run: %v, want none", got)
+	}
 }
 
 // TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset.

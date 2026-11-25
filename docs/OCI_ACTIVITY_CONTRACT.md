@@ -604,7 +604,7 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `run.orkflow.name` | string | required | — | slug |
 | `run.orkflow.version` | string | required | — | pinned version string; for a document never created, run locally by `orkctl task run -f`, its content hash (§4.4) |
 | `run.orkflow.definitionDigest` | string | required | — | `sha256:<64 hex>` (§4.4) |
-| `run.context` | string | required | — | the run context's marker: `available` (every run-context key below that applies is present), `cached` (a cached task: the run-describing keys are left out, below), or `unavailable` (the input carries no run context: a local run, `orkctl activity test`). Check it before trusting the absence of any run-context key |
+| `run.context` | string | required | — | the run context's marker: `available` (every run-context key below that applies is present), `cached` (a cached task: the run-describing keys are left out, below), or `unavailable` (the input carries no run context: a local run of no recorded run (§10.4), `orkctl activity test`). Check it before trusting the absence of any run-context key |
 | `run.createdAt`, `run.startedAt` | string | optional | absent | RFC 3339 UTC: when the run was created and when it started executing; present when `run.context` is `available` |
 | `run.deadline` | string | optional | absent | RFC 3339 UTC: the run's deadline, for a run whose definition declares `timeout:` (a child's is its own `timeout:`'s); `available` only |
 | `run.origin` | object | optional | absent | what started the run; `available` only. `kind` (`SUBMIT`, `TRIGGER`, `SCHEDULE`, `RUN_AGAIN`, `PARENT_RUN`), `id` (the trigger, schedule or source run; for `PARENT_RUN` the parent run), `reference` and `description` (caller-supplied, at most 256 B), `principal` (who asked: asserted by a gateway unless `principalVerified` is true) |
@@ -2590,8 +2590,20 @@ with those inputs, fail?* It runs **one** task of an Orkflow on the caller's
 machine and prints the rendered `config.json` before the container starts
 (`--render-only` stops there).
 
-A local run carries no run context: its `task.json` says `run.context:
-"unavailable"` and has none of the run-context keys (§3.2).
+**The run context.** With `--from-run`, `task.json` carries the recorded run's
+(§3.2), read off its record and not from its run-context object, which only an
+Orker's credential reaches. Three members are always the local run's own:
+`run.id`, the `idempotencyKey` made of it, and `task.attemptStartedAt`. So are
+`task.attempt` and `task.ownAttempt`, which are 1 where the recorded attempt's
+may be more; `task.maxAttempts` is the document's; and `task.scheduledAt` is
+now for a task the run never scheduled. Otherwise every run-context key is the
+recorded run's, so `run.root.runId` names that run. A record names the owner of
+its own Orkflow, its parent's and its root's and no other, so for a run whose
+parent is not the root the root's `origin` has no `principal`,
+`principalVerified` or `reference`, as inside a shared Orkflow. `run.context` is
+`cached` for a cached task; and `unavailable`, with none of the keys, without
+`--from-run`, for a run whose tasks were given no context or that never
+started, and where the record does not say the whole lineage.
 
 **What it shares with an Orker.** The dispatcher is the Orker's, built by the
 Orker's constructor, on this machine's runtime; the renderer is the Orker's,

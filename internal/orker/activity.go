@@ -185,6 +185,8 @@ type Options struct {
 	// fails a task whose input carries a run context RUN_CONTEXT_UNAVAILABLE;
 	// cmd/orker always builds one.
 	RunContexts RunContextReader
+	// LocalRunContext is a local run's own (LocalRunContext). Nil on an Orker.
+	LocalRunContext *LocalRunContext
 }
 
 // Activities implements the engine<->Orker activity seam.
@@ -344,6 +346,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			CommitRoot:          strings.TrimSuffix(opts.CommitRoot, "/"),
 			EachIndexes:         eachIndexReaderOf(opts.EachIndexes),
 			RunContexts:         opts.RunContexts,
+			LocalRunContext:     opts.LocalRunContext,
 			Policy:              policy,
 			WorkRoot:            workRoot,
 			OrkerID:             orkerID,

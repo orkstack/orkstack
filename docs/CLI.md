@@ -4561,7 +4561,8 @@ renderer and workspace an Orker uses, and prints the rendered config.json before
 the container starts.
 
 With --from-run RUN, the task's upstream values and artifacts are the run's
-committed bytes, read through the engine's integrity-checked artifact reads. With
+committed bytes, read through the engine's integrity-checked artifact reads, and
+its task.json carries the run's context (what started the run and when). With
 --file, an edited document that is not stored is validated by the engine and run instead
 of the stored definition. --output and --artifact supply an upstream task's
 values.json and output files from local files.

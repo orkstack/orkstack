@@ -29,7 +29,8 @@ const (
 	// out so a memo hit can never hand it another run's data.
 	RunContextCached = "cached"
 	// RunContextUnavailable: the input carries no run context (a local run
-	// from files, `orkctl activity test`).
+	// from files, one of a run whose record does not say it, `orkctl activity
+	// test`).
 	RunContextUnavailable = "unavailable"
 )
 
@@ -119,21 +120,109 @@ func (d *OCIDispatcher) runContextObject(ctx context.Context, in *orkstackv1.Exe
 	return &obj, nil
 }
 
+// RunLineage is where a run came from, as task.json's run says it: what
+// started it, the run at the top of its composed chain and, for a child, the
+// run and the task that started it.
+type RunLineage struct {
+	Origin    artifacts.RunContextOrigin
+	RootRunID string
+	// Root is the root run's Orkflow and what started it, as this run may read
+	// that (RunContextRoot.OriginShared is not used).
+	Root artifacts.RunContextRoot
+	// Parent is nil for a top-level run.
+	Parent *RunParent
+}
+
+// RunParent is the run and the composed task that started a child run.
+type RunParent struct {
+	RunID, TaskID string
+	Orkflow       artifacts.RunContextOrkflow
+}
+
+// lineageSource is where a run context's lineage is read from, once its times
+// and attempts stand.
+type lineageSource func() (RunLineage, *Failure)
+
+// fixedLineage is a lineage that is known.
+func fixedLineage(l RunLineage) lineageSource {
+	return func() (RunLineage, *Failure) { return l, nil }
+}
+
+// objectLineage is the lineage of in's run from its run tree's object. One it
+// cannot account for whole fails closed, RUN_CONTEXT_INVALID: no key is
+// guessed, and a run inside a shared Orkflow is never shown the root's
+// principal or reference.
+func objectLineage(in *orkstackv1.ExecuteTaskInput, obj *artifacts.RunContextObject) lineageSource {
+	return func() (RunLineage, *Failure) {
+		rc := in.GetRunContext()
+		invalid := func(format string, args ...any) (RunLineage, *Failure) {
+			return RunLineage{}, runContextInvalid(format, args...)
+		}
+		if obj == nil {
+			return invalid("was not read for a task that is not cached")
+		}
+		index := int(rc.GetTreeIndex())
+		if index < 0 || index >= len(obj.Entries) {
+			return invalid("names entry %d of a tree of %d runs", index, len(obj.Entries))
+		}
+		if index > 0 && (rc.GetRootRunId() == "" || rc.GetParentRunId() == "") {
+			return invalid("of a child run names no root or no parent")
+		}
+		// A run inside an Orkflow another namespace shared, at any depth, reads
+		// the root's origin without its principal and reference.
+		shared := false
+		for i := index; i > 0; {
+			e := obj.Entries[i]
+			if e.Parent == nil || int(*e.Parent) < 0 || int(*e.Parent) >= i {
+				return invalid("entry %d has no parent before it", i)
+			}
+			shared = shared || e.Shared
+			i = int(*e.Parent)
+		}
+		rootOrigin := obj.Root.Origin
+		if shared {
+			if obj.Root.OriginShared == nil {
+				return invalid("puts the run inside a shared Orkflow but holds no origin it may read")
+			}
+			rootOrigin = *obj.Root.OriginShared
+		}
+		lineage := RunLineage{RootRunID: in.GetRunId(), Origin: obj.Root.Origin,
+			Root: artifacts.RunContextRoot{Orkflow: obj.Root.Orkflow, Origin: rootOrigin}}
+		if index == 0 {
+			return lineage, nil
+		}
+		lineage.RootRunID = rc.GetRootRunId()
+		entry := obj.Entries[index]
+		parentOrkflow := obj.Root.Orkflow
+		if p := int(*entry.Parent); p > 0 {
+			if obj.Entries[p].Orkflow == nil {
+				return invalid("entry %d names no orkflow", p)
+			}
+			parentOrkflow = *obj.Entries[p].Orkflow
+		}
+		lineage.Origin = artifacts.RunContextOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN.String(), ID: rc.GetParentRunId()}
+		lineage.Parent = &RunParent{RunID: rc.GetParentRunId(), TaskID: entry.ParentTaskID, Orkflow: parentOrkflow}
+		return lineage, nil
+	}
+}
+
+func runContextInvalid(format string, args ...any) *Failure {
+	return Fail(ReasonRunContextInvalid, "the run's context "+format, args...)
+}
+
 // runContextTaskJSON is what the run context adds to task.json's run and
 // task: the marker, and for an available context every key that applies.
-// obj is the run tree's object, read for every task but a cached one;
-// attempt is the cluster's attempt of the current execution and startedAt
-// when it started. A context it cannot account for whole fails closed,
-// RUN_CONTEXT_INVALID: no key is guessed, and a run inside a shared Orkflow
-// is never shown the root's principal or reference.
-func runContextTaskJSON(in *orkstackv1.ExecuteTaskInput, obj *artifacts.RunContextObject, cached bool,
+// lineage is read for every task but a cached one; attempt is the cluster's
+// attempt of the current execution and startedAt when it started. A context
+// it cannot account for whole fails closed, RUN_CONTEXT_INVALID.
+func runContextTaskJSON(in *orkstackv1.ExecuteTaskInput, lineage lineageSource, cached bool,
 	attempt int32, startedAt time.Time) (taskJSONRunContext, taskJSONTaskContext, *Failure) {
 	rc := in.GetRunContext()
 	if rc == nil {
 		return taskJSONRunContext{Context: RunContextUnavailable}, taskJSONTaskContext{}, nil
 	}
 	invalid := func(format string, args ...any) (taskJSONRunContext, taskJSONTaskContext, *Failure) {
-		return taskJSONRunContext{}, taskJSONTaskContext{}, Fail(ReasonRunContextInvalid, "the run's context "+format, args...)
+		return taskJSONRunContext{}, taskJSONTaskContext{}, runContextInvalid(format, args...)
 	}
 	if attempt < 1 || rc.GetOwnAttemptsBefore() < 0 || rc.GetDeclaredMaxAttempts() < 1 {
 		return invalid("counts attempt %d after %d own, of %d declared", attempt, rc.GetOwnAttemptsBefore(), rc.GetDeclaredMaxAttempts())
@@ -147,68 +236,30 @@ func runContextTaskJSON(in *orkstackv1.ExecuteTaskInput, obj *artifacts.RunConte
 	if cached {
 		return taskJSONRunContext{Context: RunContextCached}, task, nil
 	}
-	if obj == nil {
-		return invalid("was not read for a task that is not cached")
-	}
 	if rc.GetCreatedAt() == nil || rc.GetStartedAt() == nil || rc.GetTaskScheduledAt() == nil {
 		return invalid("lacks the run's created or started time, or the task's scheduled time")
 	}
 	if startedAt.IsZero() {
 		return invalid("has no start for this attempt")
 	}
-	index := int(rc.GetTreeIndex())
-	if index < 0 || index >= len(obj.Entries) {
-		return invalid("names entry %d of a tree of %d runs", index, len(obj.Entries))
-	}
-	if index > 0 && (rc.GetRootRunId() == "" || rc.GetParentRunId() == "") {
-		return invalid("of a child run names no root or no parent")
-	}
-	// A run inside an Orkflow another namespace shared, at any depth, reads
-	// the root's origin without its principal and reference.
-	shared := false
-	for i := index; i > 0; {
-		e := obj.Entries[i]
-		if e.Parent == nil || int(*e.Parent) < 0 || int(*e.Parent) >= i {
-			return invalid("entry %d has no parent before it", i)
-		}
-		shared = shared || e.Shared
-		i = int(*e.Parent)
-	}
-	rootOrigin := obj.Root.Origin
-	if shared {
-		if obj.Root.OriginShared == nil {
-			return invalid("puts the run inside a shared Orkflow but holds no origin it may read")
-		}
-		rootOrigin = *obj.Root.OriginShared
-	}
-	rootID := rc.GetRootRunId()
-	if index == 0 {
-		rootID = in.GetRunId()
+	from, failure := lineage()
+	if failure != nil {
+		return taskJSONRunContext{}, taskJSONTaskContext{}, failure
 	}
 	task.ScheduledAt = rfc3339(rc.GetTaskScheduledAt())
 	task.AttemptStartedAt = startedAt.UTC().Format(time.RFC3339Nano)
+	origin := contextOrigin(from.Origin)
 	run := taskJSONRunContext{
 		Context:   RunContextAvailable,
 		CreatedAt: rfc3339(rc.GetCreatedAt()),
 		StartedAt: rfc3339(rc.GetStartedAt()),
 		Deadline:  rfc3339(rc.GetRunDeadline()),
-		Root:      &taskJSONRunRoot{RunID: rootID, Orkflow: contextOrkflow(obj.Root.Orkflow), Origin: contextOrigin(rootOrigin)},
+		Origin:    &origin,
+		Root:      &taskJSONRunRoot{RunID: from.RootRunID, Orkflow: contextOrkflow(from.Root.Orkflow), Origin: contextOrigin(from.Root.Origin)},
 	}
-	if index == 0 {
-		origin := contextOrigin(obj.Root.Origin)
-		run.Origin = &origin
-		return run, task, nil
+	if p := from.Parent; p != nil {
+		run.Parent = &taskJSONRunParent{RunID: p.RunID, TaskID: p.TaskID, Orkflow: contextOrkflow(p.Orkflow)}
 	}
-	entry := obj.Entries[index]
-	parentOrkflow := obj.Root.Orkflow
-	if p := int(*entry.Parent); p > 0 {
-		if obj.Entries[p].Orkflow == nil {
-			return invalid("entry %d names no orkflow", p)
-		}
-		parentOrkflow = *obj.Entries[p].Orkflow
-	}
-	run.Origin = &taskJSONRunOrigin{Kind: originKind(orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN.String()), ID: rc.GetParentRunId()}
-	run.Parent = &taskJSONRunParent{RunID: rc.GetParentRunId(), TaskID: entry.ParentTaskID, Orkflow: contextOrkflow(parentOrkflow)}
 	return run, task, nil
 }
 

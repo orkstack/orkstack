@@ -58,7 +58,7 @@ func TestRunContextTaskJSON_Markers(t *testing.T) {
 	tree := testRunContextTree()
 	start := time.Date(2026, 11, 11, 5, 0, 3, 20_000_000, time.UTC)
 	t.Run("no run context is unavailable, with no attempt keys", func(t *testing.T) {
-		run, task, f := runContextTaskJSON(baseExportInput("x"), nil, false, 2, start)
+		run, task, f := runContextTaskJSON(baseExportInput("x"), objectLineage(baseExportInput("x"), nil), false, 2, start)
 		if f != nil {
 			t.Fatal(f)
 		}
@@ -67,7 +67,7 @@ func TestRunContextTaskJSON_Markers(t *testing.T) {
 		}
 	})
 	t.Run("a cached task keeps only its attempt keys", func(t *testing.T) {
-		run, task, f := runContextTaskJSON(testRunContextInput(0, "", ""), &tree, true, 2, start)
+		run, task, f := runContextTaskJSON(testRunContextInput(0, "", ""), objectLineage(testRunContextInput(0, "", ""), &tree), true, 2, start)
 		if f != nil {
 			t.Fatal(f)
 		}
@@ -84,7 +84,7 @@ func TestRunContextTaskJSON_TopLevelRun(t *testing.T) {
 	tree := testRunContextTree()
 	start := time.Date(2026, 11, 11, 5, 0, 3, 20_000_000, time.UTC)
 	in := testRunContextInput(0, "", "")
-	run, task, f := runContextTaskJSON(in, &tree, false, 2, start)
+	run, task, f := runContextTaskJSON(in, objectLineage(in, &tree), false, 2, start)
 	if f != nil {
 		t.Fatal(f)
 	}
@@ -109,7 +109,7 @@ func TestRunContextTaskJSON_TopLevelRun(t *testing.T) {
 
 func TestRunContextTaskJSON_ChildSeesItsParentAndRoot(t *testing.T) {
 	tree := testRunContextTree()
-	run, _, f := runContextTaskJSON(testRunContextInput(2, "ork-mid", "ork-root"), &tree, false, 1, time.Now())
+	run, _, f := runContextTaskJSON(testRunContextInput(2, "ork-mid", "ork-root"), objectLineage(testRunContextInput(2, "ork-mid", "ork-root"), &tree), false, 1, time.Now())
 	if f != nil {
 		t.Fatal(f)
 	}
@@ -132,7 +132,7 @@ func TestRunParent_NeverFromTemporalParent(t *testing.T) {
 	// scheduled run's starter is the fire, which is no parent run.
 	tree := testRunContextTree()
 	tree.Root.Origin.Kind = "RUN_ORIGIN_KIND_SCHEDULE"
-	run, _, f := runContextTaskJSON(testRunContextInput(0, "", ""), &tree, false, 1, time.Now())
+	run, _, f := runContextTaskJSON(testRunContextInput(0, "", ""), objectLineage(testRunContextInput(0, "", ""), &tree), false, 1, time.Now())
 	if f != nil {
 		t.Fatal(f)
 	}
@@ -232,7 +232,7 @@ func TestTaskJSON_CachedTaskOmitsDataBearingKeys(t *testing.T) {
 	ws := newTestWorkspace(t)
 	in := testRunContextInput(0, "", "")
 	tree := testRunContextTree()
-	run, task, f := runContextTaskJSON(in, &tree, true, 1, time.Now())
+	run, task, f := runContextTaskJSON(in, objectLineage(in, &tree), true, 1, time.Now())
 	if f != nil {
 		t.Fatal(f)
 	}
@@ -299,7 +299,7 @@ func TestRunContextTaskJSON_FailsClosed(t *testing.T) {
 			tree := testRunContextTree()
 			in := testRunContextInput(2, "ork-mid", "ork-root")
 			obj, cached := mutate(in, &tree)
-			run, task, f := runContextTaskJSON(in, obj, cached, 1, now)
+			run, task, f := runContextTaskJSON(in, objectLineage(in, obj), cached, 1, now)
 			if f == nil || f.Reason != ReasonRunContextInvalid {
 				t.Fatalf("failure = %v, want %s (run %+v task %+v)", f, ReasonRunContextInvalid, run, task)
 			}
