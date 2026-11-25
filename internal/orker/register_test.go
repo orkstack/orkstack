@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	commonpb "go.temporal.io/api/common/v1"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 
@@ -237,5 +238,52 @@ func TestAdmission_ARefusalIsWrittenAsItIs(t *testing.T) {
 				t.Fatalf("written as %v, want its own words and %s", f, ReasonResourceAdmissionMismatch)
 			}
 		})
+	}
+}
+
+// recordedActivities is a registrar that keeps what it was given, by name.
+type recordedActivities map[string]any
+
+func (r recordedActivities) RegisterActivityWithOptions(a any, options activity.RegisterOptions) {
+	r[options.Name] = a
+}
+
+// Every activity of the task worker that is handed a run's input is
+// registered to take it raw, and refuses a sealed one it has no key for
+// itself: a typed registration would leave a sealed input to the SDK, which
+// cannot read it and would retry it for ever. What takes none of a run's
+// input is listed.
+func TestRegisterTaskActivities_ARunsInputIsTakenRaw(t *testing.T) {
+	typed := map[string]string{
+		task.ActivityDescribeOrker: "takes nothing",
+		task.ActivityReleasePin:    "takes ids, which the engine writes in plaintext (plainActivities)",
+	}
+	registered := recordedActivities{}
+	(&Activities{dispatcher: &OCIDispatcher{Policy: DefaultSecurityPolicy()}}).RegisterTaskActivities(registered)
+	scope := payloadcrypt.NewScope(taskKey(t, 5), payloadcrypt.RunContext("ork-1"))
+	dc := payloadcrypt.NewConverter(converter.GetDefaultDataConverter(), nil)
+	raw := 0
+	for name, fn := range registered {
+		call, ok := fn.(func(context.Context, converter.RawValue) (any, error))
+		if _, listed := typed[name]; listed {
+			if ok {
+				t.Errorf("%s is listed as typed and is registered raw", name)
+			}
+			continue
+		}
+		if !ok {
+			t.Errorf("%s is registered as %T, want its input raw", name, fn)
+			continue
+		}
+		raw++
+		p, err := dc.ToPayload(payloadcrypt.Seal(scope, &orkstackv1.ExecuteTaskInput{RunId: "ork-1"}))
+		must.OK(t, err)
+		_, err = call(context.Background(), converter.NewRawValue(p))
+		if reason, final := reasonOf(t, err); reason != ReasonPayloadEncryptionNotConfigured || !final {
+			t.Errorf("%s answers a sealed input it has no key for with %s (final %v), want %s", name, reason, final, ReasonPayloadEncryptionNotConfigured)
+		}
+	}
+	if raw != 2 || len(registered) != 2+len(typed) {
+		t.Fatalf("%d of %d activities are registered raw; want ExecuteTask and IndexEachLines, beside %v", raw, len(registered), typed)
 	}
 }

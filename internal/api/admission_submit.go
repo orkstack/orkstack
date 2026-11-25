@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/task"
@@ -75,6 +76,16 @@ type admittedChild struct {
 	taskID string
 	entry  *engine.ChildRunPlan
 	run    *admittedRun
+	// passes is the artifacts the task passes its child.
+	passes []passedArtifact
+}
+
+// passedArtifact is one artifact a composed task passes under input: from, of
+// a task of the composing run, or that run's own received artifact through.
+type passedArtifact struct {
+	input   string
+	from    artifacts.StartArtifact
+	through string
 }
 
 // placeholderAdmission is the digest a plan carries while prepare measures
@@ -120,9 +131,11 @@ func (s *Service) prepareAdmission(ctx context.Context, ns *orkstackv1.Namespace
 		NamespaceID:   nsID,
 		TokenTTL:      int32(s.identityTokenTTL / time.Second),
 		AttemptsExtra: extra,
+		CommitWait:    int32(s.identityCommitWait / time.Second),
 		SpecVersion:   int(task.IdentitySpecVersion),
+		ValueRecords:  artifacts.RecordFormat,
 	}
-	root, err := s.admittedRunOf(ctx, common, planned, plan)
+	root, err := s.admittedRunOf(ctx, grantsIn{ns: ns, policy: policy, rootOrigin: originWord(origin)}, common, planned, plan, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +143,9 @@ func (s *Service) prepareAdmission(ctx context.Context, ns *orkstackv1.Namespace
 }
 
 // admittedRunOf is one run's admission and, recursively, its children's.
-func (s *Service) admittedRunOf(ctx context.Context, common artifacts.Admission, wf *orkstackv1.Orkflow, plan *engine.RunPlan) (*admittedRun, error) {
+// start is what the start of a run below the root follows, under placeholder
+// run ids as long as the ids buildAdmissions writes; nil for the root.
+func (s *Service) admittedRunOf(ctx context.Context, in grantsIn, common artifacts.Admission, wf *orkstackv1.Orkflow, plan *engine.RunPlan, start *startFollows) (*admittedRun, error) {
 	// Another namespace's definition, and whatever runs below it, is not told
 	// who submitted the tree: its tokens are read by that namespace's code.
 	if wf.GetDefinitionNamespace() != "" {
@@ -157,11 +172,22 @@ func (s *Service) admittedRunOf(ctx context.Context, common artifacts.Admission,
 		return nil, err
 	}
 	a.OrkflowID = orkflowID
-	tasks, sets, err := s.admittedTasks(wf, plan, common.AttemptsExtra)
+	// Judged again under the one policy this admission is made from: what
+	// the record pins was allowed by what the record was read from.
+	if a.Grants, err = s.checkGrants(ctx, in.ns, in.policy, wf, owner, in.rootOrigin, true); err != nil {
+		return nil, grantRefusal(err)
+	}
+	tasks, sets, err := s.admittedTasks(wf, plan, common.AttemptsExtra, a.Grants)
 	if err != nil {
 		return nil, err
 	}
 	a.Tasks, a.Sets = tasks, sets
+	a.SessionTags = s.sessionTagsOf(a)
+	follows, completes := identity.Follows(wf)
+	a.Follows = follows
+	if start != nil {
+		a.Completes, a.StartFollows, a.StartArtifacts = completes, start.refs, start.artifacts
+	}
 	if err := checkAdmissionTemplate(a); err != nil {
 		return nil, err
 	}
@@ -176,26 +202,91 @@ func (s *Service) admittedRunOf(ctx context.Context, common artifacts.Admission,
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("task %q's child run: %w", t.GetId(), err))
 		}
-		child, err := s.admittedRunOf(ctx, common, def, &entry.Plan)
+		passes := passedBy(wf, t)
+		child, err := s.admittedRunOf(ctx, in, common, def, &entry.Plan, &startFollows{refs: followedAbove(a, t.GetId(), placeholderRunID),
+			artifacts: receivedAbove(a, passes, placeholderRunID)})
 		if err != nil {
 			return nil, err
 		}
-		run.children = append(run.children, admittedChild{taskID: t.GetId(), entry: entry, run: child})
+		run.children = append(run.children, admittedChild{taskID: t.GetId(), entry: entry, run: child, passes: passes})
 	}
 	return run, nil
+}
+
+// startFollows is what a child run's start follows, and the artifacts it
+// receives.
+type startFollows struct {
+	refs      []artifacts.FollowRef
+	artifacts map[string]artifacts.StartArtifact
+}
+
+// passedBy is what t, a composed task of wf, passes its child.
+func passedBy(wf *orkstackv1.Orkflow, t *orkstackv1.Task) []passedArtifact {
+	var out []passedArtifact
+	handler := t.GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED || t.GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE
+	for _, b := range t.GetChildArtifacts() {
+		if b.GetTaskId() == dsl.InputsProducer {
+			out = append(out, passedArtifact{input: b.GetInput(), through: b.GetName()})
+			continue
+		}
+		src := artifacts.StartArtifact{TaskID: b.GetTaskId(), Kind: artifacts.FollowContainer, Name: b.GetName(), Handler: handler}
+		for _, producer := range wf.GetTasks() {
+			if producer.GetId() == b.GetTaskId() {
+				src.Kind = identity.RecordKind(producer)
+			}
+		}
+		out = append(out, passedArtifact{input: b.GetInput(), from: src})
+	}
+	return out
+}
+
+// receivedAbove is what the child receives of the artifacts passes, in the
+// composing run admitted as a, whose id is runID. One passed through keeps
+// its first passer's word on whether a record must be there: the run that
+// passes it on received it.
+func receivedAbove(a artifacts.Admission, passes []passedArtifact, runID string) map[string]artifacts.StartArtifact {
+	if len(passes) == 0 {
+		return nil
+	}
+	out := make(map[string]artifacts.StartArtifact, len(passes))
+	for _, p := range passes {
+		src := p.from
+		src.RunID = runID
+		if p.through != "" {
+			src = a.StartArtifacts[p.through]
+		}
+		out[p.input] = src
+	}
+	return out
+}
+
+// placeholderRunID is as long as a run id.
+var placeholderRunID = "ork-" + strings.Repeat("0", 26)
+
+// followedAbove is what the start of the child that task composes follows,
+// in the parent admitted as a, whose run is runID: what task follows, each
+// named with its run.
+func followedAbove(a artifacts.Admission, taskID, runID string) []artifacts.FollowRef {
+	refs := slices.Clone(identity.FollowedBy(a, taskID))
+	for i := range refs {
+		if refs[i].RunID == "" {
+			refs[i].RunID = runID
+		}
+	}
+	return refs
 }
 
 // admittedTasks is the table of every task of wf that runs a container,
 // and the distinct identity sets they name. A task whose attempts would
 // pass identity.attempts.max is refused, naming it.
-func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, extra int32) (map[string]artifacts.AdmittedTask, []artifacts.IdentitySet, error) {
+func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, extra int32, grants map[string]artifacts.GrantSelection) (map[string]artifacts.AdmittedTask, []artifacts.IdentitySet, error) {
 	tasks := map[string]artifacts.AdmittedTask{}
 	var sets []artifacts.IdentitySet
 	for _, t := range wf.GetTasks() {
 		if t.GetAwait() != nil || t.GetSleep() != nil || t.GetOrkflow() != nil {
 			continue
 		}
-		digest, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(t))
+		digest, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(t, engine.IdentityGrants(t, grants)))
 		if err != nil {
 			return nil, nil, connect.NewError(connect.CodeInternal, fmt.Errorf("task %q: %w", t.GetId(), err))
 		}
@@ -203,7 +294,7 @@ func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ex
 		if pool == "" {
 			pool = task.DefaultPool
 		}
-		row := artifacts.AdmittedTask{Pool: pool, SpecSHA256: digest}
+		row := artifacts.AdmittedTask{Pool: pool, SpecSHA256: digest, MaxItems: t.GetEach().GetMaxItems(), Inputs: slices.Clone(t.GetInputArtifacts())}
 		if identity.TaskHoldsIdentity(t) {
 			slots, err := identity.Slots(int(t.GetRetry().GetMaximumAttempts()), int(extra), s.identityAttemptsMax)
 			var over *identity.AttemptsOverLimitError
@@ -215,7 +306,10 @@ func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ex
 			case err != nil:
 				return nil, nil, connect.NewError(connect.CodeInternal, fmt.Errorf("task %q: %w", t.GetId(), err))
 			}
-			row.Set = setIndex(&sets, admittedSet(t))
+			if len(t.GetIdentities()) > 0 {
+				row.Set = setIndex(&sets, admittedSet(t))
+			}
+			row.Grants = engine.TaskGrants(t)
 			row.IdentitySlots = int32(slots)
 			deadline := engine.AttemptDeadlineSeconds(t, plan.TransferBudgetSeconds)
 			if deadline > math.MaxInt32 {
@@ -223,11 +317,18 @@ func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ex
 					"task %q of Orkflow %s@%s: an attempt's deadline of %d s cannot be admitted", t.GetId(), wf.GetName(), wf.GetVersion(), deadline))
 			}
 			row.AttemptDeadline = int32(deadline)
-			row.MaxItems = t.GetEach().GetMaxItems()
 		}
 		tasks[t.GetId()] = row
 	}
 	return tasks, sets, nil
+}
+
+// grantsIn is what a tree's grants are judged by: the namespace it runs in,
+// its policy as read once for the tree, and what started the root.
+type grantsIn struct {
+	ns         *orkstackv1.Namespace
+	policy     artifacts.NamespacePolicy
+	rootOrigin string
 }
 
 // admittedSet is t's identities as the admission holds them.
@@ -259,9 +360,8 @@ func setIndex(sets *[]artifacts.IdentitySet, set artifacts.IdentitySet) int {
 // admittedOrigin is what started the run, as admitted, with a stored
 // starter's binder.
 func admittedOrigin(o *orkstackv1.RunOrigin, binder *artifacts.AdmittedBinder) artifacts.AdmittedOrigin {
-	kind := strings.ToLower(strings.TrimPrefix(o.GetKind().String(), "RUN_ORIGIN_KIND_"))
 	return artifacts.AdmittedOrigin{
-		Kind:      strings.ReplaceAll(kind, "_", "-"),
+		Kind:      originWord(o),
 		ID:        o.GetId(),
 		Principal: o.GetPrincipal(),
 		Verified:  o.GetPrincipalVerified(),
@@ -291,7 +391,7 @@ func (s *Service) admitRun(ctx context.Context, sub *submission, runID string, s
 	work, cancel := context.WithTimeout(context.WithoutCancel(ctx), admissionWriteBound)
 	defer cancel()
 	at := s.now().UTC().Truncate(time.Millisecond)
-	built, err := buildAdmissions(sub.admission.root, runID, "", starter, at)
+	built, err := buildAdmissions(sub.admission.root, runID, "", startFollows{}, starter, at)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("build the run's admission: %w", err))
 	}
@@ -340,14 +440,16 @@ type builtAdmission struct {
 }
 
 // buildAdmissions builds run's record for runID and then, recursively, each
-// child's after its parent's. rootRunID is "" for the root itself.
-func buildAdmissions(run *admittedRun, runID, rootRunID string, starter artifacts.Starter, at time.Time) ([]builtAdmission, error) {
+// child's after its parent's. rootRunID is "" for the root itself, and
+// start is what the run's start follows and receives, nothing for the root.
+func buildAdmissions(run *admittedRun, runID, rootRunID string, start startFollows, starter artifacts.Starter, at time.Time) ([]builtAdmission, error) {
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("draw the admission's nonce: %w", err)
 	}
 	a := run.template
 	a.RunID, a.Starter, a.RootRunID, a.Nonce, a.AdmittedAt = runID, starter, rootRunID, hex.EncodeToString(nonce), at
+	a.StartFollows, a.StartArtifacts = start.refs, start.artifacts
 	// Each composed task's child run, by id: what ties a child's start to
 	// the task of its parent that composes it, not only to the parent run.
 	for _, c := range run.children {
@@ -369,7 +471,8 @@ func buildAdmissions(run *admittedRun, runID, rootRunID string, starter artifact
 		root = runID
 	}
 	for _, c := range run.children {
-		below, err := buildAdmissions(c.run, c.entry.RunID, root, artifacts.Starter{
+		below, err := buildAdmissions(c.run, c.entry.RunID, root, startFollows{refs: followedAbove(a, c.taskID, runID),
+			artifacts: receivedAbove(a, c.passes, runID)}, artifacts.Starter{
 			Kind: artifacts.StarterParentRun, RunID: runID, AdmissionSHA256: sha, TaskID: c.taskID}, at)
 		if err != nil {
 			return nil, err
@@ -457,7 +560,7 @@ func (s *Service) completeChain(ctx context.Context, sub submission, runID, exec
 // sha256Hex: derived from the record, never built beside it.
 func identityPlanOf(a artifacts.Admission, sha256Hex string) *engine.IdentityPlan {
 	p := &engine.IdentityPlan{AdmissionSHA256: sha256Hex, Issuer: a.Issuer, TokenTTLSeconds: a.TokenTTL,
-		SpecVersion: uint32(a.SpecVersion), AttemptsExtra: a.AttemptsExtra}
+		SpecVersion: uint32(a.SpecVersion), AttemptsExtra: a.AttemptsExtra, CommitWaitSeconds: a.CommitWait}
 	if len(a.Grants) > 0 {
 		p.Grants = maps.Clone(a.Grants)
 	}
@@ -489,10 +592,13 @@ func (e *scrubbedError) Unwrap() error { return e.err }
 // the definition, so every submit and fire of it would fail alike).
 func checkAdmissionTemplate(a artifacts.Admission) error {
 	probe := a
-	probe.RunID = "ork-" + strings.Repeat("0", 26)
+	probe.RunID = placeholderRunID
 	probe.Nonce = strings.Repeat("0", 32)
 	probe.AdmittedAt = time.Unix(0, 0).UTC()
 	probe.Starter = artifacts.Starter{Kind: artifacts.StarterEngine}
+	if len(a.StartArtifacts) > 0 {
+		probe.Starter = artifacts.Starter{Kind: artifacts.StarterParentRun, RunID: placeholderRunID, AdmissionSHA256: placeholderAdmission(), TaskID: "t"}
+	}
 	raw, _, err := artifacts.EncodeAdmission(probe)
 	if errors.Is(err, artifacts.ErrAdmissionTooLarge) || (err == nil && len(raw) > artifacts.MaxAdmissionBytes-admissionHeadroom) {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(

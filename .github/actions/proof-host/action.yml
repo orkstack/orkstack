@@ -10,6 +10,14 @@ inputs:
     description: Pull the Dex image deploy/dex-image.txt pins (the sign-in interop test and ui/e2e/signin.spec.ts)
     required: false
     default: "false"
+  moto:
+    description: Pull the Moto image deploy/moto-image.txt pins (the aws provider's integration tests)
+    required: false
+    default: "false"
+  vault:
+    description: Pull the Vault image deploy/vault-image.txt pins (internal/provider/vault's integration tests)
+    required: false
+    default: "false"
   temporal-cli:
     description: Install the temporal CLI from the compose service's own image (ui/e2e/admin.spec.ts)
     required: false
@@ -235,6 +243,40 @@ runs:
       uses: ./.github/actions/proof-fetch
       with:
         image: ${{ steps.dex-image.outputs.image }}
+
+    # The Moto image the aws provider's integration tests run
+    # (deploy/moto-image.txt): pulled here, through proof-fetch, when the
+    # daemon lacks it, so a test's own pull is never the first.
+    - name: moto image
+      id: moto-image
+      if: inputs.moto == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        image="$(grep -v '^#' deploy/moto-image.txt | grep -v '^$' | head -1)"
+        [ -n "$image" ] || { echo "deploy/moto-image.txt names no image" >&2; exit 1; }
+        docker image inspect "$image" >/dev/null 2>&1 || echo "image=$image" >>"$GITHUB_OUTPUT"
+    - name: fetch moto image
+      if: inputs.moto == 'true' && steps.moto-image.outputs.image != ''
+      uses: ./.github/actions/proof-fetch
+      with:
+        image: ${{ steps.moto-image.outputs.image }}
+    # The Vault image internal/provider/vault's integration tests run
+    # (deploy/vault-image.txt), as Dex's is.
+    - name: vault image
+      id: vault-image
+      if: inputs.vault == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        image="$(grep -v '^#' deploy/vault-image.txt | grep -v '^$' | head -1)"
+        [ -n "$image" ] || { echo "deploy/vault-image.txt names no image" >&2; exit 1; }
+        docker image inspect "$image" >/dev/null 2>&1 || echo "image=$image" >>"$GITHUB_OUTPUT"
+    - name: fetch vault image
+      if: inputs.vault == 'true' && steps.vault-image.outputs.image != ''
+      uses: ./.github/actions/proof-fetch
+      with:
+        image: ${{ steps.vault-image.outputs.image }}
 
     - name: temporal CLI
       if: inputs.temporal-cli == 'true'

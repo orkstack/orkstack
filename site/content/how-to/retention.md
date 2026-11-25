@@ -31,7 +31,7 @@ Lowering the maximum below a namespace's own value is refused, and the error nam
 With cleanup on, each pass retires finished runs that are older than their namespace's retention, or the maximum where none is set. Cleanup removes:
 
 - the run's logs;
-- its attempt records and snapshots;
+- its attempt records and snapshots, and what its tasks read about it;
 - its completion commits.
 
 The archived run record stays, so a retired run is still listed and readable. A pass that cannot read the retention settings deletes nothing.
@@ -67,7 +67,7 @@ Cleanup does not touch every prefix. Use bucket lifecycle rules for these, and o
 | `metadata/deliveries/` | Webhook delivery records |
 | `metadata/memo/` | Cached-task memos. Keep the rule at least as long as `ORK_CACHE_MAX_TTL`. |
 
-Never expire the definition, registry, settings, trigger or webhook prefixes, or the snapshot, commit and run archive prefixes. Live reads depend on them.
+Never expire the definition, registry, settings, trigger or webhook prefixes, or the snapshot, run-context, commit, attested and run archive prefixes. Live reads depend on them.
 
 A rule expires by age, whatever a run's retention says. Keep every expiry longer than the longest run, or a running run's inputs can disappear.
 

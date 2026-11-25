@@ -342,8 +342,9 @@ func (n *WebhookNotifier) NotifyRunEvent(
 		return
 	}
 	// A delivery body never carries a fan-out's items: it stays small, and
-	// a subscriber reads items with GetRun.
-	encoded, err := MarshalJSON(engine.WithoutItems(run))
+	// a subscriber reads items with GetRun. Nor the trace context the run was
+	// started in, which is for a reader of the run.
+	encoded, err := MarshalJSON(withoutTraceparent(engine.WithoutItems(run)))
 	if err != nil {
 		n.logger.Error("webhook encode run", "run_id", event.GetRunId(), "error", err)
 		return
@@ -357,6 +358,8 @@ func (n *WebhookNotifier) NotifyRunEvent(
 		Event:       transition,
 		RunID:       event.GetRunId(),
 		OrkflowName: run.GetOrkflowName(),
+		// Set only for another namespace's shared Orkflow.
+		OrkflowNamespace: run.GetOrkflowNamespace(),
 		// The one place an unset namespace becomes "default", so a
 		// subscription scoped to "default" matches a run that named none.
 		Namespace: artifacts.ResolveNamespace(run.GetNamespace()),
@@ -367,10 +370,20 @@ func (n *WebhookNotifier) NotifyRunEvent(
 		Sequence:  event.GetSequence(),
 		// What the event did to the run's pause, when it did anything.
 		PauseTransition: pauseTransitionName(event.GetPauseTransition()),
+		ResumeCount:     event.GetResumed().GetResumeCount(),
+		ResultsKept:     resultsKept(event.GetResultsKept()),
 		TaskID:          event.GetTaskId(),
 		Attempt:         taskAttempt(run, event.GetTaskId()),
 		Run:             encoded,
 	})
+}
+
+// resultsKept is a RUN_RESULTS_KEPT delivery's account, nil for every other.
+func resultsKept(kept *orkstackv1.RunResultsKept) *webhooks.ResultsKept {
+	if kept == nil {
+		return nil
+	}
+	return &webhooks.ResultsKept{KeptCount: kept.GetKeptCount(), SettledCount: kept.GetSettledCount(), ReadBackSeconds: kept.GetReadBackSeconds()}
 }
 
 // taskAttempt is the attempt TaskRun records for taskID: the attempt that

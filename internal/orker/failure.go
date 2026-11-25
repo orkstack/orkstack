@@ -11,6 +11,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/eachlines"
 	"github.com/orkstack/orkstack/internal/identity"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -172,6 +173,17 @@ const (
 	// effect. A never-started fault: it resets no never-started count, so a
 	// broken daemon cannot re-dispatch a task forever.
 	ReasonRuntimeStateUnknown = "RUNTIME_STATE_UNKNOWN"
+	// ReasonRunContextUnavailable is an attempt whose run-context object the
+	// store did not answer for (or that this Orker has no store for), so its
+	// task.json could not be written. Retried under the task's policy.
+	ReasonRunContextUnavailable = "RUN_CONTEXT_UNAVAILABLE"
+	// ReasonRunContextMissing is an attempt whose run-context object the
+	// store says is not there. Retried under the task's policy.
+	ReasonRunContextMissing = "RUN_CONTEXT_MISSING"
+	// ReasonRunContextInvalid is an attempt whose run-context object is not
+	// what its name says: other bytes, no object, or no entry for the run.
+	// Never retried: its bytes cannot change.
+	ReasonRunContextInvalid = "RUN_CONTEXT_INVALID"
 
 	// Image supply-chain policy (docs/DEPLOY.md "Image supply-chain policy"), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
@@ -288,6 +300,9 @@ var reasonCategory = map[string]string{
 	ReasonHeartbeatLost:             CategoryInfrastructureError,
 	ReasonAttemptStoreUnavailable:   CategoryInfrastructureError,
 	ReasonRuntimeStateUnknown:       CategoryInfrastructureError,
+	ReasonRunContextUnavailable:     CategoryInfrastructureError,
+	ReasonRunContextMissing:         CategoryInfrastructureError,
+	ReasonRunContextInvalid:         CategoryContractViolation,
 
 	ReasonRunAsOrkerUnavailable: CategoryInfrastructureError,
 	ReasonIdentityNotConfigured: CategoryInfrastructureError,
@@ -304,6 +319,18 @@ var reasonCategory = map[string]string{
 	ReasonIdentitySpecSkew:           CategoryInfrastructureError,
 	ReasonIdentityClockSkew:          CategoryInfrastructureError,
 	ReasonIdentityRefreshFailed:      CategoryInfrastructureError,
+	// What a provider's answer ends an attempt with (provider.Classify and
+	// its fixed outcomes; held equal by a test).
+	provider.ReasonProviderUnavailable:       CategoryInfrastructureError,
+	provider.ReasonCredentialRefreshFailed:   CategoryInfrastructureError,
+	provider.ReasonCredentialRefused:         CategoryContractViolation,
+	provider.ReasonSecretAccessDenied:        CategoryContractViolation,
+	provider.ReasonSecretNotFound:            CategoryContractViolation,
+	provider.ReasonProviderRequestInvalid:    CategoryContractViolation,
+	provider.ReasonSecretTooLarge:            CategoryContractViolation,
+	provider.ReasonProviderNotConfigured:     CategoryInfrastructureError,
+	provider.ReasonProviderContractViolation: CategoryInfrastructureError,
+	ReasonProviderSetup:                      CategoryInfrastructureError,
 	// What the engine's answer to a commit ends an attempt with
 	// (recorded_results.go).
 	ReasonCommitEngineUnavailable:   CategoryInfrastructureError,
@@ -349,6 +376,10 @@ var retryableReason = map[string]bool{
 	identity.ReasonTaskNotAsAdmitted: false,
 	identity.ReasonAttemptsExhausted: false,
 	identity.ReasonAttemptExpired:    false,
+	// A provider this Orker does not declare, and one that broke its
+	// contract at setup, would be the same again.
+	provider.ReasonProviderNotConfigured:     false,
+	provider.ReasonProviderContractViolation: false,
 	// No retry of the dependent makes an upstream's record appear, and a
 	// task a record it follows lacks is refused again (recorded_results.go).
 	ReasonUpstreamNotRecorded:       false,

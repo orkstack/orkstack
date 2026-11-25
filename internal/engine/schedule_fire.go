@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -117,7 +118,7 @@ func ScheduleFireWorkflow(ctx workflow.Context, rec *orkstackv1.ScheduleRecord) 
 	var unavailableSince time.Time
 	backoff := fireUnavailableBackoffMin
 	for {
-		err := workflow.ExecuteLocalActivity(localCtx, ActivityPrepareScheduledRun, rec, scheduledAt).Get(localCtx, &prep)
+		err := getLocal(localCtx, fireScope, workflow.ExecuteLocalActivity(localCtx, ActivityPrepareScheduledRun, rec, scheduledAt), &prep)
 		if err == nil {
 			break
 		}
@@ -210,29 +211,55 @@ func ScheduleFireWorkflow(ctx workflow.Context, rec *orkstackv1.ScheduleRecord) 
 // kept from starting completes the fire with the reason, or refuses it for a
 // refuse limit's full key; anything else is the run's own.
 func fireOutcome(ctx workflow.Context, plan RunPlan, runErr error) error {
-	failure := categoryOf(runErr)
 	if runErr == nil || plan.Concurrency == nil || plan.Concurrency.runSlot() == nil {
 		return runErr
 	}
 	// Only a run that never started: one that ran and then lost its slot
 	// (after a pause, or carrying on) failed as itself.
-	var notStarted ConcurrencyRunNotStarted
-	if !failure.appDetails(&notStarted) || !notStarted.NotStarted {
+	code, message, notStarted := limitEnding(runErr)
+	if !notStarted {
 		return runErr
 	}
 	slot := plan.Concurrency.runSlot()
-	switch failure.appType() {
+	switch code {
 	case RunConcurrencyLimitCode:
 		if slot.Strategy == ConcurrencyStrategySkip {
 			return completeNotStarted(ctx, FireSkippedConcurrencyCode,
-				fmt.Sprintf("key %s was full; this fire started no run (%s)", slot.Key, failure.appMessage()))
+				fmt.Sprintf("key %s was full; this fire started no run (%s)", slot.Key, message))
 		}
-		return refuseFire(ctx, failure.appMessage(), runErr)
+		return refuseFire(ctx, message, runErr)
 	case RunQueueTimeoutCode, RunConcurrencyFullCode, RunConcurrencyUnavailableCode,
 		RunConcurrencyFencedCode, RunConcurrencyUnsupportedCode:
-		return completeNotStarted(ctx, FireNotStartedConcurrencyCode, "this fire started no run: "+failure.appMessage())
+		return completeNotStarted(ctx, FireNotStartedConcurrencyCode, "this fire started no run: "+message)
 	}
 	return runErr
+}
+
+// fireLimitCodes are the endings a limit gives a run, as a fire reads them.
+var fireLimitCodes = map[string]bool{
+	RunConcurrencyLimitCode: true, RunQueueTimeoutCode: true, RunConcurrencyFullCode: true,
+	RunConcurrencyUnavailableCode: true, RunConcurrencyFencedCode: true, RunConcurrencyUnsupportedCode: true,
+}
+
+// notStartedSuffix marks, in the plaintext reason of a sealed run's failure,
+// that the run never started (ConcurrencyRunNotStarted, which is sealed).
+const notStartedSuffix = "_NOT_STARTED"
+
+// limitEnding is how a limit kept a fire's run from starting: its code and
+// what is said of it. A sealed run's is its reason alone, since a fire holds
+// no run's key.
+func limitEnding(runErr error) (code, message string, notStarted bool) {
+	var sealed *payloadcrypt.SealedFailure
+	if errors.As(runErr, &sealed) {
+		code, notStarted = strings.CutSuffix(sealed.Reason(), notStartedSuffix)
+		return code, code, notStarted && fireLimitCodes[code]
+	}
+	failure := categoryOf(runErr)
+	var ending ConcurrencyRunNotStarted
+	if !failure.appDetails(&ending) || !ending.NotStarted {
+		return "", "", false
+	}
+	return failure.appType(), failure.appMessage(), true
 }
 
 // sealedFireWords is what a fire that is not unsealed records for the reason

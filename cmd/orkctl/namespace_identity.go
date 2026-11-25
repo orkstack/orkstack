@@ -40,7 +40,7 @@ func addIdentityFlags(cmd *cobra.Command, f *identityFlags) {
 	fl.StringArrayVar(&f.grants, "grant", nil, "set a grant as NAME=PROVIDER:PRINCIPAL (repeatable)")
 	fl.StringArrayVar(&f.grantOrkflows, "grant-orkflow", nil, "let an Orkflow use a grant, as NAME=ORKFLOW: a name, * or <owner>/<name> (repeatable)")
 	fl.StringArrayVar(&f.grantOrigins, "grant-origin", nil,
-		"let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, event-source, parent-run or run-again (repeatable)")
+		"let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, parent-run or run-again (repeatable)")
 	fl.StringArrayVar(&f.grantCurrentOnly, "grant-current-only", nil, "let only a run of its Orkflow's current version use the grant NAME (repeatable)")
 	fl.StringArrayVar(&f.removeGrants, "remove-grant", nil, "remove the grant NAME (repeatable)")
 	fl.Int32Var(&f.attemptsExtra, "attempts-extra", 0, "how many attempts past a task's own retries may hold its identity, up to identity.attempts.max_extra")

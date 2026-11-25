@@ -193,6 +193,15 @@ func (v StartVerdict) String() string {
 type StartAnswer struct {
 	Verdict StartVerdict
 	Reason  string
+	// cause is what a fact that could not be read was answered, if anything.
+	cause error
+}
+
+// unavailableMint is a StartUnavailable answer as a step that could not ask.
+func (a StartAnswer) unavailableMint() *MintError {
+	e := unavailableMint("%s", a.Reason)
+	e.cause = a.cause
+	return e
 }
 
 func notAdmitted(format string, args ...any) StartAnswer {
@@ -200,7 +209,7 @@ func notAdmitted(format string, args ...any) StartAnswer {
 }
 
 func unavailable(format string, args ...any) StartAnswer {
-	return StartAnswer{Verdict: StartUnavailable, Reason: fmt.Sprintf(format, args...)}
+	return StartAnswer{Verdict: StartUnavailable, Reason: fmt.Sprintf(format, args...), cause: firstError(args)}
 }
 
 // CheckStart decides whether the execution facts describe is the run adm

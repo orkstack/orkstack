@@ -142,6 +142,8 @@ func pipelineRules() []Rule {
 			Fix:         "Turn off `ORK_TELEMETRY_HIGH_CARDINALITY` or object labels, or raise the limit knowing the cost.",
 			Cases: []Case{
 				fire("an overflow series", "90m", out(), s("ork_tasks_total", `otel_metric_overflow="true"`, "0+1x100")),
+				fire("a concurrency series", "90m", out(), s("ork_concurrency_arrivals_total", `otel_metric_overflow="true"`, "0+1x100")),
+				fire("a schedule fires series", "90m", out(), s("ork_schedule_fires_total", `otel_metric_overflow="true"`, "0+1x100")),
 				quiet("no overflow", "90m", s("ork_tasks_total", `ork_namespace="n"`, "0+1x100")),
 			},
 		},

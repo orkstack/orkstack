@@ -40,7 +40,10 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/healthcheck"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/procguard"
+	"github.com/orkstack/orkstack/internal/provider"
+	"github.com/orkstack/orkstack/internal/provider/types"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/temporalconn"
@@ -115,6 +118,8 @@ type config struct {
 	// at boot outside their bounds (docs/DEPLOY.md §1).
 	continuation   continuationConfig
 	runMaxInFlight int32
+	// resume is engine.resume.*, refused at boot when malformed.
+	resume api.ResumeSettings
 	// pinCreationTimeout is ORK_PIN_CREATION_TIMEOUT (pinCreationTimeoutFromEnv):
 	// how long a pin waits for a free pin slot before its first task fails
 	// PIN_UNAVAILABLE. Whole seconds, 1s to 24h, refused at boot otherwise
@@ -186,6 +191,13 @@ type config struct {
 	// setting.
 	auth    authConfig
 	authErr error
+	// providers is the providers document (ORK_PROVIDERS); providersErr
+	// refuses the boot, naming the setting.
+	providers    provider.Set
+	providersErr error
+	// sessionTags are the audiences whose tokens carry session tags, as the
+	// providers ask.
+	sessionTags map[string]artifacts.SessionTagging
 	// identity is identity.* (identityFromEnv): the task identity issuer.
 	identity    identityConfig
 	identityErr error
@@ -208,6 +220,7 @@ func loadConfig() config {
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	pinCreationTimeout, pinCreationErr := pinCreationTimeoutFromEnv()
 	interruptions, interruptionsErr := interruptionBudgetsFromEnv()
+	resumeSettings, resumeErr := resumeSettingsFromEnv()
 	poolMetrics, poolMetricsErr := poolMetricsFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
@@ -251,7 +264,8 @@ func loadConfig() config {
 		snapshotOverlays:              snapshotOverlays,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
-		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
+		resume:                        resumeSettings,
+		limitsErr: errors.Join(resumeErr, valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
 			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr,
 			interruptionsErr, poolMetricsErr, concurrencyErr),
@@ -292,6 +306,13 @@ func loadConfig() config {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
 	cfg.auth, cfg.authErr = authFromEnv(os.LookupEnv)
+	cfg.providers, cfg.providersErr = provider.FromEnv(os.LookupEnv, types.All())
+	if cfg.providersErr == nil {
+		cfg.sessionTags, cfg.providersErr = identity.SessionTagSettings(cfg.providers)
+		if cfg.providersErr != nil {
+			cfg.providersErr = fmt.Errorf("%s (%s): %w", provider.Setting, provider.Var, cfg.providersErr)
+		}
+	}
 	cfg.identity, cfg.identityErr = identityFromEnv(os.LookupEnv)
 	cfg.ui, cfg.uiErr = uiFromEnv()
 	cfg.listener, cfg.listenerErr = listenerFromEnv(tasks.value)
@@ -520,9 +541,8 @@ func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, lo
 			"settings", unsaid)
 	}
 	// The engine decodes an Orker's answer leniently (engine.DataConverter);
-	// the Orker dials with the SDK default and stays strict.
-	temporalOptions.DataConverter = engine.DataConverter()
-	temporalOptions.FailureConverter = engine.FailureConverter()
+	// the Orker's own converter stays strict (orkerDataConverter).
+	temporalOptions = engine.ClientOptions(temporalOptions, nil)
 	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(),
 		append(cfg.auth.capabilities(), described.Tokens()...)...)
 	if dialing != nil {
@@ -1139,12 +1159,8 @@ func apiHandler(tcfg telemetry.Config, sinks *telemetry.Sinks, mux *http.ServeMu
 	if !tcfg.TracesEnabled() && !tcfg.MetricsEnabled() {
 		return mux
 	}
-	providers := sinks.Default()
 	return otelhttp.NewHandler(mux, "orkstack.api",
-		otelhttp.WithTracerProvider(providers.Tracer),
-		otelhttp.WithMeterProvider(providers.Meter),
-		otelhttp.WithPropagators(providers.Propagator),
-		otelhttp.WithFilter(traceAPIRequest))
+		append(telemetry.InboundHTTPOptions(sinks.Default()), otelhttp.WithFilter(traceAPIRequest))...)
 }
 
 func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
@@ -1188,6 +1204,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	if cfg.authErr != nil {
 		return cfg.authErr
+	}
+	if cfg.providersErr != nil {
+		return cfg.providersErr
 	}
 	if err := cfg.auth.checkBoot(tcfg.AdminAddr, tcfg.PprofEnabled); err != nil {
 		return err
@@ -1517,10 +1536,17 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open snapshot store: %w", err)
 	}
-	// Each run tree's run-context object is written to the same store.
-	runContexts, ok := snapshots.(api.RunContextWriter)
+	// ResumeRun lists a run's snapshots; every store NewRunSnapshotStore opens
+	// can.
+	resumeSnapshots, ok := snapshots.(api.ResumeSnapshots)
 	if !ok {
-		return fmt.Errorf("open snapshot store: %T cannot store run contexts", snapshots)
+		return fmt.Errorf("the snapshot store %T lists no snapshots", snapshots)
+	}
+	// Each run tree's run-context object is under a prefix of its own in the
+	// same store, the one prefix of the two an Orker may read.
+	runContexts, err := artifacts.NewRunContextStore(ctx, archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open run context store: %w", err)
 	}
 	// engine.definition_by_reference's effective value: on, unset, only
 	// where continuation is (docs/DEPLOY.md §1).
@@ -1805,7 +1831,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		triggerMetrics = telemetry.NewTriggerMetrics(sinks.Default(), route, logger)
 		scheduleMetrics = telemetry.NewScheduleMetrics(sinks.Default(), route, objectLabels, logger)
 		concMetrics = telemetry.NewConcurrencyMetrics(sinks.Default(), route, tcfg.OrkflowLabel, logger)
-		gateActivities.WithArrivalObserver(arrivalObserver{concMetrics})
+		gateActivities.WithArrivalObserver(arrivalObserver{concMetrics}).WithGateReportObserver(gateReportObserver{concMetrics})
 		observer.WithConcurrencyMetrics(concMetrics)
 		hooks := telemetry.NewWebhookMetrics(sinks.Default(), route, objectLabels, logger)
 		webhookMetrics.Store(hooks)
@@ -2077,6 +2103,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// The build the recorder names is the one an admission records, by the
 	// same rule, so the two compare.
 	recorder := newRecorder(minter, issuedRecords, orkflows.Get, engineBuild(cfg.deployment.BuildID))
+	// The two local activities that record a child run's outputs and a
+	// composed task's values, of a run whose results the engine records.
+	valueRecords := engine.NewValueRecordActivities(newValuesRecorder(minter, issuedRecords, orkflows.Get, compose, engineBuild(cfg.deployment.BuildID)))
+	runWorker.RegisterActivityWithOptions(valueRecords.RecordOutputs,
+		activity.RegisterOptions{Name: engine.ActivityRecordOutputs})
+	runWorker.RegisterActivityWithOptions(valueRecords.RecordComposed,
+		activity.RegisterOptions{Name: engine.ActivityRecordComposed})
 	svc := api.NewService(api.Config{
 		Minter:                 minter,
 		MintObserver:           identityMetrics,
@@ -2091,6 +2124,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Runs:                   runs,
 		Bus:                    bus,
 		Starter:                starter,
+		Resume:                 resumeSeam(starter),
+		ResumeRecords:          resumeRecords,
+		ResumeSettings:         cfg.resume,
+		ResumeObserver:         observer,
+		ResumeClaims:           engine.NewTemporalIdempotency(temporalClient, q.run, api.ResumeClaimTTL),
+		ResumeSnapshots:        resumeSnapshots,
 		Pools:                  pools,
 		Orkers:                 starter,
 		Fleet:                  starter,
@@ -2131,6 +2170,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		IdentityAttemptsMax:      cfg.identity.attemptsMax,
 		IdentityTokenTTL:         cfg.identity.tokenTTL.Default,
 		IdentityAdmissions:       admissionRecords(issuedRecords),
+		Providers:                cfg.providers,
+		SessionTags:              cfg.sessionTags,
+		AwaitRecords:             awaitRecords(minter, issuedRecords),
+		AwaitChecks:              awaitChecks(minter),
+		ClockSkew:                cfg.auth.clockSkew,
 		EngineBuild:              engineBuild(cfg.deployment.BuildID),
 		Issuer:                   issuer,
 		ServeDiscovery:           cfg.identity.serveDiscovery,

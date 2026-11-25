@@ -125,8 +125,8 @@ func loadResumeAtR(ctx workflow.Context, deps workflowDeps, namespace, runID str
 	if !ok {
 		return nil, &resumeLoadFailure{code: ReasonResumePlanUnreadable, message: "no time is left to read the reset"}
 	}
-	err := workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityReadResetFacts,
-		ReadResetFactsInput{Namespace: namespace, RunID: runID, ExecutionID: info.WorkflowExecution.RunID}).Get(ctx, &facts)
+	err := getLocal(ctx, runScope(ctx), workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityReadResetFacts,
+		ReadResetFactsInput{Namespace: namespace, RunID: runID, ExecutionID: info.WorkflowExecution.RunID}), &facts)
 	if ctx.Err() != nil {
 		return nil, errResumeCanceled
 	}
@@ -145,8 +145,8 @@ func loadResumeAtR(ctx workflow.Context, deps workflowDeps, namespace, runID str
 	if opts, ok = resumeLoadOptions(ctx, deadline); !ok {
 		return nil, &resumeLoadFailure{code: ReasonResumePlanUnreadable, message: "no time is left to read the plan " + key.String(), scope: key.Scope}
 	}
-	err = workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityLoadResumePlan,
-		LoadResumePlanInput{Namespace: namespace, RunID: runID, Reset: facts}).Get(ctx, &record)
+	err = getLocal(ctx, runScope(ctx), workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityLoadResumePlan,
+		LoadResumePlanInput{Namespace: namespace, RunID: runID, Reset: facts}), &record)
 	if ctx.Err() != nil {
 		return nil, errResumeCanceled
 	}

@@ -75,6 +75,11 @@ engine:
     events: 8192  # ork
     bytes: 8388608  # 8 MiB; ork
     restore_timeout: 1h  # ork
+  resume:
+    confirm_timeout: 30s  # ork
+    visibility_lag_floor: 15s  # ork
+    max_seq_gap: 4096  # ork
+    confirm_per_run: 6  # ork
   definition_by_reference: true  # ork
   snapshot_overlays: true  # ork
   run_max_in_flight: 500  # ork
@@ -268,6 +273,9 @@ orker:
     retry_min: 5s  # orker
     max_concurrent: 8  # orker
     max_clock_skew: 2m  # orker
+  providers:
+    call_timeout: 15s  # orker
+    max_concurrent: 8  # orker
 
 telemetry:
   log_format: text
@@ -277,6 +285,7 @@ telemetry:
   pprof_enabled: false
   high_cardinality: false
   orkflow_label: true  # ork
+  trust_inbound_trace: false  # ork
   object_labels: false  # ork
   metric_cardinality_limit: 2000
   census_requests_per_minute: 60  # ork
@@ -307,6 +316,8 @@ telemetry:
   batch: {}
     # batch.metric_export_interval: ""  # SDK default
   # sinks: {}  # no named sinks
+
+# providers: {}  # no providers
 
 auth:
   mode: asserted  # ork

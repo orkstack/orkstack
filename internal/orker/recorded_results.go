@@ -36,7 +36,7 @@ const (
 	ReasonUpstreamNotRecorded = "UPSTREAM_RESULT_NOT_RECORDED"
 	// ReasonRequiredResultNotRecorded is the engine's answer that a task
 	// this one follows has no record of success (workload-identity §3.6).
-	ReasonRequiredResultNotRecorded = "REQUIRED_RESULT_NOT_RECORDED"
+	ReasonRequiredResultNotRecorded = identity.ReasonRequiredResultNotRecorded
 )
 
 // The wait's margins (workload-identity §3.4, "When the engine cannot be

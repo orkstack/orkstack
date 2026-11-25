@@ -2266,7 +2266,7 @@ Flags:
 - `--fair-share-weight FLOAT64` — this namespace's share of dispatch when several namespaces' tasks wait for one pool, pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect only where the cluster has fair dispatch enabled
 - `--grant STRINGARRAY` — set a grant as NAME=PROVIDER:PRINCIPAL (repeatable)
 - `--grant-current-only STRINGARRAY` — let only a run of its Orkflow's current version use the grant NAME (repeatable)
-- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, event-source, parent-run or run-again (repeatable)
+- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, parent-run or run-again (repeatable)
 - `--grant-orkflow STRINGARRAY` — let an Orkflow use a grant, as NAME=ORKFLOW: a name, * or <owner>/<name> (repeatable)
 - `--hold STRING` — close this namespace to new runs, with the reason the next operator reads (runs already accepted finish untouched)
 - `--identities-current-only` — give an identity only to a run of its Orkflow's current version
@@ -3442,7 +3442,8 @@ Check an evidence bundle's members against its MANIFEST.json
 Verify hashes every member of a bundle and compares it with MANIFEST.json. It
 needs no server, no credentials and writes nothing to disk. Reclaimed,
 unrecorded and withheld members are findings, not failures; any member whose
-bytes do not match is named and the command exits 1.
+bytes do not match is named and the command exits 1. It reads the bundles this
+release's engine writes (schema_version 3) and refuses any other by name.
 
 --against-store additionally asks the engine for the live manifest of the same
 run and scope and compares the two member by member.
@@ -3795,9 +3796,14 @@ The resolution is stored and delivered to the run before this returns;
 the run applies it next. Follow the run to see the outcome: a resolution
 that loses a race is recorded on the run, never applied twice.
 
+A run that holds a task identity keeps a record of each resolution, and
+the first stands. --redeliver tells such a run again of the resolution on
+record, without deciding anything, when its delivery was lost.
+
 Flags:
 
 - `--reason STRING` — why the await is rejected (with --reject)
+- `--redeliver` — tell the run again of the resolution on record
 - `--reject` — reject the await instead of completing it
 - `-t, --task STRING` — the awaited task to resolve (required)
 - `--values STRING` — the completion's values as one JSON object (default {})
@@ -4561,7 +4567,8 @@ renderer and workspace an Orker uses, and prints the rendered config.json before
 the container starts.
 
 With --from-run RUN, the task's upstream values and artifacts are the run's
-committed bytes, read through the engine's integrity-checked artifact reads. With
+committed bytes, read through the engine's integrity-checked artifact reads, and
+its task.json carries the run's context (what started the run and when). With
 --file, an edited document that is not stored is validated by the engine and run instead
 of the stored definition. --output and --artifact supply an upstream task's
 values.json and output files from local files.
@@ -4819,17 +4826,23 @@ Inherited flags:
 Create and inspect run-event callbacks
 
 A webhook receives a signed POST when a run or one of its tasks changes
-state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
-RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,
-TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED. A pause's
-events: RUN_PAUSED, RUN_UNPAUSED.
+state.
 
-Omitting --event means every run transition; task events and a pause's
-events are opt-in by name. Task events are best-effort hints with a short retry budget: a
+The run's lifecycle, what omitting --event means:
+  RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED, RUN_CANCELED, RUN_RESUMED
+Run events opt-in by name:
+  RUN_QUEUED, RUN_PAUSED, RUN_UNPAUSED, RUN_RESULTS_KEPT
+Task events, opt-in by name:
+  TASK_QUEUED, TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING, TASK_RESOLVED,
+  TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED
+
+Task events are best-effort hints with a short retry budget: a
 subscriber that must not miss one reconciles with GetRun.
 
 A subscription is deployment-wide unless it names a scope: a namespace
-(-n), an orkflow (--orkflow) and a task (--task), each an exact match.
+(-n), an orkflow (--orkflow) and a task (--task), each an exact match. An
+orkflow is the run's own namespace's: another namespace's shared orkflow of
+that name is never one.
 
 What each delivery did is recorded; `deliveries` lists the records, `delivery`
 shows one, `redeliver` sends one again by hand.
@@ -4853,12 +4866,14 @@ Inherited flags:
 Create a webhook: a callback URL for run events
 
 Create a webhook that calls a URL. Repeat --event to select transitions;
-omitting it subscribes to every run transition. Task events are opt-in
-and are best-effort hints: reconcile with GetRun if one must not be missed.
+omitting it subscribes to a run's start, its endings and RUN_RESUMED. Every
+other event is opt-in; task events are best-effort hints: reconcile with
+GetRun if one must not be missed.
 
 Scope defaults to every namespace; only an explicit -n narrows it.
-ORK_NAMESPACE and the saved default do not apply here. --orkflow and
---task narrow further; each is an exact match, empty means every, and
+ORK_NAMESPACE and the saved default do not apply here. --orkflow (the
+run's own namespace's, never another's shared one) and --task narrow
+further; each is an exact match, empty means every, and
 --task needs at least one TASK_* event.
 
 --name gives the subscription a handle, unique in its namespace scope,
@@ -4869,9 +4884,9 @@ an HMAC-SHA256 of the request body in the X-Ork-Signature header.
 
 Flags:
 
-- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED | RUN_RESUMED | RUN_RESULTS_KEPT
 - `--name STRING` — handle an automation document addresses this subscription by (needs -n)
-- `--orkflow STRING` — narrow to runs of this orkflow (exact name; empty means every orkflow)
+- `--orkflow STRING` — narrow to runs of this orkflow of the run's own namespace (exact name; empty means every orkflow)
 - `--secret STRING` — signing secret to use instead of a generated one
 - `-t, --task STRING` — narrow task events to this task (exact id; needs a TASK_* --event)
 
@@ -4933,7 +4948,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   run_id       = != =a,b       text
   webhook_id   = != =a,b       text
-  event        = != =a,b       RUN_QUEUED RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_QUEUED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED
+  event        = != =a,b       RUN_QUEUED RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_QUEUED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED RUN_RESUMED RUN_RESULTS_KEPT
   delivered    =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
@@ -5049,18 +5064,18 @@ id and signing secret never change, so a receiver keeps verifying and the
 subscription's delivery history stays continuous.
 
 Only the flags given change anything: --event replaces the event list,
---clear-events empties it (every run transition), an explicit -n sets the
+--clear-events empties it (the run's lifecycle), an explicit -n sets the
 namespace scope and --deployment-wide clears it, --orkflow "" and
 --task "" clear those, --name "" makes the subscription unnamed. A
 name needs a namespace scope. Rotating a secret is delete then create.
 
 Flags:
 
-- `--clear-events` — empty the event list: every run transition
+- `--clear-events` — empty the event list: the run's lifecycle
 - `--deployment-wide` — clear the namespace scope
-- `--event STRINGARRAY` — replace the event list (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — replace the event list (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED | RUN_RESUMED | RUN_RESULTS_KEPT
 - `--name STRING` — new handle ("" makes the subscription unnamed; needs a namespace scope)
-- `--orkflow STRING` — narrow to runs of this orkflow ("" clears it)
+- `--orkflow STRING` — narrow to runs of this orkflow of the run's own namespace ("" clears it)
 - `-t, --task STRING` — narrow task events to this task ("" clears it)
 - `--url STRING` — new callback URL
 

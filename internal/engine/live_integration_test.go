@@ -97,7 +97,7 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 	defer cancel()
 
 	namespace := privateNamespaceForCommitE2E(t)
-	temporalClient, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+	temporalClient, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}

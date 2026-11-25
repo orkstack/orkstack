@@ -160,16 +160,12 @@ func (e *evidenceExport) build(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	schema := evidence.SchemaVersion
 	var eventGaps []evidence.EventGap
 	for _, gap := range gaps {
 		eventGaps = append(eventGaps, evidence.EventGap{First: gap.First, Last: gap.Last, Reason: gap.Reason})
 	}
-	if len(eventGaps) > 0 {
-		schema = evidence.SchemaVersionEventGaps
-	}
 	m := &evidence.Manifest{
-		SchemaVersion:    schema,
+		SchemaVersion:    evidence.SchemaVersion,
 		EventGaps:        eventGaps,
 		RunID:            archived.GetId(),
 		Namespace:        namespace,

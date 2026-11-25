@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +161,35 @@ func TestAdmission_OfARunThatRunsNoContainer(t *testing.T) {
 	}
 }
 
+// withGrant admits the named grants for the run, and says task id uses them.
+func withGrant(a *Admission, id string, names ...string) {
+	a.Grants = map[string]GrantSelection{}
+	for _, name := range names {
+		a.Grants[name] = GrantSelection{Provider: "aws", Principal: "role/x", Audience: "sts"}
+	}
+	t := a.Tasks[id]
+	t.Grants = append([]string{}, names...)
+	a.Tasks[id] = t
+}
+
+// TestAdmission_ATaskThatHoldsOnlyAGrant: it needs its slots and its
+// deadline as one that holds an identity does, and no set.
+func TestAdmission_ATaskThatHoldsOnlyAGrant(t *testing.T) {
+	a := testAdmission()
+	withGrant(&a, "deploy", "c", "g")
+	a.Sets = nil
+	row := a.Tasks["deploy"]
+	row.Set = 0
+	a.Tasks["deploy"] = row
+	raw, _, err := EncodeAdmission(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"grants":["c","g"]`)) {
+		t.Fatalf("the record is %s", raw)
+	}
+}
+
 // TestAdmission_RefusesWhatItCannotTrust: a record that would mislead the
 // mint is refused by the encoder, so it is never written, and read back it
 // is invalid.
@@ -178,15 +209,29 @@ func TestAdmission_RefusesWhatItCannotTrust(t *testing.T) {
 		"a subject format":           func(a *Admission) { a.SubjectFormat = "x509" },
 		"spiffe with no domain":      func(a *Admission) { a.SubjectFormat = SubjectFormatSPIFFE },
 		"sets with no issuer":        func(a *Admission) { a.Issuer = "" },
-		"no spec version":            func(a *Admission) { a.SpecVersion = 0 },
-		"extra over 16":              func(a *Admission) { a.AttemptsExtra = 17 },
-		"no tasks":                   func(a *Admission) { a.Tasks = nil },
-		"a set no task could use":    func(a *Admission) { a.Tasks, a.Follows = map[string]AdmittedTask{}, nil },
-		"a task id":                  func(a *Admission) { a.Tasks["Bad"] = a.Tasks["build"] },
-		"a pool":                     func(a *Admission) { t := a.Tasks["build"]; t.Pool = "P"; a.Tasks["build"] = t },
-		"a spec digest":              func(a *Admission) { t := a.Tasks["build"]; t.SpecSHA256 = ""; a.Tasks["build"] = t },
-		"a set out of range":         func(a *Admission) { t := a.Tasks["deploy"]; t.Set = 2; a.Tasks["deploy"] = t },
-		"an identity with no slots":  func(a *Admission) { t := a.Tasks["deploy"]; t.IdentitySlots = 0; a.Tasks["deploy"] = t },
+		"an empty table of tags":     func(a *Admission) { a.SessionTags = map[string]SessionTagging{} },
+		"tags of an unused audience": func(a *Admission) { a.SessionTags = map[string]SessionTagging{"https://other": {}} },
+		"a tag outside the set": func(a *Admission) {
+			a.SessionTags = map[string]SessionTagging{"https://vault": {Transitive: []string{"team"}}}
+		},
+		"transitive tags unsorted": func(a *Admission) {
+			a.SessionTags = map[string]SessionTagging{"https://vault": {Transitive: []string{"ork_task", "ork_pool"}}}
+		},
+		"a transitive tag twice": func(a *Admission) {
+			a.SessionTags = map[string]SessionTagging{"https://vault": {Transitive: []string{"ork_task", "ork_task"}}}
+		},
+		"an empty list of transitive tags": func(a *Admission) {
+			a.SessionTags = map[string]SessionTagging{"https://vault": {Transitive: []string{}}}
+		},
+		"no spec version":           func(a *Admission) { a.SpecVersion = 0 },
+		"extra over 16":             func(a *Admission) { a.AttemptsExtra = 17 },
+		"no tasks":                  func(a *Admission) { a.Tasks = nil },
+		"a set no task could use":   func(a *Admission) { a.Tasks, a.Follows = map[string]AdmittedTask{}, nil },
+		"a task id":                 func(a *Admission) { a.Tasks["Bad"] = a.Tasks["build"] },
+		"a pool":                    func(a *Admission) { t := a.Tasks["build"]; t.Pool = "P"; a.Tasks["build"] = t },
+		"a spec digest":             func(a *Admission) { t := a.Tasks["build"]; t.SpecSHA256 = ""; a.Tasks["build"] = t },
+		"a set out of range":        func(a *Admission) { t := a.Tasks["deploy"]; t.Set = 2; a.Tasks["deploy"] = t },
+		"an identity with no slots": func(a *Admission) { t := a.Tasks["deploy"]; t.IdentitySlots = 0; a.Tasks["deploy"] = t },
 		"slots past the most": func(a *Admission) {
 			t := a.Tasks["deploy"]
 			t.IdentitySlots = MaxAttemptSlots + 1
@@ -202,7 +247,29 @@ func TestAdmission_RefusesWhatItCannotTrust(t *testing.T) {
 		"a follow's task": func(a *Admission) {
 			a.Follows = map[string][]FollowRef{"deploy": {{TaskID: "", Kind: FollowContainer}}}
 		},
-		"an empty grants":               func(a *Admission) { a.Grants = map[string]GrantSelection{} },
+		"an empty grants": func(a *Admission) { a.Grants = map[string]GrantSelection{} },
+		"a task's grant the run has not": func(a *Admission) {
+			withGrant(a, "deploy", "c", "g")
+			delete(a.Grants, "g")
+		},
+		"a grant no task uses": func(a *Admission) {
+			withGrant(a, "deploy", "c")
+			a.Grants["g"] = a.Grants["c"]
+		},
+		"a task's empty grants": func(a *Admission) {
+			withGrant(a, "deploy")
+			a.Grants = nil
+		},
+		"a task's grants out of order": func(a *Admission) { withGrant(a, "deploy", "g", "c") },
+		"a task's grant twice":         func(a *Admission) { withGrant(a, "deploy", "c", "c") },
+		"a grant with no slots":        func(a *Admission) { withGrant(a, "build", "c") },
+		"grants with no issuer": func(a *Admission) {
+			withGrant(a, "deploy", "c")
+			a.Issuer, a.Sets = "", nil
+			d := a.Tasks["deploy"]
+			d.Set = 0
+			a.Tasks["deploy"] = d
+		},
 		"a child's task id":             func(a *Admission) { a.Children = map[string]string{"B": "ork-2"} },
 		"a root on a root":              func(a *Admission) { a.RootRunID = "ork-0" },
 		"a week's commit wait and more": func(a *Admission) { a.CommitWait = 7*24*3600 + 1 },
@@ -279,8 +346,11 @@ func FuzzAdmission(f *testing.F) {
 	fired := testAdmission()
 	fired.Starter = Starter{Kind: StarterFire, WorkflowID: "fire-1", ExecutionID: "e"}
 	fired.Follows = map[string][]FollowRef{"deploy": {{TaskID: "build", Kind: FollowContainer}}}
-	fired.Grants = map[string]GrantSelection{"aws": {Provider: "aws", Principal: "arn:x", Audience: "sts"}}
-	raw2, _, _ := EncodeAdmission(fired)
+	withGrant(&fired, "deploy", "aws")
+	raw2, _, err := EncodeAdmission(fired)
+	if err != nil {
+		f.Fatal(err)
+	}
 	f.Add(raw2)
 	f.Add([]byte(`{"v":1}`))
 	f.Add([]byte(`{"v":2}`))
@@ -355,5 +425,52 @@ func TestAdmission_DeleteRemovesOnlyThatRecord(t *testing.T) {
 	}
 	if err := s.DeleteAdmission(ctx, a.Namespace, a.RunID, "not-a-digest"); err == nil {
 		t.Fatal("a delete by no digest was accepted")
+	}
+}
+
+// TestAdmission_PinsSessionTagsPerAudience: an audience in the table has its
+// tokens tagged, whichever identity or grant asks for it; one that is not has
+// none, and a run that tags nothing has the record it always had.
+func TestAdmission_PinsSessionTagsPerAudience(t *testing.T) {
+	plain, _, err := EncodeAdmission(testAdmission())
+	if err != nil || bytes.Contains(plain, []byte("session_tags")) {
+		t.Fatalf("a run that tags nothing: %s, %v", plain, err)
+	}
+	a := testAdmission()
+	a.Grants = map[string]GrantSelection{"deployer": {Provider: "aws", Principal: "arn:aws:iam::1:role/r", Audience: "sts.amazonaws.com"}}
+	build := a.Tasks["build"]
+	build.Grants, build.IdentitySlots, build.AttemptDeadline = []string{"deployer"}, 1, 330
+	a.Tasks["build"] = build
+	a.SessionTags = map[string]SessionTagging{"https://vault": {}, "sts.amazonaws.com": {Transitive: []string{"ork_namespace", "ork_task"}}}
+	raw, _, err := EncodeAdmission(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"session_tags":{"https://vault":{},"sts.amazonaws.com":{"transitive":["ork_namespace","ork_task"]}}`
+	if !bytes.Contains(raw, []byte(want)) {
+		t.Errorf("the record %s does not hold %s", raw, want)
+	}
+}
+
+func TestSessionTagKeys_AreSortedAndUnique(t *testing.T) {
+	if !slices.IsSorted(SessionTagKeys) || len(slices.Compact(slices.Clone(SessionTagKeys))) != len(SessionTagKeys) {
+		t.Fatalf("SessionTagKeys = %v", SessionTagKeys)
+	}
+}
+
+// A version is the one value of a session tag an author spells, so its grammar
+// must be within AWS's for a tag's value: letters, digits, spaces and
+// _ . : / = + - @, at most 256 characters, not beginning "aws:".
+func TestOrkflowVersions_AreValuesAWSTakes(t *testing.T) {
+	aws := regexp.MustCompile(`^[A-Za-z0-9 _.:/=+@-]{1,256}$`)
+	for c := range 256 {
+		for _, v := range []string{string([]byte{byte(c)}), "1" + string([]byte{byte(c)})} {
+			if validOrkflowComponent("version", v) == nil && (!aws.MatchString(v) || strings.Contains(v, ":")) {
+				t.Errorf("a version may be %q, which AWS does not take", v)
+			}
+		}
+	}
+	if validOrkflowComponent("version", strings.Repeat("1", 257)) == nil {
+		t.Error("a version may be longer than a tag's value")
 	}
 }

@@ -209,10 +209,14 @@ func (x *TokenRequest) GetAudience() string {
 }
 
 type MintAttemptTokensResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tokens        []*IssuedToken         `protobuf:"bytes,1,rep,name=tokens,proto3" json:"tokens,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Tokens []*IssuedToken         `protobuf:"bytes,1,rep,name=tokens,proto3" json:"tokens,omitempty"`
+	// input_artifacts are the artifacts of the run's start the task names, each
+	// under its input's name, as the engine read them from the records of the
+	// tasks that produced them: the only ones its attempt stages.
+	InputArtifacts []*ArtifactRef `protobuf:"bytes,2,rep,name=input_artifacts,json=inputArtifacts,proto3" json:"input_artifacts,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *MintAttemptTokensResponse) Reset() {
@@ -248,6 +252,13 @@ func (*MintAttemptTokensResponse) Descriptor() ([]byte, []int) {
 func (x *MintAttemptTokensResponse) GetTokens() []*IssuedToken {
 	if x != nil {
 		return x.Tokens
+	}
+	return nil
+}
+
+func (x *MintAttemptTokensResponse) GetInputArtifacts() []*ArtifactRef {
+	if x != nil {
+		return x.InputArtifacts
 	}
 	return nil
 }
@@ -1066,7 +1077,7 @@ var File_orkstack_v1_identity_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_identity_service_proto_rawDesc = "" +
 	"\n" +
-	"\"orkstack/v1/identity_service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/identity.proto\"\x95\x04\n" +
+	"\"orkstack/v1/identity_service.proto\x12\vorkstack.v1\x1a\x18orkstack/v1/common.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/identity.proto\"\x95\x04\n" +
 	"\x18MintAttemptTokensRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
@@ -1087,9 +1098,10 @@ const file_orkstack_v1_identity_service_proto_rawDesc = "" +
 	"\x05_itemJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\">\n" +
 	"\fTokenRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
-	"\baudience\x18\x02 \x01(\tR\baudience\"M\n" +
+	"\baudience\x18\x02 \x01(\tR\baudience\"\x90\x01\n" +
 	"\x19MintAttemptTokensResponse\x120\n" +
-	"\x06tokens\x18\x01 \x03(\v2\x18.orkstack.v1.IssuedTokenR\x06tokens\"\xde\x01\n" +
+	"\x06tokens\x18\x01 \x03(\v2\x18.orkstack.v1.IssuedTokenR\x06tokens\x12A\n" +
+	"\x0finput_artifacts\x18\x02 \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0einputArtifacts\"\xde\x01\n" +
 	"\vIssuedToken\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\baudience\x18\x02 \x01(\tR\baudience\x12\x14\n" +
@@ -1193,39 +1205,41 @@ var file_orkstack_v1_identity_service_proto_goTypes = []any{
 	(*RetireSigningKeyRequest)(nil),   // 12: orkstack.v1.RetireSigningKeyRequest
 	(*RetireSigningKeyResponse)(nil),  // 13: orkstack.v1.RetireSigningKeyResponse
 	nil,                               // 14: orkstack.v1.MintAttemptTokensRequest.SpecMembersEntry
-	(*timestamppb.Timestamp)(nil),     // 15: google.protobuf.Timestamp
-	(*SigningKey)(nil),                // 16: orkstack.v1.SigningKey
+	(*ArtifactRef)(nil),               // 15: orkstack.v1.ArtifactRef
+	(*timestamppb.Timestamp)(nil),     // 16: google.protobuf.Timestamp
+	(*SigningKey)(nil),                // 17: orkstack.v1.SigningKey
 }
 var file_orkstack_v1_identity_service_proto_depIdxs = []int32{
 	1,  // 0: orkstack.v1.MintAttemptTokensRequest.tokens:type_name -> orkstack.v1.TokenRequest
 	14, // 1: orkstack.v1.MintAttemptTokensRequest.spec_members:type_name -> orkstack.v1.MintAttemptTokensRequest.SpecMembersEntry
 	3,  // 2: orkstack.v1.MintAttemptTokensResponse.tokens:type_name -> orkstack.v1.IssuedToken
-	15, // 3: orkstack.v1.IssuedToken.issued_at:type_name -> google.protobuf.Timestamp
-	6,  // 4: orkstack.v1.ListIssuedTokensResponse.records:type_name -> orkstack.v1.IssuedTokenRecord
-	15, // 5: orkstack.v1.IssuedTokenRecord.issued_at:type_name -> google.protobuf.Timestamp
-	7,  // 6: orkstack.v1.IssuedTokenRecord.tokens:type_name -> orkstack.v1.IssuedTokenEntry
-	15, // 7: orkstack.v1.IssuedTokenEntry.issued_at:type_name -> google.protobuf.Timestamp
-	15, // 8: orkstack.v1.IssuedTokenEntry.expires_at:type_name -> google.protobuf.Timestamp
-	15, // 9: orkstack.v1.GetIssuerResponse.keys_read_at:type_name -> google.protobuf.Timestamp
-	15, // 10: orkstack.v1.GetIssuerResponse.live_checked_at:type_name -> google.protobuf.Timestamp
-	16, // 11: orkstack.v1.ListSigningKeysResponse.keys:type_name -> orkstack.v1.SigningKey
-	15, // 12: orkstack.v1.RetireSigningKeyRequest.compromised_from:type_name -> google.protobuf.Timestamp
-	16, // 13: orkstack.v1.RetireSigningKeyResponse.key:type_name -> orkstack.v1.SigningKey
-	8,  // 14: orkstack.v1.IdentityService.GetIssuer:input_type -> orkstack.v1.GetIssuerRequest
-	10, // 15: orkstack.v1.IdentityService.ListSigningKeys:input_type -> orkstack.v1.ListSigningKeysRequest
-	12, // 16: orkstack.v1.IdentityService.RetireSigningKey:input_type -> orkstack.v1.RetireSigningKeyRequest
-	0,  // 17: orkstack.v1.IdentityService.MintAttemptTokens:input_type -> orkstack.v1.MintAttemptTokensRequest
-	4,  // 18: orkstack.v1.IdentityService.ListIssuedTokens:input_type -> orkstack.v1.ListIssuedTokensRequest
-	9,  // 19: orkstack.v1.IdentityService.GetIssuer:output_type -> orkstack.v1.GetIssuerResponse
-	11, // 20: orkstack.v1.IdentityService.ListSigningKeys:output_type -> orkstack.v1.ListSigningKeysResponse
-	13, // 21: orkstack.v1.IdentityService.RetireSigningKey:output_type -> orkstack.v1.RetireSigningKeyResponse
-	2,  // 22: orkstack.v1.IdentityService.MintAttemptTokens:output_type -> orkstack.v1.MintAttemptTokensResponse
-	5,  // 23: orkstack.v1.IdentityService.ListIssuedTokens:output_type -> orkstack.v1.ListIssuedTokensResponse
-	19, // [19:24] is the sub-list for method output_type
-	14, // [14:19] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	15, // 3: orkstack.v1.MintAttemptTokensResponse.input_artifacts:type_name -> orkstack.v1.ArtifactRef
+	16, // 4: orkstack.v1.IssuedToken.issued_at:type_name -> google.protobuf.Timestamp
+	6,  // 5: orkstack.v1.ListIssuedTokensResponse.records:type_name -> orkstack.v1.IssuedTokenRecord
+	16, // 6: orkstack.v1.IssuedTokenRecord.issued_at:type_name -> google.protobuf.Timestamp
+	7,  // 7: orkstack.v1.IssuedTokenRecord.tokens:type_name -> orkstack.v1.IssuedTokenEntry
+	16, // 8: orkstack.v1.IssuedTokenEntry.issued_at:type_name -> google.protobuf.Timestamp
+	16, // 9: orkstack.v1.IssuedTokenEntry.expires_at:type_name -> google.protobuf.Timestamp
+	16, // 10: orkstack.v1.GetIssuerResponse.keys_read_at:type_name -> google.protobuf.Timestamp
+	16, // 11: orkstack.v1.GetIssuerResponse.live_checked_at:type_name -> google.protobuf.Timestamp
+	17, // 12: orkstack.v1.ListSigningKeysResponse.keys:type_name -> orkstack.v1.SigningKey
+	16, // 13: orkstack.v1.RetireSigningKeyRequest.compromised_from:type_name -> google.protobuf.Timestamp
+	17, // 14: orkstack.v1.RetireSigningKeyResponse.key:type_name -> orkstack.v1.SigningKey
+	8,  // 15: orkstack.v1.IdentityService.GetIssuer:input_type -> orkstack.v1.GetIssuerRequest
+	10, // 16: orkstack.v1.IdentityService.ListSigningKeys:input_type -> orkstack.v1.ListSigningKeysRequest
+	12, // 17: orkstack.v1.IdentityService.RetireSigningKey:input_type -> orkstack.v1.RetireSigningKeyRequest
+	0,  // 18: orkstack.v1.IdentityService.MintAttemptTokens:input_type -> orkstack.v1.MintAttemptTokensRequest
+	4,  // 19: orkstack.v1.IdentityService.ListIssuedTokens:input_type -> orkstack.v1.ListIssuedTokensRequest
+	9,  // 20: orkstack.v1.IdentityService.GetIssuer:output_type -> orkstack.v1.GetIssuerResponse
+	11, // 21: orkstack.v1.IdentityService.ListSigningKeys:output_type -> orkstack.v1.ListSigningKeysResponse
+	13, // 22: orkstack.v1.IdentityService.RetireSigningKey:output_type -> orkstack.v1.RetireSigningKeyResponse
+	2,  // 23: orkstack.v1.IdentityService.MintAttemptTokens:output_type -> orkstack.v1.MintAttemptTokensResponse
+	5,  // 24: orkstack.v1.IdentityService.ListIssuedTokens:output_type -> orkstack.v1.ListIssuedTokensResponse
+	20, // [20:25] is the sub-list for method output_type
+	15, // [15:20] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_identity_service_proto_init() }
@@ -1233,6 +1247,7 @@ func file_orkstack_v1_identity_service_proto_init() {
 	if File_orkstack_v1_identity_service_proto != nil {
 		return
 	}
+	file_orkstack_v1_common_proto_init()
 	file_orkstack_v1_identity_proto_init()
 	file_orkstack_v1_identity_service_proto_msgTypes[0].OneofWrappers = []any{}
 	file_orkstack_v1_identity_service_proto_msgTypes[4].OneofWrappers = []any{}

@@ -16,6 +16,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -60,6 +61,7 @@ func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concR
 	h := &concRunHarness{t: t, env: generousDeadlock(suite.NewTestWorkflowEnvironment()), answers: answers}
 	h.env.SetTestTimeout(30 * time.Second)
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
+	h.env.RegisterWorkflowWithOptions(RunWorkflowRaw, workflow.RegisterOptions{Name: "raw"})
 	h.env.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		h.mu.Lock()
 		h.ran++
@@ -93,7 +95,7 @@ func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concR
 		func(_, _, _, _ string, arg any) error {
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			h.releases = append(h.releases, arg.(GateReleaseAll))
+			h.releases = append(h.releases, payloadcrypt.Unplain(arg).(GateReleaseAll))
 			return nil
 		})
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: concRunID})

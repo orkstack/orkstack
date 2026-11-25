@@ -164,7 +164,7 @@ func exportEvidenceFile(cmd *cobra.Command, g *globalFlags, req *orkstackv1.Expo
 	info, statErr := file.Stat()
 	_ = file.Close()
 	if err != nil {
-		return nil, 0, fmt.Errorf("read bundle back: %w", err)
+		return nil, 0, fmt.Errorf("read bundle back: %w", engineSchemaError(err))
 	}
 	if statErr != nil {
 		return nil, 0, fmt.Errorf("read bundle back: %w", statErr)
@@ -222,7 +222,8 @@ func newRunEvidenceVerifyCommand(g *globalFlags) *cobra.Command {
 		Long: "Verify hashes every member of a bundle and compares it with MANIFEST.json. It\n" +
 			"needs no server, no credentials and writes nothing to disk. Reclaimed,\n" +
 			"unrecorded and withheld members are findings, not failures; any member whose\n" +
-			"bytes do not match is named and the command exits 1.\n\n" +
+			"bytes do not match is named and the command exits 1. It reads the bundles this\n" +
+			"release's engine writes (schema_version 3) and refuses any other by name.\n\n" +
 			"--against-store additionally asks the engine for the live manifest of the same\n" +
 			"run and scope and compares the two member by member.",
 		Args: cobra.ExactArgs(1),
@@ -286,7 +287,23 @@ func liveManifest(cmd *cobra.Command, g *globalFlags, m *evidence.Manifest) (*ev
 	if err != nil {
 		return nil, err
 	}
-	return evidence.ParseManifest(document)
+	live, err := evidence.ParseManifest(document)
+	if err != nil {
+		return nil, fmt.Errorf("read the engine's manifest: %w", engineSchemaError(err))
+	}
+	return live, nil
+}
+
+// engineSchemaError is err with the advice an engine's own answer needs: a
+// manifest of another version that this engine just wrote was exported by this
+// orkctl or by none.
+func engineSchemaError(err error) error {
+	var other *evidence.SchemaVersionError
+	if !errors.As(err, &other) {
+		return err
+	}
+	return fmt.Errorf("this engine writes evidence bundles of schema_version %d, and this orkctl reads only %d: "+
+		"use an orkctl of the engine's release", other.Version, evidence.SchemaVersion)
 }
 
 // storeComparison is what --against-store found.

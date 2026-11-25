@@ -3,8 +3,10 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -70,6 +72,10 @@ type LocalTask struct {
 	// their spans from. Required for such a fan-out; there is no index
 	// without a run.
 	Lines *orkstackv1.EachLines
+	// RunContext is the recorded run's times and the task's own
+	// (RunContextFromRun); nil without a run that says them. It is no part of
+	// the input's size bound, as a dispatched task's is not.
+	RunContext *orkstackv1.RunContext
 	// Join is how a failure handler's needs ended (JoinContextFromRun, or the
 	// caller's --need). Required for a failure handler, refused for any other
 	// task.
@@ -283,14 +289,18 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		input.Join = proto.Clone(t.Join).(*orkstackv1.JoinContext)
 	}
 	if each := spec.GetEach(); each != nil {
-		return localItemInput(wf, spec, t, input)
-	}
-	if err := task.CheckInputSize(input, limits.GetValuesMaxBytes()); err != nil {
+		if input, err = localItemInput(wf, spec, t, input); err != nil {
+			return nil, err
+		}
+	} else if err := task.CheckInputSize(input, limits.GetValuesMaxBytes()); err != nil {
 		return nil, &LocalTaskRefusal{
 			Code:     task.ReasonInputTooLarge,
 			Category: task.CategoryContractViolation,
 			Err:      err,
 		}
+	}
+	if t.RunContext != nil {
+		input.RunContext = proto.Clone(t.RunContext).(*orkstackv1.RunContext)
 	}
 	return input, nil
 }
@@ -432,6 +442,57 @@ func JoinContextFromRun(run *orkstackv1.Run, wf *orkstackv1.Orkflow, taskID stri
 		rows[tr.GetTaskId()] = tr
 	}
 	return joinContextFor(spec, func(id string) *orkstackv1.TaskRun { return rows[id] })
+}
+
+// RunContextFromRun is the run context a local run of taskID, or of its item,
+// is given from run's record: the run's times and deadline, its parent's and
+// root's ids, when the task was scheduled, and the attempts wf declares for
+// it. It names no object: the caller reads the lineage from the record too
+// (orker.LineageOfRun). A task the run never scheduled was scheduled now, by
+// the local run; a local run is the first of its own attempts. Nil for a run
+// whose tasks were given no context, or that never started, for an item its
+// record does not hold, and for a task that ran with no scheduled time.
+func RunContextFromRun(run *orkstackv1.Run, wf *orkstackv1.Orkflow, taskID string, item *int32, now time.Time) *orkstackv1.RunContext {
+	spec := taskByID(wf, taskID)
+	if spec == nil || run.GetRunContext().GetStatus() != orkstackv1.RunContextStatus_RUN_CONTEXT_STATUS_AVAILABLE ||
+		run.GetCreatedAt() == nil || run.GetStartedAt() == nil {
+		return nil
+	}
+	var row *orkstackv1.TaskRun
+	for _, tr := range run.GetTaskRuns() {
+		if tr.GetTaskId() != taskID {
+			continue
+		}
+		if row = tr; item != nil {
+			row = nil
+			for _, it := range tr.GetItems() {
+				if it.Item != nil && it.GetItem() == *item {
+					row = it
+				}
+			}
+			if row == nil {
+				return nil
+			}
+		}
+	}
+	scheduled := copyTimestamp(row.GetScheduledAt())
+	if scheduled == nil {
+		if row.GetAttempt() > 0 || row.GetStartedAt() != nil {
+			return nil
+		}
+		scheduled = timestamppb.New(now)
+	}
+	rc := &orkstackv1.RunContext{
+		CreatedAt:           copyTimestamp(run.GetCreatedAt()),
+		StartedAt:           copyTimestamp(run.GetStartedAt()),
+		TaskScheduledAt:     scheduled,
+		DeclaredMaxAttempts: declaredMaxAttempts(spec),
+		RunDeadline:         copyTimestamp(run.GetTimeout().GetDeadline()),
+	}
+	if o := run.GetOrigin(); o.GetKind() == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN {
+		rc.ParentRunId, rc.RootRunId = o.GetId(), o.GetRootRunId()
+	}
+	return rc
 }
 
 // FailedNeedUpstreamFromRun returns, for every TaskRun of run that FAILED with

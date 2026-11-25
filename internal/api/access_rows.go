@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"connectrpc.com/connect"
 	"go.yaml.in/yaml/v4"
@@ -563,6 +564,13 @@ func when(name string) func(proto.Message) bool {
 	return func(msg proto.Message) bool { return strField(msg, name) != "" }
 }
 
+// whenTrue is when for bool fields: any of them set.
+func whenTrue(names ...string) func(proto.Message) bool {
+	return func(msg proto.Message) bool {
+		return slices.ContainsFunc(names, func(name string) bool { return boolField(msg, name) })
+	}
+}
+
 // namespacePolicyFields are UpdateNamespace's fields that change what a
 // namespace may reach (docs/ACCESS.md, "Namespace fields").
 var namespacePolicyFields = []string{"allowed_pools", "allowed_secrets", "require_signed_by", "max_running",
@@ -718,6 +726,14 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.RunServicePauseRunProcedure:     {res: runIn("run_id"), checks: perms(authz.PermRunPause), notFound: true},
 	orkstackv1connect.RunServiceUnpauseRunProcedure:   {res: runIn("run_id"), checks: perms(authz.PermRunPause), notFound: true},
 	orkstackv1connect.RunServiceResolveAwaitProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunAwaitResolve), notFound: true},
+	// A preview reads; a confirm reruns tasks with the run's own inputs and
+	// secrets, so it also needs to be allowed to start the Orkflow (E85 §28.7).
+	orkstackv1connect.RunServiceResumeRunProcedure: {res: runIn("run_id"), notFound: true, checks: []check{
+		{perm: authz.PermRunRead, when: whenTrue("dry_run")},
+		{perm: authz.PermRunResume, when: unless("dry_run")},
+		{perm: authz.PermRunSubmit, when: unless("dry_run")},
+		{perm: authz.PermRunResumeAcceptGap, when: whenTrue("accept_sequence_gap", "accept_unverified_stop")},
+	}},
 
 	// ScheduleService
 	orkstackv1connect.ScheduleServiceListSchedulesProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermScheduleRead),

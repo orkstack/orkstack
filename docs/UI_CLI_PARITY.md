@@ -519,6 +519,14 @@ is the `Ork-Principal` assertion, recorded and never authenticated. A run
 recorded before origins existed has kind `UNSPECIFIED`, renders `unrecorded`
 (never `submit`) and matches no origin filter.
 
+A `PARENT_RUN` origin also holds `parent_task_id`, the composed task that
+started the run, and `parent_orkflow`, `root_orkflow` (name, version, digest,
+and the owner's namespace for another namespace's shared Orkflow) and
+`root_origin`, what started the root. `root_origin` holds no lineage of its own,
+and the engine fills in a root only when it knows it. `GetRun`, an archived run
+and a webhook body's `run` carry these; a `ListRuns` row of a live run does not.
+So a child run's webhook names its root's principal, reference and description.
+
 A `PARENT_RUN` origin also holds `root_run_id`: the run at the top of the
 child's composed chain, so in A → B → C both B and C name A, and C names B as
 its parent. It is empty on every other kind, so a re-run of a child, a new
@@ -539,11 +547,12 @@ under the same fail-rather-than-subset rule as every list.
 
 CLI: `run submit --origin-ref`, `run again --origin-ref`, `run list --filter
 origin.kind=KIND [--filter origin.id=ID]`, an `ORIGIN` column (`-` when
-unrecorded), and `Origin:`, `Root run:`, `Reference:` and `Principal:` lines on
+unrecorded), and `Origin:`, `Parent task:`, `Root run:`, `Reference:` and `Principal:` lines on
 `run get`, the root's whenever one is recorded; `--json` carries it as
 `origin.rootRunId`, and `run list --filter origin.root_run_id=ID` lists the chain.
 UI: the run header's origin line — kind chip, the id linked to the source run
-or the Triggers/Schedules tab, **Root run** and a link to it when it is not the
+or the Triggers/Schedules tab, the composing task and its Orkflow, what started
+the root, **Root run** and a link to it when it is not the
 parent the line already links, the description, the reference linked only when
 it is an http(s) URL, and `by …` tagged asserted, with a not-authenticated
 title, or verified when the engine authenticated the submit; the
@@ -1040,8 +1049,9 @@ addressed exactly as a download is (optionally with `expect_sha256`; a
 mismatch with the recorded digest is `FailedPrecondition` naming both). It
 answers the recorded reference, `bytes_present`, this run's own reference
 state (`HELD`, `RELEASED` with `released_at`, or `ABSENT`), every archived
-run of the namespace that recorded the same object, `references_unreadable`
-and `computed_at`.
+run of the namespace that recorded the same object (with the owner of its
+Orkflow, for a shared Orkflow's child run), `references_unreadable` and
+`computed_at`.
 
 Three absences are never conflated: bytes gone, reference released by
 cleanup, and no evidence either way. References are ordered by
@@ -1226,11 +1236,12 @@ deletion, and a notification lookup failure never fails a run. The legacy
 plain-JSON `/v1/webhooks` routes are compatibility adapters over the same
 service; clients use the generated types.
 
-- **Events.** The four run transitions (`RUN_STARTED`, `RUN_SUCCEEDED`,
-  `RUN_FAILED`, `RUN_CANCELED`) and six task events (`TASK_SCHEDULED`,
+- **Events.** The run's lifecycle (`RUN_STARTED`, `RUN_SUCCEEDED`,
+  `RUN_FAILED`, `RUN_CANCELED`, `RUN_RESUMED`), the opt-in run events
+  (`RUN_QUEUED`, `RUN_PAUSED`, `RUN_UNPAUSED`, `RUN_RESULTS_KEPT`) and six task events (`TASK_SCHEDULED`,
   `TASK_STARTED`, `TASK_AWAITING`, `TASK_RESOLVED`, `TASK_SUCCEEDED`,
-  `TASK_FAILED`); `TASK_LOG` is refused. Empty selects every run transition
-  and no task event: task events are opt-in by name.
+  `TASK_FAILED`); `TASK_LOG` is refused. Empty selects the run's lifecycle
+  and nothing else: every other event is opt-in by name.
 - **Secrets.** URLs must be HTTP(S). The signing secret (supplied, or
   generated) is disclosed once, in the create response; `List` and `Get`
   never carry it. Delivery reads the registry through the one read that does
@@ -1293,7 +1304,8 @@ says so rather than implying the namespace switcher filters it.
 A subscription may name `namespace`, `orkflow_name` and `task_id`: three
 exact-match strings, each empty meaning every, each validated as a slug and
 never sanitized. A run with no namespace is in `default`, so a subscription
-scoped to `default` matches it. `task_id` is consulted only for task events (a
+scoped to `default` matches it. `orkflow_name` is the run's own namespace's
+Orkflow: a child run of another namespace's shared one never matches it. `task_id` is consulted only for task events (a
 `RUN_*` event passes it), and registration refuses a `task_id` when no
 `TASK_*` event is named. A scope names coordinates, not objects: nothing checks
 that the namespace, Orkflow or task exists, so a subscription may precede the

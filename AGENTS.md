@@ -154,9 +154,11 @@ create-only object a slot, never changed; it moves nothing.
 
 Where task identity is on, every Orker's object-storage credential must
 reach only what an Orker writes (artifacts, logs, commits, attempt records,
-memos, probes): no definition, namespace, setting, schedule or event-source
-object (`metadata/schedules/`, `metadata/event-sources/`), nor anything of a
-run's saved state or under `metadata/identity/`. The store enforces that.
+memos, probes) and, to read and never write, the results an engine attested
+and the run contexts: no definition, namespace, setting, schedule or
+event-source object (`metadata/schedules/`, `metadata/event-sources/`), nor
+anything of a run's saved state or under `metadata/identity/`. The store
+enforces that.
 Each Orker tests its own credential at boot and hourly and reports the
 result, and the check never pauses an Orker; by default
 (`identity.unscoped_orkers: refuse`) the engine refuses a submission that
@@ -973,7 +975,9 @@ internal never appears on any of those surfaces.
   and to the audit trail.
 - **Origin** means the immutable record of what started a run: a kind
   (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), the
-  originating object's id, a caller-supplied reference and the principal.
+  originating object's id, a caller-supplied reference and the principal. A
+  child's origin also names its parent task, the parent's and root's Orkflow,
+  and the root's origin.
 - **Root run** means the run at the top of a composed chain, the one that
   started it. A child run's origin names it beside its parent
   (`origin.root_run_id`), copied down at each child start. A top-level run holds
@@ -1165,9 +1169,19 @@ an identity token, the engine checks that the namespace still allows that
 audience, so removing one stops new tokens at the next refresh. It un-admits
 nothing: the run goes on, and the attempt is refused its token with that
 reason. A cached task's memo hit asks
-nothing and is not covered. Every refusal happens before a
-run ID is minted or an idempotency key claimed, so a refused submission leaves
-nothing behind. Admission is never retroactive. A guard that reads the
+nothing and is not covered. A submission is refused before an idempotency key
+is claimed and before anything is started; only the cluster can refuse after
+that, and a start it refuses is recorded as a failed run. The run's own ID is
+minted once its preparation refuses nothing. A run that holds an identity has
+its records written under that ID before the key is claimed, and a submission
+that goes no further removes them, or counts those it cannot; an object it
+wrote beside them is left to the sweep. After the claim a submission can still
+end without an answer that it started: a start whose outcome is unknown is
+never recorded as a failure, the key keeps naming its run ID, and a later
+submission under the key finds that run or starts that same ID, until the
+cluster could no longer tell whether it ever started; then it is refused. A
+run ID is started at most once, so one key never yields two runs. Admission is
+never retroactive. A guard that reads the
 cluster's index or usage (`max_running`, an enforced budget) is a lock-free
 read-then-act and therefore best-effort by a bounded overshoot. `max_running`
 and an enforced budget stay read-then-act; a declared concurrency limit is
@@ -1677,7 +1691,9 @@ includes:
   whose tasks have long cancellation graces, force-canceled, ends
   `RUN_CANCELED` on its own path and is never terminated; an engine killed
   between the termination and the terminal event still publishes the event
-  once.
+  once;
+- one trace id across a tree, a continuation and a fire; trust setting off → new
+  trace + link.
 
 Scale and soak tests leave the per-merge proof only through
 `scripts/proof-nightly-tests.txt`, and Playwright specs through its spec-side
@@ -1808,7 +1824,8 @@ cannot be queued is dropped; telemetry can never fail a task or a run.
 Operational endpoints (`/healthz`, `/readyz`, `/metrics`, `/debug/pprof/`)
 live on `ORK_ADMIN_ADDR`, never the API port. Workflow code never imports
 OpenTelemetry — instrumentation is a side effect, and `RunWorkflow` must stay
-a pure function of its history (§2). Activity authors need no observability
+a pure function of its history (§2). Children continue the parent's trace from
+plan-pinned context. Activity authors need no observability
 SDK; activity logs remain stdout/stderr.
 
 The shipped observability kit ingests metrics only by OTLP push and scrapes
@@ -2306,6 +2323,7 @@ internal/payloadcrypt/ Payload encryption: the sealed envelope, a run's key in i
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
+internal/runspan/      A run span's id and a child run's trace context, as string work with no OpenTelemetry
 internal/runstatus/    The one classifier of a run's status, live or terminal, every reader asks
 internal/stablejson/   The JSON bytes OrkStack hashes, stores or hands a container, written with encoding/json/v2
 internal/typeid/       The time-ordered ids a run id and a minted Orkflow version are made of

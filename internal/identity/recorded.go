@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -74,6 +75,16 @@ func ResultSHA256(valuesSHA256 string, artifacts []ResultArtifact) (string, erro
 
 // minNonceBytes is the shortest admission nonce a binding is keyed by.
 const minNonceBytes = 16
+
+// StartInput is a run's start input as a record is bound to it: its decoded
+// value's canonical JSON, "null" for a run with none. Whoever compares a
+// binding takes the input through it too.
+func StartInput(input *orkstackv1.Payload) ([]byte, error) {
+	if input.GetData() == nil {
+		return []byte("null"), nil
+	}
+	return stablejson.Marshal(input.GetData().AsMap())
+}
 
 // InputBinding binds a record to the start input its run was admitted
 // with: an HMAC-SHA256 of the input's bytes, as the start carried them,

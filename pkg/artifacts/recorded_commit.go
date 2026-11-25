@@ -74,3 +74,68 @@ func (s *RecordStore) RecordCommit(ctx context.Context, commitKey string, c *ork
 	rec, err := recordFor(there, existing)
 	return RecordedCommit{Key: key, Record: rec}, err
 }
+
+// AttestedWant names the engine's record of one task's result: its run,
+// the resume scope it was made under and the run's admission.
+type AttestedWant struct {
+	Namespace, RunID, TaskID string
+	Scope                    uint64
+	AdmissionSHA256          string
+}
+
+// ReadAttestedCommit reads the engine's record of a task's result, with the
+// run's spacings (nil: the reader's own). It is found only when it decodes,
+// is of the format this build writes, names exactly what want says, names
+// its values, and was recorded under want's admission. A store that does
+// not answer is *RecordStoreUnanswered.
+func (s *RecordStore) ReadAttestedCommit(ctx context.Context, class SlotClass, spacing *RecordSpacings, want AttestedWant) (RecordRead[CommitRecord], error) {
+	key, err := ScopedCommitKey(want.Namespace, want.RunID, want.TaskID, want.Scope)
+	if err != nil {
+		return RecordRead[CommitRecord]{}, err
+	}
+	if key, err = AttestedCommitKey(key); err != nil {
+		return RecordRead[CommitRecord]{}, err
+	}
+	body, _, found, err := s.readerWith(spacing).readObject(ctx, class, key, CommitMaxBytes+1)
+	if err != nil {
+		return RecordRead[CommitRecord]{}, err
+	}
+	if !found {
+		return RecordRead[CommitRecord]{Answer: RecordNone}, nil
+	}
+	if len(body) > CommitMaxBytes {
+		return invalidRead[CommitRecord]("commit", "%d bytes, more than %d", len(body), CommitMaxBytes), nil
+	}
+	c, err := UnmarshalCommit(body)
+	if err != nil {
+		return invalidRead[CommitRecord]("commit", "%v", err), nil
+	}
+	if v := c.GetSchemaVersion(); v != CommitSchemaVersion {
+		return RecordRead[CommitRecord]{Answer: RecordUnsupported, Object: "commit", Version: int64(v)}, nil
+	}
+	ns := ResolveNamespace(want.Namespace)
+	switch {
+	case ResolveNamespace(c.GetNamespace()) != ns || c.GetRunId() != want.RunID || c.GetTaskId() != want.TaskID:
+		return invalidRead[CommitRecord]("commit", "names %s/%s/%s, not %s/%s/%s", c.GetNamespace(), c.GetRunId(), c.GetTaskId(),
+			ns, want.RunID, want.TaskID), nil
+	case !lowerHex64(want.AdmissionSHA256) || c.GetRecorded().GetAdmissionSha256() != want.AdmissionSHA256:
+		return invalidRead[CommitRecord]("commit", "not recorded under this run's admission"), nil
+	case !lowerHex64(c.GetValues().GetSha256()):
+		return invalidRead[CommitRecord]("commit", "names no values"), nil
+	}
+	rec, err := recordFor(body, c)
+	if err != nil {
+		return RecordRead[CommitRecord]{}, err
+	}
+	return RecordRead[CommitRecord]{Answer: RecordFound, Value: rec}, nil
+}
+
+// readerWith is the replica's reader, with spacing when it is given.
+func (s *RecordStore) readerWith(spacing *RecordSpacings) *recordReader {
+	if spacing == nil {
+		return s.reader
+	}
+	r := *s.reader
+	r.spacing = *spacing
+	return &r
+}

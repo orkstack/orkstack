@@ -143,6 +143,8 @@ type Config struct {
 	// OrkflowLabel puts ork.orkflow.name on the run metrics. ConfigFromEnv
 	// sets it true unless ORK_TELEMETRY_ORKFLOW_LABEL says false.
 	OrkflowLabel bool
+	// TrustInboundTrace lets an API request join its caller's trace.
+	TrustInboundTrace bool
 	// MetricCardinalityLimit is the most series one instrument keeps;
 	// zero means the SDK's own default (DefaultMetricCardinalityLimit).
 	MetricCardinalityLimit int
@@ -227,7 +229,8 @@ func configFrom(service string, lookup func(string) (string, bool)) (Config, err
 	for _, flag := range []struct {
 		key string
 		dst *bool
-	}{{PprofEnabledVar, &cfg.PprofEnabled}, {HighCardinalityVar, &cfg.HighCardinality}, {OrkflowLabelVar, &cfg.OrkflowLabel}} {
+	}{{PprofEnabledVar, &cfg.PprofEnabled}, {HighCardinalityVar, &cfg.HighCardinality}, {OrkflowLabelVar, &cfg.OrkflowLabel},
+		{TrustInboundTraceVar, &cfg.TrustInboundTrace}} {
 		raw := get(flag.key)
 		if raw == "" {
 			continue

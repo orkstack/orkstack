@@ -255,30 +255,55 @@ func TestDashboards_NoUnboundedMetricLabel(t *testing.T) {
 	}
 }
 
-// A run is counted once. Once a resumed run counts again under
-// ork_run_resumed="true", every run count must leave that copy out; until
-// internal/telemetry exports the label, no query may filter on it, because a
-// matcher on a label nothing records matches everything and only seems to.
+// distinctRunPanels are the panels that mean runs, not endings: a resumed
+// run's later ending, which ork.runs and ork.run.duration record again under
+// ork_run_resumption="true", is left out of them.
+var distinctRunPanels = map[string]bool{"Runs / min": true, "Run duration": true, "Run duration distribution": true}
+
+// endingPanels are the panels that count each ending, a resumed run's later
+// ones included.
+var endingPanels = map[string]bool{"Runs by status": true, "Failure ratio, 15 m": true}
+
+// A panel that means runs counts a run once, however often it was resumed;
+// a panel of endings counts each, so a resumed run's success or second
+// failure shows in its status counts and in the failure ratio.
 func TestDashboards_RunCountsExcludeResumed(t *testing.T) {
-	exported := metriccatalog.DeclaredAttributes(t)["ork_run_resumed"]
-	run := regexp.MustCompile(`ork_runs_total\{[^}]*\}|ork_run_duration_seconds_bucket\{[^}]*\}`)
-	counted := 0
+	if !metriccatalog.DeclaredAttributes(t)["ork_run_resumption"] {
+		t.Fatal("nothing exports ork_run_resumption: a matcher on it would match everything and only seem to filter")
+	}
+	run := regexp.MustCompile(`ork_runs_total\b(?:\{[^}]*\})?|ork_run_duration_seconds_(?:bucket|count|sum)\b(?:\{[^}]*\})?`)
+	found := map[string]bool{}
 	for _, p := range allPanels(dashboardsByUID(t)[UIDOrkStack]) {
+		title := p["title"].(string)
 		for _, expr := range exprsOf(p) {
 			for _, sel := range run.FindAllString(expr, -1) {
-				counted++
-				has := strings.Contains(sel, `ork_run_resumed!="true"`)
-				if exported && !has {
-					t.Errorf("panel %q counts runs without ork_run_resumed!=\"true\": %s", p["title"], sel)
-				}
-				if !exported && strings.Contains(sel, "ork_run_resumed") {
-					t.Errorf("panel %q filters on ork_run_resumed, which nothing exports: %s", p["title"], sel)
+				has := strings.Contains(sel, `ork_run_resumption!="true"`)
+				switch {
+				case distinctRunPanels[title]:
+					found[title] = true
+					if !has {
+						t.Errorf("panel %q means runs and counts a resumed run's later ending too: %s", title, sel)
+					}
+					if !strings.Contains(p["description"].(string), "later endings are left out") {
+						t.Errorf("panel %q does not say that a resumed run's later endings are left out", title)
+					}
+				case endingPanels[title]:
+					found[title] = true
+					if strings.Contains(sel, "ork_run_resumption") {
+						t.Errorf("panel %q counts endings and leaves a resumed run's out: %s", title, sel)
+					}
+				default:
+					t.Errorf("panel %q reads runs and is on neither list: say whether it means runs or endings: %s", title, sel)
 				}
 			}
 		}
 	}
-	if counted == 0 {
-		t.Fatal("no panel counts runs; the check has nothing to hold")
+	for _, list := range []map[string]bool{distinctRunPanels, endingPanels} {
+		for title := range list {
+			if !found[title] {
+				t.Errorf("panel %q is listed and reads no runs", title)
+			}
+		}
 	}
 }
 

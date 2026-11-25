@@ -67,7 +67,7 @@ func TestSubject_Refuses(t *testing.T) {
 			t.Errorf("%s: SPIFFEID() = %q", name, v)
 		}
 	}
-	for _, domain := range []string{"", "Ork.acme.dev", "ork.acme.dev:443", "https://ork.acme.dev", "ork.acme.dev/x", "ork acme", strings.Repeat("a", 256)} {
+	for _, domain := range []string{"", "Ork.acme.dev", "ork.acme.dev:443", "https://ork.acme.dev", "ork.acme.dev/x", "ork acme", strings.Repeat("a", 221)} {
 		if err := ValidTrustDomain(domain); err == nil {
 			t.Errorf("trust domain %q was accepted", domain)
 		}
@@ -75,7 +75,7 @@ func TestSubject_Refuses(t *testing.T) {
 			t.Errorf("SPIFFEID(%q) = %q", domain, v)
 		}
 	}
-	for _, domain := range []string{"ork.acme.dev", "a", "ork_x-1.example", strings.Repeat("a", 255)} {
+	for _, domain := range []string{"ork.acme.dev", "a", "ork_x-1.example", strings.Repeat("a", 220)} {
 		if err := ValidTrustDomain(domain); err != nil {
 			t.Errorf("trust domain %q: %v", domain, err)
 		}
@@ -90,6 +90,27 @@ func TestSubject_Refuses(t *testing.T) {
 		if s, _, err := ParseSPIFFEID(id); err == nil {
 			t.Errorf("ParseSPIFFEID(%q) = %+v", id, s)
 		}
+	}
+}
+
+// TestValidTrustDomain_LeavesRoomForASubject: the longest trust domain is the
+// one with which the shortest subject still fits, so a longer one is refused
+// where it is set and not at every create.
+func TestValidTrustDomain_LeavesRoomForASubject(t *testing.T) {
+	shortest := Subject{Namespace: "a", Orkflow: "a", Task: "a"}
+	longest := strings.Repeat("d", 220)
+	if err := ValidTrustDomain(longest); err != nil {
+		t.Fatalf("a 220-byte trust domain: %v", err)
+	}
+	id, err := shortest.SPIFFEID(longest)
+	if err != nil || len(id) != MaxSubjectBytes {
+		t.Fatalf("SPIFFEID is %d bytes, %v; want exactly %d", len(id), err, MaxSubjectBytes)
+	}
+	if err := shortest.Fits(FormatSPIFFE, longest); err != nil {
+		t.Fatalf("the shortest subject under the longest trust domain: %v", err)
+	}
+	if err := ValidTrustDomain(longest + "d"); err == nil {
+		t.Fatal("a trust domain with which no subject fits was accepted")
 	}
 }
 

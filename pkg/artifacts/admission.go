@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 )
 
@@ -83,35 +84,45 @@ var (
 
 // Admission is one admitted run's record.
 type Admission struct {
-	Version          int                       `json:"v"`
-	RunID            string                    `json:"run_id"`
-	Namespace        string                    `json:"namespace"`
-	Orkflow          string                    `json:"orkflow"`
-	OrkflowNamespace string                    `json:"orkflow_namespace,omitzero"`
-	OrkflowVersion   string                    `json:"orkflow_version"`
-	DefinitionDigest string                    `json:"definition_digest"`
-	Starter          Starter                   `json:"starter"`
-	RootRunID        string                    `json:"root_run_id,omitzero"`
-	Origin           AdmittedOrigin            `json:"origin"`
-	Nonce            string                    `json:"nonce"`
-	AdmittedAt       time.Time                 `json:"admitted_at"`
-	EngineBuild      string                    `json:"engine_build"`
-	Issuer           string                    `json:"issuer,omitzero"`
-	SubjectFormat    string                    `json:"subject_format"`
-	TrustDomain      string                    `json:"trust_domain,omitzero"`
-	NamespaceID      string                    `json:"namespace_id,omitzero"`
-	OrkflowID        string                    `json:"orkflow_id,omitzero"`
-	TokenTTL         int32                     `json:"token_ttl_seconds,omitzero"`
-	AttemptsExtra    int32                     `json:"attempts_extra"`
-	CommitWait       int32                     `json:"commit_wait_seconds"`
-	SpecVersion      int                       `json:"spec_v"`
-	Sets             []IdentitySet             `json:"sets"`
-	Tasks            map[string]AdmittedTask   `json:"tasks"`
-	Grants           map[string]GrantSelection `json:"grants,omitempty"`
-	Follows          map[string][]FollowRef    `json:"follows,omitempty"`
-	StartFollows     []FollowRef               `json:"start_follows,omitempty"`
-	Completes        []string                  `json:"completes,omitempty"`
-	Children         map[string]string         `json:"children,omitempty"`
+	Version          int            `json:"v"`
+	RunID            string         `json:"run_id"`
+	Namespace        string         `json:"namespace"`
+	Orkflow          string         `json:"orkflow"`
+	OrkflowNamespace string         `json:"orkflow_namespace,omitzero"`
+	OrkflowVersion   string         `json:"orkflow_version"`
+	DefinitionDigest string         `json:"definition_digest"`
+	Starter          Starter        `json:"starter"`
+	RootRunID        string         `json:"root_run_id,omitzero"`
+	Origin           AdmittedOrigin `json:"origin"`
+	Nonce            string         `json:"nonce"`
+	AdmittedAt       time.Time      `json:"admitted_at"`
+	EngineBuild      string         `json:"engine_build"`
+	Issuer           string         `json:"issuer,omitzero"`
+	SubjectFormat    string         `json:"subject_format"`
+	TrustDomain      string         `json:"trust_domain,omitzero"`
+	NamespaceID      string         `json:"namespace_id,omitzero"`
+	OrkflowID        string         `json:"orkflow_id,omitzero"`
+	TokenTTL         int32          `json:"token_ttl_seconds,omitzero"`
+	AttemptsExtra    int32          `json:"attempts_extra"`
+	CommitWait       int32          `json:"commit_wait_seconds"`
+	SpecVersion      int            `json:"spec_v"`
+	// ValueRecords is the format the engine writes this run's records of
+	// awaited and composed tasks in; 0 in a run admitted before there were any.
+	ValueRecords int                       `json:"value_records,omitzero"`
+	Sets         []IdentitySet             `json:"sets"`
+	Tasks        map[string]AdmittedTask   `json:"tasks"`
+	Grants       map[string]GrantSelection `json:"grants,omitempty"`
+	// SessionTags are the audiences whose tokens carry session tags, as the
+	// deployment's providers asked when the run was admitted: the mint reads
+	// nothing else.
+	SessionTags  map[string]SessionTagging `json:"session_tags,omitempty"`
+	Follows      map[string][]FollowRef    `json:"follows,omitempty"`
+	StartFollows []FollowRef               `json:"start_follows,omitempty"`
+	Completes    []string                  `json:"completes,omitempty"`
+	// StartArtifacts is where each artifact a run below the root receives at
+	// its start comes from, by its input's name.
+	StartArtifacts map[string]StartArtifact `json:"start_artifacts,omitempty"`
+	Children       map[string]string        `json:"children,omitempty"`
 }
 
 // Starter is who may start the run: one of the three kinds, with exactly
@@ -171,7 +182,8 @@ type AdmittedIdentity struct {
 
 // AdmittedTask is one task that runs a container. Set is the 1-based
 // position of its identity set in Sets, 0 when it holds no identity; the
-// slots, deadline and item maximum are pinned for a task that holds one.
+// slots and deadline are pinned for a task that holds one, and the item
+// maximum for every fan-out, since the engine records each item's result.
 type AdmittedTask struct {
 	Set             int    `json:"set,omitzero"`
 	Pool            string `json:"pool"`
@@ -179,14 +191,78 @@ type AdmittedTask struct {
 	IdentitySlots   int32  `json:"identity_slots,omitzero"`
 	AttemptDeadline int32  `json:"attempt_deadline_seconds,omitzero"`
 	MaxItems        int32  `json:"max_items,omitzero"`
+	// Grants are the names of the run's grants the task's credentials and
+	// secrets use, sorted, each once: what its mints may log in as.
+	Grants []string `json:"grants,omitempty"`
+	// Inputs are the artifacts of the run's start the task names, sorted.
+	Inputs []string `json:"inputs,omitempty"`
 }
 
 // GrantSelection is a grant as admitted for the run.
 type GrantSelection struct {
-	Provider    string            `json:"provider"`
-	Principal   string            `json:"principal"`
-	Audience    string            `json:"audience,omitzero"`
-	SessionTags map[string]string `json:"session_tags,omitempty"`
+	Provider  string `json:"provider"`
+	Principal string `json:"principal"`
+	Audience  string `json:"audience,omitzero"`
+}
+
+// StartArtifact is the artifact a run receives under an input's name: Name,
+// of the task that produced it, in a run above. Handler says the task that
+// passes it is a failure handler, whose need may have failed and left no
+// record to hold the artifact to.
+type StartArtifact struct {
+	RunID   string `json:"run_id"`
+	TaskID  string `json:"task_id"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Handler bool   `json:"handler,omitzero"`
+}
+
+// SessionTagging is how one audience's tokens are tagged.
+type SessionTagging struct {
+	// Transitive are the tags that follow the session through role chaining,
+	// sorted.
+	Transitive []string `json:"transitive,omitempty"`
+}
+
+// SessionTagGrant is the one tag that is not a claim's: a grant's login's
+// grant.
+const SessionTagGrant = "ork_grant"
+
+// SessionTagKeys are the tags a token may carry, sorted: a closed set. A task
+// adds none, renames none and chooses no value.
+var SessionTagKeys = []string{
+	SessionTagGrant, "ork_namespace", "ork_namespace_id", "ork_origin", "ork_orkflow", "ork_orkflow_id", "ork_orkflow_namespace",
+	"ork_orkflow_version", "ork_pool", "ork_root_run_id", "ork_run_id", "ork_task",
+}
+
+// checkSessionTags is why the pinned tags of a could not be trusted, or "".
+func checkSessionTags(a Admission) string {
+	if a.SessionTags != nil && len(a.SessionTags) == 0 {
+		return "an empty table of session tags is written as none"
+	}
+	used := map[string]bool{}
+	for _, set := range a.Sets {
+		for _, id := range set.Identities {
+			used[id.Audience] = true
+		}
+	}
+	for _, g := range a.Grants {
+		used[g.Audience] = true
+	}
+	for audience, tagging := range a.SessionTags {
+		if audience == "" || !used[audience] {
+			return "session tags are of an audience nothing asks for"
+		}
+		if tagging.Transitive != nil && len(tagging.Transitive) == 0 {
+			return "an empty list of transitive tags is written as none"
+		}
+		for i, key := range tagging.Transitive {
+			if !slices.Contains(SessionTagKeys, key) || (i > 0 && tagging.Transitive[i-1] >= key) {
+				return "transitive tags are of the closed set, sorted, each once"
+			}
+		}
+	}
+	return ""
 }
 
 // FollowRef names a task whose record another needs: in this run when
@@ -349,6 +425,9 @@ func checkAdmission(a Admission) string {
 	default:
 		return fmt.Sprintf("subject format %q is not ork or spiffe", a.SubjectFormat)
 	}
+	if a.ValueRecords < 0 {
+		return "a negative record format"
+	}
 	if a.SpecVersion < 1 {
 		return "the spec digest's projection is needed"
 	}
@@ -356,7 +435,7 @@ func checkAdmission(a Admission) string {
 		a.TokenTTL < 0 || a.TokenTTL > maxAdmittedSeconds {
 		return "attempts_extra, commit_wait and the token's life are out of bounds"
 	}
-	if len(a.Sets) > 0 && (!text(a.Issuer) || !text(a.NamespaceID) || !text(a.OrkflowID) || a.TokenTTL < 1) {
+	if (len(a.Sets) > 0 || len(a.Grants) > 0) && (!text(a.Issuer) || !text(a.NamespaceID) || !text(a.OrkflowID) || a.TokenTTL < 1) {
 		return "a run that holds an identity needs the issuer, the ids and the token's life"
 	}
 	for i, set := range a.Sets {
@@ -371,10 +450,17 @@ func checkAdmission(a Admission) string {
 	if len(a.Tasks) == 0 && (len(a.Sets) > 0 || len(a.Grants) > 0) {
 		return "it holds an identity no task uses"
 	}
+	used := map[string]bool{}
 	for id, t := range a.Tasks {
-		if reason := checkAdmittedTask(id, t, len(a.Sets)); reason != "" {
+		if reason := checkAdmittedTask(id, t, len(a.Sets), a.Grants); reason != "" {
 			return fmt.Sprintf("task %q: %s", id, reason)
 		}
+		for _, name := range t.Grants {
+			used[name] = true
+		}
+	}
+	if len(used) != len(a.Grants) {
+		return "it holds a grant no task uses"
 	}
 	if a.Grants != nil && len(a.Grants) == 0 {
 		return "an empty grants table is written as none"
@@ -383,6 +469,9 @@ func checkAdmission(a Admission) string {
 		if !text(name) || !text(g.Provider) || !text(g.Principal) {
 			return "a grant needs a name, a provider and a principal"
 		}
+	}
+	if reason := checkSessionTags(a); reason != "" {
+		return reason
 	}
 	for id, refs := range a.Follows {
 		if validCommitTaskID(id) != nil || len(refs) == 0 {
@@ -398,6 +487,25 @@ func checkAdmission(a Admission) string {
 	for _, id := range a.Completes {
 		if validCommitTaskID(id) != nil {
 			return "a completion names a task"
+		}
+	}
+	for input, src := range a.StartArtifacts {
+		if !text(input) || !text(src.Name) || validCommitTaskID(src.TaskID) != nil ||
+			(src.Kind != FollowContainer && src.Kind != FollowComposed) {
+			return "a received artifact names its producer's artifact, kind and run"
+		}
+		if _, err := encodeArchiveSegment(src.RunID); err != nil || src.RunID == "" {
+			return "a received artifact's run id is no run id"
+		}
+	}
+	if len(a.StartArtifacts) > 0 && a.Starter.Kind != StarterParentRun {
+		return "only a run below another receives artifacts"
+	}
+	for id, t := range a.Tasks {
+		for i, input := range t.Inputs {
+			if _, ok := a.StartArtifacts[input]; !ok || (i > 0 && t.Inputs[i-1] >= input) {
+				return fmt.Sprintf("task %q: its inputs are sorted, each once, and each received", id)
+			}
 		}
 	}
 	for id, child := range a.Children {
@@ -451,7 +559,7 @@ func checkSet(set IdentitySet) string {
 	return ""
 }
 
-func checkAdmittedTask(id string, t AdmittedTask, sets int) string {
+func checkAdmittedTask(id string, t AdmittedTask, sets int, grants map[string]GrantSelection) string {
 	if err := validCommitTaskID(id); err != nil {
 		return err.Error()
 	}
@@ -464,7 +572,18 @@ func checkAdmittedTask(id string, t AdmittedTask, sets int) string {
 	if t.Set < 0 || t.Set > sets || t.MaxItems < 0 {
 		return "it names no set, or a negative item maximum"
 	}
-	if t.Set == 0 {
+	if t.Grants != nil && len(t.Grants) == 0 {
+		return "no grants is written as none"
+	}
+	for i, name := range t.Grants {
+		if _, ok := grants[name]; !ok {
+			return fmt.Sprintf("it uses grant %q, which the run was not admitted", name)
+		}
+		if i > 0 && t.Grants[i-1] >= name {
+			return "its grants are not sorted, or one is named twice"
+		}
+	}
+	if t.Set == 0 && len(t.Grants) == 0 {
 		if t.IdentitySlots != 0 || t.AttemptDeadline != 0 {
 			return "a task that holds no identity has no slots"
 		}

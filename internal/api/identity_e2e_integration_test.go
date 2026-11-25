@@ -103,7 +103,7 @@ func TestIntegration_IdentityEndToEnd_ARealMintThroughTheDispatcher(t *testing.T
 		Network:    orkstackv1.NetworkMode_NETWORK_MODE_NONE,
 		Identities: []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts", TtlSeconds: 900}},
 	}
-	spec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(tk))
+	spec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(tk, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,9 +143,11 @@ func TestIntegration_IdentityEndToEnd_ARealMintThroughTheDispatcher(t *testing.T
 		Describe: func(ctx context.Context, runID string) (identity.ExecutionFacts, error) {
 			return starts.Describe(ctx, runID, "")
 		},
-		Audiences: func(context.Context, string, string) ([]string, error) { return []string{"sts"}, nil },
-		Signer:    func() (*jwt.Signer, error) { return signer, nil },
-		Issuer:    mintIssuer, Deployment: "e2e-test",
+		Policy: func(context.Context, string, string) (artifacts.NamespacePolicy, error) {
+			return artifacts.NamespacePolicy{Audiences: []string{"sts"}}, nil
+		},
+		Signer: func() (*jwt.Signer, error) { return signer, nil },
+		Issuer: mintIssuer, Deployment: "e2e-test",
 		TTL:            identity.TTLBounds{Default: time.Hour, Min: 10 * time.Minute, Max: 12 * time.Hour},
 		Skew:           time.Minute,
 		RecordIssuance: true,

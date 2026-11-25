@@ -233,6 +233,37 @@ func TestCheckStoreScope_AsksEveryCheckedPrefix(t *testing.T) {
 			}
 		}
 	}
+	// Of a read-only prefix the round asks for exactly what is not granted.
+	for _, p := range ScopeReadOnlyPrefixes {
+		for _, verb := range []s3scope.Verb{s3scope.Put, s3scope.Delete, s3scope.List} {
+			asked := slices.ContainsFunc(requests, func(r s3scope.Request) bool {
+				return r.Verb == verb && strings.HasPrefix(r.Key, p.Prefix+"/") && !r.Allowed && (verb == s3scope.List || r.IfMatch != "")
+			})
+			if want := verb != s3scope.List || !p.Listed; asked != want {
+				t.Errorf("a refused %s of %s/ asked: %v, want %v", verb, p.Prefix, asked, want)
+			}
+		}
+	}
+}
+
+// TestCheckStoreScope_AReadOnlyPrefixThatReachesMoreIsUnscoped: a credential
+// that may write or delete where only an engine may, or list the run
+// contexts, is unscoped, and the round names the request that reached.
+func TestCheckStoreScope_AReadOnlyPrefixThatReachesMoreIsUnscoped(t *testing.T) {
+	for _, p := range ScopeReadOnlyPrefixes {
+		for _, verb := range []s3scope.Verb{s3scope.Put, s3scope.Delete, s3scope.List} {
+			if verb == s3scope.List && p.Listed {
+				continue
+			}
+			t.Run(string(verb)+" "+p.Prefix, func(t *testing.T) {
+				f := newScopeFixture(t, s3scope.OrkerPolicy().With(p.Prefix+"/", verb))
+				round := f.check(t, 10*time.Second)
+				if want := "reached: " + string(verb) + " " + p.Prefix + "/"; round.Outcome != ScopeUnscoped || round.Detail != want {
+					t.Fatalf("round = %v %q, want unscoped %q", round.Outcome, round.Detail, want)
+				}
+			})
+		}
+	}
 }
 
 // TestScopeTables_CoverEveryPrefix ties the check's two tables to every
@@ -264,8 +295,29 @@ func TestScopeTables_CoverEveryPrefix(t *testing.T) {
 		}
 	}
 	// The documented policy, as s3scope reads it, allows exactly the
-	// allow-list's prefixes.
+	// allow-list's prefixes, and of a read-only one its reads alone.
 	policy := s3scope.OrkerPolicy()
+	for _, p := range ScopeReadOnlyPrefixes {
+		if !slices.Contains(OrkerAllowedPrefixes, p.Prefix) {
+			t.Errorf("%q is read-only but not on the allow-list", p.Prefix)
+		}
+		want := []s3scope.Verb{s3scope.Get, s3scope.Head}
+		if p.Listed {
+			want = append(want, s3scope.List)
+		}
+		i := slices.IndexFunc(policy, func(r s3scope.Rule) bool { return r.Prefix == p.Prefix+"/" })
+		if i < 0 || !slices.Equal(policy[i].Verbs, want) {
+			t.Errorf("s3scope's policy on read-only %s/ is %+v, want %v", p.Prefix, policy, want)
+		}
+	}
+	// And a prefix an Orker reads but never writes is in the read-only table,
+	// so the check cannot forget to ask for the write.
+	for _, rule := range policy {
+		if slices.Contains(rule.Verbs, s3scope.Get) && !slices.Contains(rule.Verbs, s3scope.Put) &&
+			!slices.ContainsFunc(ScopeReadOnlyPrefixes, func(p ScopeReadOnly) bool { return p.Prefix+"/" == rule.Prefix }) {
+			t.Errorf("%s is read and never written by the documented policy, but is not in ScopeReadOnlyPrefixes", rule.Prefix)
+		}
+	}
 	if len(policy) != len(OrkerAllowedPrefixes) {
 		t.Errorf("s3scope's policy has %d rules, OrkerAllowedPrefixes %d entries", len(policy), len(OrkerAllowedPrefixes))
 	}

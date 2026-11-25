@@ -20,7 +20,7 @@ func rawEnv(t *testing.T, memo *KeyMemo, keys *EngineKeys) *testsuite.TestWorkfl
 	env := sealedEnv(t, memo, keys)
 	env.SetWorkerOptions(worker.Options{
 		DeadlockDetectionTimeout: testDeadlockDetectionTimeout,
-		Interceptors:             []interceptor.WorkerInterceptor{WorkflowInterceptor(keys)},
+		Interceptors:             []interceptor.WorkerInterceptor{WorkflowInterceptor(keys, "readsItsErrors")},
 	})
 	return env
 }

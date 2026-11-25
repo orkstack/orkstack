@@ -54,10 +54,10 @@ func dialClaimCluster(t *testing.T, ctx context.Context) client.Client {
 	_ = conn.Close()
 
 	namespace := claimNamespace()
-	bootstrap, err := client.DialContext(ctx, client.Options{
+	bootstrap, err := client.DialContext(ctx, engine.ClientOptions(client.Options{
 		HostPort:  address,
 		Namespace: client.DefaultNamespace,
-	})
+	}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -72,7 +72,7 @@ func dialClaimCluster(t *testing.T, ctx context.Context) client.Client {
 	// failed.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 		if err == nil {
 			if _, probe := c.DescribeTaskQueue(ctx, claimQueue(), 0); probe == nil {
 				t.Cleanup(c.Close)

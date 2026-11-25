@@ -12,7 +12,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -57,24 +56,23 @@ type OrkerObserver struct {
 	twinsOnce sync.Once
 }
 
-// orkerRoute is one sink's cached tracer, propagator, instruments and
+// orkerRoute is one sink's cached tracer, instruments and
 // cardinality policy — built at most once per sink, however many attempts
 // Begin routes to it.
 type orkerRoute struct {
-	tracer     trace.Tracer
-	propagator propagation.TextMapPropagator
-	inst       *OrkerInstruments
-	card       Cardinality
+	tracer trace.Tracer
+	inst   *OrkerInstruments
+	card   Cardinality
 	// run is the wait and memo instruments; nil when they could not be built.
 	run *orkerRunInstruments
 }
 
 var _ orker.PhaseObserver = (*OrkerObserver)(nil)
 
-// newOrkerRoute builds one sink's route from p's tracer, meter and
-// propagator. A nil p behaves like disabled Providers: newOrkerRoute reuses
+// newOrkerRoute builds one sink's route from p's tracer and meter.
+// A nil p behaves like disabled Providers: newOrkerRoute reuses
 // noopProviders (setup.go) for that rather than hand-building the same no-op
-// tracer and propagator a second time. inst, when non-nil, is used as-is
+// tracer a second time. inst, when non-nil, is used as-is
 // instead of building fresh instruments — the seam NewOrkerObserver uses to
 // keep its existing "caller builds instruments once, itself" contract; every
 // other caller passes nil and gets instruments built from p (any
@@ -84,10 +82,6 @@ func newOrkerRoute(p *Providers, inst *OrkerInstruments) *orkerRoute {
 	if p == nil {
 		p = noopProviders(Config{})
 	}
-	propagator := p.Propagator
-	if propagator == nil {
-		propagator = propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
-	}
 	if inst == nil {
 		inst, _ = NewOrkerInstruments(p)
 	}
@@ -95,7 +89,7 @@ func newOrkerRoute(p *Providers, inst *OrkerInstruments) *orkerRoute {
 	if err != nil {
 		slog.Default().Warn("telemetry: a sink's Orker wait and memo instruments could not be built; they are not exported", "error", err)
 	}
-	return &orkerRoute{tracer: p.Tracer.Tracer(ScopeName), propagator: propagator, inst: inst, card: p.Cardinality(), run: run}
+	return &orkerRoute{tracer: p.Tracer.Tracer(ScopeName), inst: inst, card: p.Cardinality(), run: run}
 }
 
 // NewOrkerObserverForSinks builds an observer that picks s.ForNamespaced(attempt's
@@ -190,7 +184,15 @@ func (o *OrkerObserver) Begin(
 		attribute.Int64(AttrAttempt, int64(attempt)),
 		attribute.String(AttrNamespace, in.GetNamespace()),
 		attribute.String(AttrOrkflowName, in.GetOrkflowName()),
+		attribute.String(AttrOrkflowVersion, in.GetOrkflowVersion()),
+		attribute.String(AttrOrkflowDigest, in.GetOrkflowDefinitionDigest()),
 		attribute.String(AttrPool, in.GetPool()),
+	}
+	// A child run's place in its tree; a run at the top has none, as its run
+	// span has none.
+	if parent := in.GetRunContext().GetParentRunId(); parent != "" {
+		spanAttrs = append(spanAttrs, attribute.String(AttrParentRunID, parent),
+			attribute.String(AttrRootRunID, in.GetRunContext().GetRootRunId()))
 	}
 	if each := in.GetEach(); each != nil {
 		spanAttrs = append(spanAttrs, attribute.Int64(AttrItem, int64(each.GetIndex())))
@@ -217,23 +219,23 @@ func (o *OrkerObserver) Begin(
 	}
 }
 
-// TraceContext returns the W3C carrier for ctx — "traceparent" and, when the
-// propagator sets one, "tracestate" — or an empty map when ctx carries no
-// valid span (the propagator's own Inject is a no-op in that case). Its
+// TraceContext returns the W3C carrier for ctx — "traceparent" and, when there
+// is one within its bounds, "tracestate" — or an empty map when ctx carries no
+// valid span. It is part of the activity contract (task.json's `trace`), so it
+// is W3C trace context whatever a sink propagates, and never baggage. Its
 // signature matches OCIDispatcher.TraceContext, so cmd/orker can assign it
 // directly with no adapter.
-//
-// Every sink shares the same SDK-default W3C propagator (TraceContext +
-// Baggage), so which sink an attempt was routed to makes no difference here;
-// this always uses the default sink's route rather than looking one up per
-// call.
 func (o *OrkerObserver) TraceContext(ctx context.Context) map[string]string {
-	carrier := propagation.MapCarrier{}
-	route := o.routeFor(o.sinks.Default())
-	if route.propagator != nil {
-		route.propagator.Inject(ctx, carrier)
+	carrier := map[string]string{}
+	traceparent, tracestate := RunTrace(ctx)
+	if traceparent == "" {
+		return carrier
 	}
-	return map[string]string(carrier)
+	carrier["traceparent"] = traceparent
+	if tracestate != "" {
+		carrier["tracestate"] = tracestate
+	}
+	return carrier
 }
 
 // attemptObservation is one attempt's live spans, returned by Begin as an

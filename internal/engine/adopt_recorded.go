@@ -13,6 +13,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"golang.org/x/sync/errgroup"
 )
@@ -81,6 +82,16 @@ func NewResumeActivities(commits artifacts.CommitStore, values AdoptStore) *Resu
 // does not answer is a retryable error. The answer holds one result per
 // entry, in order, and never more than in.Budget encoded bytes.
 func (a *ResumeActivities) AdoptRecorded(ctx context.Context, in *orkstackv1.AdoptRecordedInput) (*orkstackv1.AdoptRecordedResult, error) {
+	out, err := a.adoptRecorded(ctx, in)
+	if a.observer != nil && activity.IsActivity(ctx) && (err == nil || isFinal(err)) && len(in.GetEntries()) > 0 {
+		if namespace := in.GetEntries()[0].GetExpected().GetNamespace(); namespace != "" {
+			a.observer.ObserveReadBackCall(ctx, namespace, int(activity.GetInfo(ctx).Attempt))
+		}
+	}
+	return out, err
+}
+
+func (a *ResumeActivities) adoptRecorded(ctx context.Context, in *orkstackv1.AdoptRecordedInput) (*orkstackv1.AdoptRecordedResult, error) {
 	if why := adoptInputFault(in); why != "" {
 		// The workflow pins every bound; an input without them is a fault of
 		// the build that made it, and reading on unbounded would hide it.

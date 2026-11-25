@@ -276,7 +276,7 @@ func renderDelivery(out io.Writer, d *orkstackv1.Delivery) error {
 	table := newTable(out)
 	fmt.Fprintf(table, "WEBHOOK\t%s  %s\n", d.GetWebhookId(), d.GetUrl())
 	fmt.Fprintf(table, "EVENT\t%s\n", deliveryEventLabel(d.GetEvent()))
-	fmt.Fprintf(table, "RUN\t%s  (namespace %s, orkflow %s)\n", d.GetRunId(), orDash(d.GetNamespace()), orDash(d.GetOrkflowName()))
+	fmt.Fprintf(table, "RUN\t%s  (namespace %s, orkflow %s)\n", d.GetRunId(), orDash(d.GetNamespace()), orDash(ownedLabel(d.GetOrkflowNamespace(), d.GetOrkflowName())))
 	if d.GetTaskId() != "" {
 		task := d.GetTaskId()
 		if d.GetAttempt() > 0 {

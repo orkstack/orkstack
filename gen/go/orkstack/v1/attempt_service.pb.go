@@ -183,9 +183,12 @@ type CommitResultResponse struct {
 	// repeat, or another attempt's that came first.
 	Created bool `protobuf:"varint,2,opt,name=created,proto3" json:"created,omitempty"`
 	// existing is that record, set when created is false.
-	Existing      *ActivityCommit `protobuf:"bytes,3,opt,name=existing,proto3" json:"existing,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Existing *ActivityCommit `protobuf:"bytes,3,opt,name=existing,proto3" json:"existing,omitempty"`
+	// input_artifacts is set on a preflight's answer, as
+	// MintAttemptTokensResponse.input_artifacts is.
+	InputArtifacts []*ArtifactRef `protobuf:"bytes,4,rep,name=input_artifacts,json=inputArtifacts,proto3" json:"input_artifacts,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CommitResultResponse) Reset() {
@@ -239,11 +242,18 @@ func (x *CommitResultResponse) GetExisting() *ActivityCommit {
 	return nil
 }
 
+func (x *CommitResultResponse) GetInputArtifacts() []*ArtifactRef {
+	if x != nil {
+		return x.InputArtifacts
+	}
+	return nil
+}
+
 var File_orkstack_v1_attempt_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_attempt_service_proto_rawDesc = "" +
 	"\n" +
-	"!orkstack/v1/attempt_service.proto\x12\vorkstack.v1\x1a\x1aorkstack/v1/activity.proto\"\xbe\x04\n" +
+	"!orkstack/v1/attempt_service.proto\x12\vorkstack.v1\x1a\x18orkstack/v1/common.proto\x1a\x1aorkstack/v1/activity.proto\"\xbe\x04\n" +
 	"\x13CommitResultRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
@@ -264,11 +274,12 @@ const file_orkstack_v1_attempt_service_proto_rawDesc = "" +
 	"\x10SpecMembersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
-	"\x05_item\"\x99\x01\n" +
+	"\x05_item\"\xdc\x01\n" +
 	"\x14CommitResultResponse\x12.\n" +
 	"\x06commit\x18\x01 \x01(\v2\x16.orkstack.v1.CommitRefR\x06commit\x12\x18\n" +
 	"\acreated\x18\x02 \x01(\bR\acreated\x127\n" +
-	"\bexisting\x18\x03 \x01(\v2\x1b.orkstack.v1.ActivityCommitR\bexisting2e\n" +
+	"\bexisting\x18\x03 \x01(\v2\x1b.orkstack.v1.ActivityCommitR\bexisting\x12A\n" +
+	"\x0finput_artifacts\x18\x04 \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0einputArtifacts2e\n" +
 	"\x0eAttemptService\x12S\n" +
 	"\fCommitResult\x12 .orkstack.v1.CommitResultRequest\x1a!.orkstack.v1.CommitResultResponseB\xaf\x01\n" +
 	"\x0fcom.orkstack.v1B\x13AttemptServiceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
@@ -292,19 +303,21 @@ var file_orkstack_v1_attempt_service_proto_goTypes = []any{
 	nil,                          // 2: orkstack.v1.CommitResultRequest.SpecMembersEntry
 	(*ActivityCommit)(nil),       // 3: orkstack.v1.ActivityCommit
 	(*CommitRef)(nil),            // 4: orkstack.v1.CommitRef
+	(*ArtifactRef)(nil),          // 5: orkstack.v1.ArtifactRef
 }
 var file_orkstack_v1_attempt_service_proto_depIdxs = []int32{
 	2, // 0: orkstack.v1.CommitResultRequest.spec_members:type_name -> orkstack.v1.CommitResultRequest.SpecMembersEntry
 	3, // 1: orkstack.v1.CommitResultRequest.commit:type_name -> orkstack.v1.ActivityCommit
 	4, // 2: orkstack.v1.CommitResultResponse.commit:type_name -> orkstack.v1.CommitRef
 	3, // 3: orkstack.v1.CommitResultResponse.existing:type_name -> orkstack.v1.ActivityCommit
-	0, // 4: orkstack.v1.AttemptService.CommitResult:input_type -> orkstack.v1.CommitResultRequest
-	1, // 5: orkstack.v1.AttemptService.CommitResult:output_type -> orkstack.v1.CommitResultResponse
-	5, // [5:6] is the sub-list for method output_type
-	4, // [4:5] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	5, // 4: orkstack.v1.CommitResultResponse.input_artifacts:type_name -> orkstack.v1.ArtifactRef
+	0, // 5: orkstack.v1.AttemptService.CommitResult:input_type -> orkstack.v1.CommitResultRequest
+	1, // 6: orkstack.v1.AttemptService.CommitResult:output_type -> orkstack.v1.CommitResultResponse
+	6, // [6:7] is the sub-list for method output_type
+	5, // [5:6] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_attempt_service_proto_init() }
@@ -312,6 +325,7 @@ func file_orkstack_v1_attempt_service_proto_init() {
 	if File_orkstack_v1_attempt_service_proto != nil {
 		return
 	}
+	file_orkstack_v1_common_proto_init()
 	file_orkstack_v1_activity_proto_init()
 	file_orkstack_v1_attempt_service_proto_msgTypes[0].OneofWrappers = []any{}
 	type x struct{}

@@ -398,5 +398,5 @@ func (n *Notifier) Wait(ctx context.Context) error {
 
 // match is what the registry filters a delivery on.
 func (d Delivery) match() Match {
-	return Match{Event: d.Event, Namespace: d.Namespace, OrkflowName: d.OrkflowName, TaskID: d.TaskID}
+	return Match{Event: d.Event, Namespace: d.Namespace, OrkflowName: d.OrkflowName, OrkflowNamespace: d.OrkflowNamespace, TaskID: d.TaskID}
 }

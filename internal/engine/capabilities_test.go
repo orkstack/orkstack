@@ -194,10 +194,10 @@ func typeAwareReleaseCluster(t *testing.T,
 		proto.Merge(reply.(*workflowservice.DescribeTaskQueueResponse), answer)
 		return nil
 	}
-	c, err := client.NewLazyClient(client.Options{
+	c, err := client.NewLazyClient(ClientOptions(client.Options{
 		HostPort: "127.0.0.1:1", Namespace: "caps",
 		ConnectionOptions: client.ConnectionOptions{DialOptions: []grpc.DialOption{grpc.WithUnaryInterceptor(intercept)}},
-	})
+	}, nil))
 	must.OK(t, err)
 	t.Cleanup(c.Close)
 	cluster, err := newReleaseCluster(temporalReleaseClient{Client: c, namespace: "caps"}, nil, "orkstack", task.DefaultQueue, "")

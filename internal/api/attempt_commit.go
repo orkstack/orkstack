@@ -129,6 +129,7 @@ func (s *Service) CommitResult(ctx context.Context, req *connect.Request[orkstac
 	}
 	out := &orkstackv1.CommitResultResponse{}
 	if creq.Preflight {
+		out.InputArtifacts = got.Received
 		s.logger.Debug("a task result's preflight passed", "namespace", creq.Namespace, "run", creq.RunID, "task", creq.TaskID,
 			"attempt", creq.Attempt, "orker", caller.OrkerID)
 		return connect.NewResponse(out), nil

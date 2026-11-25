@@ -108,12 +108,19 @@ func concurrencyRow() row {
 			q(g("ork_concurrency_stalled_holders", byLimit), "{{ork_namespace}} {{ork_concurrency_limit}} stalled holders"),
 			q(g("ork_concurrency_fence_degraded", byLimit), "{{ork_namespace}} {{ork_concurrency_limit}} fence degraded"),
 			q(g("ork_concurrency_rebuilding", "(ork_namespace, ork_concurrency_state)"), "rebuilding, {{ork_concurrency_state}}")),
+		series("Slots taken back", "Slots and places in line a limit took back, per second, because their run no longer holds or waits for them, by why, and the checks of a run that failed, whose slot or place is kept.", unitOps,
+			q(`sum by (ork_concurrency_limit, ork_concurrency_outcome) (`+rate(with("ork_concurrency_reclaimed_total", ns))+`)`, "{{ork_concurrency_limit}} {{ork_concurrency_outcome}}"),
+			dash(`sum by (ork_concurrency_limit) (`+rate(with("ork_concurrency_verify_errors_total", ns))+`)`, "{{ork_concurrency_limit}} check failed")),
+		series("Limit starts", "Keys that became active, per second, and the rebuilds of their record: skipped after a clean end, done, or an attempt that failed and is tried again.", unitOps,
+			q(`sum(`+rate(with("ork_concurrency_gates_started_total", ns))+`)`, "started"),
+			q(`sum by (ork_concurrency_outcome) (`+rate(with("ork_concurrency_rebuilt_total", ns))+`)`, "rebuild {{ork_concurrency_outcome}}")),
 		series("Concurrency census", "Gates the last census read and those that did not answer; 1 while it stopped at its gate ceiling, could not run, or a namespace's gate did not answer.", unitShort,
 			q(`max(ork_concurrency_census_gates)`, "gates"),
 			q(`max(ork_concurrency_census_unanswered)`, "unanswered"),
 			q(`max(ork_concurrency_census_truncated)`, "truncated"),
 			q(`max(ork_concurrency_census_unavailable)`, "unavailable"),
-			q(`max by (ork_namespace) (`+with("ork_concurrency_census_partial", ns)+`)`, "{{ork_namespace}} partial")),
+			q(`max by (ork_namespace) (`+with("ork_concurrency_census_partial", ns)+`)`, "{{ork_namespace}} partial"),
+			dash(`sum(increase(ork_concurrency_census_failures_total[$__rate_interval]))`, "passes that could not run")),
 		series("Concurrency census age", "How long the last census pass took, and how old each engine's snapshot is beside the census interval.", unitSeconds,
 			q(`max(ork_concurrency_census_duration_seconds)`, "pass"),
 			q(`max(ork_concurrency_census_local_age_seconds)`, "snapshot age"),
@@ -209,8 +216,8 @@ const usage = `{service_name=~".*orker"} | ork_record="usage" | ork_usage_kind="
 // integrity failures, attempts, and the tasks that retried or used most.
 func runsMorePanels() []panel {
 	return []panel{
-		heatmap("Run duration distribution", "How long runs took, bucket by bucket; an exemplar opens the trace of one run of that length.", unitSeconds,
-			`sum by (le) (increase(`+with("ork_run_duration_seconds_bucket", sel)+`[$__interval]))`),
+		heatmap("Run duration distribution", "How long runs took, bucket by bucket; an exemplar opens the trace of one run of that length. A resumed run's later endings are left out.", unitSeconds,
+			`sum by (le) (increase(`+with("ork_run_duration_seconds_bucket", distinctRuns, sel)+`[$__interval]))`),
 		series("Integrity failures", "Attempts that found stored data not what was written, by reason, across every namespace, the first of a reason included. Never a workload's fault: shown even at zero.", unitShort,
 			q(alerts.NEW(`ork_deployment_orker_tasks_total{ork_failure_reason=~"`+alerts.IntegrityReasons+`"}`, "$__rate_interval", "ork_failure_reason")+` or vector(0)`, "{{ork_failure_reason}}")).
 			withNoValue("none"),

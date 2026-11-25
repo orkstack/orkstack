@@ -244,14 +244,16 @@ func invalidDefinition(format string, args ...any) error {
 }
 
 // definitionIdentity checks that a loaded definition is the one the stub
-// names: name, version, namespace and digest. It returns what differs, or
-// "".
+// names: name, version, namespace, owner and digest. It returns what differs,
+// or "".
 func definitionIdentity(loaded, stub *orkstackv1.Orkflow) string {
 	switch {
 	case loaded.GetName() != stub.GetName() || loaded.GetVersion() != stub.GetVersion():
 		return "it names another orkflow or version than the run started"
 	case loaded.GetNamespace() != stub.GetNamespace():
 		return "it names another namespace than the run started in"
+	case loaded.GetDefinitionNamespace() != stub.GetDefinitionNamespace():
+		return "it names another owner than the run started with"
 	case loaded.GetDefinitionDigest() != stub.GetDefinitionDigest():
 		return "its digest is not the one the run started with"
 	case len(loaded.GetTasks()) == 0:

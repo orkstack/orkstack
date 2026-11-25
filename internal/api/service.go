@@ -20,6 +20,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -29,7 +30,6 @@ import (
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"go.temporal.io/api/serviceerror"
-	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -82,6 +82,20 @@ type Config struct {
 	// substitutes the in-memory store, never a fallback for a configured one.
 	Orkflows engine.OrkflowStore
 	Starter  RunStarter
+	// Resume is what ResumeRun asks of the cluster; nil serves no resume.
+	Resume engine.ResumeCluster
+	// ResumeSettings are engine.resume.*; an unset value is its default.
+	ResumeSettings ResumeSettings
+	// ResumeObserver counts requests to resume runs; nil counts nothing.
+	ResumeObserver ResumeObserver
+	// ResumeRecords holds resume plan records; nil serves no resume.
+	ResumeRecords ResumeRecords
+	// ResumeClaims hold a plan's reset for one request at a time; nil serves
+	// no resume.
+	ResumeClaims ResumeClaims
+	// ResumeSnapshots answers the highest sequence stored for a run; nil
+	// serves no resume.
+	ResumeSnapshots ResumeSnapshots
 
 	// Reader is the system of record for live runs. `ork` wires
 	// engine.TemporalRunReader, and every read then leaves the process. Nil
@@ -214,13 +228,28 @@ type Config struct {
 	// IdentityTokenTTL is identity.token.ttl, the life an admission pins for
 	// an identity that names none.
 	IdentityTokenTTL time.Duration
+	// SessionTags are the audiences whose tokens carry session tags: those of
+	// the deployment's providers that ask for them. A submit pins them into
+	// the run's admission.
+	SessionTags map[string]artifacts.SessionTagging
 	// IdentityAdmissions is where a run's admission and chain records are written
 	// (admission_submit.go). nil, with no Issuer, admits nothing: a tree
 	// that holds an identity is refused IDENTITY_NOT_CONFIGURED.
 	IdentityAdmissions AdmissionRecords
+	// AwaitRecords and AwaitChecks are what the await doors read and write
+	// for a run whose results the engine records; without them such a run's
+	// await answers unavailable. AwaitSpacings are the waits of one read, the
+	// reader's own when nil; ClockSkew is auth.clock_skew.
+	AwaitRecords  AwaitRecords
+	AwaitChecks   AwaitChecks
+	AwaitSpacings *artifacts.RecordSpacings
+	ClockSkew     time.Duration
 	// EngineBuild is this engine's build, recorded in every admission it
 	// writes: ORK_BUILD_ID, or the commit the binary was built from.
 	EngineBuild string
+	// Providers are the providers the deployment declares (ORK_PROVIDERS),
+	// which a grant's references are judged against; none refuses them all.
+	Providers provider.Set
 	// OnAdmissionOrphan counts an admission record a submit could not delete
 	// (ork.identity.admission_orphans); nil counts nothing.
 	OnAdmissionOrphan func(context.Context)
@@ -450,7 +479,7 @@ type Config struct {
 	DefinitionByReference bool
 	DefinitionObjects     DefinitionObjectWriter
 	// RunContexts is where each run tree's run-context object is written
-	// (run_context.go): the run snapshot store. Unset, a run's tasks are
+	// (run_context.go): the run-context store. Unset, a run's tasks are
 	// given no run context.
 	RunContexts RunContextWriter
 
@@ -640,7 +669,16 @@ type Service struct {
 	identityAttemptsExtra    int
 	identityAttemptsMax      int
 	identityTokenTTL         time.Duration
+	sessionTags              map[string]artifacts.SessionTagging
 	identityAdmissions       AdmissionRecords
+	providers                provider.Set
+	awaitRecords             AwaitRecords
+	awaitChecks              AwaitChecks
+	awaitSpacings            *artifacts.RecordSpacings
+	awaitTold                awaitTellings
+	awaitLimits              *identity.MintLimits
+	storeOffset              storeOffsetReading
+	clockSkew                time.Duration
 	engineBuild              string
 	onAdmissionOrphan        func(context.Context)
 	// incarnations is cfg.Incarnations; ids caches what it read.
@@ -720,6 +758,15 @@ type Service struct {
 	concurrency       engine.ConcurrencySettings
 	gateTunables      engine.GateTunables
 	concurrencyReader engine.ConcurrencyAdmissionReader
+	// resumeSettings are engine.resume.*.
+	resumeSettings ResumeSettings
+	// resumes is whether this engine resumes runs (Config.Resume).
+	resumes         bool
+	resumeRecords   ResumeRecords
+	resumeClaims    ResumeClaims
+	resumeObserver  ResumeObserver
+	resumeGate      resumeGate
+	resumeSnapshots ResumeSnapshots
 	// queuedWarn spaces GetRun's warnings that a queued run's gate could
 	// not be read (applyLiveQueued): a run page polls GetRun.
 	queuedWarn warnLimiter
@@ -758,7 +805,7 @@ type Service struct {
 	floorThroughput int64
 	logger          *slog.Logger
 	// doorFaults bounds what the unauthenticated doors log (doorFault).
-	doorFaults rate.Sometimes
+	doorFaults authn.LogBound
 	now        func() time.Time
 	newRunID   func() string
 
@@ -815,6 +862,11 @@ func NewService(cfg Config) *Service {
 		notifier:                 cfg.Notifier,
 		observer:                 cfg.Observer,
 		identityAdmissions:       cfg.IdentityAdmissions,
+		providers:                cfg.Providers,
+		awaitRecords:             cfg.AwaitRecords,
+		awaitChecks:              cfg.AwaitChecks,
+		awaitSpacings:            cfg.AwaitSpacings,
+		clockSkew:                cfg.ClockSkew,
 		triggerMetrics:           cfg.TriggerMetrics,
 		scheduleMetrics:          cfg.ScheduleMetrics,
 		concurrencyMetrics:       cfg.ConcurrencyMetrics,
@@ -856,12 +908,14 @@ func NewService(cfg Config) *Service {
 		identityCommitWait:       cfg.IdentityCommitWait,
 		commitObserver:           cfg.CommitObserver,
 		commitLimits:             identity.NewCommitLimits(cfg.Now),
+		awaitLimits:              identity.NewResolveLimits(cfg.Now),
 		identityUnscopedOrkers:   cfg.IdentityUnscopedOrkers,
 		issuedRecords:            cfg.IssuedRecords,
 		identityAttemptsMaxExtra: cfg.IdentityAttemptsMaxExtra,
 		identityAttemptsExtra:    cfg.IdentityAttemptsExtra,
 		identityAttemptsMax:      cfg.IdentityAttemptsMax,
 		identityTokenTTL:         cfg.IdentityTokenTTL,
+		sessionTags:              cfg.SessionTags,
 		admissions:               cfg.Admissions,
 		engineBuild:              cfg.EngineBuild,
 		onAdmissionOrphan:        cfg.OnAdmissionOrphan,
@@ -869,6 +923,12 @@ func NewService(cfg Config) *Service {
 		concurrency:              concurrencySettingsOf(cfg.Concurrency),
 		gateTunables:             gateTunablesOf(cfg.GateTunables),
 		concurrencyReader:        cfg.ConcurrencyReader,
+		resumeSettings:           resumeSettingsOf(cfg.ResumeSettings),
+		resumes:                  cfg.Resume != nil,
+		resumeRecords:            cfg.ResumeRecords,
+		resumeClaims:             cfg.ResumeClaims,
+		resumeObserver:           cfg.ResumeObserver,
+		resumeSnapshots:          cfg.ResumeSnapshots,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -878,12 +938,12 @@ func NewService(cfg Config) *Service {
 			Reader:  cfg.Reader,
 			Starter: cfg.Starter,
 			Pools:   cfg.Pools,
+			Resume:  cfg.Resume,
 		})
 	}
 	if svc.logger == nil {
 		svc.logger = slog.Default()
 	}
-	svc.doorFaults.Interval = time.Second
 	// cmd/ork validates engine.concurrency.* at boot; a partly set value
 	// from anywhere else would pin zeros into every limited run's plan, so it
 	// is the defaults instead, and said.
@@ -1834,6 +1894,31 @@ func (s *Service) SubmitRun(
 	return s.submitFrom(ctx, req.Msg, origin)
 }
 
+// withoutTraceparent is run without the trace context it was started in, for
+// an answer to a caller who may not read the run: the span and the sampling
+// decision are the submitter's request's. The trace id stays, as the run's
+// own. The run handed in is not changed.
+func withoutTraceparent(run *orkstackv1.Run) *orkstackv1.Run {
+	if run.GetTraceparent() == "" {
+		return run
+	}
+	run = proto.Clone(run).(*orkstackv1.Run)
+	run.Traceparent = ""
+	return run
+}
+
+// withoutTraceparents is withoutTraceparent of each run.
+func withoutTraceparents(runs []*orkstackv1.Run) []*orkstackv1.Run {
+	if runs == nil {
+		return nil
+	}
+	out := make([]*orkstackv1.Run, len(runs))
+	for i, run := range runs {
+		out[i] = withoutTraceparent(run)
+	}
+	return out
+}
+
 // submitFrom is SubmitRun with the origin already decided AND already
 // validated by the door that decided it. It is the seam the trigger door
 // (TRIGGER) and, later, schedules (SCHEDULE) start runs through: an origin's
@@ -1865,6 +1950,9 @@ func (s *Service) submitFrom(
 	if err != nil {
 		return nil, callerGaveUp(ctx, err)
 	}
+	// Submitting is not reading, through whichever door: a key's holder may
+	// be answered another caller's run.
+	resp.Msg.Run = withoutTraceparent(resp.Msg.GetRun())
 	return resp, nil
 }
 
@@ -1929,7 +2017,8 @@ func (s *Service) prepare(
 	// policy now, and, for a run whose tree holds one, every live Orker's
 	// storage credential confirmed scoped (identity_submit.go). Each
 	// composed child's definition is held to the same in planChildren.
-	if err := s.checkIdentityAtSubmit(ctx, ns, stored, ns.GetName()); err != nil {
+	needs, err := s.checkIdentityAtSubmit(ctx, ns, stored, ns.GetName(), originWord(origin))
+	if err != nil {
 		return submission{}, err
 	}
 	holds, err := s.treeAsksForIdentity(ctx, ns.GetName(), stored)
@@ -1943,7 +2032,11 @@ func (s *Service) prepare(
 		}
 		// A run a schedule or a trigger starts holds an identity only from
 		// a binder who may still submit, and a consent to what it asks for.
-		if startedByAnObject(origin) {
+		byObject, err := startedByAnObject(origin)
+		if err != nil {
+			return submission{}, err
+		}
+		if byObject {
 			if binder, err = s.checkedBinder(ctx, ns, msg, origin); err != nil {
 				return submission{}, err
 			}
@@ -1973,7 +2066,7 @@ func (s *Service) prepare(
 	// it runs a container on serves task identity; each child it plans is
 	// asked the same in planChildren.
 	if holds {
-		if err := s.resolverFor(binding).CheckIdentitySupport(ctx, ns, planned); err != nil {
+		if err := s.resolverFor(binding).CheckIdentitySupport(ctx, ns, planned, needs); err != nil {
 			return submission{}, poolPlanError(err)
 		}
 	}
@@ -2017,7 +2110,7 @@ func (s *Service) prepare(
 	plan.RootRunIndexed = rootIndexAnswer(binding.Starter)
 	if err := s.planChildren(ctx, composeRequest{
 		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
-		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(), holdsIdentity: holds,
+		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(), holdsIdentity: holds, rootOrigin: originWord(origin),
 	}, planned, &plan, 0, nil); err != nil {
 		return submission{}, err
 	}
@@ -2043,6 +2136,8 @@ func (s *Service) prepare(
 	// door that accepted the submission is the only thing that knows it, and
 	// workflow code may not ask.
 	plan.Origin = engine.OriginFromProto(origin)
+	// So does the trace it was accepted in: a request's, or a fire's.
+	plan.Trace = engine.NewTraceContext(telemetry.RunTrace(ctx))
 	// The run input and the definition each travel as one payload of the
 	// workflow start; refuse either over AGENTS.md §2.2's bound before
 	// anything is minted.
@@ -2379,6 +2474,12 @@ func poolPlanError(err error) error {
 	// that holds one (POOL_NO_IDENTITY_SUPPORT).
 	var noIdentity *engine.PoolNoIdentitySupportError
 	if errors.As(err, &noIdentity) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A pool one of whose Orkers does not declare a provider a task of the
+	// run logs in to (POOL_NO_PROVIDER).
+	var noProvider *engine.PoolNoProviderError
+	if errors.As(err, &noProvider) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	// A pool whose Orker predates join policies: it could not decode a
@@ -2973,6 +3074,9 @@ func (s *Service) GetRun(
 	SetRunTiming(run, time.Now())
 	s.applyCensusPendingReasons(ctx, run)
 	s.applyLiveQueued(ctx, run)
+	if s.resumes && s.resumeRecords != nil {
+		run.ResumeHint = engine.ResumeHintOf(run)
+	}
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
@@ -3361,7 +3465,7 @@ func (s *Service) CancelRun(
 	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), request); err != nil {
 		return nil, connect.NewError(cancelErrorCode(ctx, err), err)
 	}
-	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: run}), nil
+	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: withoutTraceparent(run)}), nil
 }
 
 // cancelErrorCode is the code a refused cancellation answers with: a cluster

@@ -292,6 +292,7 @@ Defined in `proto/orkstack/v1/run_service.proto`.
 | `InspectRun` | [`InspectRunRequest`](#inspectrunrequest) | [`InspectRunResponse`](#inspectrunresponse) | InspectRun answers "what is this task doing right now" for every in-flight task of ONE live run, from the heartbeat detail the Orker already sends and the cluster already holds for the pending activity.<br><br>It is a READ of Temporal's own describe of the execution — nothing is stored, nothing is projected onto the snapshot, and no event is added. A run that is terminal, or whose execution has left the cluster, answers with run_status and no attempts. There is no stream: a client polls.<br><br>A heartbeat is reported ONLY when it belongs to the attempt that is pending now. Temporal keeps a failed attempt's last detail through the retry backoff and until the next attempt's first beat; that detail is never rendered as the new attempt's progress. |
 | `DiffRuns` | [`DiffRunsRequest`](#diffrunsrequest) | [`DiffRunsResponse`](#diffrunsresponse) | DiffRuns compares two runs of ONE namespace field by field: the pinned definition, the input (as a canonical-JSON unified diff), and per task its status, attempt, pool, pin, orker, exit code, error, duration, and the image it was dispatched with and the platform manifest it ran.<br><br>It is a READ over what GetRun, GetOrkflow and ListTaskAttempts already serve, computed on every call and stored nowhere, so there is no comparison record that can disagree with the runs it compares. Both ids resolve inside the request's namespace exactly as GetRun resolves one: a run of another namespace is NotFound. Two runs of different orkflows are compared and flagged (same_orkflow=false), never refused.<br><br>The diff is SERVER-side for the reason DiffOrkflowVersions records: two clients render it, and the rendering of "unavailable", "does not apply" and an empty value must be decided once. Every from_value/to_value is a rendered string a client prints verbatim. |
 | `ExportRunEvidence` | [`ExportRunEvidenceRequest`](#exportrunevidencerequest) | stream [`EvidenceChunk`](#evidencechunk) | ExportRunEvidence streams ONE finished run's evidence bundle: a tar.gz whose first member, MANIFEST.json, names every other member's path, origin, size, sha256 and state, followed by the archived run and events, the pinned definition's source YAML, and per task the verbatim commit.json, values.json, every output artifact, every attempt record, and every attempt's stdout.log and stderr.log.<br><br>It is a READ, assembled per request from objects that already exist and kept nowhere: there is no export record, so nothing can disagree with the archive. Every member digest is of the bytes as they were read; a member with a recorded reference is verified as it streams and a mismatch ends the stream with DataLoss and no `last`. Bytes the cleanup worker or a lifecycle rule removed are listed with state "reclaimed" and their recorded sha256 preserved, never omitted.<br><br>The run is addressed inside its namespace exactly as GetRun addresses it and must be finished and archived; a live run is FailedPrecondition. The stream is complete only when a chunk with `last` arrives, on the same terms as ReadArtifact. The bundle layout and manifest schema are docs/RUN_EVIDENCE.md. |
+| `ResumeRun` | [`ResumeRunRequest`](#resumerunrequest) | [`ResumeRunResponse`](#resumerunresponse) | ResumeRun resumes a failed run from its failed tasks, or retries it from a chosen task, keeping the results of the tasks that need not run again. The run keeps its id, and its event stream continues after RUN_RESUMED.<br><br>dry_run previews the plan and changes nothing (run.read). A confirm (run.resume and run.submit) must send the preview's terminal_sequence and plan_digest; if the run or the plan changed since, it is refused and nothing is done. A refusal is FailedPrecondition with a ResumeRefusal detail naming its RUN_NOT_RESUMABLE sub-reason and its class: permanent, wait (try again after retry_after_seconds) or replan (preview again). docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason. |
 
 ### ScheduleService
 
@@ -675,6 +676,7 @@ recorded the same object under two tasks yields two references.
 | `run_status` | [`Status`](#status) |  |
 | `run_created_at` | `google.protobuf.Timestamp` |  |
 | `item` | optional `int32` | item is set when the referencing run recorded the object under one item. |
+| `orkflow_namespace` | `string` | orkflow_namespace is the namespace that owns orkflow_name when that is not the run's own: a shared Orkflow's child run. Empty otherwise. |
 
 ### AsksFor
 
@@ -855,7 +857,7 @@ Binding grants a role to subjects at a scope.
 | `scope_id` | `string` | scope_id is the immutable id of the namespace or Orkflow the binding is pinned to; empty when it is not pinned. Set by the engine only: a write that sets scope_id, pin or pinned_at is refused, and an update that changes scope pins again to what exists under the new scope. A pin is never carried from one scope to another. |
 | `pin` | [`BindingPin`](#bindingpin) | pin says what scope_id means for this binding now. Output only. |
 | `pinned_at` | `google.protobuf.Timestamp` | pinned_at is when the binding was last pinned. Output only. |
-| `orker_ids_any` | `bool` | orker_ids_any lets a binding to the `orker` role accept the Orker id the request's attempt names, for a pool whose Orkers share one credential. One stolen Orker of that pool can then claim to be any other, and such a binding hosts no event source. |
+| `orker_ids_any` | `bool` | orker_ids_any says a binding to the `orker` role is for a credential that a pool's Orkers share, which names no Orker. Such a credential serves no task identity, has no result of a run that holds one recorded, and hosts no event source: an Orker that does any of them needs a credential of its own. |
 | `from_configuration` | `bool` | from_configuration is true for a binding that comes from configuration (auth.admins, auth.orkers), not from the document; it is shown, never written. Output only: a write that sets it is refused. |
 
 ### Budget
@@ -1051,6 +1053,7 @@ CommitRef points at a written ActivityCommit object.
 | `commit` | [`CommitRef`](#commitref) | commit names the record now at the key. Unset for a preflight. |
 | `created` | `bool` | created is false when a record was already there: this attempt's repeat, or another attempt's that came first. |
 | `existing` | [`ActivityCommit`](#activitycommit) | existing is that record, set when created is false. |
+| `input_artifacts` | repeated [`ArtifactRef`](#artifactref) | input_artifacts is set on a preflight's answer, as MintAttemptTokensResponse.input_artifacts is. |
 
 ### CompareInterfacesRequest
 
@@ -1450,6 +1453,7 @@ receiver answered, and nothing about what the receiver did with it.
 | `settled_at` | `google.protobuf.Timestamp` |  |
 | `redelivery_of` | `string` | redelivery_of names the delivery this one repeats, when an operator asked for it through RedeliverWebhook. Empty for a delivery the engine made on its own. |
 | `sequence` | `int64` | sequence is the run event's sequence, as the body's "sequence" and X-Ork-Sequence carried it: the order the run emitted its events in, which a receiver orders deliveries by. A redelivery keeps the original's. Zero on a record written before deliveries carried it. |
+| `orkflow_namespace` | `string` | orkflow_namespace is the namespace that owns orkflow_name when that is not `namespace`: the run was a shared Orkflow's child run. The body carries it as "orkflowNamespace". Empty otherwise. |
 
 ### DeliveryAttempt
 
@@ -1518,6 +1522,8 @@ is alive by answering DescribeOrker (§6.5).
 | `masks_secrets` | `bool` | masks_secrets is whether this Orker masks a task's secrets in its logs (orker.log.mask_secrets). It reads secrets[].unmasked either way. |
 | `metadata_reachable` | repeated `string` | metadata_reachable is every address in metadata_probes that answered. Empty when none did, or when no probe ran (orker.metadata_probe off). |
 | `run_context_supported` | `bool` | run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch). |
+| `running` | repeated [`RunningAttempt`](#runningattempt) | running lists the attempts this Orker has claimed and not ended, and those whose container it has not removed yet, for the engine's own checks: it is never part of an API answer, so run ids stay in their namespaces. |
+| `running_truncated` | `bool` | running_truncated says running may be short of some: an attempt missing from it then says nothing. |
 | `each_lines_supported` | `bool` | each_lines_supported is true when this Orker indexes the lines of an artifact a fan-out reads, resolves such an item's span and stages a batch's slice file. Submit refuses a fan-out over lines on a pool where an uncordoned Orker answers false. |
 | `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is what the boot's metadata probe found, one entry per address it asked (docs/DEPLOY.md, "Keeping tasks away from the host's identity"). Empty when orker.metadata_probe is off, and from an Orker built before the probe existed. |
 | `store_scope` | [`StoreScope`](#storescope) | store_scope is this Orker's verdict on its own storage credential, from its scope check (docs/DEPLOY.md, "An Orker's own storage credential"). Unspecified for an Orker that never ran the check (an older build). |
@@ -2998,7 +3004,7 @@ answer is the TaskAttempt record the Orker writes.
 | `last_heartbeat_at` | `google.protobuf.Timestamp` | last_heartbeat_at is the cluster's time of the last beat from this attempt (last_heartbeat_time). |
 | `heartbeat_stale` | `bool` | heartbeat_stale is computed_at - last_heartbeat_at > task.HeartbeatStaleAfter (two ceiling ticks, 20 s): a healthy Orker beats at least every task.MaxHeartbeatInterval, so an older beat means the Orker is gone, partitioned, or cannot reach the frontend. Temporal has not yet acted: it times the attempt out at heartbeat_deadline_at, after which the attempt is retried or the task fails, and this attempt becomes an UNREPORTED row in ListTaskAttempts if the Orker never files a record. |
 | `heartbeat_deadline_at` | `google.protobuf.Timestamp` | heartbeat_deadline_at is last_heartbeat_at + the heartbeat timeout (task.HeartbeatTimeout, 30 s): the instant Temporal times this attempt out unless another beat arrives first. Computed here so no client needs to know the constant. |
-| `phase` | `string` | phase is the phase the attempt is in, in the Orker's own vocabulary: "start", "commit-check", "workspace", "stage-inputs", "image", "render", "create", "run", "exit", "validate", "commit", "timeout", "cancel"; "image-policy" is entered only when the task carries an image policy (ExecuteTaskInput.image_policy), between "commit-check" and "workspace"; "identity" only by a task that declares an identity, between "image" and "render". Not an enum, for the reason TaskAttempt.phase is a string. |
+| `phase` | `string` | phase is the phase the attempt is in, in the Orker's own vocabulary: "start", "commit-check", "workspace", "stage-inputs", "image", "render", "create", "run", "exit", "validate", "commit", "timeout", "cancel"; "image-policy" is entered only when the task carries an image policy (ExecuteTaskInput.image_policy), between "commit-check" and "workspace"; "identity" only by a task that declares an identity, and "credentials" after it only by one that logs in through a grant, both between "image" and "render". Not an enum, for the reason TaskAttempt.phase is a string. |
 | `container_id` | `string` | container_id is the runtime's id for the container, once one exists. |
 | `bytes_logged` | `int64` | bytes_logged is every byte the workload has written to stdout AND stderr, counted before the per-stream retention cap drops any — so it keeps growing after retention stops. Zero with heartbeat_available true means the workload has written nothing. |
 | `orker_id` | `string` | orker_id is the Orker that sent the heartbeat, as it names itself (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id carry. Empty when the beat came from an Orker built before the detail carried it. |
@@ -3158,6 +3164,7 @@ it.
 | Field | Type | Description |
 |---|---|---|
 | `tokens` | repeated [`IssuedToken`](#issuedtoken) |  |
+| `input_artifacts` | repeated [`ArtifactRef`](#artifactref) | input_artifacts are the artifacts of the run's start the task names, each under its input's name, as the engine read them from the records of the tasks that produced them: the only ones its attempt stages. |
 
 ### NamedArtifact
 
@@ -3553,8 +3560,9 @@ TaskAttempt.finished_at. The names are the dispatcher's own — "start",
 carries an image policy (ExecuteTaskInput.image_policy), between
 "commit-check" and "workspace"; "memo" and "stage-artifacts" are entered
 only by an attempt of a cached task, after "stage-inputs"; "identity" is
-entered only by an attempt of a task that declares an identity, between
-"image" and "render" — and are not an enum, for the reason
+entered only by an attempt of a task that declares an identity, and
+"credentials" after it only by one of a task that logs in through a grant,
+both between "image" and "render" — and are not an enum, for the reason
 TaskAttempt.phase is a string: a reader of an older build must be able to
 read a phase it has never heard of.
 
@@ -4014,7 +4022,7 @@ of it the workload used.
 | `values_json` | `string` | values_json is the completion's values.json, as exact JSON text: it is stored byte for byte, never re-encoded. Empty means {}. Must be empty when reject is set. |
 | `reject` | `bool` |  |
 | `reason` | `string` | reason is required with reject and refused without it; at most 1024 bytes, no control character other than tab and newline. |
-| `redeliver` | `bool` | redeliver is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `redeliver` | `bool` | redeliver tells the run again of the resolution on record for this task, for a run that holds a task identity. It carries no decision: values_json, reject and reason must be unset. The run is told the task alone. Inside ten seconds of a telling it repeats that telling's answer. Refused when nothing is on record, and AWAIT_DEADLINE_PASSED, telling nothing, when the record was stored after the deadline. |
 
 ### ResolveAwaitResponse
 
@@ -4026,9 +4034,9 @@ of it the workload used.
 | `reject` | `bool` |  |
 | `values_sha256` | `string` | values_sha256 is the hex sha256 of the stored values.json; empty for a rejection. |
 | `repeat` | `bool` | repeat is true when this request repeated the resolution that had already been applied — same values, or same rejection reason — so nothing was stored or delivered. |
-| `delivery_pending` | `bool` | delivery_pending is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
-| `told_at` | `google.protobuf.Timestamp` | told_at is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
-| `deadline_passed` | `bool` | deadline_passed is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `delivery_pending` | `bool` | delivery_pending: the resolution is on record and the run could not be told of it. Repeating the request, or redeliver, delivers it. Set only for a run that holds a task identity, as are told_at and deadline_passed. |
+| `told_at` | `google.protobuf.Timestamp` | told_at is when this replica last had the run told of the resolution on record: by this request, or by the one it stands on. It never says that the run applied it. |
+| `deadline_passed` | `bool` | deadline_passed: the resolution is on record and the await's deadline has passed by the store's clock. The run decides whether it takes it, and repeating the request changes nothing. |
 
 ### ResourceQuantity
 
@@ -4066,6 +4074,24 @@ instant whose execution the restored cluster holds again.
 | `deleted` | `bool` | deleted says this call deleted its executions. |
 | `open` | `bool` | open says the restored execution is running (a run replaying its tail, or one resumed since the restore). It is never deleted; cancel it or let it finish. |
 
+### ResumeCount
+
+ResumeCount is how many units of a plan fall in one category.
+
+| Field | Type | Description |
+|---|---|---|
+| `category` | [`ResumeCategory`](#resumecategory) |  |
+| `count` | `int32` |  |
+
+### ResumeDiff
+
+ResumeDiff is what changed in a plan since the caller's preview.
+
+| Field | Type | Description |
+|---|---|---|
+| `added` | repeated [`ResumeUnitRef`](#resumeunitref) |  |
+| `dropped` | repeated [`ResumeUnitRef`](#resumeunitref) |  |
+
 ### ResumeEventSourceRequest
 
 | Field | Type | Description |
@@ -4080,12 +4106,67 @@ instant whose execution the restored cluster holds again.
 | `event_source` | [`EventSource`](#eventsource) |  |
 | `notice` | `string` | notice is set when the resume changed nothing, saying why. |
 
+### ResumeForceCanceledBy
+
+ResumeForceCanceledBy names who force-cancelled a resumed run.
+
+| Field | Type | Description |
+|---|---|---|
+| `principal` | `string` |  |
+| `principal_verified` | `bool` |  |
+
 ### ResumeHint
 
-ResumeHint is E85's; it is empty until E85 lands (v0.4.0 proto
-batch).
+ResumeHint says whether a finished run's ending is one a resume can start
+from, and which tasks offer Resume or Retry from here. It is advisory: it
+is derived from the run's ending alone, with no look at its history or its
+saved results, so a ResumeRun preview can still refuse (docs/RESUME.md).
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `state` | [`ResumeHintState`](#resumehintstate) |  |
+| `refusal` | `string` | refusal is the RUN_NOT_RESUMABLE sub-reason (docs/REASONS.md) when state is NOT_RESUMABLE. |
+| `message` | `string` | message is the sentence to show beside the run's ending. |
+| `task_actions` | repeated [`ResumeTaskAction`](#resumetaskaction) |  |
+| `resumes_used` | `int32` | resumes_used counts this run's resumes toward the cap of 20. |
+
+### ResumeRunRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `run_id` | `string` |  |
+| `reason` | `string` | reason is recorded with the resume; at most 1 KiB. |
+| `from_task_id` | `string` | from_task_id empty is Resume; set, Retry from here. |
+| `dry_run` | `bool` |  |
+| `expected_terminal_sequence` | `int64` | expected_terminal_sequence is the preview's terminal_sequence; required unless dry_run. |
+| `expected_plan_digest` | `string` | expected_plan_digest is the preview's plan_digest. |
+| `acknowledged_unknown_attempts` | repeated `string` | acknowledged_unknown_attempts lists the acknowledge_key of every ATTEMPT_OUTCOME_UNKNOWN warning the caller accepts; it needs expected_plan_digest. |
+| `accept_sequence_gap` | `bool` | accept_sequence_gap and accepted_highest_seq accept a gap in the run's stored events (run.resume.accept_gap); accepted_highest_seq is the preview's highest_sequence. |
+| `accepted_highest_seq` | `int64` |  |
+| `accept_unverified_stop` | `bool` | accept_unverified_stop accepts a force cancel whose stop could not be confirmed (run.resume.accept_gap). |
+
+### ResumeRunResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `resume` | [`RunResume`](#runresume) | resume is the resume made, or the one a repeated confirm found. |
+| `already_resumed` | `bool` |  |
+| `plan_digest` | `string` | plan_digest names the plan: what reruns, what is kept and how. |
+| `seq_base` | `int64` | seq_base is RUN_RESUMED's sequence. |
+| `kept_count` | `int32` |  |
+| `tasks` | repeated [`ResumeTask`](#resumetask) |  |
+| `counts` | repeated [`ResumeCount`](#resumecount) |  |
+| `diff` | [`ResumeDiff`](#resumediff) | diff is what changed since the plan the caller previewed. |
+| `action` | [`ResumeAction`](#resumeaction) |  |
+| `concurrency_effect` | `string` | concurrency_effect says whether the run waits for a concurrency slot. |
+| `estimated_readback_seconds` | `int64` |  |
+| `readback_calls` | `int32` |  |
+| `resumes_used` | `int32` | resumes_used counts this run's resumes toward the cap of 20. |
+| `warnings` | repeated [`ResumeWarning`](#resumewarning) |  |
+| `terminal_sequence` | `int64` | terminal_sequence is the sequence of the ending a confirm sets aside. |
+| `highest_sequence` | `int64` | highest_sequence is the highest event sequence stored for the run. |
 
 ### ResumeScheduleRequest
 
@@ -4099,6 +4180,61 @@ No fields.
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | [`Schedule`](#schedule) |  |
+
+### ResumeTask
+
+ResumeTask is one task, or one fan-out item, of a resume's plan.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `item` | optional `int32` | item is set for one item of a fan-out. |
+| `category` | [`ResumeCategory`](#resumecategory) |  |
+| `why` | `string` | why is the sentence the plan lists the task with. |
+| `previous_outcome` | [`Status`](#status) |  |
+| `memo` | [`ResumeMemoState`](#resumememostate) |  |
+| `callback_works` | `bool` | callback_works: an awaited task's callback token accepts one more resolution once the run waits for it again. |
+| `detail` | `string` |  |
+| `answer_not_used_reason` | `string` | answer_not_used_reason: why an answer on record was not used. |
+| `child_waiting_on` | `string` | child_waiting_on: what a composed task's open child run waits on. |
+
+### ResumeTaskAction
+
+ResumeTaskAction is what one task of a resumable run offers.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `resume` | `bool` | resume: the task failed, so Resume reruns it. |
+| `retry_from` | `bool` | retry_from: Retry from here can start from it. |
+
+### ResumeUnitRef
+
+ResumeUnitRef names a task, or one item of a fan-out.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `item` | optional `int32` |  |
+
+### ResumeWarning
+
+ResumeWarning is something a resume's caller should know before
+confirming. Only ATTEMPT_OUTCOME_UNKNOWN needs acknowledging.
+
+| Field | Type | Description |
+|---|---|---|
+| `kind` | [`ResumeWarningKind`](#resumewarningkind) |  |
+| `message` | `string` |  |
+| `build_id` | `string` | build_id: FORCE_CANCELED_SAME_BUILD's release build. |
+| `orker_id` | `string` | orker_id, task_id, item, ordinal and last_seen_at name an attempt whose outcome is unknown; acknowledge_key is what a confirm lists in acknowledged_unknown_attempts. |
+| `task_id` | `string` |  |
+| `item` | optional `int32` |  |
+| `ordinal` | `int32` |  |
+| `last_seen_at` | `google.protobuf.Timestamp` |  |
+| `acknowledge_key` | `string` |  |
+| `pin` | `string` | pin and until: PIN_LEASE_HELD's pin and when its host's old slot frees. |
+| `until` | `google.protobuf.Timestamp` |  |
 
 ### RetentionPolicy
 
@@ -4190,7 +4326,7 @@ Run is one execution of an Orkflow.
 | `timing` | [`RunTiming`](#runtiming) | timing is the run's half of the task-timing derivation (RunTiming), set by GetRun and never stored; each TaskRun carries its own half. |
 | `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts are the artifacts a child run received from the task that composed it, by the name of the artifact input each binds. |
 | `output_artifacts` | repeated [`NamedArtifact`](#namedartifact) | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `trace_id` | `string` | trace_id is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `trace_id` | `string` | trace_id is the trace the run belongs to, as 32 hex digits: the one its submission was accepted in, and for a child run its parent's. Empty when the submission was not traced. |
 | `run_context` | [`RunContextState`](#runcontextstate) | run_context says whether the run's tasks can read its run context (their task.json and the .run and .task template roots). |
 | `canceled_by_verified` | `bool` | canceled_by_verified says canceled_by is a principal OrkStack authenticated (auth.mode observe or enforce). Unset, canceled_by is what the deployment's gateway asserted in Ork-Principal, unauthenticated. |
 | `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while the run waits in line for a slot of its concurrency limit's key (docs/DSL.md "Concurrency limits"): status PENDING, or RUNNING when an unpaused or resumed run waits again. |
@@ -4206,6 +4342,7 @@ Run is one execution of an Orkflow.
 | `pause_slot_kept` | `bool` | pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `timeout` | [`RunTimeout`](#runtimeout) | timeout is the run's own time limit; unset when its Orkflow declares no `timeout:`. |
 | `dispatch_hold` | [`RunDispatchHold`](#rundispatchhold) | dispatch_hold is why the run itself is holding back work it could start, as of the last time it looked: it is at its in-flight limit, or it is carrying on. Unspecified when nothing is held, and while the run is paused (pause says why). A task waiting behind this hold reads PENDING. |
+| `traceparent` | `string` | traceparent is the W3C trace context the run was started in, whose span is its run span's parent; for a child run that is its parent's run span. Only a read of the run carries it: a response to a submit or a cancel, and a webhook body, do not. Empty when the submission was not traced. |
 
 ### RunArtifact
 
@@ -4261,10 +4398,10 @@ in OrkStack reads it to decide anything.
 | `principal` | `string` | principal is what the deployment's gateway asserted in the Ork-Principal request header on the submitting request — the trigger invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes by truncation, and NEVER authenticated: it is the same assertion, on the same terms, as AuditRecord.principal. Empty when no header was present; a client then omits the line entirely rather than showing a blank that could be mistaken for a name. |
 | `root_run_id` | `string` | root_run_id is the id of the run at the top of this run's composed chain: the run that started the chain, which id names only for a direct child. Set on a PARENT_RUN origin and empty on every other kind, so a run-again of a child, a new top-level run, has none. An empty value names no root. Opaque, like id. |
 | `schedule` | [`RunScheduleFire`](#runschedulefire) | schedule is set from E86; unset until it lands (v0.4.0 proto batch). |
-| `parent_task_id` | `string` | parent_task_id is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `parent_orkflow` | [`OrkflowRef`](#orkflowref) | parent_orkflow is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `root_orkflow` | [`OrkflowRef`](#orkflowref) | root_orkflow is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `root_origin` | [`RunOrigin`](#runorigin) | root_origin is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `parent_task_id` | `string` | parent_task_id is the composed task that started this run, in the parent run id names. Set on a PARENT_RUN origin and empty on every other kind. |
+| `parent_orkflow` | [`OrkflowRef`](#orkflowref) | parent_orkflow is the parent run's Orkflow, its version and definition digest; its namespace is set only when another namespace owns it. Set as parent_task_id is. |
+| `root_orkflow` | [`OrkflowRef`](#orkflowref) | root_orkflow is the Orkflow of the run root_run_id names, as parent_orkflow is the parent's. Set with root_run_id. |
+| `root_origin` | [`RunOrigin`](#runorigin) | root_origin is the whole origin of the run root_run_id names: what started the chain, and its principal, asserted or verified as it says. A child has no principal or reference of its own. It holds no parent or root of its own, so an origin nests one level. Absent when the root recorded no origin. |
 | `principal_verified` | `bool` | principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 | `auth_method` | `string` | auth_method is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
@@ -4300,10 +4437,35 @@ RUN_RESULTS_KEPT.
 
 ### RunResume
 
-RunResume is E85's; it is empty until E85 lands (v0.4.0 proto
-batch).
+RunResume is one resume of a run, oldest first in Run.resumes: who asked,
+what for, and how the run ended afterwards. A run keeps one id, one event
+stream and one archive however often it is resumed (docs/RESUME.md).
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `at` | `google.protobuf.Timestamp` |  |
+| `action` | [`ResumeAction`](#resumeaction) |  |
+| `from_task_id` | `string` | from_task_id is the task retried from; empty for RESUME. |
+| `principal` | `string` | principal is who resumed the run, verified or asserted as principal_verified says (docs/ACCESS.md). |
+| `principal_verified` | `bool` |  |
+| `reason` | `string` |  |
+| `superseded_reason` | `string` | superseded_reason is the run's earlier ending, which the resume set aside. |
+| `resumed_after_sequence` | `int64` | resumed_after_sequence is the last event sequence of the ending set aside; sequence is this resume's RUN_RESUMED event. |
+| `sequence` | `int64` |  |
+| `ended` | [`RunResumeEnded`](#runresumeended) | ended is how the run ended after this resume; unset while it runs. |
+| `from_state` | [`ResumeFromState`](#resumefromstate) |  |
+| `force_canceled_by` | [`ResumeForceCanceledBy`](#resumeforcecanceledby) | force_canceled_by is who force-cancelled the run, for a resume of a force-cancelled run. |
+| `scope` | `uint64` | scope numbers this resume's records (docs/STORAGE.md). |
+
+### RunResumeEnded
+
+RunResumeEnded is how a run ended after one resume.
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | [`Status`](#status) |  |
+| `reason` | `string` |  |
+| `before_anything_reran` | `bool` | before_anything_reran: the run ended before any task ran again. |
 
 ### RunResumed
 
@@ -4355,6 +4517,17 @@ derived on read by GetRun and never stored.
 | `wait_sum_tasks` | `int32` |  |
 | `wait_unavailable_tasks` | `int32` |  |
 | `computed_at` | `google.protobuf.Timestamp` | computed_at is the server's clock when it derived this, the instant every since_scheduled is measured against. Set only while the run has not ended and a task (or item) is RUNNING, so a finished run answers the same bytes every time. |
+
+### RunningAttempt
+
+RunningAttempt names one attempt of a task, or of one item of a fan-out.
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `task_id` | `string` |  |
+| `item` | optional `int32` |  |
+| `ordinal` | `int32` |  |
 
 ### Schedule
 
@@ -5277,8 +5450,9 @@ trigger's orkflow cannot change.
 ### UpdateWebhookRequest
 
 UpdateWebhookRequest replaces every mutable field, on the terms
-RegisterWebhookRequest states them: empty events means every run
-transition; each scope field empty means every. It carries no secret.
+RegisterWebhookRequest states them: empty events means the run's
+lifecycle (its start, endings and resumption); each scope field empty means
+every. It carries no secret.
 
 | Field | Type | Description |
 |---|---|---|
@@ -5361,7 +5535,7 @@ grouped by". The total row has every key empty.
 | `events` | repeated [`EventType`](#eventtype) | events selects the transitions this subscription wants. Empty means every RUN transition — and only those: a task outcome event (TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED, TASK_FAILED) is delivered only to a subscription that names it. TASK_LOG is never accepted. |
 | `created_at` | `google.protobuf.Timestamp` |  |
 | `namespace` | `string` | namespace narrows this subscription to runs of one namespace. Empty means every namespace, which is what every subscription registered before this field existed is. A run that names no namespace is in "default", so a subscription written as "default" matches it. |
-| `orkflow_name` | `string` | orkflow_name narrows to runs of one orkflow, by the name the author wrote. Empty means every orkflow. It composes with namespace by conjunction and does not require it: a name alone matches that name in every namespace. |
+| `orkflow_name` | `string` | orkflow_name narrows to runs of one orkflow, by the name the author wrote. Empty means every orkflow. It composes with namespace by conjunction and does not require it: a name alone matches that name in every namespace. The orkflow is the run's own namespace's: a child run of another namespace's shared orkflow never matches a name. |
 | `task_id` | `string` | task_id narrows the task outcome events to one task. Empty means every task. It is consulted only for TASK_* events: a RUN_* event has no task and passes this filter unconditionally, so one subscription can want TASK_SUCCEEDED of `extract` and RUN_FAILED of the whole run. Registration refuses a task_id when events names no TASK_* event, because the filter could then never be consulted. |
 | `name` | `string` | name is the operator's handle: a slug, at most 200 bytes, unique among the named subscriptions of its namespace scope. It REQUIRES namespace: a name is unique within one namespace, and a deployment-wide subscription belongs to none. Empty means unnamed — every subscription registered before this field existed — and an unnamed subscription is outside every automation document. It plays no part in delivery. |
 | `plaintext_runs_acknowledged` | `bool` | plaintext_runs_acknowledged is set from identity (O74); unset until it lands (v0.4.0 proto batch). |
@@ -5757,7 +5931,7 @@ interrupted.
 | Value | Number | Description |
 |---|---|---|
 | `INTERRUPTION_PHASE_UNSPECIFIED` | 0 | UNSPECIFIED: not known, or reported by an Orker this release does not name. |
-| `INTERRUPTION_PHASE_BEFORE_START` | 1 | BEFORE_START: preparing, before its container started (staging inputs, pulling the image, creating the container). |
+| `INTERRUPTION_PHASE_BEFORE_START` | 1 | BEFORE_START: preparing, before its container started (staging inputs, pulling the image, obtaining its identities and credentials, creating the container). |
 | `INTERRUPTION_PHASE_RUNNING` | 2 | RUNNING: its container was running. |
 | `INTERRUPTION_PHASE_AFTER_EXIT` | 3 | AFTER_EXIT: its container had ended and the Orker was checking and saving its outputs. |
 | `INTERRUPTION_PHASE_REPORTED` | 4 | REPORTED: the Orker had reported how the attempt ended. |
@@ -6107,6 +6281,29 @@ ResumeAction is what a resume was asked to do.
 | `RESUME_ACTION_RESUME` | 1 | RESUME reruns the failed tasks and everything downstream of them. |
 | `RESUME_ACTION_RETRY_FROM` | 2 | RETRY_FROM also reruns the chosen task and everything downstream of it. |
 
+### ResumeCategory
+
+ResumeCategory is the section of the plan a task is listed in.
+
+| Value | Number | Description |
+|---|---|---|
+| `RESUME_CATEGORY_UNSPECIFIED` | 0 |  |
+| `RESUME_CATEGORY_RERUN_FAILED` | 1 | Reruns: it failed. |
+| `RESUME_CATEGORY_RERUN_SELECTED` | 2 | Reruns: it is the task retried from. |
+| `RESUME_CATEGORY_RERUN_DOWNSTREAM` | 3 | Reruns: it is downstream of a task that reruns. |
+| `RESUME_CATEGORY_RERUN_RESULT_GONE` | 4 | Reruns: its saved result is gone. |
+| `RESUME_CATEGORY_RERUN_UNFINISHED` | 5 | Reruns: it never finished. |
+| `RESUME_CATEGORY_RERUN_PIN_MEMBER` | 6 | Reruns: another member of its pin reruns. |
+| `RESUME_CATEGORY_RERUN_EACH_SOURCE` | 7 | Reruns: the task its fan-out is over reruns. |
+| `RESUME_CATEGORY_KEPT` | 8 | Kept: its saved result is read back. |
+| `RESUME_CATEGORY_SETTLED` | 9 | Already done: an awaited or composed task's result is kept. |
+| `RESUME_CATEGORY_SKIPPED` | 10 | Stays skipped. |
+| `RESUME_CATEGORY_WAITS_AGAIN` | 11 | Waits again, from the resume, with a fresh deadline. |
+| `RESUME_CATEGORY_SLEEP_KEPT` | 12 | A sleep that already started: it wakes when it would have. |
+| `RESUME_CATEGORY_EARLIER` | 13 | Finished in an earlier part of the run, before it carried on. |
+| `RESUME_CATEGORY_RESOLVED_ON_RECORD` | 14 | Answered and on record: the answer given is used. |
+| `RESUME_CATEGORY_CHILD_OUTPUTS_ON_RECORD` | 15 | A composed task whose child run's outputs are on record. |
+
 ### ResumeDisposition
 
 ResumeDisposition is how a resume treats one task or item (E85 §3.4).
@@ -6120,6 +6317,50 @@ ResumeDisposition is how a resume treats one task or item (E85 §3.4).
 | `RESUME_DISPOSITION_KEEP_SKIPPED` | 4 | KEEP_SKIPPED keeps it skipped. |
 | `RESUME_DISPOSITION_WAIT` | 5 | WAIT waits again, from the resume, with a fresh deadline. |
 | `RESUME_DISPOSITION_SLEEP_UNTIL` | 6 | SLEEP_UNTIL sleeps until its recorded wake-up time. |
+
+### ResumeFromState
+
+ResumeFromState is how the run had ended when it was resumed.
+
+| Value | Number | Description |
+|---|---|---|
+| `RESUME_FROM_STATE_UNSPECIFIED` | 0 |  |
+| `RESUME_FROM_STATE_FAILED` | 1 |  |
+| `RESUME_FROM_STATE_FORCE_CANCELED` | 2 |  |
+
+### ResumeHintState
+
+ResumeHintState is what a run's ending allows.
+
+| Value | Number | Description |
+|---|---|---|
+| `RESUME_HINT_STATE_UNSPECIFIED` | 0 | A run that has not ended, or ended in a way a resume never starts from (succeeded, canceled). |
+| `RESUME_HINT_STATE_RESUMABLE` | 1 | A failed run: Resume reruns its failed tasks; Retry from here also reruns a chosen task. |
+| `RESUME_HINT_STATE_RESUMABLE_FROM_TASK` | 2 | A force-cancelled run: it is resumed only from a task the caller picks. |
+| `RESUME_HINT_STATE_NOT_RESUMABLE` | 3 | An ending no resume can fix; refusal says why. |
+
+### ResumeMemoState
+
+ResumeMemoState is what a cached task that reruns does with its memo.
+
+| Value | Number | Description |
+|---|---|---|
+| `RESUME_MEMO_STATE_UNSPECIFIED` | 0 | Not a cached task. |
+| `RESUME_MEMO_STATE_BYPASSED` | 1 | It succeeded before: it runs again, and its memo points at the new result. |
+| `RESUME_MEMO_STATE_LOOKED_UP` | 2 | It never succeeded: its memo is looked up as on any run. |
+
+### ResumeWarningKind
+
+ResumeWarningKind is a ResumeWarning's kind.
+
+| Value | Number | Description |
+|---|---|---|
+| `RESUME_WARNING_KIND_UNSPECIFIED` | 0 |  |
+| `RESUME_WARNING_KIND_FORCE_CANCELED_SAME_BUILD` | 1 | The run was force-cancelled on the build it resumes on, and may stall the same way. |
+| `RESUME_WARNING_KIND_WAS_PAUSED` | 2 | The run was paused; it resumes unpaused. |
+| `RESUME_WARNING_KIND_PIN_LEASE_HELD` | 3 | A pin's host may still hold its old slot until the lease expires. |
+| `RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN` | 4 | An earlier attempt may still be running on an Orker that is gone. |
+| `RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING` | 5 | The force cancel of the run is still finishing. |
 
 ### RetryState
 

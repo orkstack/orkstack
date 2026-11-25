@@ -30,13 +30,13 @@ type TwinInstruments struct {
 func NewTwinInstruments(p *Providers) (*TwinInstruments, error) {
 	meter := meterFor(p)
 	runs, err := meter.Int64Counter(DeploymentRunsMetric,
-		metric.WithDescription("Runs reaching a terminal state in every namespace, by status."),
+		metric.WithDescription("Runs reaching a terminal state in every namespace, by status and, for a closed set, failure reason."),
 		metric.WithUnit("{run}"))
 	if err != nil {
 		return nil, err
 	}
 	tasks, err := meter.Int64Counter(DeploymentTasksMetric,
-		metric.WithDescription("Tasks reaching a terminal state in every namespace, by pool, status, failure category and cache outcome."),
+		metric.WithDescription("Tasks reaching a terminal state in every namespace, by pool, status, failure category, cache outcome and, for a closed set, failure reason."),
 		metric.WithUnit("{task}"))
 	if err != nil {
 		return nil, err

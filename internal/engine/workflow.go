@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -2605,29 +2606,66 @@ func (s *runState) executeTaskInput(
 		// payload is byte-identical to what it was before this field existed.
 		Cache: s.cacheContextFor(t),
 
-		// Set ONLY for a task that declares identities or credentials, of a
-		// run its plan admitted: what its attempt needs to ask for its tokens.
+		// Set ONLY for a task of a run its plan admitted, one that declares no
+		// identity included: what its attempt needs to ask the engine for its
+		// tokens and to have its result recorded.
 		Identity: s.identityContextFor(t),
 	}
 }
 
-// identityContextFor is t's IdentityContext, or nil for a task that holds no
-// identity or a run with no admission. Everything in it comes from the plan
+// identityContextFor is t's IdentityContext, or nil for a run with no
+// admission: the engine records the result of every container task of an
+// admitted run, whatever the task holds. Everything in it comes from the plan
 // the submitting engine pinned and from the definition, copied verbatim, so
 // an Orker that hashes its input computes the digest the admission recorded.
 // The scopes are 0: this release resumes no run under a new scope.
 func (s *runState) identityContextFor(t *orkstackv1.Task) *orkstackv1.IdentityContext {
 	id := s.plan.Identity
-	if id == nil || (len(t.GetIdentities()) == 0 && len(t.GetCredentials()) == 0) {
+	if id == nil {
 		return nil
 	}
 	return &orkstackv1.IdentityContext{
 		Issuer:          id.Issuer,
 		Identities:      t.GetIdentities(),
 		Credentials:     t.GetCredentials(),
+		Grants:          IdentityGrants(t, id.Grants),
 		AdmissionSha256: id.AdmissionSHA256,
 		DigestVersion:   id.SpecVersion,
+
+		CommitWaitSeconds: id.CommitWaitSeconds,
 	}
+}
+
+// TaskGrants is the names of the grants t's credentials and secrets use,
+// sorted, each once; nil when it uses none. Pure.
+func TaskGrants(t *orkstackv1.Task) []string {
+	var out []string
+	for _, c := range t.GetCredentials() {
+		out = append(out, c.GetGrant())
+	}
+	for _, s := range t.GetSecrets() {
+		if s.GetGrant() != "" {
+			out = append(out, s.GetGrant())
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// IdentityGrants is the grants t uses as its run was admitted with them, in
+// name order: what its spec digest hashes and its attempt logs in with. A
+// grant the run was not admitted with is left out, so the digest of a task
+// that names one is not the admitted one's. Pure.
+func IdentityGrants(t *orkstackv1.Task, admitted map[string]artifacts.GrantSelection) []*orkstackv1.IdentityGrant {
+	var out []*orkstackv1.IdentityGrant
+	for _, name := range TaskGrants(t) {
+		g, ok := admitted[name]
+		if !ok {
+			continue
+		}
+		out = append(out, &orkstackv1.IdentityGrant{Name: name, Provider: g.Provider, Principal: g.Principal, Audience: g.Audience})
+	}
+	return out
 }
 
 // cacheContextFor is t's CacheContext, or nil — for a task with no cache,
@@ -3472,6 +3510,9 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		DispatchHold:   s.dispatchHoldProto(),
 		Queued:         s.concQueuedProto(),
 	}
+	// The trace the run belongs to; empty when its submission was not traced
+	// (the plan is replay-pinned).
+	run.TraceId, run.Traceparent = s.plan.Trace.ids()
 	for _, id := range s.order {
 		row := s.taskRuns[id]
 		settleDispatchHeld(row, s.eaches[id] != nil)

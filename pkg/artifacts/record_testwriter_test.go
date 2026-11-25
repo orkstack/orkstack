@@ -61,7 +61,16 @@ func TestRecordTestWriter_OnlyTestsUseIt(t *testing.T) {
 // each an adopting site (it takes values, through RecordedFound.InTime) or
 // an answering one (it only reports what is on record, also by InTime).
 // A new caller is added here with its class, so a review sees it.
-var recordReadSites = map[string]string{}
+var recordReadSites = map[string]string{
+	// Step 6a asks whether a result is on record, through Standing.
+	"internal/identity/follows_check.go": "answer",
+	// The await doors answer what is on record and tell the run; they adopt
+	// nothing, and judge a record late by RecordedInTime.
+	"internal/api/await_record.go": "answer",
+	// A composed task's record takes its child's outputs', which nothing is
+	// due by: it adopts no resolution.
+	"internal/identity/values_record.go": "answer",
+}
 
 // TestRecordReader_AdoptionSitesHoldRecordedInTime: every production file
 // outside this package that reads a RecordedValues is a registered site,

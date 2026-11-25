@@ -230,6 +230,10 @@ type taskDocument struct {
 	// each attempt (docs/DSL.md, "Task identity").
 	Identities []identityDocument `yaml:"identities"`
 
+	// Credentials are the bundles of files the task holds, issued for each
+	// attempt by the namespace's grants (docs/DSL.md, "Credentials").
+	Credentials []credentialDocument `yaml:"credentials"`
+
 	// Resources is what the task asks the Orker for. Orker policy may cap it;
 	// it may never raise it (§9.3).
 	Resources *resourceDocument `yaml:"resources"`
@@ -279,6 +283,11 @@ type secretDocument struct {
 	// Mask false leaves the value unmasked in the task's logs; absent or true
 	// masks it.
 	Mask *bool `yaml:"mask"`
+	// Grant is the namespace's grant a provider source is read as; set with
+	// a provider's source only (docs/DSL.md, "Secrets from a provider").
+	Grant string `yaml:"grant"`
+	// Ciphertext is base64 a provider that decrypts is given; never a value.
+	Ciphertext string `yaml:"ciphertext"`
 }
 
 // resourceDocument is the Kubernetes spelling of a resource request.
@@ -493,6 +502,10 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		if err != nil {
 			return nil, err
 		}
+		credentials, err := compileCredentials(taskIndex, td)
+		if err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
 			Join:           join,
 			Each:           each,
@@ -509,6 +522,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			Pool:           td.Pool,
 			Pin:            td.Pin,
 			Identities:     identities,
+			Credentials:    credentials,
 		}
 		if td.Devices != nil {
 			if len(*td.Devices) == 0 {
@@ -556,7 +570,9 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 				Source: sd.Source,
 				// The one place `mask: false` becomes the input's unmasked:
 				// an input without it, from any engine, means masked.
-				Unmasked: sd.Mask != nil && !*sd.Mask,
+				Unmasked:   sd.Mask != nil && !*sd.Mask,
+				Grant:      sd.Grant,
+				Ciphertext: sd.Ciphertext,
 			})
 		}
 		with, err := freeForm("with", fmt.Sprintf("tasks[%d].with", taskIndex), &td.With)

@@ -192,7 +192,10 @@ func TestIsSubscribableEvent_SelectsRunTransitionsAndTaskOutcomes(t *testing.T) 
 				// A run's and a task's wait for a concurrency slot: opt-in,
 				// whatever their status (webhook rule W).
 				orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED,
-				orkstackv1.EventType_EVENT_TYPE_TASK_QUEUED:
+				orkstackv1.EventType_EVENT_TYPE_TASK_QUEUED,
+				// A resume's two, whatever their status (rule W).
+				orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED,
+				orkstackv1.EventType_EVENT_TYPE_RUN_RESULTS_KEPT:
 				want = true
 			case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 				want = status == orkstackv1.Status_STATUS_FAILED
@@ -358,7 +361,10 @@ func TestIsRunTransitionEvent_SelectsTheRunsOwnStateChanges(t *testing.T) {
 		orkstackv1.EventType_EVENT_TYPE_TASK_LOG:       false,
 		orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED:     false,
 		orkstackv1.EventType_EVENT_TYPE_TASK_QUEUED:    false,
-		orkstackv1.EventType_EVENT_TYPE_UNSPECIFIED:    false,
+		// A resume re-opens an ended run; it neither starts nor ends one.
+		orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED:      false,
+		orkstackv1.EventType_EVENT_TYPE_RUN_RESULTS_KEPT: false,
+		orkstackv1.EventType_EVENT_TYPE_UNSPECIFIED:      false,
 	}
 	for eventType, want := range transitions {
 		if got := engine.IsRunTransitionEvent(&orkstackv1.Event{Type: eventType}); got != want {

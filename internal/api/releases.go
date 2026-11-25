@@ -280,7 +280,7 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 		}
 		if count, ok := runs[observed.BuildID]; ok && count.err == nil {
 			release.RunsInFlight = int32(count.n)
-			release.Runs = count.runs
+			release.Runs = withoutTraceparents(count.runs)
 			release.PausedRuns = count.paused
 			release.QueuedRuns = count.queued
 		} else {

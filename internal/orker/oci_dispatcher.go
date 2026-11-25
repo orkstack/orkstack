@@ -28,6 +28,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -82,6 +83,12 @@ type OCIDispatcher struct {
 	recordClockFor identityClock
 	recordDrawFor  func() float64
 	identityConfig *IdentityConfig
+
+	// providers are the providers this Orker declares, with the bounds its
+	// attempts share (SetProviders).
+	providers           provider.Set
+	providerLimiters    map[string]*provider.Limiter
+	providerCallTimeout time.Duration
 	// identityDirMu serialises the making of this Orker's own identity
 	// directory by its attempts, should the host have cleared it.
 	identityDirMu sync.Mutex
@@ -226,6 +233,16 @@ type OCIDispatcher struct {
 	EachIndexes    eachIndexReader
 	indexCacheOnce sync.Once
 	indexCache     *eachIndexCache
+	// RunContexts is where a task's run-context object is read from
+	// (run_context.go); nil fails a task whose input carries a run context
+	// RUN_CONTEXT_UNAVAILABLE. runContexts is the process's copy of the
+	// objects it read, built on first use.
+	RunContexts RunContextReader
+	// LocalRunContext, of a local run of a recorded run's task, is read in
+	// place of the object. Nil on an Orker.
+	LocalRunContext     *LocalRunContext
+	runContextCacheOnce sync.Once
+	runContexts         *eachIndexCache
 	// runAsOrker is the boot probe's finding about the §3.1 escape hatch on
 	// this host: nil until a probe ran (`orkctl activity test` and `task run`
 	// run none, and render the hatch as before), then what the probe found.
@@ -248,6 +265,8 @@ type OCIDispatcher struct {
 	reportPause func(context.Context, time.Duration) bool
 	// unremoved is the removals this process still owes (removal.go).
 	unremoved unremovedContainers
+	// attempts is what DescribeOrker lists as running (running_attempts.go).
+	attempts runningAttempts
 }
 
 // transferLimit is the per-phase bound on concurrent object-store requests.
@@ -898,6 +917,10 @@ func (d *OCIDispatcher) checkOrkerPolicy(in *orkstackv1.ExecuteTaskInput) *Failu
 		return failure
 	}
 	for _, secret := range in.GetSecrets() {
+		// One read through a grant is providerUseOf's, below.
+		if provider.ReadByGrant(secret.GetSource(), secret.GetGrant()) {
+			continue
+		}
 		scheme, _ := SplitSecretSource(secret.GetSource())
 		if !d.Policy.AllowsSecretScheme(scheme) {
 			return Fail(ReasonSecretSchemeForbid,
@@ -908,6 +931,9 @@ func (d *OCIDispatcher) checkOrkerPolicy(in *orkstackv1.ExecuteTaskInput) *Failu
 		if failure := d.secretFloorFailure(secret); failure != nil {
 			return failure
 		}
+	}
+	if _, failure := d.providerUseOf(in); failure != nil {
+		return failure
 	}
 	if failure := d.identityFailure(in); failure != nil {
 		return failure
@@ -1107,7 +1133,9 @@ func (d *OCIDispatcher) execute(
 	// whose results the engine records asks the engine whether it may
 	// commit before anything of it is made, so an attempt the engine would
 	// refuse runs nothing. A task that holds an identity is asked the same
-	// at its mint (step 6a).
+	// at its mint (step 6a), and one that holds a credential alone at the
+	// mint of its logins' tokens (step 6a′): every grant it uses is logged in
+	// to before its container is created, and a login asks for a token.
 	if recordedRun(in) && !holdsIdentity(in) {
 		beat.Phase("commit-preflight")
 		if failure := d.preflightCommit(ctx, in, attempt); failure != nil {
@@ -1293,6 +1321,18 @@ func (d *OCIDispatcher) execute(
 		}
 	}
 
+	// STEP 5d. The run's context, read only for a task whose run-describing
+	// keys task.json carries: after the commit check and the memo, so neither
+	// a commit nor a hit is ever refused for it, and before the image, so a
+	// read that fails pulls nothing.
+	var runContext *artifacts.RunContextObject
+	contextCached := cached || (d.LocalRunContext != nil && d.LocalRunContext.Cached)
+	if !contextCached && d.LocalRunContext == nil {
+		if runContext, failure = d.runContextObject(ctx, in); failure != nil {
+			return nil, failure
+		}
+	}
+
 	// STEP 6. The image — BEFORE the render, so task.json can carry what the
 	// pull resolved.
 	beat.Phase("image")
@@ -1319,6 +1359,7 @@ func (d *OCIDispatcher) execute(
 	// after the commit check and the memo step, so neither a committed result
 	// nor a memo hit mints, and before the render (identity_attempt.go). The
 	// files are removed with the attempt on every exit path.
+	setupDeadline := d.identitySetupDeadline()
 	var ids *identityAttempt
 	if len(in.GetIdentity().GetIdentities()) > 0 {
 		beat.Phase("identity")
@@ -1329,6 +1370,22 @@ func (d *OCIDispatcher) execute(
 		defer func() { cleanup.record(d.logger(), in, attempt, "identity", ids.dir, ids.remove()) }()
 		beat.setIdentities(ids.refresher.liveIdentities)
 		beat.setIssued(ids.refresher.attemptIdentities)
+	}
+
+	// STEP 6a′. The task's logins through its grants, its granted secrets and
+	// its credentials (provider_attempt.go), in the same setup budget. The
+	// logins are closed and the files removed on every exit path.
+	use, failure := d.providerUseOf(in)
+	if failure != nil {
+		return nil, failure
+	}
+	var logins *providerAttempt
+	if use != nil {
+		beat.Phase("credentials")
+		if logins, failure = d.setupProviders(ctx, setupDeadline, in, attempt, use, ids, ws, staged); failure != nil {
+			return nil, failure
+		}
+		defer func() { cleanup.record(d.logger(), in, attempt, "credentials", logins.dir, logins.close()) }()
 	}
 
 	// STEP 7. Render, then compose and SEAL the input tree.
@@ -1373,15 +1430,30 @@ func (d *OCIDispatcher) execute(
 	if err := ws.WriteRunJSON(payloadMapOf(in.GetRunInput())); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write run.json: %v", err)
 	}
-	// The trace key is optional and non-ABI (§3.2): d.TraceContext is nil in
-	// every deployment that does not trace, and ctx here is the one Phases.Begin
+	// The trace key is optional (§3.2): d.TraceContext is nil in every
+	// deployment that does not trace, and ctx here is the one Phases.Begin
 	// returned, which is what may carry a span.
 	var traceCarrier map[string]string
 	if d.TraceContext != nil {
 		traceCarrier = d.TraceContext(ctx)
 	}
+	credentials, failure := credentialsOf(logins, in)
+	if failure != nil {
+		return nil, failure
+	}
+	lineage := objectLineage(in, runContext)
+	if d.LocalRunContext != nil {
+		lineage = fixedLineage(d.LocalRunContext.Lineage)
+	}
+	contextRun, contextTask, failure := runContextTaskJSON(in, lineage, contextCached, attempt, attemptStart(ctx, startedAt))
+	if failure != nil {
+		return nil, failure
+	}
 	if err := ws.WriteTaskJSON(in, TaskContext{
+		RunContext:     contextRun,
+		TaskContext:    contextTask,
 		Identities:     identitiesOf(ids, in),
+		Credentials:    credentials,
 		Attempt:        attempt,
 		Pool:           resolvedPool(in.GetPool()),
 		Namespace:      artifacts.ResolveNamespace(in.GetNamespace()),
@@ -1426,6 +1498,10 @@ func (d *OCIDispatcher) execute(
 	if ids != nil {
 		spec.Mounts = append(spec.Mounts, Mount{Source: ids.dir, Destination: identityMountPath, ReadOnly: true})
 	}
+	// The credentials likewise, and for the same reason.
+	if logins != nil && logins.dir != "" {
+		spec.Mounts = append(spec.Mounts, Mount{Source: logins.dir, Destination: credentialsMountPath, ReadOnly: true})
+	}
 	for key, value := range units.labels {
 		spec.Labels[key] = value
 	}
@@ -1447,11 +1523,13 @@ func (d *OCIDispatcher) execute(
 	id, err := d.Runtime.Create(ctx, spec)
 	if err != nil {
 		if id != "" {
+			sink.Container(id)
 			d.removeFailedCreate(ctx, id, err)
 		}
 		return nil, d.runtimeFailure(err, "create the container")
 	}
 	beat.Container(id)
+	sink.Container(id)
 	// A declared capacity frees this attempt's reservation when the
 	// container is removed, never before (capacity.go).
 	admission := admissionFrom(ctx)
@@ -1483,24 +1561,35 @@ func (d *OCIDispatcher) execute(
 	// stops it through the attempt's own cancellation, SIGTERM then SIGKILL
 	// after the grace, and the attempt fails with the identity's reason.
 	runCtx := ctx
-	if ids != nil {
+	if ids != nil || logins != nil {
 		var stopRun context.CancelCauseFunc
 		runCtx, stopRun = context.WithCancelCause(ctx)
 		defer stopRun(nil)
-		ids.start(ctx, func(f *Failure) { stopRun(errIdentityStopped{f}) })
+		onStop := func(f *Failure) { stopRun(errIdentityStopped{f}) }
+		if ids != nil {
+			ids.start(ctx, onStop)
+		}
+		if logins != nil {
+			logins.start(ctx, onStop)
+		}
 	}
 	capture, failure := d.runContainer(runCtx, in, ws, id, beat, stdoutLine, stderrLine, sink.mask)
-	if ids != nil {
-		// Only a stop that came while the container ran is the attempt's
-		// failure; a container that ended by itself first keeps its own
-		// outcome, whatever the watchdog found after.
-		var byIdentity errIdentityStopped
-		stoppedWhileRunning := capture != nil && capture.cancelled && ctx.Err() == nil && errors.As(context.Cause(runCtx), &byIdentity)
-		switch stopped := ids.stop(); {
-		case stopped != nil && stoppedWhileRunning:
-			return nil, d.attachFailureDetail(context.WithoutCancel(ctx), in, ws, capture, image, sink.Ordinal(), stopped)
+	if ids != nil || logins != nil {
+		byIdentity := stoppedByIdentity(ctx, runCtx, capture, failure)
+		var stopped *Failure
+		if logins != nil {
+			stopped = logins.halt()
+		}
+		if ids != nil {
+			if f := ids.stop(); f != nil {
+				stopped = f
+			}
+		}
+		switch {
+		case byIdentity != nil:
+			return nil, d.attachFailureDetail(context.WithoutCancel(ctx), in, ws, capture, image, sink.Ordinal(), byIdentity)
 		case stopped != nil:
-			d.logger().Warn("an identity token could not be kept after the container had ended; the container's own outcome stands",
+			d.logger().Warn("an identity token or a credential could not be kept after the container had ended; the container's own outcome stands",
 				"run", in.GetRunId(), "task", in.GetTaskId(), "attempt", attempt, "reason", stopped.Reason)
 		}
 	}
@@ -2042,24 +2131,33 @@ func (d *OCIDispatcher) stageInputs(
 func (d *OCIDispatcher) stageSecrets(in *orkstackv1.ExecuteTaskInput, ws *Workspace, staged *stagedInputs) *Failure {
 	resolved := make([]secretValue, 0, len(in.GetSecrets()))
 	for _, secret := range in.GetSecrets() {
+		// One read through a grant is written once the attempt has logged in
+		// (setupProviders).
+		if provider.ReadByGrant(secret.GetSource(), secret.GetGrant()) {
+			continue
+		}
 		value, failure := d.resolveSecret(secret)
 		if failure != nil {
 			return failure
 		}
 		resolved = append(resolved, secretValue{name: secret.GetName(), value: value, unmasked: secret.GetUnmasked()})
-		hostPath := filepath.Join(ws.Secrets, secret.GetName())
-		if err := os.WriteFile(hostPath, value, 0o600); err != nil {
-			return FailCause(ReasonSecretUnresolved, err,
-				"write secret %q: %v", secret.GetName(), err)
+		if failure := writeSecret(ws, staged, secret.GetName(), value); failure != nil {
+			return failure
 		}
-		staged.secrets = append(staged.secrets, taskJSONSecret{
-			Name: secret.GetName(),
-			Path: ContainerSecrets + "/" + secret.GetName(),
-		})
 	}
 	// Registered once every value is read and before the container exists,
 	// so nothing can print one the masker has not heard of.
 	return staged.mask.register(resolved)
+}
+
+// writeSecret writes one secret's value into the input tree, before it is
+// sealed, and names it for task.json.
+func writeSecret(ws *Workspace, staged *stagedInputs, name string, value []byte) *Failure {
+	if err := os.WriteFile(filepath.Join(ws.Secrets, name), value, 0o600); err != nil {
+		return FailCause(ReasonSecretUnresolved, err, "write secret %q: %v", name, err)
+	}
+	staged.secrets = append(staged.secrets, taskJSONSecret{Name: name, Path: ContainerSecrets + "/" + name})
+	return nil
 }
 
 // fetchInto puts one referenced artifact's verified bytes at dest.

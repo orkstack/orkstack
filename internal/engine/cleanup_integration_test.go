@@ -288,7 +288,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 
 func cleanupTemporalClient(t *testing.T, ctx context.Context, address, namespace string) client.Client {
 	t.Helper()
-	bootstrap, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
+	bootstrap, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: client.DefaultNamespace}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -300,7 +300,7 @@ func cleanupTemporalClient(t *testing.T, ctx context.Context, address, namespace
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 		if err == nil {
 			if _, probe := c.WorkflowService().CountWorkflowExecutions(ctx, &workflowservice.CountWorkflowExecutionsRequest{Namespace: namespace}); probe == nil {
 				t.Cleanup(c.Close)

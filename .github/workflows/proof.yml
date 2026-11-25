@@ -536,6 +536,8 @@ jobs:
         with:
           cosign: "true"
           dex: "true"
+          moto: "true"
+          vault: "true"
           cleanup-disk: "true"
           usb-serial: "true"
       - name: fetch plan

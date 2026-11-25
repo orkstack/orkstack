@@ -7,6 +7,7 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -185,6 +186,67 @@ func TestScanResumeBase_Generation0(t *testing.T) {
 	}
 	if !h.Published["a"] || h.CloseTime.IsZero() {
 		t.Errorf("published %v, close %v", h.Published, h.CloseTime)
+	}
+}
+
+// TestScanResumeBase_WhatMayStillRun: when each attempt ended and how, the
+// children started and not ended, the highest sequence published, and how
+// much history the reset keeps.
+func TestScanResumeBase_WhatMayStillRun(t *testing.T) {
+	b := &historyBuilder{t: t}
+	r := gen0Prefix(b)
+	prefix := len(b.events)
+	done, timedOut := b.task("a", -1), b.task("b", -1)
+	b.completed(done)
+	lost := b.add(enumspb.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT, func(ev *historypb.HistoryEvent) {
+		ev.Attributes = &historypb.HistoryEvent_ActivityTaskTimedOutEventAttributes{
+			ActivityTaskTimedOutEventAttributes: &historypb.ActivityTaskTimedOutEventAttributes{ScheduledEventId: timedOut}}
+	})
+	b.task("c", -1)
+	initiated := func(id string) int64 {
+		return b.add(enumspb.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED, func(ev *historypb.HistoryEvent) {
+			ev.Attributes = &historypb.HistoryEvent_StartChildWorkflowExecutionInitiatedEventAttributes{
+				StartChildWorkflowExecutionInitiatedEventAttributes: &historypb.StartChildWorkflowExecutionInitiatedEventAttributes{WorkflowId: id}}
+		})
+	}
+	ended, _, refused := initiated("ork-ended"), initiated("ork-open"), initiated("ork-refused")
+	b.add(enumspb.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED, func(ev *historypb.HistoryEvent) {
+		ev.Attributes = &historypb.HistoryEvent_ChildWorkflowExecutionFailedEventAttributes{
+			ChildWorkflowExecutionFailedEventAttributes: &historypb.ChildWorkflowExecutionFailedEventAttributes{InitiatedEventId: ended}}
+	})
+	b.add(enumspb.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED, func(ev *historypb.HistoryEvent) {
+		ev.Attributes = &historypb.HistoryEvent_StartChildWorkflowExecutionFailedEventAttributes{
+			StartChildWorkflowExecutionFailedEventAttributes: &historypb.StartChildWorkflowExecutionFailedEventAttributes{InitiatedEventId: refused}}
+	})
+	b.publish(orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, 41, "b")
+	b.publish(orkstackv1.EventType_EVENT_TYPE_TASK_LOG, 40, "b")
+	b.closed()
+	h, err := ScanResumeBase(b.events, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(id int64) time.Time { return b.events[id-1].GetEventTime().AsTime() }
+	if d := h.Dispatches[0]; !d.Completed || d.Open {
+		t.Errorf("a = %+v, want completed", d)
+	}
+	if d := h.Dispatches[1]; d.Completed || d.Open || !d.ClosedAt.Equal(at(lost)) {
+		t.Errorf("b = %+v, want closed at its timeout, not completed", d)
+	}
+	if d := h.Dispatches[2]; !d.Open || d.Completed || !d.ClosedAt.IsZero() {
+		t.Errorf("c = %+v, want open", d)
+	}
+	if len(h.Children) != 3 || !h.Children[0].Closed || h.Children[1].Closed || h.Children[1].RunID != "ork-open" || !h.Children[2].Closed {
+		t.Errorf("children = %+v, want ork-open alone open", h.Children)
+	}
+	if h.MaxPublishedSequence != 41 {
+		t.Errorf("highest published = %d, want 41", h.MaxPublishedSequence)
+	}
+	var bytes int64
+	for _, ev := range b.events[:r.CompletedEventID] {
+		bytes += int64(proto.Size(ev))
+	}
+	if int64(prefix) != r.CompletedEventID || h.PrefixBytes != bytes {
+		t.Errorf("prefix = %d bytes, want the %d of the first %d events", h.PrefixBytes, bytes, r.CompletedEventID)
 	}
 }
 
@@ -376,4 +438,32 @@ func FuzzScanResumeBase(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestResumeHistory_ContainersStoppedBy: no container of the base runs past
+// its close plus 30 s, nor past 30 s after the heartbeat timeout and grace
+// of an attempt that did not report its result, counted from that attempt's
+// end, or from the base's close when it was still open.
+func TestResumeHistory_ContainersStoppedBy(t *testing.T) {
+	closed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	ht, grace := 20*time.Second, 30*time.Second
+	for name, tc := range map[string]struct {
+		d    []ResumeDispatch
+		want time.Duration
+	}{
+		"nothing dispatched":                    {nil, 30 * time.Second},
+		"an open attempt":                       {[]ResumeDispatch{{Open: true, HeartbeatTimeout: ht, Grace: grace}}, ht + grace + 30*time.Second},
+		"a reported result counts nothing":      {[]ResumeDispatch{{Completed: true, ClosedAt: closed, HeartbeatTimeout: ht, Grace: time.Hour}}, 30 * time.Second},
+		"an attempt that ended long before":     {[]ResumeDispatch{{ClosedAt: closed.Add(-time.Hour), HeartbeatTimeout: ht, Grace: grace}}, 30 * time.Second},
+		"an attempt that ended just before":     {[]ResumeDispatch{{ClosedAt: closed.Add(-10 * time.Second), HeartbeatTimeout: ht, Grace: grace}}, ht + grace + 20*time.Second},
+		"the latest of several":                 {[]ResumeDispatch{{Open: true, HeartbeatTimeout: ht}, {Open: true, HeartbeatTimeout: ht, Grace: time.Minute}}, ht + time.Minute + 30*time.Second},
+		"a long grace of an attempt that ended": {[]ResumeDispatch{{ClosedAt: closed.Add(-time.Minute), HeartbeatTimeout: ht, Grace: 10 * time.Minute}}, ht + 9*time.Minute + 30*time.Second},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := &ResumeHistory{CloseTime: closed, Dispatches: tc.d}
+			if got := h.ContainersStoppedBy(); !got.Equal(closed.Add(tc.want)) {
+				t.Fatalf("stopped by close+%s, want close+%s", got.Sub(closed), tc.want)
+			}
+		})
+	}
 }

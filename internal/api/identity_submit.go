@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"connectrpc.com/connect"
 
@@ -24,32 +25,128 @@ const reasonStoreUnscoped = "IDENTITY_STORE_UNSCOPED"
 // checkIdentityAtSubmit is task identity's part of a submit's preparation,
 // for one definition of the run's tree as it runs in namespace ns
 // (workload-identity §10): every audience its tasks ask for is one the
-// namespace allows now; with identities_current_only, it is the version
-// its owner's current pointer names. A definition that asks for nothing
-// reads nothing. Every refusal comes before a run id is minted.
-func (s *Service) checkIdentityAtSubmit(ctx context.Context, ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow, owner string) error {
+// namespace allows now; each of its tokens' subjects fits; with
+// identities_current_only, it is the version its owner's current pointer
+// names. A definition that asks for nothing
+// reads nothing. Every refusal comes before a run id is minted. It answers the
+// provider each grant the definition uses is for, which the pools its tasks
+// run on must declare (PoolResolver.CheckIdentitySupport).
+func (s *Service) checkIdentityAtSubmit(ctx context.Context, ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow, owner, rootOrigin string) (map[string]engine.ProviderNeed, error) {
 	if !identity.AsksForIdentity(wf) {
+		return nil, nil
+	}
+	if err := s.checkSubjects(ns, wf, owner); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	p, err := s.namespacePolicy(ctx, ns)
+	if err != nil {
+		return nil, policyReadError(ns.GetName(), err)
+	}
+	if err := identity.CheckAudiences(ns.GetName(), p.Audiences, wf); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	if p.IdentitiesCurrentOnly {
+		current, err := s.orkflows.Get(ctx, owner, wf.GetName(), "")
+		if err != nil {
+			return nil, orkflowStoreError(err, "the current version of orkflow %q in namespace %q", wf.GetName(), owner)
+		}
+		if current.GetVersion() != wf.GetVersion() {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"%s: namespace %q lets only an Orkflow's current version hold identities, and %s@%s is not current (%s is)",
+				identity.ReasonNotPermitted, ns.GetName(), wf.GetName(), wf.GetVersion(), current.GetVersion()))
+		}
+	}
+	used, err := s.checkGrants(ctx, ns, p, wf, owner, rootOrigin, true)
+	if err != nil {
+		return nil, grantRefusal(err)
+	}
+	return s.providerNeeds(used)
+}
+
+// providerNeeds is, by grant, the provider each of used is for. checkGrants
+// has judged that the deployment declares it, so one it does not is this
+// engine's own fault, and never a grant that nobody is asked about.
+func (s *Service) providerNeeds(used map[string]artifacts.GrantSelection) (map[string]engine.ProviderNeed, error) {
+	needs := make(map[string]engine.ProviderNeed, len(used))
+	for grant, selected := range used {
+		p, ok := s.providers.ByName(selected.Provider)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("grant %q was judged for provider %q, which this engine does not declare", grant, selected.Provider))
+		}
+		needs[grant] = engine.ProviderNeed{Name: p.Name(), Type: p.Type()}
+	}
+	return needs, nil
+}
+
+// checkSubjects refuses a definition one of whose tokens' subjects does not
+// fit, as it runs in ns and owner owns it, in the form this deployment's
+// issuer issues and, with a trust domain, in the other too. An engine that
+// issues none holds it to the colon form, the one every deployment has.
+func (s *Service) checkSubjects(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow, owner string) error {
+	format, trustDomain := identity.FormatOrk, ""
+	if s.issuer != nil {
+		format, trustDomain = s.issuer.SubjectFormat(), s.issuer.TrustDomain()
+	}
+	return identity.CheckSubjects(format, trustDomain, ns.GetName(), owner, wf)
+}
+
+// checkGrants judges the grants wf's tasks name as it runs in namespace ns
+// under policy p (identity.CheckGrants). rootOrigin is the kind of start of
+// the run tree's root. With submitted, a grant for the current version only
+// is asked of the Orkflow's owner; before a submit there is no run to judge.
+func (s *Service) checkGrants(ctx context.Context, ns *orkstackv1.Namespace, p artifacts.NamespacePolicy, wf *orkstackv1.Orkflow,
+	owner, rootOrigin string, submitted bool) (map[string]artifacts.GrantSelection, error) {
+	ask := identity.GrantAsk{Namespace: ns.GetName(), Grants: p.Grants, Allowed: ns.GetAllowedSecrets(),
+		Owner: owner, Orkflow: wf.GetName(), Origin: rootOrigin, Providers: s.providers.ByName}
+	if submitted {
+		// One answer for the whole definition, read at most once.
+		ask.Current = sync.OnceValues(func() (bool, error) {
+			current, err := s.orkflows.Get(ctx, owner, wf.GetName(), "")
+			if err != nil {
+				return false, orkflowStoreError(err, "the current version of orkflow %q in namespace %q", wf.GetName(), owner)
+			}
+			return current.GetVersion() == wf.GetVersion(), nil
+		})
+	}
+	return identity.CheckGrants(ask, wf)
+}
+
+// checkChildIdentity judges a composed child's subjects and grants at
+// validate and create, where no run is: a definition that names no grant
+// reads no policy.
+func (s *Service) checkChildIdentity(ctx context.Context, ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow, owner string) error {
+	if err := s.checkSubjects(ns, wf, owner); err != nil {
+		return err
+	}
+	named := false
+	for _, t := range wf.GetTasks() {
+		named = named || len(engine.TaskGrants(t)) > 0
+	}
+	if !named {
 		return nil
 	}
 	p, err := s.namespacePolicy(ctx, ns)
 	if err != nil {
 		return policyReadError(ns.GetName(), err)
 	}
-	if err := identity.CheckAudiences(ns.GetName(), p.Audiences, wf); err != nil {
+	_, err = s.checkGrants(ctx, ns, p, wf, owner, "", false)
+	return err
+}
+
+// grantRefusal is a grant's refusal at a submit, FAILED_PRECONDITION: the
+// request is right and the namespace or the deployment does not allow it
+// now. Any other error is returned as it is.
+func grantRefusal(err error) error {
+	var refused *identity.GrantRefusedError
+	if errors.As(err, &refused) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
-	if p.IdentitiesCurrentOnly {
-		current, err := s.orkflows.Get(ctx, owner, wf.GetName(), "")
-		if err != nil {
-			return orkflowStoreError(err, "the current version of orkflow %q in namespace %q", wf.GetName(), owner)
-		}
-		if current.GetVersion() != wf.GetVersion() {
-			return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-				"%s: namespace %q lets only an Orkflow's current version hold identities, and %s@%s is not current (%s is)",
-				identity.ReasonNotPermitted, ns.GetName(), wf.GetName(), wf.GetVersion(), current.GetVersion()))
-		}
-	}
-	return nil
+	return err
+}
+
+// originWord is an origin's kind as a grant and an admission name it.
+func originWord(o *orkstackv1.RunOrigin) string {
+	return artifacts.OriginWord(o.GetKind())
 }
 
 // checkStoreScopedForIdentity refuses, IDENTITY_STORE_UNSCOPED, a run that
@@ -222,15 +319,27 @@ func (s *Service) readStarter(ctx context.Context, ns string, msg *orkstackv1.Su
 		}
 		return st, nil
 	}
-	return starter{kind: "starter", name: origin.GetId()}, nil
+	return starter{}, unknownStart(origin)
 }
 
 // startedByAnObject reports a run a schedule or a trigger starts: the
-// runs nobody submitted that checkStarter judges.
-func startedByAnObject(origin *orkstackv1.RunOrigin) bool {
+// runs nobody submitted that checkStarter judges. A start that is neither
+// that nor a person's is refused: a kind this function does not name must
+// never pass for a submit.
+func startedByAnObject(origin *orkstackv1.RunOrigin) (bool, error) {
 	switch origin.GetKind() {
 	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER:
-		return true
+		return true, nil
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN:
+		return false, nil
 	}
-	return false
+	return false, unknownStart(origin)
+}
+
+// unknownStart refuses a run that would hold an identity and whose kind of
+// start has no binder to judge and no person who submitted it.
+func unknownStart(origin *orkstackv1.RunOrigin) error {
+	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		"%s: a run started by %q holds no identity: that start is neither a person's nor one whose binder is recorded",
+		reasonStarterNotRecorded, originWord(origin)))
 }

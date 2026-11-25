@@ -816,7 +816,7 @@ var Claims = []string{"iss", "sub", "aud", "exp", "iat", "nbf", "jti",
 	"ork_deployment", "ork_namespace", "ork_namespace_id", "ork_orkflow", "ork_orkflow_id",
 	ClaimSubject, ClaimSPIFFEID, "ork_orkflow_namespace", "ork_orkflow_version", "ork_definition_digest",
 	"ork_run_id", "ork_root_run_id", "ork_parent_run_id", "ork_task", "ork_item", "ork_attempt",
-	"ork_identity", "ork_pool", "ork_orker", "ork_origin", "ork_submitted_by"}
+	"ork_identity", "ork_pool", "ork_orker", "ork_origin", "ork_submitted_by", ClaimAWSTags}
 
 // Discovery is the issuer's OpenID discovery document. It is the same
 // wherever it is served or exported: jwks_uri is the issuer's own

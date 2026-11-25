@@ -426,6 +426,7 @@ func Middleware(next http.Handler, opts MiddlewareOptions) http.Handler {
 			refuse(w, http.StatusServiceUnavailable, "unavailable", "authentication is not configured on this engine")
 		})
 	}
+	var lines LogBound // what a presented credential can make it log
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -448,7 +449,10 @@ func Middleware(next http.Handler, opts MiddlewareOptions) http.Handler {
 			if err := opts.Authenticator.preVerify(ctx, r); err != nil {
 				var ref *Refusal
 				if errors.As(err, &ref) && ref.Unavailable {
-					logger.Warn("authentication: an assertion could not be checked now; answered unavailable", "path", r.URL.Path, "error", err)
+					lines.Do("assertion", func(dropped int) {
+						logger.Warn("authentication: an assertion could not be checked now; answered unavailable",
+							"path", LogText(r.URL.Path, LogTextMax), "error", logError(err), "more_not_logged", dropped)
+					})
 					refuse(w, http.StatusServiceUnavailable, "unavailable", "the credential could not be checked now; try again")
 					return
 				}
@@ -532,8 +536,10 @@ func Middleware(next http.Handler, opts MiddlewareOptions) http.Handler {
 				opts.Observe(r, method, outcome)
 			}
 			if outcome == "unavailable" {
-				logger.Warn("authentication: a credential could not be checked now; answered unavailable",
-					"method", method, "path", r.URL.Path, "error", err)
+				lines.Do("credential "+method, func(dropped int) {
+					logger.Warn("authentication: a credential could not be checked now; answered unavailable",
+						"method", method, "path", LogText(r.URL.Path, LogTextMax), "error", logError(err), "more_not_logged", dropped)
+				})
 				refuse(w, http.StatusServiceUnavailable, "unavailable", "the credential could not be checked now; try again")
 				return
 			}

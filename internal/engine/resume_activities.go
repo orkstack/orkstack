@@ -93,9 +93,12 @@ type ReadResetFactsInput struct {
 }
 
 // ResumeObserver is told what a resumed run met that should not happen
-// (ork.run.resume.anomalies, docs/DEPLOY.md §7).
+// (ork.run.resume.anomalies), and the tries each read of its kept results
+// took once it answered or failed for good
+// (ork.run.resume.readback.attempts; docs/DEPLOY.md §7).
 type ResumeObserver interface {
 	ObserveResumeAnomaly(ctx context.Context, namespace, kind string)
+	ObserveReadBackCall(ctx context.Context, namespace string, attempts int)
 }
 
 // resumeAnomalyResetUnreadable: a reset run could not read the reset that
@@ -238,6 +241,8 @@ func verifyResumePlan(key ResumePlanKey, facts ResetFacts, read artifacts.Record
 			rec.GetRScheduledEventId(), rec.GetRStartedEventId(), facts.ScheduledEventID, facts.StartedEventID)
 	case rec.GetBlock().GetScope() != key.Scope:
 		return fmt.Sprintf("its block is of scope %d, not %d", rec.GetBlock().GetScope(), key.Scope)
+	case rec.GetPlanDigest() != ResumePlanDigestOf(rec):
+		return "its plan is not the one it was confirmed as"
 	}
 	switch {
 	case link.Answer != artifacts.RecordFound:

@@ -32,7 +32,7 @@ func (s *runState) runContextFor(t *orkstackv1.Task, row *orkstackv1.TaskRun) (*
 		CreatedAt:           copyTimestamp(s.createdAt),
 		StartedAt:           copyTimestamp(s.startedAt),
 		TaskScheduledAt:     copyTimestamp(row.GetScheduledAt()),
-		DeclaredMaxAttempts: max(t.GetRetry().GetMaximumAttempts(), 1),
+		DeclaredMaxAttempts: declaredMaxAttempts(t),
 		OwnAttemptsBefore:   row.GetInterruptions().GetOwnAttemptsUsed(),
 	}
 	if o := s.plan.Origin; o != nil && o.Kind == RunOriginKindParentRun {
@@ -47,6 +47,11 @@ func (s *runState) runContextFor(t *orkstackv1.Task, row *orkstackv1.TaskRun) (*
 		rc.RunDeadline = timestamppb.New(rt.deadline)
 	}
 	return rc, nil
+}
+
+// declaredMaxAttempts is the attempts t's retry: declares, 1 without one.
+func declaredMaxAttempts(t *orkstackv1.Task) int32 {
+	return max(t.GetRetry().GetMaximumAttempts(), 1)
 }
 
 func copyTimestamp(ts *timestamppb.Timestamp) *timestamppb.Timestamp {

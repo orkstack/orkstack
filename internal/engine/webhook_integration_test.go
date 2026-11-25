@@ -98,10 +98,10 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	temporalClient, err := client.DialContext(ctx, client.Options{
+	temporalClient, err := client.DialContext(ctx, engine.ClientOptions(client.Options{
 		HostPort:  address,
 		Namespace: client.DefaultNamespace,
-	})
+	}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}

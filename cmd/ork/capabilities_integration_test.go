@@ -116,7 +116,7 @@ func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	_, _, _ = bootEngine(ctx, t, binary, temporal, "engine-caps", "ORK_TEMPORAL_NAMESPACE="+ns)
 	pid := engines["engine-caps"].cmd.Process.Pid
 
-	control, err := client.DialContext(ctx, client.Options{HostPort: temporal, Namespace: ns, Identity: "caps-control"})
+	control, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: temporal, Namespace: ns, Identity: "caps-control"}, nil))
 	must.OKf(t, err, "dial %s", temporal)
 	defer control.Close()
 

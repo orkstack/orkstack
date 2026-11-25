@@ -16,7 +16,8 @@ func TestVerifyResumePlan_RunsOnlyThePlanTheResetNames(t *testing.T) {
 	facts := ResetFacts{BaseRunID: "base", Reason: key.String(), ScheduledEventID: 8, StartedEventID: 9}
 	record := func(edit func(*orkstackv1.ResumePlanRecord)) artifacts.RecordRead[*orkstackv1.ResumePlanRecord] {
 		r := &orkstackv1.ResumePlanRecord{BaseExecutionRunId: "base", RScheduledEventId: 8, RStartedEventId: 9,
-			Block: &orkstackv1.ResumeBlock{Scope: 42}}
+			Block: &orkstackv1.ResumeBlock{Scope: 42, SeqBase: 42, Units: []byte{1, 2, 3}}}
+		r.PlanDigest = ResumePlanDigestOf(r)
 		if edit != nil {
 			edit(r)
 		}
@@ -38,6 +39,11 @@ func TestVerifyResumePlan_RunsOnlyThePlanTheResetNames(t *testing.T) {
 		// resume-plan-key-at-wrong-reset-point-invalid
 		{"another reset point", record(func(r *orkstackv1.ResumePlanRecord) { r.RStartedEventId = 15 }), testDigest, 42, linked, "workflow task"},
 		{"a block of another scope", record(func(r *orkstackv1.ResumePlanRecord) { r.Block.Scope = 7 }), testDigest, 42, linked, "scope 7"},
+		// A stored digest is never trusted: it is the plan's own, or the plan is not run.
+		{"a digest of another plan", record(func(r *orkstackv1.ResumePlanRecord) { r.PlanDigest = strings.Repeat("ef", 32) }), testDigest, 42, linked, "not the one it was confirmed as"},
+		{"no digest", record(func(r *orkstackv1.ResumePlanRecord) { r.PlanDigest = "" }), testDigest, 42, linked, "not the one it was confirmed as"},
+		{"other units than it was confirmed as", record(func(r *orkstackv1.ResumePlanRecord) { r.Block.Units = []byte{1, 2, 4} }), testDigest, 42, linked, "not the one it was confirmed as"},
+		{"another sequence", record(func(r *orkstackv1.ResumePlanRecord) { r.Block.SeqBase = 43 }), testDigest, 42, linked, "not the one it was confirmed as"},
 		{"a newer resume", record(nil), testDigest, 50, linked, "newest resume is plan 50"},
 		{"a later plan of the scope", record(nil), testDigest, 42,
 			artifacts.RecordRead[artifacts.ResumeRecord]{Answer: artifacts.RecordFound, Value: artifacts.ResumeRecord{Scope: 42, N: 2}}, "plan 42.002"},

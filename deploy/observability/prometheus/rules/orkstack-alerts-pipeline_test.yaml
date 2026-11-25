@@ -466,6 +466,42 @@ tests:
         description: At least one OrkStack instrument has more series than the cardinality limit, so its excess series are folded into one overflow series.
         runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackmetricoverflow
         summary: An OrkStack metric hit its cardinality limit.
+- name: 'OrkStackMetricOverflow: a concurrency series'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_arrivals_total{otel_metric_overflow="true",ork_deployment="d"}
+    values: 0+1x100
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: OrkStackMetricOverflow
+    exp_alerts:
+    - exp_labels:
+        component: telemetry
+        ork_deployment: d
+        severity: info
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: At least one OrkStack instrument has more series than the cardinality limit, so its excess series are folded into one overflow series.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackmetricoverflow
+        summary: An OrkStack metric hit its cardinality limit.
+- name: 'OrkStackMetricOverflow: a schedule fires series'
+  interval: 1m
+  input_series:
+  - series: ork_schedule_fires_total{otel_metric_overflow="true",ork_deployment="d"}
+    values: 0+1x100
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: OrkStackMetricOverflow
+    exp_alerts:
+    - exp_labels:
+        component: telemetry
+        ork_deployment: d
+        severity: info
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: At least one OrkStack instrument has more series than the cardinality limit, so its excess series are folded into one overflow series.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackmetricoverflow
+        summary: An OrkStack metric hit its cardinality limit.
 - name: 'OrkStackMetricOverflow: no overflow'
   interval: 1m
   input_series:

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/mock"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 
@@ -94,4 +95,68 @@ func memoText(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// TestFireOutcome_ASealedRunALimitKeptFromStarting: a sealed run's failure
+// reaches its fire sealed, and the fire holds no run's key. It tells a run a
+// limit kept from starting from one that ran, and by which limit's ending,
+// from the failure's plaintext reason alone.
+func TestFireOutcome_ASealedRunALimitKeptFromStarting(t *testing.T) {
+	const secret = "deploy-alice@example.com"
+	key, err := payloadcrypt.NewKey(bytes.Repeat([]byte{7}, payloadcrypt.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runScope := payloadcrypt.NewScope(key, payloadcrypt.RunContext("ork-6"))
+	fireScope := payloadcrypt.NewScope(key, payloadcrypt.ScheduleContext("sch-x"))
+	fc := payloadcrypt.NewFailureConverter(NewDataConverter(nil), true)
+	for _, tc := range []struct {
+		name, strategy, code string
+		started              bool
+		wantSkip             string
+		wantFails            bool
+	}{
+		{"skip, key full", ConcurrencyStrategySkip, RunConcurrencyLimitCode, false, FireSkippedConcurrencyCode, false},
+		{"refuse, key full", ConcurrencyStrategyRefuse, RunConcurrencyLimitCode, false, "", true},
+		{"queue timed out", ConcurrencyStrategyQueue, RunQueueTimeoutCode, false, FireNotStartedConcurrencyCode, false},
+		{"line full", ConcurrencyStrategyQueue, RunConcurrencyFullCode, false, FireNotStartedConcurrencyCode, false},
+		{"it ran, then lost its slot", ConcurrencyStrategyQueue, RunConcurrencyUnavailableCode, true, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var details []any
+			if !tc.started {
+				details = []any{ConcurrencyRunNotStarted{NotStarted: true}}
+			}
+			failure := fc.ErrorToFailure(payloadcrypt.WithKey(
+				temporal.NewNonRetryableApplicationError("key "+secret+" was full", tc.code, nil, details...), runScope, reasonCodeOf(
+					temporal.NewNonRetryableApplicationError("", tc.code, nil, details...))))
+			if strings.Contains(failure.String(), secret) {
+				t.Fatalf("the cluster's record of the run's failure quotes it: %v", failure)
+			}
+			runErr := fc.FailureToError(failure)
+			run := 0
+			plan := RunPlan{Concurrency: &ConcurrencyPlan{Run: &run, Slots: []ConcurrencySlotPlan{{Key: secret, Strategy: tc.strategy}}}}
+			var suite testsuite.WorkflowTestSuite
+			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
+			memo := map[string]string{}
+			env.OnUpsertMemo(mock.Anything).Run(func(args mock.Arguments) {
+				for k, v := range args.Get(0).(map[string]any) {
+					memo[k] = memoText(t, v)
+				}
+			}).Return(nil)
+			env.ExecuteWorkflow(func(ctx workflow.Context) error { return fireOutcome(withRunScope(ctx, fireScope), plan, runErr) })
+			if failed := env.GetWorkflowError() != nil; failed != tc.wantFails {
+				t.Fatalf("the fire ended %v, want failed %v", env.GetWorkflowError(), tc.wantFails)
+			}
+			if memo[MemoScheduleFireSkipCode] != tc.wantSkip {
+				t.Fatalf("memo %v, want skip code %q", memo, tc.wantSkip)
+			}
+			if tc.code == RunConcurrencyLimitCode && tc.strategy == ConcurrencyStrategyRefuse && memo[MemoScheduleFireRefusal] == "" {
+				t.Fatalf("a refuse limit's full key did not refuse the fire: memo %v", memo)
+			}
+			if strings.Contains(fmt.Sprint(memo), secret) {
+				t.Fatalf("memo %v quotes the run", memo)
+			}
+		})
+	}
 }

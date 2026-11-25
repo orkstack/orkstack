@@ -58,7 +58,8 @@ func (w *recordWorld) record(req CommitRequest) (artifacts.RecordedCommit, error
 	if err != nil {
 		return artifacts.RecordedCommit{}, err
 	}
-	return w.recorder.Record(context.Background(), a, req, Caller{Principal: "orker:orker-1", OrkerID: "orker-1"})
+	got, err := w.recorder.Record(context.Background(), a, req, Caller{Principal: "orker:orker-1", OrkerID: "orker-1"})
+	return got.RecordedCommit, err
 }
 
 // recordedAt reads what is at req's attested key as an Orker's commit
@@ -193,6 +194,7 @@ func TestRecord_Refuses(t *testing.T) {
 			w.starts.chains["ork-1"] = found(artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: r.AdmissionSHA256})
 		}, ReasonEngineRefused, false},
 		{"no document", func(w *recordWorld, r *CommitRequest) { r.Commit = nil }, ReasonCommitIdentityMismatch, true},
+		{"an exit other than 0", doc(func(c *orkstackv1.ActivityCommit) { c.ExitCode = 3 }), ReasonCommitIdentityMismatch, true},
 		{"another schema", doc(func(c *orkstackv1.ActivityCommit) { c.SchemaVersion = 2 }), ReasonCommitIdentityMismatch, true},
 		{"another namespace in the document", doc(func(c *orkstackv1.ActivityCommit) { c.Namespace = "other" }), ReasonCommitIdentityMismatch, true},
 		{"another run in the document", doc(func(c *orkstackv1.ActivityCommit) { c.RunId = "ork-2" }), ReasonCommitIdentityMismatch, true},

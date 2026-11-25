@@ -14,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/telemetry"
 )
 
@@ -61,12 +62,14 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		// this engine talk to the page I serve?" — which is what `make up` uses
 		// to refuse to report a stack that looks fine and never goes live.
 		if !originAllowed(r, allowedOrigins) {
-			svc.logger.Warn("websocket upgrade refused",
-				"run_id", runID,
-				"origin", r.Header.Get("Origin"),
-				"host", r.Host,
-				"allowed_origins", allowedOrigins,
-				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin")
+			svc.doorFaults.Do("run socket origin", func(dropped int) {
+				svc.logger.Warn("websocket upgrade refused",
+					"run_id", authn.LogText(runID, authn.LogTextMax),
+					"origin", authn.LogText(r.Header.Get("Origin"), authn.LogTextMax),
+					"host", authn.LogText(r.Host, authn.LogTextMax),
+					"allowed_origins", allowedOrigins,
+					"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin", "more_not_logged", dropped)
+			})
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -103,13 +106,15 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			// live and the engine says nothing at all. The common cause is an
 			// origin this engine was not told to allow, so name both sides and
 			// the setting that fixes it.
-			svc.logger.Warn("websocket upgrade refused",
-				"run_id", runID,
-				"origin", r.Header.Get("Origin"),
-				"host", r.Host,
-				"allowed_origins", allowedOrigins,
-				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin",
-				"error", err)
+			svc.doorFaults.Do("run socket", func(dropped int) {
+				svc.logger.Warn("websocket upgrade refused",
+					"run_id", authn.LogText(runID, authn.LogTextMax),
+					"origin", authn.LogText(r.Header.Get("Origin"), authn.LogTextMax),
+					"host", authn.LogText(r.Host, authn.LogTextMax),
+					"allowed_origins", allowedOrigins,
+					"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin",
+					"error", err, "more_not_logged", dropped)
+			})
 			return
 		}
 		defer svc.rpcMetrics.StreamOpened(r.Context(), telemetry.StreamWebSocketEvents)()
@@ -306,11 +311,13 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 		// Origin first, for the reasons the run socket states: a foreign
 		// origin must not learn which run ids exist by telling 404 from 403.
 		if !originAllowed(r, allowedOrigins) {
-			svc.logger.Warn("websocket upgrade refused",
-				"run_id", runID, "task_id", taskID,
-				"origin", r.Header.Get("Origin"), "host", r.Host,
-				"allowed_origins", allowedOrigins,
-				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin")
+			svc.doorFaults.Do("task log socket origin", func(dropped int) {
+				svc.logger.Warn("websocket upgrade refused",
+					"run_id", authn.LogText(runID, authn.LogTextMax), "task_id", authn.LogText(taskID, authn.LogTextMax),
+					"origin", authn.LogText(r.Header.Get("Origin"), authn.LogTextMax), "host", authn.LogText(r.Host, authn.LogTextMax),
+					"allowed_origins", allowedOrigins,
+					"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin", "more_not_logged", dropped)
+			})
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -340,12 +347,14 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 			OriginPatterns: allowedOrigins,
 		})
 		if err != nil {
-			svc.logger.Warn("websocket upgrade refused",
-				"run_id", runID, "task_id", taskID,
-				"origin", r.Header.Get("Origin"), "host", r.Host,
-				"allowed_origins", allowedOrigins,
-				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin",
-				"error", err)
+			svc.doorFaults.Do("task log socket", func(dropped int) {
+				svc.logger.Warn("websocket upgrade refused",
+					"run_id", authn.LogText(runID, authn.LogTextMax), "task_id", authn.LogText(taskID, authn.LogTextMax),
+					"origin", authn.LogText(r.Header.Get("Origin"), authn.LogTextMax), "host", authn.LogText(r.Host, authn.LogTextMax),
+					"allowed_origins", allowedOrigins,
+					"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin",
+					"error", err, "more_not_logged", dropped)
+			})
 			return
 		}
 		defer svc.rpcMetrics.StreamOpened(r.Context(), telemetry.StreamWebSocketLogs)()

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"connectrpc.com/connect"
@@ -1400,4 +1401,133 @@ func TestTaskRun_ASharedChildRunReadsItsOwnersDefinition(t *testing.T) {
 	if !strings.Contains(got.stdout, "RENDERED  no container was started") {
 		t.Fatalf("no RENDERED outcome:\n%s\n%s", got.stdout, got.stderr)
 	}
+}
+
+// TestTaskRun_ACredentialIsRefusedByName: a task that declares a credential
+// is refused, naming each credential, and a task without one is not.
+func TestTaskRun_ACredentialIsRefusedByName(t *testing.T) {
+	spec := &orkstackv1.Task{Id: "migrate", Credentials: []*orkstackv1.CredentialRef{{Name: "aws", Grant: "deployer"}, {Name: "db", Grant: "vault-app"}}}
+	err := credentialRefusal(spec)
+	if err == nil || !strings.Contains(err.Error(), `"aws", "db"`) || !strings.Contains(err.Error(), `task "migrate"`) {
+		t.Fatalf("credentialRefusal = %v; want a refusal naming the task and both credentials", err)
+	}
+	if err := credentialRefusal(&orkstackv1.Task{Id: "plain"}); err != nil {
+		t.Errorf("a task with no credential = %v", err)
+	}
+}
+
+// A replay's task.json carries the recorded run's context: its times, what
+// started it and where it stands in its composed chain, with the local run's
+// own id, attempt and start; and says `unavailable` where the record has none.
+func TestTaskRun_AReplayCarriesTheRecordedRunsContext(t *testing.T) {
+	type contextJSON struct {
+		Run struct {
+			ID        string         `json:"id"`
+			Context   string         `json:"context"`
+			CreatedAt string         `json:"createdAt"`
+			StartedAt string         `json:"startedAt"`
+			Deadline  string         `json:"deadline"`
+			Origin    map[string]any `json:"origin"`
+			Parent    map[string]any `json:"parent"`
+			Root      map[string]any `json:"root"`
+		} `json:"run"`
+		Task struct {
+			OwnAttempt       int    `json:"ownAttempt"`
+			MaxAttempts      int    `json:"maxAttempts"`
+			ScheduledAt      string `json:"scheduledAt"`
+			AttemptStartedAt string `json:"attemptStartedAt"`
+		} `json:"task"`
+	}
+	fx := newTaskRunFixture(t)
+	const source = "ork-1790000000000000000-4294967299"
+	started := fixedNow.Add(time.Second)
+	given := func(run *orkstackv1.Run) {
+		run.StartedAt = timestamppb.New(started)
+		run.RunContext = &orkstackv1.RunContextState{Status: orkstackv1.RunContextStatus_RUN_CONTEXT_STATUS_AVAILABLE}
+		run.Timeout = &orkstackv1.RunTimeout{Seconds: 60, Deadline: timestamppb.New(started.Add(time.Minute))}
+		run.Origin = &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, Reference: "https://ci/1", Principal: "ci-bot"}
+	}
+	child := func(run *orkstackv1.Run) {
+		given(run)
+		top := &orkstackv1.OrkflowRef{Name: "top", Version: "3", DefinitionDigest: "sha256:top"}
+		run.Origin = &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-root", RootRunId: "ork-root",
+			ParentTaskId: "compose", ParentOrkflow: top, RootOrkflow: top,
+			RootOrigin: &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, Reference: "https://ci/1", Principal: "ci-bot"}}
+	}
+	n := 0
+	replay := func(edit func(*orkstackv1.Run), task string, args ...string) contextJSON {
+		t.Helper()
+		n++
+		id := fmt.Sprintf("%s%d", source, n)
+		fx.seedRun(t, id, edit)
+		var seen contextJSON
+		rt := &fakeTaskRuntime{script: func(spec orker.ContainerSpec, stdout, stderr io.Writer) int32 {
+			raw, err := os.ReadFile(filepath.Join(mountSource(spec, orker.ContainerInput), "task.json"))
+			if err != nil {
+				t.Errorf("read task.json: %v", err)
+			} else if err := json.Unmarshal(raw, &seen); err != nil {
+				t.Errorf("decode task.json: %v", err)
+			}
+			return succeedWith(`{"ok":true}`, "")(spec, stdout, stderr)
+		}}
+		fx.runTaskRun(rt, append([]string{"--from-run", id, "--task", task}, args...)...).requireExit(t, exitOK)
+		if !strings.HasPrefix(seen.Run.ID, "local-") {
+			t.Fatalf("run.id = %q, want the local run's own", seen.Run.ID)
+		}
+		return seen
+	}
+	at := func(when time.Time) string { return when.UTC().Format(time.RFC3339Nano) }
+
+	t.Run("a top-level run", func(t *testing.T) {
+		before := time.Now()
+		got := replay(given, "consume")
+		if got.Run.Context != "available" || got.Run.CreatedAt != at(fixedNow) || got.Run.StartedAt != at(started) ||
+			got.Run.Deadline != at(started.Add(time.Minute)) || got.Run.Parent != nil {
+			t.Fatalf("run = %+v", got.Run)
+		}
+		if got.Run.Origin["kind"] != "SUBMIT" || got.Run.Origin["reference"] != "https://ci/1" || got.Run.Origin["principal"] != "ci-bot" {
+			t.Fatalf("origin = %v", got.Run.Origin)
+		}
+		if got.Run.Root["runId"] != fmt.Sprintf("%s%d", source, n) {
+			t.Fatalf("root = %v, want the recorded run", got.Run.Root)
+		}
+		begun, err := time.Parse(time.RFC3339Nano, got.Task.AttemptStartedAt)
+		if err != nil || begun.Before(before) || got.Task.ScheduledAt != at(fixedNow) || got.Task.OwnAttempt != 1 || got.Task.MaxAttempts != 1 {
+			t.Fatalf("task = %+v (%v), want the recorded scheduled time and this run's own start and attempt", got.Task, err)
+		}
+	})
+	t.Run("a child run", func(t *testing.T) {
+		got := replay(child, "consume")
+		if got.Run.Origin["kind"] != "PARENT_RUN" || got.Run.Parent["taskId"] != "compose" || got.Run.Parent["runId"] != "ork-root" ||
+			got.Run.Root["runId"] != "ork-root" || got.Run.Root["origin"].(map[string]any)["principal"] != "ci-bot" {
+			t.Fatalf("run = %+v", got.Run)
+		}
+	})
+	t.Run("a child of another namespace's shared Orkflow", func(t *testing.T) {
+		got := replay(func(run *orkstackv1.Run) { child(run); run.Origin.ParentOrkflow.Namespace = "platform" }, "consume")
+		origin := got.Run.Root["origin"].(map[string]any)
+		if got.Run.Context != "available" || origin["principal"] != nil || origin["reference"] != nil {
+			t.Fatalf("root origin = %v, want no principal and no reference", origin)
+		}
+	})
+	t.Run("the record has none", func(t *testing.T) {
+		for name, edit := range map[string]func(*orkstackv1.Run){
+			"a run given no context":   nil,
+			"a run that never started": func(run *orkstackv1.Run) { given(run); run.StartedAt = nil },
+			"a child of no root":       func(run *orkstackv1.Run) { child(run); run.Origin.RootRunId = "" },
+		} {
+			got := replay(edit, "consume")
+			if got.Run.Context != "unavailable" || got.Run.CreatedAt != "" || got.Run.Origin != nil || got.Run.Root != nil || got.Task.OwnAttempt != 0 {
+				t.Errorf("%s: %+v", name, got)
+			}
+		}
+	})
+	t.Run("a cached task reads none of the run's data", func(t *testing.T) {
+		cached := fx.writeDoc(t, "cached.ork.yaml", strings.Replace(taskRunFixtureYAML, "  - id: consume\n    uses: shell\n",
+			"  - id: consume\n    uses: shell\n    cache:\n      enabled: true\n", 1))
+		got := replay(given, "consume", "--file", cached)
+		if got.Run.Context != "cached" || got.Run.CreatedAt != "" || got.Run.Origin != nil || got.Task.ScheduledAt != "" || got.Task.OwnAttempt != 1 {
+			t.Fatalf("%+v", got)
+		}
+	})
 }

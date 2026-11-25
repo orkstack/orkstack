@@ -100,16 +100,12 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 		}
 	}
 	t.Logf("what this host answers to a service network:\n%s", joined)
-	// A name that does not resolve on a service network was not asked, so the
-	// probe did not run, and says which. A host that answers something else
-	// open reports that instead, so the questions are accepted as far as they
-	// can be, and question 3 is asked of a name no resolver answers.
+	// A cluster's name that resolves to nothing, from the Orker either, is not
+	// asked, so the probe did not run, and says which.
 	unresolved := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, Cluster: "ork-probe.invalid:7233",
 		Allow: servicehost.Allowances{MetadataReach: true, ContainerReach: true}}).Result
-	if unresolved.Ran && unresolved.Fitness.Fit {
-		t.Errorf("a cluster's name that does not resolve was read as not reached: %+v", unresolved)
-	} else if !unresolved.Ran && !strings.Contains(unresolved.Err, "ork-probe.invalid:7233") {
-		t.Errorf("the probe did not run for another reason: %+v", unresolved)
+	if unresolved.Ran || !strings.Contains(unresolved.Err, "ork-probe.invalid") {
+		t.Errorf("a cluster's name that does not resolve: %+v; want not run, naming it", unresolved)
 	}
 	t.Logf("asked of a name that does not resolve: %+v", unresolved)
 	out := run("ps", "-a", "--filter", "label=ork.orker="+owner, "--format", "{{.ID}} {{.Label \"ork.task\"}}")

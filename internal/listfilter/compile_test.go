@@ -130,7 +130,7 @@ func TestCompile_RefusesEnumValueNotAllowedOrUnspecified(t *testing.T) {
 	// A field whose name starts with a vowel reads "an": the event a
 	// delivery carries is only ever a subscribable one.
 	expectRefusal(t, specOf(t, &orkstackv1.ListDeliveriesRequest{}),
-		`filters[0]: "TASK_LOG" is not an event this list can select; event is one of RUN_QUEUED, RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED, RUN_CANCELED, TASK_QUEUED, TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING, TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED, RUN_PAUSED, RUN_UNPAUSED`,
+		`filters[0]: "TASK_LOG" is not an event this list can select; event is one of RUN_QUEUED, RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED, RUN_CANCELED, TASK_QUEUED, TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING, TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED, RUN_PAUSED, RUN_UNPAUSED, RUN_RESUMED, RUN_RESULTS_KEPT`,
 		"event=TASK_LOG")
 }
 

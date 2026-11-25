@@ -407,6 +407,9 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 		if err := engine.CheckForeignSecrets(ns, node.Owner, node.Orkflow); err != nil {
 			rule31 = append(rule31, composeIssue(usesField(rootIndex), prefix+err.Error(), errorSeverity))
 		}
+		if err := s.checkChildIdentity(ctx, ns, node.Orkflow, node.Owner); err != nil {
+			rule31 = append(rule31, composeIssue(usesField(rootIndex), prefix+err.Error(), errorSeverity))
+		}
 		// Item 6: the definition as the plan will carry it.
 		if cp, err := engine.NewChildRunPlan(node.Orkflow, engine.RunPlan{}, false, false); err == nil {
 			chainHere := append(append([]string(nil), chain...), label)
@@ -714,6 +717,9 @@ type composeRequest struct {
 	// holdsIdentity is a run whose tree holds an identity: every child's
 	// pools are asked whether they serve task identity.
 	holdsIdentity bool
+	// rootOrigin is the kind of start of the tree's root, which a grant
+	// that names the starts it serves is judged on in every run of it.
+	rootOrigin string
 }
 
 // rootIndexAnswer is the boot answer a plan pins for its child starts (false
@@ -802,7 +808,8 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		if err := foreignSecretsRefusal(r.ns, owner, child); err != nil {
 			return childRefusal(err, ref, t.GetId())
 		}
-		if err := s.checkIdentityAtSubmit(ctx, r.ns, child, owner); err != nil {
+		needs, err := s.checkIdentityAtSubmit(ctx, r.ns, child, owner, r.rootOrigin)
+		if err != nil {
 			return childRefusal(err, ref, t.GetId())
 		}
 		// 3. The ordinary pool plan over the child: secret policy, the
@@ -813,7 +820,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 			return childRefusal(poolPlanError(err), ref, t.GetId())
 		}
 		if r.holdsIdentity {
-			if err := r.resolver.CheckIdentitySupport(ctx, r.ns, childPlanned); err != nil {
+			if err := r.resolver.CheckIdentitySupport(ctx, r.ns, childPlanned, needs); err != nil {
 				return childRefusal(poolPlanError(err), ref, t.GetId())
 			}
 		}
@@ -906,15 +913,20 @@ func (s *Service) mintChildren(planned *orkstackv1.Orkflow, plan *engine.RunPlan
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run's plan: %w", err))
 	}
-	reserved := 0
+	// What a child's start adds to its planned bytes: its origin, and the
+	// references its artifacts: bindings pass. Its trace is no larger than the
+	// top-level plan's, which is in the measured bytes (a context's parts have
+	// fixed lengths, and the state is copied).
+	references := 0
 	if plan.ArtifactClaims != nil {
-		reserved = bindings * int(plan.ArtifactClaims.ReserveBytesPerBind)
+		references = bindings * int(plan.ArtifactClaims.ReserveBytesPerBind)
 	}
+	reserved := engine.ChildOriginMaxBytes + references
 	if len(encoded)+reserved > engine.MaxPlanBytes {
-		what := ","
-		if reserved > 0 {
-			what = fmt.Sprintf(", and its %d artifact bindings reserve %d KiB for the references they pass,",
-				bindings, kib(reserved))
+		what := fmt.Sprintf(", and a child's start reserves %d KiB for its origin,", engine.ChildOriginMaxBytes/1024)
+		if references > 0 {
+			what = fmt.Sprintf(", a child's start reserves %d KiB for its origin, and its %d artifact bindings "+
+				"reserve %d KiB for the references they pass,", engine.ChildOriginMaxBytes/1024, bindings, kib(references))
 		}
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"the run's plan — this definition and the %d child runs it composes — encodes to %d KiB%s "+

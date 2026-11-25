@@ -96,6 +96,8 @@ type Binding struct {
 	Reader  RunReader
 	Starter RunStarter
 	Pools   PoolProbe
+	// Resume is what ResumeRun asks of the cluster; nil serves no resume.
+	Resume ResumeCluster
 }
 
 // serves reports whether this binding answers for a namespace.

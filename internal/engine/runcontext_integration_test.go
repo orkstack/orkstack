@@ -43,9 +43,9 @@ func startedPlan(t *testing.T, ctx context.Context, c client.Client, runID strin
 // runContextObjects lists the run-context objects under a run's prefix.
 func runContextObjects(t *testing.T, root, namespace, runID string) []string {
 	t.Helper()
-	prefix, err := artifacts.RunSnapshotPrefix(namespace, runID)
+	prefix, err := artifacts.RunContextRunPrefix(namespace, runID)
 	must.OK(t, err)
-	found, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(prefix), "run-context-*.json"))
+	found, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(prefix), "*.json"))
 	must.OK(t, err)
 	return found
 }
@@ -70,7 +70,7 @@ func TestIntegration_ReissuedRunIDGetsItsOwnObject(t *testing.T) {
 		t.Fatalf("store orkflow: %v", err)
 	}
 	root := t.TempDir()
-	store, err := artifacts.NewLocalRunSnapshotStore(root)
+	store, err := artifacts.NewLocalRunContextStore(root)
 	must.OK(t, err)
 	candidates := []string{taken, reissued}
 	svc := api.NewService(api.Config{
@@ -120,7 +120,7 @@ func TestIntegration_ComposedTreeWritesOneObjectUnderItsRoot(t *testing.T) {
 	starter := engine.NewTemporalStarter(c, runIDQueue())
 
 	root := t.TempDir()
-	store, err := artifacts.NewLocalRunSnapshotStore(root)
+	store, err := artifacts.NewLocalRunContextStore(root)
 	must.OK(t, err)
 	svc := api.NewService(api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(), Runs: engine.NewRunStore(), Bus: engine.NewEventBus(),

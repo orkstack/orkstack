@@ -8,12 +8,15 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
@@ -22,6 +25,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/jwt"
+	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -42,7 +46,7 @@ type admissionWorld struct {
 	records     *artifacts.RecordStore
 	dir         string
 	starter     *executionStarter
-	runContexts *artifacts.LocalRunSnapshotStore
+	runContexts *artifacts.RunContextStore
 }
 
 // executionStarter is the unit tests' stand-in cluster, answering each
@@ -64,6 +68,14 @@ type admissionOptions struct {
 	dir         string
 	attemptsMax int
 	definitions []*orkstackv1.Orkflow
+	grants      map[string]artifacts.Grant
+	providers   provider.Set
+	// trustDomain makes the issuer's tokens carry the SPIFFE form too.
+	trustDomain string
+	sessionTags map[string]artifacts.SessionTagging
+	// fleet is the Orkers a submit asks; nil wires no inventory.
+	fleet engine.OrkerFleet
+	pools engine.PoolProbe
 }
 
 func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
@@ -82,7 +94,7 @@ func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
 	}
 	// The built-in namespace's policy lets its tasks ask for the audience.
 	if _, err := incarnations.SetNamespacePolicy(ctx, artifacts.DefaultNamespace, time.Unix(0, 0).UTC(),
-		artifacts.NamespacePolicy{Audiences: []string{"sts.amazonaws.com"}}, 0, artifacts.PolicyWriter{Principal: "admin"}); err != nil {
+		artifacts.NamespacePolicy{Audiences: []string{"sts.amazonaws.com"}, Grants: o.grants}, 0, artifacts.PolicyWriter{Principal: "admin"}); err != nil {
 		t.Fatal(err)
 	}
 	orkflows := engine.NewMemoryOrkflowStore()
@@ -99,7 +111,7 @@ func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
 		o.attemptsMax = identity.DefaultAttemptsMax
 	}
 	starter := &executionStarter{}
-	runContexts, err := artifacts.NewLocalRunSnapshotStore(o.dir)
+	runContexts, err := artifacts.NewLocalRunContextStore(o.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,19 +122,24 @@ func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
 		Bus:                    engine.NewEventBus(),
 		Starter:                starter,
 		Idempotency:            o.claimer,
-		Issuer:                 admissionTestIssuer(t),
+		Issuer:                 admissionTestIssuer(t, o.trustDomain),
 		IdentityAdmissions:     store,
 		IdentityUnscopedOrkers: identity.UnscopedReport,
 		IdentityAttemptsMax:    o.attemptsMax,
 		IdentityTokenTTL:       time.Hour,
+		SessionTags:            o.sessionTags,
+		IdentityCommitWait:     2 * time.Minute,
 		Incarnations:           incarnations,
 		NamespacePolicies:      incarnations,
 		EngineBuild:            "build-test",
+		Providers:              o.providers,
+		Fleet:                  o.fleet,
+		Pools:                  o.pools,
 	})
 	return &admissionWorld{svc: svc, records: records, dir: o.dir, starter: starter, runContexts: runContexts}
 }
 
-func admissionTestIssuer(t *testing.T) *identity.Issuer {
+func admissionTestIssuer(t *testing.T, trustDomain string) *identity.Issuer {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -137,7 +154,7 @@ func admissionTestIssuer(t *testing.T) *identity.Issuer {
 		t.Fatal(err)
 	}
 	i, err := identity.New(identity.Config{URL: admissionIssuer, Keys: []*jwt.Signer{signer}, Algorithm: jwt.ES256,
-		ActivationDelay: time.Hour, Engine: "e1"}, keys, nothingLive{}, nil)
+		ActivationDelay: time.Hour, Engine: "e1", TrustDomain: trustDomain}, keys, nothingLive{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +252,7 @@ func TestSubmitRun_AdmitsARunThatHoldsAnIdentity(t *testing.T) {
 		t.Fatalf("started plans %+v; want one naming its admission", plans)
 	}
 	ip := plans[0].Identity
-	if ip.AttemptsExtra != identity.DefaultAttemptsExtra || ip.SpecVersion != task.IdentitySpecVersion || ip.Issuer != admissionIssuer || ip.TokenTTLSeconds != 3600 || len(ip.AdmissionSHA256) != 64 {
+	if ip.AttemptsExtra != identity.DefaultAttemptsExtra || ip.SpecVersion != task.IdentitySpecVersion || ip.Issuer != admissionIssuer || ip.TokenTTLSeconds != 3600 || ip.CommitWaitSeconds != 120 || len(ip.AdmissionSHA256) != 64 {
 		t.Fatalf("the plan's identity = %+v", ip)
 	}
 	read, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, run.GetId(), ip.AdmissionSHA256)
@@ -254,7 +271,7 @@ func TestSubmitRun_AdmitsARunThatHoldsAnIdentity(t *testing.T) {
 	}
 	def := identityOrkflow()
 	for _, tk := range def.GetTasks()[:2] {
-		want, _, _ := task.IdentitySpecDigest(1, task.IdentitySpecOfTask(tk))
+		want, _, _ := task.IdentitySpecDigest(1, task.IdentitySpecOfTask(tk, nil))
 		if got := a.Tasks[tk.GetId()]; got.SpecSHA256 != want || got.Pool != task.DefaultPool {
 			t.Errorf("task %q: %+v; want spec %s at pool %s", tk.GetId(), got, want, task.DefaultPool)
 		}
@@ -273,6 +290,27 @@ func TestSubmitRun_AdmitsARunThatHoldsAnIdentity(t *testing.T) {
 	}
 	if files := w.admissionFiles(t); len(files) != 1 {
 		t.Fatalf("admission records %v; want one", files)
+	}
+}
+
+// TestSubmitRun_AdmitsAFanOutsItems: the admission pins a fan-out's item maximum
+// whether or not its task holds an identity, since the engine records every
+// item's result and admits no item past it.
+func TestSubmitRun_AdmitsAFanOutsItems(t *testing.T) {
+	wf := undigestedIdentityOrkflow()
+	wf.Tasks[0].Each = &orkstackv1.EachSpec{Over: "{{ .inputs.xs }}", As: "x", MaxItems: 4}
+	wf.Tasks[1].Each = &orkstackv1.EachSpec{Over: "{{ .inputs.xs }}", As: "x", MaxItems: 3}
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{digested(wf)}})
+	run, err := w.submit(t, "deploy", "")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	read, err := w.records.ReadAdmission(context.Background(), artifacts.DefaultNamespace, run.GetId(), w.starter.startedPlans()[0].Identity.AdmissionSHA256)
+	if err != nil || read.Answer != artifacts.RecordFound {
+		t.Fatalf("the admission reads %+v, %v", read, err)
+	}
+	if apply, report := read.Value.Tasks["apply"], read.Value.Tasks["report"]; apply.MaxItems != 4 || report.MaxItems != 3 || report.Set != 0 {
+		t.Fatalf("apply %+v, report %+v; want 4 and 3 items", apply, report)
 	}
 }
 
@@ -623,6 +661,118 @@ func TestSubmitRun_ASharedOrkflowsOwnChildIsItsOwners(t *testing.T) {
 		if want := e.ParentTaskID != "mine"; e.Shared != want {
 			t.Errorf("the run of task %q has the root's principal and reference hidden: %v; want %v", e.ParentTaskID, e.Shared, want)
 		}
+	}
+}
+
+// TestSubmitRun_AnAdmissionHoldsWhatEachTaskFollows: the record names what
+// each task follows, a child's names what its start follows, in its
+// parent's run or, through a composing task with no need, in a run above,
+// and only a child's names the tasks it completes.
+func TestSubmitRun_AnAdmissionHoldsWhatEachTaskFollows(t *testing.T) {
+	ctx := context.Background()
+	parent, child := composingOrkflows()
+	child.Tasks = append(child.Tasks, &orkstackv1.Task{Id: "verify", Image: child.Tasks[0].Image, Needs: []string{"push"}})
+	mid := &orkstackv1.Orkflow{Name: "mid", Version: "1", DefinitionDigest: "sha256:" + strings.Repeat("f", 64), Tasks: []*orkstackv1.Task{
+		{Id: "inner", Uses: "orkflow:child@1", Orkflow: &orkstackv1.OrkflowRef{Name: "child", Version: "1", DefinitionDigest: child.GetDefinitionDigest()}},
+	}}
+	parent.Tasks[1].Uses = "orkflow:mid@1"
+	parent.Tasks[1].Orkflow = &orkstackv1.OrkflowRef{Name: "mid", Version: "1", DefinitionDigest: mid.GetDefinitionDigest()}
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{child, mid, parent}})
+	run, err := w.submit(t, "release", "")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	read := func(runID string, plan engine.RunPlan) artifacts.Admission {
+		t.Helper()
+		got, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, runID, plan.Identity.AdmissionSHA256)
+		if err != nil || got.Answer != artifacts.RecordFound {
+			t.Fatalf("the admission of %s reads %+v, %v", runID, got, err)
+		}
+		return got.Value
+	}
+	plan := w.starter.startedPlans()[0]
+	ship := plan.Children["ship"]
+	inner := ship.Plan.Children["inner"]
+	build := artifacts.FollowRef{TaskID: "build", Kind: artifacts.FollowContainer}
+	above := build
+	above.RunID = run.GetId()
+
+	root := read(run.GetId(), plan)
+	if !reflect.DeepEqual(root.Follows, map[string][]artifacts.FollowRef{"ship": {build}}) || root.StartFollows != nil || root.Completes != nil {
+		t.Errorf("the root follows %v, its start %v, completes %v", root.Follows, root.StartFollows, root.Completes)
+	}
+	m := read(ship.RunID, ship.Plan)
+	if m.Follows != nil || !slices.Equal(m.StartFollows, []artifacts.FollowRef{above}) || !slices.Equal(m.Completes, []string{"inner"}) {
+		t.Errorf("mid follows %v, its start %v, completes %v", m.Follows, m.StartFollows, m.Completes)
+	}
+	c := read(inner.RunID, inner.Plan)
+	if !reflect.DeepEqual(c.Follows, map[string][]artifacts.FollowRef{"verify": {{TaskID: "push", Kind: artifacts.FollowContainer}}}) ||
+		!slices.Equal(c.StartFollows, []artifacts.FollowRef{above}) || !slices.Equal(c.Completes, []string{"push", "verify"}) {
+		t.Errorf("the child follows %v, its start %v, completes %v", c.Follows, c.StartFollows, c.Completes)
+	}
+}
+
+// TestSubmitRun_AnAdmissionHoldsWhereReceivedArtifactsComeFrom: each run
+// below the root names, for each artifact it receives, the task that produced
+// it and its run, through a run that only passes it on, for a shared child as
+// for one of this namespace, and the tasks that name each.
+func TestSubmitRun_AnAdmissionHoldsWhereReceivedArtifactsComeFrom(t *testing.T) {
+	ctx := context.Background()
+	parent, child := composingOrkflows()
+	digest := func(d string) string { return "sha256:" + strings.Repeat(d, 64) }
+	input := func(names ...string) *structpb.Struct {
+		out := map[string]any{}
+		for _, n := range names {
+			out[n] = map[string]any{"type": "artifact", "required": true}
+		}
+		st, err := structpb.NewStruct(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	child.Namespace, child.SharedWith = "platform", []*orkstackv1.OrkflowShare{{Namespace: "*"}}
+	child.Inputs = input("bundle", "notes")
+	child.Tasks[0].InputArtifacts = []string{"bundle"}
+	mid := &orkstackv1.Orkflow{Name: "mid", Version: "1", DefinitionDigest: digest("f"), Inputs: input("archive"), Tasks: []*orkstackv1.Task{
+		{Id: "write", Image: child.Tasks[0].Image},
+		{Id: "inner", Needs: []string{"write"}, Uses: "orkflow:platform/child@1", ChildArtifacts: []*orkstackv1.ChildArtifact{
+			{Input: "bundle", TaskId: "_inputs", Name: "archive"}, {Input: "notes", TaskId: "write", Name: "notes.md"}},
+			Orkflow: &orkstackv1.OrkflowRef{Name: "child", Version: "1", DefinitionDigest: child.GetDefinitionDigest(), Namespace: "platform"}},
+	}}
+	parent.Tasks[1].Uses = "orkflow:mid@1"
+	parent.Tasks[1].ChildArtifacts = []*orkstackv1.ChildArtifact{{Input: "archive", TaskId: "build", Name: "app.tar"}}
+	parent.Tasks[1].Orkflow = &orkstackv1.OrkflowRef{Name: "mid", Version: "1", DefinitionDigest: mid.GetDefinitionDigest()}
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{child, mid, parent}})
+	run, err := w.submit(t, "release", "")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	plan := w.starter.startedPlans()[0]
+	ship := plan.Children["ship"]
+	inner := ship.Plan.Children["inner"]
+	read := func(runID string, plan engine.RunPlan) artifacts.Admission {
+		t.Helper()
+		got, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, runID, plan.Identity.AdmissionSHA256)
+		if err != nil || got.Answer != artifacts.RecordFound {
+			t.Fatalf("the admission of %s reads %+v, %v", runID, got, err)
+		}
+		return got.Value
+	}
+	app := artifacts.StartArtifact{RunID: run.GetId(), TaskID: "build", Kind: artifacts.FollowContainer, Name: "app.tar"}
+	if got := read(run.GetId(), plan).StartArtifacts; got != nil {
+		t.Errorf("the root receives %v", got)
+	}
+	if got := read(ship.RunID, ship.Plan).StartArtifacts; !reflect.DeepEqual(got, map[string]artifacts.StartArtifact{"archive": app}) {
+		t.Errorf("mid receives %v", got)
+	}
+	c := read(inner.RunID, inner.Plan)
+	if want := (map[string]artifacts.StartArtifact{"bundle": app,
+		"notes": {RunID: ship.RunID, TaskID: "write", Kind: artifacts.FollowContainer, Name: "notes.md"}}); !reflect.DeepEqual(c.StartArtifacts, want) {
+		t.Errorf("the child receives %v; want %v", c.StartArtifacts, want)
+	}
+	if !slices.Equal(c.Tasks["push"].Inputs, []string{"bundle"}) || c.OrkflowNamespace != "platform" {
+		t.Errorf("push names %v, owner %q", c.Tasks["push"].Inputs, c.OrkflowNamespace)
 	}
 }
 

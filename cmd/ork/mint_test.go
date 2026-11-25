@@ -21,11 +21,11 @@ func TestNewMinter_None(t *testing.T) {
 	}
 }
 
-// TestNamespaceAudiences: the mint's step 7 reads the audiences of the
-// namespace's policy for the incarnation the run was admitted in; default's
+// TestNamespacePolicy: the mint's step 7 reads the namespace's
+// policy for the incarnation the run was admitted in; default's
 // is read where the API writes it; an absent namespace, or one made again
 // under its name, is gone, never "allows nothing".
-func TestNamespaceAudiences(t *testing.T) {
+func TestNamespacePolicy(t *testing.T) {
 	ctx := context.Background()
 	policies, err := artifacts.NewIncarnationStore(ctx, artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: t.TempDir()})
 	if err != nil {
@@ -45,15 +45,15 @@ func TestNamespaceAudiences(t *testing.T) {
 	}
 	ids := map[string]string{"payments": paymentsID, "default": artifacts.DefaultNamespaceID}
 	for ns, want := range map[string]string{"payments": "sts", "default": "vault"} {
-		got, err := namespaceAudiences(ctx, registry, policies, ns, ids[ns])
-		if err != nil || len(got) != 1 || got[0] != want {
+		got, err := namespacePolicy(ctx, registry, policies, ns, ids[ns])
+		if err != nil || len(got.Audiences) != 1 || got.Audiences[0] != want {
 			t.Errorf("%s: audiences = %v, %v; want %s", ns, got, err, want)
 		}
 	}
-	if _, err := namespaceAudiences(ctx, registry, policies, "absent", "ns_x"); !errors.Is(err, identity.ErrNamespaceGone) {
+	if _, err := namespacePolicy(ctx, registry, policies, "absent", "ns_x"); !errors.Is(err, identity.ErrNamespaceGone) {
 		t.Fatalf("an absent namespace: %v, want ErrNamespaceGone", err)
 	}
-	if _, err := namespaceAudiences(ctx, registry, policies, "payments", "ns_an_earlier_one"); !errors.Is(err, identity.ErrNamespaceGone) {
+	if _, err := namespacePolicy(ctx, registry, policies, "payments", "ns_an_earlier_one"); !errors.Is(err, identity.ErrNamespaceGone) {
 		t.Fatalf("a namespace made again under its name: %v, want ErrNamespaceGone", err)
 	}
 }

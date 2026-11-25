@@ -246,6 +246,14 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 		if s.GetUnmasked() {
 			secret["unmasked"] = true
 		}
+		// grant and ciphertext likewise: a secret read from the Orker's own
+		// sources keeps its digest.
+		if s.GetGrant() != "" {
+			secret["grant"] = s.GetGrant()
+		}
+		if s.GetCiphertext() != "" {
+			secret["ciphertext"] = s.GetCiphertext()
+		}
 		secrets = append(secrets, secret)
 	}
 	var retry any
@@ -326,6 +334,10 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	// with none keeps its digest.
 	if ids := canonicalIdentities(t); ids != nil {
 		out["identities"] = ids
+	}
+	// credentials likewise: a definition with none keeps its digest.
+	if creds := canonicalCredentials(t); creds != nil {
+		out["credentials"] = creds
 	}
 	// join is emitted ONLY when it is not UNSPECIFIED (all_succeeded) — the
 	// same exception, for the same reason, as `pin`: a definition with no

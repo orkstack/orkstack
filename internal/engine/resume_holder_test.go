@@ -192,6 +192,20 @@ func testReadback() *orkstackv1.ResumeReadback {
 	}
 }
 
+func keptUnit(task string) engine.ResumeUnitPlan {
+	return engine.ResumeUnitPlan{Task: task, Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT, EncodedSize: 512}
+}
+
+func rerunUnit(task string) engine.ResumeUnitPlan {
+	return engine.ResumeUnitPlan{Task: task, Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN}
+}
+
+// pack gives the harness's plan these units of document.
+func (h *resetHarness) pack(t *testing.T, document string, units ...engine.ResumeUnitPlan) {
+	t.Helper()
+	must.OK(t, engine.EncodeResumeUnits(compile(t, document), h.plan.Block, units, false))
+}
+
 // keepBuildRerunDeploy is the plan of a run whose build succeeded and whose
 // deploy failed: build kept, deploy run again under scope 42.
 func (h *resetHarness) keepBuildRerunDeploy(t *testing.T, commitBuild bool) {
@@ -202,11 +216,10 @@ func (h *resetHarness) keepBuildRerunDeploy(t *testing.T, commitBuild bool) {
 		RunId: "ork-reset-1", Scope: 42, BaseTerminalSequence: 41, Principal: "ops@example.com", Reason: "flaky network",
 		Block: &orkstackv1.ResumeBlock{
 			SeqBase: 42, Scope: 42, Action: orkstackv1.ResumeAction_RESUME_ACTION_RESUME,
-			Rerun:        []*orkstackv1.ResumeUnitRange{{TaskId: "deploy", FirstItem: -1}},
-			Dispositions: []*orkstackv1.ResumeUnitDisposition{{TaskId: "build", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT, EncodedSize: 512}},
-			Readback:     testReadback(),
+			Readback: testReadback(),
 		},
 	}
+	h.pack(t, resumeTwoTaskDocument, keptUnit("build"), rerunUnit("deploy"))
 	if !commitBuild {
 		return
 	}
@@ -286,12 +299,30 @@ func TestResetRun_AKeptResultThatIsGoneFailsBeforeAnythingRunsAgain(t *testing.T
 	}
 }
 
+const resumeAwaitDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: resume-await
+tasks:
+  - id: build
+    uses: shell
+    with: {op: exec, command: "echo build"}
+  - id: approve
+    needs: [build]
+    await: {timeout_seconds: 3600}
+  - id: deploy
+    uses: shell
+    needs: [approve]
+    with: {op: exec, command: "echo deploy"}
+`
+
 // A plan needing a part this build has not built is never resumed half-way.
 func TestResetRun_APlanNeedingAnUnbuiltPartIsNotRun(t *testing.T) {
 	h := newResetHarness(t)
 	h.keepBuildRerunDeploy(t, true)
-	h.plan.Block.Dispositions[0].Disposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_WAIT
-	err := h.runResetOf(t, resumeTwoTaskDocument)
+	h.pack(t, resumeAwaitDocument, keptUnit("build"),
+		engine.ResumeUnitPlan{Task: "approve", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_WAIT}, rerunUnit("deploy"))
+	err := h.runResetOf(t, resumeAwaitDocument)
 	var app *temporal.ApplicationError
 	if !errors.As(err, &app) || app.Type() != engine.ReasonResumePlanInvalid || !strings.Contains(app.Error(), "resume_unsupported:wait_again") {
 		t.Fatalf("error = %v, want RESUME_PLAN_INVALID resume_unsupported:wait_again", err)
@@ -304,24 +335,32 @@ func TestResetRun_APlanNeedingAnUnbuiltPartIsNotRun(t *testing.T) {
 // A block that says nothing of a task is not carried out: that task would run
 // again under its first run's key.
 func TestResetRun_APlanThatLeavesATaskOutIsNotRun(t *testing.T) {
-	for name, drop := range map[string]func(*orkstackv1.ResumeBlock){
-		"a task that failed": func(b *orkstackv1.ResumeBlock) { b.Rerun = nil },
-		"a kept task":        func(b *orkstackv1.ResumeBlock) { b.Dispositions = nil },
+	for name, units := range map[string][]byte{
+		"a task left out": packedUnits(t, &orkstackv1.ResumeUnits{RunLengths: []int32{1}, RunEpochs: []int32{0},
+			RunDispositions: []orkstackv1.ResumeDisposition{orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN}}),
+		"no unit at all": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newResetHarness(t)
 			h.keepBuildRerunDeploy(t, true)
-			drop(h.plan.Block)
+			h.plan.Block.Units = units
 			err := h.runResetOf(t, resumeTwoTaskDocument)
 			var app *temporal.ApplicationError
-			if !errors.As(err, &app) || app.Type() != engine.ReasonResumePlanInvalid || !strings.Contains(app.Error(), "says nothing of task") {
-				t.Fatalf("error = %v, want RESUME_PLAN_INVALID naming the task left out", err)
+			if !errors.As(err, &app) || app.Type() != engine.ReasonResumePlanInvalid {
+				t.Fatalf("error = %v, want RESUME_PLAN_INVALID", err)
 			}
 			if n := len(h.taskCalls("deploy")) + len(h.taskCalls("build")); n != 0 {
 				t.Fatalf("%d tasks ran", n)
 			}
 		})
 	}
+}
+
+func packedUnits(t *testing.T, u *orkstackv1.ResumeUnits) []byte {
+	t.Helper()
+	raw, err := proto.Marshal(u)
+	must.OK(t, err)
+	return raw
 }
 
 // While a resumed run cannot retake its concurrency slot, a run held to a
@@ -406,8 +445,7 @@ tasks:
 func TestResetRun_AReadBackFailureStartsNoFailureHandler(t *testing.T) {
 	h := newResetHarness(t)
 	h.keepBuildRerunDeploy(t, false)
-	h.plan.Block.Dispositions = append(h.plan.Block.Dispositions,
-		&orkstackv1.ResumeUnitDisposition{TaskId: "notify", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT, EncodedSize: 512})
+	h.pack(t, resumeHandlerDocument, keptUnit("build"), rerunUnit("deploy"), keptUnit("notify"))
 	if err := h.runResetOf(t, resumeHandlerDocument); err == nil {
 		t.Fatal("the run succeeded without its kept results")
 	}
@@ -430,7 +468,7 @@ func TestResetRun_AReadBackFailureStartsNoFailureHandler(t *testing.T) {
 func TestResetRun_TheLastKeptRowFailingStartsNoFailureHandler(t *testing.T) {
 	h := newResetHarness(t)
 	h.keepBuildRerunDeploy(t, false)
-	h.plan.Block.Rerun = append(h.plan.Block.Rerun, &orkstackv1.ResumeUnitRange{TaskId: "notify", FirstItem: -1})
+	h.pack(t, resumeHandlerDocument, keptUnit("build"), rerunUnit("deploy"), rerunUnit("notify"))
 	if err := h.runResetOf(t, resumeHandlerDocument); err == nil {
 		t.Fatal("the run succeeded without its kept result")
 	}

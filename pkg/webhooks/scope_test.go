@@ -38,6 +38,16 @@ func TestWebhook_MatchesScopeExactlyAndEmptyMeansEvery(t *testing.T) {
 		{"orkflow equal", webhooks.Webhook{Events: []webhooks.Event{event}, OrkflowName: "nightly-etl"}, match, true},
 		{"orkflow alone matches in every namespace", webhooks.Webhook{Events: []webhooks.Event{event}, OrkflowName: "nightly-etl"},
 			webhooks.Match{Event: event, Namespace: "marketing", OrkflowName: "nightly-etl", TaskID: "extract"}, true},
+		{"another namespace's shared orkflow is not the namespace's own of its name",
+			webhooks.Webhook{Events: []webhooks.Event{event}, Namespace: "analytics", OrkflowName: "nightly-etl"},
+			webhooks.Match{Event: event, Namespace: "analytics", OrkflowName: "nightly-etl", OrkflowNamespace: "platform"}, false},
+		{"nor for a scope that names the owner: its runs are in the namespace they run in",
+			webhooks.Webhook{Events: []webhooks.Event{event}, Namespace: "platform", OrkflowName: "nightly-etl"},
+			webhooks.Match{Event: event, Namespace: "analytics", OrkflowName: "nightly-etl", OrkflowNamespace: "platform"}, false},
+		{"nor for a deployment-wide scope on the name", webhooks.Webhook{Events: []webhooks.Event{event}, OrkflowName: "nightly-etl"},
+			webhooks.Match{Event: event, Namespace: "analytics", OrkflowName: "nightly-etl", OrkflowNamespace: "platform"}, false},
+		{"a scope with no orkflow hears a shared one's child run", webhooks.Webhook{Events: []webhooks.Event{event}, Namespace: "analytics"},
+			webhooks.Match{Event: event, Namespace: "analytics", OrkflowName: "nightly-etl", OrkflowNamespace: "platform"}, true},
 		{"orkflow prefix is not a match", webhooks.Webhook{Events: []webhooks.Event{event}, OrkflowName: "etl"},
 			webhooks.Match{Event: event, Namespace: "analytics", OrkflowName: "etl-nightly", TaskID: "extract"}, false},
 		{"orkflow differs", webhooks.Webhook{Events: []webhooks.Event{event}, OrkflowName: "hourly"}, match, false},
@@ -82,7 +92,7 @@ func TestWebhook_TaskScopeIsIgnoredForRunTransitions(t *testing.T) {
 	}
 }
 
-func TestWebhook_EmptyEventsMeansRunTransitionsOnly(t *testing.T) {
+func TestWebhook_EmptyEventsMeansTheRunsLifecycleOnly(t *testing.T) {
 	hook := webhooks.Webhook{}
 	for _, event := range webhooks.RunEvents() {
 		if !hook.Subscribes(event) {
@@ -94,7 +104,12 @@ func TestWebhook_EmptyEventsMeansRunTransitionsOnly(t *testing.T) {
 			t.Errorf("an event-less subscription wants %s; task events are opt-in", event)
 		}
 	}
-	want := []webhooks.Event{webhooks.EventRunStarted, webhooks.EventRunSucceeded, webhooks.EventRunFailed, webhooks.EventRunCanceled}
+	for _, event := range []webhooks.Event{webhooks.EventRunQueued, webhooks.EventRunPaused, webhooks.EventRunUnpaused, webhooks.EventRunResultsKept} {
+		if hook.Subscribes(event) {
+			t.Errorf("an event-less subscription wants %s, a transition inside an open run", event)
+		}
+	}
+	want := []webhooks.Event{webhooks.EventRunStarted, webhooks.EventRunSucceeded, webhooks.EventRunFailed, webhooks.EventRunCanceled, webhooks.EventRunResumed}
 	if got := webhooks.RunEvents(); !equalEvents(got, want) {
 		t.Errorf("RunEvents() = %v, want %v", got, want)
 	}
@@ -131,6 +146,7 @@ func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.
 		webhooks.EventTaskSucceeded, webhooks.EventTaskFailed,
 		webhooks.EventRunPaused, webhooks.EventRunUnpaused,
 		webhooks.EventRunSucceeded, webhooks.EventRunFailed, webhooks.EventRunCanceled,
+		webhooks.EventRunResumed, webhooks.EventRunResultsKept,
 	}
 	if got := webhooks.KnownEvents(); !equalEvents(got, want) {
 		t.Fatalf("KnownEvents() = %v, want %v", got, want)

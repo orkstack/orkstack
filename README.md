@@ -272,6 +272,7 @@ reference.
   [Security model](./docs/SECURITY_MODEL.md) ·
   [Authentication](./docs/AUTHENTICATION.md) · [Access](./docs/ACCESS.md) ·
   [Task identity](./docs/TASK_IDENTITY.md) ·
+  [Providers](./docs/PROVIDERS.md) ·
   [Upgrading](./docs/UPGRADING.md) · [Limitations](./docs/LIMITATIONS.md) ·
   [Troubleshooting](./docs/TROUBLESHOOTING.md) ·
   [Runbooks, backup and Temporal outages](./docs/RUNBOOKS.md) ·

@@ -263,9 +263,9 @@ func (s *chaosStack) dial(source, address string) client.Client {
 	if address == "" {
 		address = s.address
 	}
-	c, err := client.DialContext(s.ctx, client.Options{
+	c, err := client.DialContext(s.ctx, engine.ClientOptions(client.Options{
 		HostPort: address, Namespace: s.namespace, Identity: source, Logger: s.logs.logger(source),
-	})
+	}, nil))
 	must.OKf(s.t, err, "dial %s for %s", address, source)
 	s.t.Cleanup(c.Close)
 	return c

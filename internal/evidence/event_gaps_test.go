@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,45 +10,49 @@ import (
 )
 
 // gappedFixture is the fixture bundle of a run that lost events 1201–2400
-// before it was archived: schema_version 2 with event_gaps.
+// before it was archived.
 func gappedFixture() fixtureBundle {
 	f := newFixture()
-	f.manifest.SchemaVersion = SchemaVersionEventGaps
 	f.manifest.EventGaps = []EventGap{{First: 1201, Last: 2400, Reason: "segment object missing"}}
 	return f
 }
 
-func TestParseManifest_AcceptsSchemaTwoOnlyWithEventGaps(t *testing.T) {
-	f := gappedFixture()
-	document, err := f.manifest.MarshalJSON()
+// A bundle may name event gaps or none; a gap is a range.
+func TestParseManifest_EventGaps(t *testing.T) {
+	for _, f := range []fixtureBundle{newFixture(), gappedFixture()} {
+		document, err := f.manifest.MarshalJSON()
+		must.OK(t, err)
+		parsed, err := ParseManifest(document)
+		must.OKf(t, err, "ParseManifest(%d gaps)", len(f.manifest.EventGaps))
+		if parsed.SchemaVersion != 3 || len(parsed.EventGaps) != len(f.manifest.EventGaps) {
+			t.Fatalf("parsed schema %d, %d gaps", parsed.SchemaVersion, len(parsed.EventGaps))
+		}
+	}
+	document, err := gappedFixture().manifest.MarshalJSON()
 	must.OK(t, err)
-	parsed, err := ParseManifest(document)
-	must.OKf(t, err, "ParseManifest(schema 2 with gaps)")
-	if len(parsed.EventGaps) != 1 || parsed.EventGaps[0].First != 1201 {
-		t.Fatalf("parsed gaps = %+v", parsed.EventGaps)
-	}
-	f.manifest.EventGaps = nil
-	empty, _ := f.manifest.MarshalJSON()
-	if _, err := ParseManifest(empty); err == nil || !strings.Contains(err.Error(), "names no event_gaps") {
-		t.Fatalf("schema 2 without gaps = %v, want a refusal", err)
-	}
-	if _, err := ParseManifest(bytes.Replace(document, []byte(`"schema_version": 2`), []byte(`"schema_version": 3`), 1)); err == nil ||
-		!strings.Contains(err.Error(), "schema_version 3") {
-		t.Fatalf("schema 3 = %v, want a refusal naming it", err)
-	}
 	backwards := bytes.Replace(document, []byte(`"first": 1201`), []byte(`"first": 2401`), 1)
 	if _, err := ParseManifest(backwards); err == nil {
 		t.Fatal("a gap whose first is after its last was accepted")
 	}
 }
 
-func TestParseManifest_SchemaOneForbidsEventGaps(t *testing.T) {
-	f := gappedFixture()
-	f.manifest.SchemaVersion = SchemaVersion
-	document, err := f.manifest.MarshalJSON()
-	must.OK(t, err)
-	if _, err := ParseManifest(document); err == nil || !strings.Contains(err.Error(), "carries event_gaps") {
-		t.Fatalf("schema 1 with gaps = %v, want a refusal", err)
+// Only the version an engine writes is read: a bundle of another, earlier or
+// later, with gaps or without, is refused by name with what does read it.
+func TestVerify_RefusesEveryOtherSchemaVersion(t *testing.T) {
+	for _, version := range []int{0, 1, 2, 4} {
+		for _, f := range []fixtureBundle{newFixture(), gappedFixture()} {
+			f.manifest.SchemaVersion = version
+			report, err := Verify(bytes.NewReader(writeFixture(t, f)))
+			if err == nil || report != nil {
+				t.Fatalf("version %d with %d gaps was read: %+v", version, len(f.manifest.EventGaps), report)
+			}
+			for _, want := range []string{fmt.Sprintf("schema_version %d", version), "reads only schema_version 3",
+				"verify it with the orkctl that exported it"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("version %d: %q does not say %q", version, err, want)
+				}
+			}
+		}
 	}
 }
 

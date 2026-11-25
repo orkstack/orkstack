@@ -147,7 +147,7 @@ settings has two namespace steps, the settings first and the policy after.
 | Key | Value | Absent means |
 | --- | --- | --- |
 | `audiences` | list of strings: token audiences the namespace's tasks may ask for; a trailing `*` matches any rest | none |
-| `grants` | mapping of grant names, each with `provider`, `principal`, `orkflows` (a name, `*` or `<owner>/<name>`), `current_only` (boolean) and `origins` (`submit`, `schedule`, `trigger`, `event-source`, `parent-run`, `run-again`) | none |
+| `grants` | mapping of grant names, each with `provider`, `principal`, `orkflows` (a name, `*` or `<owner>/<name>`), `current_only` (boolean) and `origins` (`submit`, `schedule`, `trigger`, `parent-run`, `run-again`) | none |
 | `identities_current_only` | boolean: give an identity only to a run of its Orkflow's current version | `false` |
 | `attempts_extra` | integer ≥ 0, at most `identity.attempts.max_extra`: attempts past a task's own retries that may hold its identity | the deployment's `identity.attempts.extra` |
 
@@ -199,8 +199,8 @@ namespaces").
 | Key | Value | Absent means |
 | --- | --- | --- |
 | `url` | absolute `http(s)` URL, **required** | — |
-| `events` | list of event names | every run transition |
-| `orkflow` | slug | every Orkflow |
+| `events` | list of event names | the run's lifecycle: start, endings and resumption |
+| `orkflow` | slug: the namespace's own Orkflow, never another's shared one | every Orkflow |
 | `task` | slug; needs a `TASK_*` event | every task |
 | `secret_env` | environment-variable name | a generated signing secret, disclosed once |
 
@@ -350,7 +350,7 @@ an unpinned version as `current` (unquoted); lists as `[a, b]`; maps as
 absent; input as compact JSON with sorted keys in a plan (an export writes
 input as a YAML mapping, keys sorted, quoting any string a YAML reader could
 read as something else); events in lifecycle order,
-`[]` meaning every run transition.
+`[]` meaning the run's lifecycle.
 
 ### The digest
 

@@ -378,7 +378,13 @@ assert "Tempo: /api/search{span.ork.run_id=\"$RUN_ID\"} returns a trace id" \
 	bash -c "[ -n '$TRACE_ID' ]"
 echo "- trace: $TRACE_ID" >>"$SUMMARY"
 
-curl -s "$TEMPO/api/traces/$TRACE_ID" >"$OUT/tempo-trace.json"
+# The run's own span is made when it ends and exported a batch later than its
+# attempts', so the trace is read until it is there.
+for i in $(seq 1 120); do
+	curl -s "$TEMPO/api/traces/$TRACE_ID" >"$OUT/tempo-trace.json"
+	grep -q '"ork\.run"' "$OUT/tempo-trace.json" && break
+	sleep 0.5
+done
 # The trace API's JSON shape is OTLP's own (resourceSpans/scopeSpans/spans);
 # flatten every span name and every resource's service.name in one pass so
 # the counts below don't depend on which of Tempo's historical key spellings
@@ -392,6 +398,9 @@ jq '[.batches[]?, .resourceSpans[]?] | map({
 ATTEMPT_SPANS="$(jq '[.[].spans[] | select(. == "ork.task.attempt")] | length' "$OUT/tempo-trace-summary.json")"
 PHASE_SPANS="$(jq '[.[].spans[] | select(. == "ork.task.phase")] | length' "$OUT/tempo-trace-summary.json")"
 TRACE_SERVICES="$(jq '[.[].service] | unique | length' "$OUT/tempo-trace-summary.json")"
+RUN_SPANS="$(jq '[.[].spans[] | select(. == "ork.run")] | length' "$OUT/tempo-trace-summary.json")"
+assert "Tempo trace $TRACE_ID: one ork.run span (found $RUN_SPANS)" \
+	bash -c "[ '$RUN_SPANS' = 1 ]"
 assert "Tempo trace $TRACE_ID: 6 ork.task.attempt spans (found $ATTEMPT_SPANS)" \
 	bash -c "[ '$ATTEMPT_SPANS' = 6 ]"
 assert "Tempo trace $TRACE_ID: >=60 ork.task.phase spans (found $PHASE_SPANS)" \

@@ -125,3 +125,45 @@ func TestTerminalRetention_ZeroKeepsEveryRun(t *testing.T) {
 		t.Fatalf("retention 0: runs=%d logs=%d, want all 11 kept", runs, logs)
 	}
 }
+
+// A resumed run is a live run again: its log and dedupe keys outlast the
+// window its first ending opened, and its next ending opens one of its own.
+func TestTerminalRetention_AResumedRunIsLiveAgain(t *testing.T) {
+	store, bus, clock := retainedPair(10 * time.Minute)
+	const run = "ork-1-1"
+	project(store, bus, run, 1, orkstackv1.Status_STATUS_RUNNING, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED)
+	project(store, bus, run, 2, orkstackv1.Status_STATUS_FAILED, orkstackv1.EventType_EVENT_TYPE_RUN_FAILED)
+	clock.Advance(9 * time.Minute)
+	project(store, bus, run, 3, orkstackv1.Status_STATUS_RUNNING, orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED)
+	clock.Advance(time.Hour)
+	finish(store, bus, "ork-1-2") // a write that sweeps
+	if first := project(store, bus, run, 3, orkstackv1.Status_STATUS_RUNNING, orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED); first {
+		t.Fatal("a retried RUN_RESUMED was announced a second time")
+	}
+	project(store, bus, run, 4, orkstackv1.Status_STATUS_SUCCEEDED, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED)
+	clock.Advance(9 * time.Minute)
+	finish(store, bus, "ork-1-3")
+	if first := project(store, bus, run, 4, orkstackv1.Status_STATUS_SUCCEEDED, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED); first {
+		t.Fatal("a retried second ending inside its own window was announced a second time")
+	}
+	clock.Advance(2 * time.Minute)
+	finish(store, bus, "ork-1-4")
+	if events := bus.Events(run, 0); len(events) != 0 {
+		t.Fatalf("after its second window the run still has %d events", len(events))
+	}
+}
+
+// A resume that reaches this engine after the run's later ending, which it
+// already holds, does not make the run live again.
+func TestTerminalRetention_AResumeOlderThanAnEndingChangesNothing(t *testing.T) {
+	store, bus, clock := retainedPair(10 * time.Minute)
+	const run = "ork-1-1"
+	project(store, bus, run, 4, orkstackv1.Status_STATUS_SUCCEEDED, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED)
+	bus.Publish(&orkstackv1.Event{RunId: run, Sequence: 3, Type: orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED,
+		Status: orkstackv1.Status_STATUS_RUNNING}, run+"#3")
+	clock.Advance(11 * time.Minute)
+	finish(store, bus, "ork-1-2")
+	if events := bus.Events(run, 0); len(events) != 0 {
+		t.Fatalf("a finished run past its window still has %d events", len(events))
+	}
+}
