@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 )
 
 // The cascade (design §4.11, §18.3, §19 M4/M5, §20.2): a run that becomes
@@ -185,7 +186,7 @@ func (s *runState) goSend(roundCtx workflow.Context, results workflow.Channel, i
 			if cascadeSendForTest != nil {
 				err = cascadeSendForTest(g, id, sig)
 			} else {
-				err = future.SignalChildWorkflow(g, PauseSignal, sig).Get(g, nil)
+				err = future.SignalChildWorkflow(g, PauseSignal, s.sealedForChild(id, sig)).Get(g, nil)
 			}
 			reading := categoryOf(err)
 			if g.Err() != nil || reading.canceled {
@@ -309,4 +310,18 @@ func (s *runState) cascadeIdle() bool { return s.cascade.live == 0 }
 // cascadeChildEnded forgets a child that ended, so no later round targets it.
 func (s *runState) cascadeChildEnded(id string) {
 	delete(s.cascade.cascaded, id)
+}
+
+// sealedForChild is a pause request as a composed task's child run receives
+// it: sealed for the child's own id under the tree's key in a sealed run, so
+// the child opens it (payload-encryption.md §4.1 rule 2), and the request
+// itself in any other.
+func (s *runState) sealedForChild(id string, sig any) any {
+	c := s.children[id]
+	if c == nil || c.plan == nil {
+		// No child id to seal for: sealed for this run, which no child
+		// opens, never plaintext.
+		return payloadcrypt.Seal(s.scope, sig)
+	}
+	return payloadcrypt.Seal(s.scope.For(payloadcrypt.RunContext(c.plan.RunID)), sig)
 }

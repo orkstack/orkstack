@@ -23,7 +23,7 @@ import (
 // fit, and every hour, containers of the release's probe image ask, from a
 // network made exactly as a service's is, the four questions of
 // servicehost.ProbePlan, and the Orker judges the answer
-// (servicehost.JudgeAllowed). Its containers carry this Orker's label, so a
+// (servicehost.JudgeAnswered). Its containers carry this Orker's label, so a
 // boot reaps one a dead process left, and run under the sandbox with no
 // secret of any kind.
 
@@ -187,6 +187,19 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 	if err != nil {
 		return notRun("the host's addresses", err)
 	}
+	if ha, ok := r.d.Runtime.(interface {
+		HostAlias(context.Context) (string, error)
+	}); ok {
+		// The runtime's own name for the host, which may lead to its loopback:
+		// asked as every other way a container reaches its host.
+		alias, err := ha.HostAlias(ctx)
+		if err != nil {
+			return notRun("the runtime's name for the host", err)
+		}
+		if alias != "" {
+			hosts = append(hosts, alias)
+		}
+	}
 	plan := servicehost.ProbePlan{
 		OperatorAddresses:  r.cfg.OperatorAddresses,
 		AdminPort:          r.cfg.AdminPort,
@@ -217,7 +230,7 @@ func (r *reachRun) ask(ctx context.Context) ReachProbeRun {
 	if failed := control(", after the probe"); failed != nil {
 		return *failed
 	}
-	out.Result = servicehost.ProbeResult{Ran: true, Fitness: servicehost.JudgeAllowed(obs, r.cfg.Allow)}
+	out.Result = servicehost.JudgeAnswered(obs, r.cfg.Allow)
 	return out
 }
 

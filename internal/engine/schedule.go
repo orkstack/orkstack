@@ -96,6 +96,9 @@ type ScheduleView struct {
 type ScheduleFireView struct {
 	ScheduledAt, ActualAt time.Time
 	RunID, Refusal        string
+	// SkipCode and SkipMessage say why a fire that completed started no
+	// run, or why its run never began: a concurrency limit's.
+	SkipCode, SkipMessage string
 	DetailsAvailable      bool
 }
 
@@ -421,7 +424,7 @@ func (s *TemporalScheduler) recentFires(ctx context.Context, actions []client.Sc
 	for _, action := range sorted {
 		fire := ScheduleFireView{ScheduledAt: action.ScheduleTime.UTC(), ActualAt: action.ActualTime.UTC()}
 		if started := action.StartWorkflowResult; started != nil && started.WorkflowID != "" {
-			fire.RunID, fire.Refusal, fire.DetailsAvailable = s.fireDetails(ctx, started.WorkflowID, started.FirstExecutionRunID)
+			s.fireDetails(ctx, started.WorkflowID, started.FirstExecutionRunID, &fire)
 		}
 		fires = append(fires, fire)
 	}
@@ -431,18 +434,20 @@ func (s *TemporalScheduler) recentFires(ctx context.Context, actions []client.Sc
 // fireDetails reads one fire workflow's memo. Any failure — the fire retired
 // past the cluster's execution retention, or the cluster did not answer —
 // reports the details unavailable rather than guessing.
-func (s *TemporalScheduler) fireDetails(ctx context.Context, workflowID, runID string) (string, string, bool) {
+func (s *TemporalScheduler) fireDetails(ctx context.Context, workflowID, runID string, fire *ScheduleFireView) {
 	desc, err := s.client.DescribeWorkflow(ctx, workflowID, runID)
 	if err != nil || desc == nil || desc.RawResponse == nil {
-		return "", "", false
+		return
 	}
 	fields := desc.RawResponse.GetWorkflowExecutionInfo().GetMemo().GetFields()
 	runIDValue, ok1 := s.memoString(fields, MemoScheduledRunID)
 	refusal, ok2 := s.memoString(fields, MemoScheduleFireRefusal)
-	if !ok1 || !ok2 {
-		return "", "", false
+	skipCode, ok3 := s.memoString(fields, MemoScheduleFireSkipCode)
+	skipMessage, ok4 := s.memoString(fields, MemoScheduleFireSkipMessage)
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return
 	}
-	return runIDValue, refusal, true
+	fire.RunID, fire.Refusal, fire.SkipCode, fire.SkipMessage, fire.DetailsAvailable = runIDValue, refusal, skipCode, skipMessage, true
 }
 
 // memoString decodes one memo field as a string; an absent field is "".

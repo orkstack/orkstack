@@ -100,7 +100,7 @@ run's history, so the file may be as large as an artifact may be:
     needs:
       - list
     each:
-      over_artifact: list/files.jsonl   # <task>/<artifact>, a task in needs:
+      over_artifact: list/files.jsonl   # <task>/<artifact>, a task in needs:, or _inputs/<name>
       format: jsonl                     # or lines: each line a string
       max_items: 5000
     with:

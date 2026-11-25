@@ -27,6 +27,7 @@ type ConcurrencySettings struct {
 	RequeueBackoffFactor      int
 	RequeueIntervalMax        time.Duration
 	RetryAfter                time.Duration
+	FireUnavailableRetry      time.Duration
 	EventHoldersShown         int
 	APIHoldersShown           int
 }
@@ -48,6 +49,7 @@ func DefaultConcurrencySettings() ConcurrencySettings {
 		RequeueBackoffFactor:      2,
 		RequeueIntervalMax:        15 * time.Minute,
 		RetryAfter:                time.Minute,
+		FireUnavailableRetry:      5 * time.Minute,
 		EventHoldersShown:         5,
 		APIHoldersShown:           10,
 	}
@@ -86,6 +88,7 @@ func (s ConcurrencySettings) Check(g GateTunables) error {
 		{"max_queue_timeout", s.MaxQueueTimeout}, {"acquire_backoff_min", s.AcquireBackoffMin},
 		{"acquire_backoff_max", s.AcquireBackoffMax}, {"requeue_interval", s.RequeueInterval},
 		{"requeue_interval_max", s.RequeueIntervalMax}, {"retry_after", s.RetryAfter},
+		{"fire_unavailable_retry", s.FireUnavailableRetry},
 	} {
 		if c.v <= 0 {
 			return fmt.Errorf("engine.concurrency.%s is %s; it must be above zero", c.name, c.v)

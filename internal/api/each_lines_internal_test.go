@@ -107,3 +107,34 @@ func TestCheckEachLimits_LinesAtCeilingWithManyUpstreams(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckEachLimits_LinesAllowanceWithRunContext: an item's run context is
+// outside the bound its input is held to, so create charges a lines fan-out
+// its line references and nothing for the run context: one whose own input
+// is exactly an allowance under the bound is accepted, and one byte less of
+// bound refuses it. At dispatch the largest run context a run may pin does
+// not move the item past that same bound (userInputSize,
+// TestEachLines_RunContextIsOutsideTheItemBound).
+func TestCheckEachLimits_LinesAllowanceWithRunContext(t *testing.T) {
+	wf, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: x\ntasks:\n" +
+		"  - id: list\n    uses: busybox:1\n" +
+		"  - id: convert\n    uses: busybox:1\n    needs: [list]\n    each:\n" +
+		"      over_artifact: list/a.jsonl\n      format: jsonl\n      max_items: 1\n" +
+		"    with:\n      pad: '" + strings.Repeat("x", 4096) + "'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := wf.GetTasks()[1]
+	size, err := task.InputSize(&orkstackv1.ExecuteTaskInput{Image: conv.GetImage(), Command: conv.GetCommand(), With: conv.GetWith()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{eachMaxItems: 10000, limits: engine.WorkspaceLimits{ValuesMaxBytes: size + eachLinesRefAllowance}}
+	if err := s.checkEachLimits(wf); err != nil {
+		t.Fatalf("a fan-out exactly its allowance under the bound was refused: %v", err)
+	}
+	s.limits.ValuesMaxBytes--
+	if err := s.checkEachLimits(wf); err == nil {
+		t.Fatal("a fan-out one byte over its allowance was accepted")
+	}
+}

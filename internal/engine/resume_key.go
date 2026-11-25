@@ -99,21 +99,21 @@ func lowerHexDigest(s string) bool {
 	return true
 }
 
-// resetFacts is what the reset that made this run recorded (§30.3, T20):
+// ResetFacts is what the reset that made this run recorded (§30.3, T20):
 // the base execution it reset, the reason it was given, and the ids of R's
 // workflow task in that base.
-type resetFacts struct {
-	BaseRunID        string
-	Reason           string
-	ScheduledEventID int64
-	StartedEventID   int64
+type ResetFacts struct {
+	BaseRunID        string `json:"base_run_id"`
+	Reason           string `json:"reason"`
+	ScheduledEventID int64  `json:"scheduled_event_id"`
+	StartedEventID   int64  `json:"started_event_id"`
 }
 
 // findResetEvent is the reset event of run ownRunID among events, read in
 // order: the WorkflowTaskFailed whose cause is a reset and whose new run is
 // this one. A run reset again copies its base's prefix, which can hold the
 // base's own reset event; that one names another new run and is passed by.
-func findResetEvent(events []*historypb.HistoryEvent, ownRunID string) (resetFacts, bool) {
+func findResetEvent(events []*historypb.HistoryEvent, ownRunID string) (ResetFacts, bool) {
 	for _, e := range events {
 		if e.GetEventType() != enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED {
 			continue
@@ -122,12 +122,12 @@ func findResetEvent(events []*historypb.HistoryEvent, ownRunID string) (resetFac
 		if a.GetCause() != enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW || a.GetNewRunId() != ownRunID {
 			continue
 		}
-		return resetFacts{
+		return ResetFacts{
 			BaseRunID:        a.GetBaseRunId(),
 			Reason:           a.GetFailure().GetMessage(),
 			ScheduledEventID: a.GetScheduledEventId(),
 			StartedEventID:   a.GetStartedEventId(),
 		}, true
 	}
-	return resetFacts{}, false
+	return ResetFacts{}, false
 }

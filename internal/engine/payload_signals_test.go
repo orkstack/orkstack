@@ -1,10 +1,12 @@
 package engine_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
@@ -14,6 +16,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/payloadcrypt"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -44,7 +47,11 @@ func TestRunWorkflow_AnUnreadableResolutionIsAnEvent(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, nil, okTask)
-			dc := payloadcrypt.NewConverter(engine.DataConverter(), s.keys)
+			memoForReader := map[string]any{}
+			if tc.sealed {
+				memoForReader[payloadcrypt.MemoField] = s.memo
+			}
+			dc := payloadcrypt.NewConverter(engine.DataConverter(), s.keys).WithReaderKeys(treeReader(s.keys, memoForReader))
 			h.env.SetDataConverter(dc)
 			h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{payloadcrypt.WorkflowInterceptor(s.keys)}}))
 			h.env.SetStartWorkflowOptions(clientOptions("ork-await"))
@@ -53,6 +60,7 @@ func TestRunWorkflow_AnUnreadableResolutionIsAnEvent(t *testing.T) {
 				memo := engine.RunStartMemo(wf, defaultPlan())
 				memo[payloadcrypt.MemoField] = s.memo
 				must.OK(t, h.env.SetMemoOnStart(memo))
+				sealedOrker(h, s.scope)
 			}
 			body := `{"model_uri": "s3://models/1"}`
 			h.env.RegisterDelayedCallback(func() {
@@ -92,13 +100,15 @@ func TestRunWorkflow_ASealedTreesChild(t *testing.T) {
 	h := newComposeHarness(t, defaultBehavior)
 	parent, plan, _ := composedFixture(t, composedChildDocument)
 	s := newSealedRun(t, "ork-parent")
-	dc := payloadcrypt.NewConverter(engine.DataConverter(), s.keys)
+	dc := payloadcrypt.NewConverter(engine.DataConverter(), s.keys).
+		WithReaderKeys(treeReader(s.keys, map[string]any{payloadcrypt.MemoField: s.memo}))
 	h.env.SetDataConverter(dc)
 	childMemo := &childMemoRecorder{}
 	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{childMemo, payloadcrypt.WorkflowInterceptor(s.keys)}}))
 	memo := engine.RunStartMemo(parent, plan)
 	memo[payloadcrypt.MemoField] = s.memo
 	must.OK(t, h.env.SetMemoOnStart(memo))
+	sealedComposeOrker(h, s.scope)
 	cp := plan.Children["release"]
 	childScope := s.scope.For(payloadcrypt.RunContext(cp.RunID))
 	var sawStart bool
@@ -162,13 +172,15 @@ func TestRunWorkflow_ASealedTreesChildFailure(t *testing.T) {
 	h := newComposeHarness(t, defaultBehavior)
 	parent, plan, _ := composedFixture(t, composedChildDocument)
 	s := newSealedRun(t, "ork-parent")
-	dc := payloadcrypt.NewConverter(engine.DataConverter(), s.keys)
+	dc := payloadcrypt.NewConverter(engine.DataConverter(), s.keys).
+		WithReaderKeys(treeReader(s.keys, map[string]any{payloadcrypt.MemoField: s.memo}))
 	h.env.SetDataConverter(dc)
 	h.env.SetFailureConverter(payloadcrypt.NewFailureConverter(dc, false))
 	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{payloadcrypt.WorkflowInterceptor(s.keys)}}))
 	memo := engine.RunStartMemo(parent, plan)
 	memo[payloadcrypt.MemoField] = s.memo
 	must.OK(t, h.env.SetMemoOnStart(memo))
+	sealedComposeOrker(h, s.scope)
 	cp := plan.Children["release"]
 	childScope := s.scope.For(payloadcrypt.RunContext(cp.RunID))
 	h.env.RegisterWorkflowWithOptions(func(ctx workflow.Context, _, _, _, _ converter.RawValue) (any, error) {
@@ -185,4 +197,23 @@ func TestRunWorkflow_ASealedTreesChildFailure(t *testing.T) {
 		row.GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT {
 		t.Fatalf("release row error = %v, want the child's own timeout", row.GetError())
 	}
+}
+
+// sealedComposeOrker answers the parent's tasks as an Orker with the run
+// tree's key does, with the harness's default behaviour.
+func sealedComposeOrker(h *composeHarness, scope *payloadcrypt.Scope) {
+	h.env.RegisterActivityWithOptions(func(ctx context.Context, raw converter.RawValue) (any, error) {
+		var in *orkstackv1.ExecuteTaskInput
+		if _, err := payloadcrypt.OpenRaw(scope, engine.DataConverter(), raw, &in); err != nil {
+			return nil, err
+		}
+		h.mu.Lock()
+		h.calls = append(h.calls, in)
+		h.mu.Unlock()
+		res, err := defaultBehavior(h, in)
+		if res == nil {
+			return nil, err
+		}
+		return payloadcrypt.Seal(scope, res), err
+	}, activity.RegisterOptions{Name: task.ActivityExecuteTask, DisableAlreadyRegisteredCheck: true})
 }

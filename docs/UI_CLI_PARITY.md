@@ -172,7 +172,8 @@ filter form renders it. The matcher is written once, in
 
 Lists that take filters: `ListNamespaces`, `ListOrkflows`, `ListWebhooks`,
 `ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`,
-`ListReleases`, `ListDeliveries`, `ListAuditRecords` and `ListRuns`. Child listings of one parent
+`ListReleases`, `ListDeliveries`, `ListAuditRecords`, `ListConcurrencyLimits` and
+`ListRuns`. Child listings of one parent
 (`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`, `ListIssuedTokens`), the
 `ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
 
@@ -936,7 +937,8 @@ reads `task scheduled on pool <pool>, pin <name>` for a pinned task.
 resolve in the request's namespace (another namespace's run is NotFound, never
 compared); equal or empty ids and an unknown field name are `InvalidArgument`
 (the last lists the valid fields). Runs of different Orkflows are compared and
-flagged (`same_orkflow=false`), never refused. A store error fails the call;
+flagged (`same_orkflow=false`), never refused; so are a shared Orkflow's child
+run and a run of the namespace's own Orkflow of that name. A store error fails the call;
 it never degrades to "unavailable" evidence.
 
 **Fields, in canonical order:** `definition`, `input` (run-level); `presence`,
@@ -976,11 +978,16 @@ committing attempt, for an adopted commit). When that record is gone, the
 newest record with `commit_adopted` and outcome SUCCEEDED answers instead: an
 adopting retry files its record under its own number, carrying the committing
 attempt's image from `commit.json`. A failed or canceled record is never used.
-A definition whose digest differs from the run's pinned digest cannot answer.
+A definition is read in the namespace that owns it. One whose digest differs
+from the run's pinned digest cannot answer, nor can another namespace's that
+the caller may not read (`orkflow.read`); the run's own attempt records still
+answer. While the access document cannot be read and configuration's bindings do
+not grant it, the call fails `Unavailable`.
 
 | token | sentence |
 | --- | --- |
 | `definition_unavailable` | the pinned definition is no longer stored |
+| `definition_not_readable` | this caller may not read the shared Orkflow in its owner's namespace |
 | `definition_digest_mismatch` | the stored definition does not hash to the digest this run pinned |
 | `task_not_in_definition` | the pinned definition has no task of this id |
 | `no_attempt_store` | this engine has no task attempt store configured |
@@ -1191,6 +1198,19 @@ reason after the run ends, and — live, from the failing note — a *Failing*
 banner naming the outstanding handlers beside a Running pill; a pending
 task's panel names the needs it waits for, or, once they have all finished,
 that it is waiting to start.
+
+### Concurrency limits
+
+`orkctl concurrency list [-F key=K | -F key^P]` lists the namespace's keys
+with runs holding or waiting, each with how many hold and wait and whether its
+limit is reading which runs hold it; `orkctl concurrency get KEY` shows one
+key's holders (earliest granted first, a stalled one marked) and its line in
+the order it starts, with when each wait times out. Both read the limit itself
+at the moment they are asked (`ConcurrencyService`), show at most
+`engine.concurrency.api_holders_shown` holders and waiting runs with the
+totals beside them, list a limit that does not answer as not answering, and
+need `run.read`. `--json` emits the messages unchanged. The UI's Concurrency
+page is the same read.
 
 ## Webhooks
 

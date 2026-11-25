@@ -43,7 +43,8 @@ func TestIntegrationGPU_ProbeAndBindOnOneUnit(t *testing.T) {
 			return
 		}
 		close(holding)
-		healthy, detail, err := g.d.probeGPUUnit(ctx, g.d.Runtime.(bootProber), g.d.WorkRoot, image, offer, 0, audit.unitNodes[0])
+		out, err := g.d.probeGPUUnit(ctx, g.d.Runtime.(bootProber), g.d.WorkRoot, image, offer, 0, audit.unitNodes[0])
+		healthy, detail := out.verdict == unitIsHealthy, out.detail
 		if err != nil {
 			g.c.abandonProbe(probe)
 		} else {

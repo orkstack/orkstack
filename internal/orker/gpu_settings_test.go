@@ -1,6 +1,9 @@
 package orker
 
 import (
+	"bytes"
+	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -79,15 +82,6 @@ func TestCheckGPUSettings_ZeroMaxGPURefusesAGPUProfile(t *testing.T) {
 // admission ledger even with no orker.capacity, unbounded in cpu and memory,
 // so its units are counted.
 func TestNewCapacityFor_GPUProfileBuildsALedger(t *testing.T) {
-	if !slices.Contains(SupportedProfileKinds(), orkstackv1.ProfileKind_PROFILE_KIND_GPU) {
-		// Until gpu is advertised, a gpu profile refuses the boot and builds
-		// nothing: TestBoot_RefusesUnimplementedProfileKind holds that.
-		if c, err := newCapacityFor(DefaultSecurityPolicy(), Options{Profiles: Profiles{List: []Profile{{Name: "amd",
-			Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU, GPU: &GPUProfile{CDIKind: "amd.com/gpu", Units: []string{"0"}}}}}}, 4); c != nil || err != nil {
-			t.Fatalf("an unadvertised gpu profile built %v, %v", c, err)
-		}
-		return
-	}
 	gpu := Profiles{List: []Profile{{Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU,
 		GPU: &GPUProfile{CDIKind: "amd.com/gpu", Units: []string{"0", "1"}}}}}
 	c, err := newCapacityFor(DefaultSecurityPolicy(), Options{Profiles: gpu, TaskQueue: "q"}, 4)
@@ -114,5 +108,45 @@ func TestMaxRequest_CarriesTheGPUCeiling(t *testing.T) {
 	a.capacity.useUnits("amd", 4, 2, nil)
 	if got := a.maxRequest(); got.GetGpu() != 2 || got.Gpu == nil {
 		t.Fatalf("units: max_request %v, want gpu 2", got)
+	}
+}
+
+// TestWarnGPUCeiling_AboveHalfTheUnits: an Orker whose max_gpu is more than
+// half its gpu profile's units logs one WARN at boot naming both numbers,
+// since one unhealthy unit then leaves fewer usable units than a task may
+// hold; at half or below, or on a host of one unit, it logs nothing.
+func TestWarnGPUCeiling_AboveHalfTheUnits(t *testing.T) {
+	for name, tc := range map[string]struct {
+		maxGPU, units int
+		warns         bool
+	}{
+		"2 of 2": {maxGPU: 2, units: 2, warns: true},
+		"2 of 3": {maxGPU: 2, units: 3, warns: true},
+		"1 of 1": {maxGPU: 1, units: 1},
+		"2 of 1": {maxGPU: 2, units: 1},
+		"1 of 2": {maxGPU: 1, units: 2},
+		"2 of 4": {maxGPU: 2, units: 4},
+		"0 of 2": {maxGPU: 0, units: 2},
+		"3 of 0": {maxGPU: 3, units: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			warnGPUCeiling(slog.New(slog.NewTextHandler(&buf, nil)), "amd", tc.maxGPU, tc.units)
+			out := buf.String()
+			if !tc.warns {
+				if out != "" {
+					t.Fatalf("logged %q; want nothing", out)
+				}
+				return
+			}
+			if strings.Count(out, "\n") != 1 || !strings.Contains(out, "level=WARN") {
+				t.Fatalf("logged %q; want one WARN line", out)
+			}
+			for _, want := range []string{fmt.Sprintf("max_gpu=%d", tc.maxGPU), fmt.Sprintf("units=%d", tc.units), "profile=amd"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("logged %q, which does not name %s", out, want)
+				}
+			}
+		})
 	}
 }

@@ -132,7 +132,7 @@
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '#lib/activity.ts';
 	import type { Error as OrkError } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { CommitRef } from '#lib/gen/orkstack/v1/activity_pb.ts';
-	import { LiveAttemptState, type LiveAttempt, type RunArtifact, type TaskAttemptsTiming } from '#lib/gen/orkstack/v1/run_service_pb.ts';
+	import { ArtifactKind, LiveAttemptState, type LiveAttempt, type RunArtifact, type TaskAttemptsTiming } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import { liveLine } from '#lib/live.ts';
 	import { afterNavigation } from '#lib/settle.ts';
 	import DrawingFrame from '#lib/components/DrawingFrame.svelte';
@@ -311,6 +311,28 @@
 		return () => {
 			current = false;
 		};
+	});
+	// One artifact passed between the runs of a tree, as the run page shows
+	// it: a NamedArtifact, or a composed task's returned ArtifactRef with its
+	// recorded source.
+	type PassedArtifact = { name: string; runId: string; taskId: string; artifact?: ArtifactRef };
+	// Where a passed artifact came from, for its tip and accessible name:
+	// the run and task that recorded it, and its recorded name when it was
+	// renamed. Said plainly when the record names no source.
+	function passedSource(passed: PassedArtifact): string {
+		if (!passed.runId || !passed.taskId) return 'its source is not recorded';
+		const original = passed.artifact?.metadata?.source_name;
+		return `from run ${passed.runId}, task ${passed.taskId}${original && original !== passed.name ? ` (${original})` : ''}`;
+	}
+	// This run's downloadable output records by object URI: a passed artifact
+	// is downloaded through the record that holds the same object.
+	const artifactByUri = $derived.by(() => {
+		const byUri = new Map<string, RunArtifact>();
+		for (const record of artifacts) {
+			if (record.kind !== ArtifactKind.OUTPUT || record.item !== undefined || !record.artifact?.uri) continue;
+			if (!byUri.has(record.artifact.uri)) byUri.set(record.artifact.uri, record);
+		}
+		return byUri;
 	});
 	const artifactsByTask = $derived.by(() => {
 		const grouped = new Map<string, RunArtifact[]>();
@@ -2443,6 +2465,33 @@
 	{#snippet lastedFor()}<b class="num" data-testid="run-lasted">{lasted}</b>{/snippet}
 	{#snippet progressFact()}<ProgressRing {progress} status={runStatus} testid="run-progress" />{#if isTerminal(runStatus) && (progress.skipped > 0 || neverTasks.length > 0)}<span class="text-sm text-ink-3" data-testid="run-progress-words">{[`${progress.ran} ran`, progress.skipped ? `${progress.skipped} skipped` : '', neverTasks.length ? `${neverTasks.length} never started` : ''].filter(Boolean).join(' · ')}</span>{/if}{/snippet}
 	{#snippet lastPauseFact()}{#if run?.lastPause}<span data-testid="run-last-pause">{howLastPauseEnded(run.lastPause.end)}{#if run.lastPause.pausedBy}, paused by <Principal name={run.lastPause.pausedBy} verified={run.lastPause.pausedByVerified} />{/if}</span>{/if}{/snippet}
+	<!-- Artifacts passed between the runs of a tree: what a child received
+	     from the task that composed it (the reserved producer _inputs), and
+	     what a run returns. Each is a download of the recorded object, with
+	     where it came from in its tip. -->
+	{#snippet passedArtifacts(list: PassedArtifact[], testid: string)}
+		<span class="inline-flex flex-wrap items-center gap-x-3" data-testid={testid}>
+			{#each list as passed (passed.name)}
+				<!-- The download is the record of this run that holds the same
+				     object (its URI is its identity), never one found by name:
+				     two artifacts may share a name, and the recorder may be
+				     another run's task. -->
+				{@const record = passed.artifact?.uri ? artifactByUri.get(passed.artifact.uri) : undefined}
+				{@const source = passedSource(passed)}
+				{#if record}
+					<button type="button" class="link font-mono text-sm font-semibold disabled:opacity-50" data-testid="{testid}-{passed.name}"
+						data-tip={source} aria-label="Download {passed.name}, {source}"
+						disabled={downloadingArtifact !== ''} onclick={() => void downloadArtifact(record)}>{passed.name}</button>
+				{:else}
+					<!-- The source is the tip's, so the name is a tab stop as a TimeAgo is. -->
+					<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+					<span class="font-mono text-sm font-semibold" data-testid="{testid}-{passed.name}" data-tip={source} tabindex="0">{passed.name}<span class="sr">, {source}</span></span>
+				{/if}
+			{/each}
+		</span>
+	{/snippet}
+	{#snippet receivedFact()}{@render passedArtifacts(run?.inputArtifacts ?? [], 'run-received')}{/snippet}
+	{#snippet returnedFact()}{@render passedArtifacts(run?.outputArtifacts ?? [], 'run-returned')}{/snippet}
 	{#snippet canceledBy()}{#if run?.canceledBy}<span data-testid="run-canceled-by">by <Principal name={run.canceledBy} verified={run.canceledByVerified} /></span>{/if}{/snippet}
 
 	<header class="rh" data-testid="run-header">
@@ -2507,6 +2556,8 @@
 					{ label: isTerminal(runStatus) ? 'Ran for' : 'Running for', value: lastedFor },
 					...(timeoutFact ? [{ label: 'Timeout', value: timeoutWhen, testid: 'run-timeout' }] : []),
 					{ label: 'Progress', value: progressFact },
+					...(run.inputArtifacts.length ? [{ label: 'Received', value: receivedFact, testid: 'run-received-fact' }] : []),
+					...(run.outputArtifacts.length ? [{ label: 'Returned', value: returnedFact, testid: 'run-returned-fact' }] : []),
 					...(runStatus === Status.CANCELED && run.canceledBy ? [{ label: 'Canceled', value: canceledBy }] : []),
 					...(isTerminal(runStatus) && run.lastPause ? [{ label: 'Last pause', value: lastPauseFact }] : [])
 				] satisfies Fact[]}
@@ -2963,6 +3014,23 @@
 								{#await import('#lib/components/ChildRunPanel.svelte') then { default: ChildRunPanel }}
 									<ChildRunPanel runId={run.id} namespace={data.namespace} taskId={task.id} child={task.child} status={task.status} />
 								{/await}
+								{#if task.child?.inputArtifacts.length || task.artifacts.length}
+									<dl class="passed" data-testid="task-{task.id}-passed">
+										{#if task.child?.inputArtifacts.length}
+											<dt>Passed</dt>
+											<dd>{@render passedArtifacts(task.child.inputArtifacts, `task-${task.id}-passed-in`)}</dd>
+										{/if}
+										{#if task.artifacts.length}
+											<dt>Returned</dt>
+											<dd>{@render passedArtifacts(task.artifacts.map((ref) => ({
+												name: ref.name,
+												runId: ref.metadata.source_run_id ?? '',
+												taskId: ref.metadata.source_task_id ?? '',
+												artifact: ref
+											})), `task-${task.id}-returned`)}</dd>
+										{/if}
+									</dl>
+								{/if}
 							</div>
 						{:else if fanOut && (expandAll || task.id === activeTask || !isTerminal(task.status) || task.status === Status.FAILED)}
 							<div data-row-open><EachItemGrid
@@ -3694,6 +3762,22 @@
 		align-items: center;
 		gap: 4px 12px;
 		font-size: 13px;
+	}
+	/* What a composed task passed its child and got back: one row each,
+	   the label in the panel's muted ink, the names as downloads. */
+	.passed {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: 4px 12px;
+		margin: 10px 0 0;
+		font-size: 13px;
+	}
+	.passed dt {
+		color: var(--ink-3);
+	}
+	.passed dd {
+		margin: 0;
+		min-width: 0;
 	}
 	.xhead-end {
 		display: inline-flex;

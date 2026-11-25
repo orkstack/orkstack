@@ -1,6 +1,8 @@
 package orker
 
 import (
+	"errors"
+	"fmt"
 	"os/exec"
 	"sync"
 )
@@ -61,4 +63,16 @@ func (c *cliChildren) killAll() int {
 		}
 	}
 	return n
+}
+
+// errCLINotStarted is a runtime CLI that never ran, so the engine was asked
+// nothing. A start that panicked is not one: it may have run.
+var errCLINotStarted = errors.New("the container CLI was not started")
+
+// notStarted marks err, an exec.Cmd.Start's, as errCLINotStarted.
+func notStarted(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", errCLINotStarted, err)
 }

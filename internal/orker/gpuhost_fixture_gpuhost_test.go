@@ -463,7 +463,8 @@ func (g *gpuOrker) probeOnce(ctx context.Context, t *testing.T, image string, i 
 	if err != nil {
 		t.Fatalf("probeUnit(%d): %v", i, err)
 	}
-	healthy, detail, err := g.d.probeGPUUnit(ctx, g.d.Runtime.(bootProber), g.d.WorkRoot, image, offer, i, audit.unitNodes[i])
+	out, err := g.d.probeGPUUnit(ctx, g.d.Runtime.(bootProber), g.d.WorkRoot, image, offer, i, audit.unitNodes[i])
+	healthy, detail := out.verdict == unitIsHealthy, out.detail
 	if err != nil {
 		g.c.abandonProbe(probe)
 		t.Fatalf("probe unit %d: %v", i, err)

@@ -528,8 +528,9 @@ export type EachSpec = Message<"orkstack.v1.EachSpec"> & {
 
   /**
    * over_artifact names an artifact of a task in this task's own needs:,
-   * "<task>/<name>", and makes the fan-out run one item per non-empty line
-   * of it (or per batch of lines). Exactly one of over and over_artifact is
+   * "<task>/<name>", or an artifact input of this Orkflow, "_inputs/<name>",
+   * and makes the fan-out run one item per non-empty line of it (or per
+   * batch of lines). Exactly one of over and over_artifact is
    * set. Part of canonicalOrkflow only when set, so a definition without it
    * keeps its digest.
    *

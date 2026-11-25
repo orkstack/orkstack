@@ -103,22 +103,29 @@ func (s *contractStack) refusedSubmit(name string, want ...string) string {
 // attempt record, and the Orker that ran it.
 func (s *contractStack) ranUnder(runID string) (contract, orkerID string) {
 	s.t.Helper()
+	return ranUnderProfile(s.timingStack, runID, "read", "sensor")
+}
+
+// ranUnderProfile is the contract of profile that the run's task succeeded
+// under, from its attempt record, and the Orker that ran it.
+func ranUnderProfile(s *timingStack, runID, task, profile string) (contract, orkerID string) {
+	s.t.Helper()
 	stdout := s.mustCLI(0, "--json", "run", "attempts", runID)
 	var attempts orkstackv1.ListTaskAttemptsResponse
 	if err := api.UnmarshalJSON([]byte(stdout), &attempts); err != nil {
 		s.t.Fatalf("decode run attempts --json: %v\n%s", err, stdout)
 	}
 	for _, a := range attempts.GetAttempts() {
-		if a.GetTaskId() != "read" || a.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED {
+		if a.GetTaskId() != task || a.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED {
 			continue
 		}
 		for _, p := range a.GetProfiles() {
-			if p.GetName() == "sensor" {
+			if p.GetName() == profile {
 				return p.GetContract(), a.GetOrkerId()
 			}
 		}
 	}
-	s.t.Fatalf("no successful attempt of read records the sensor profile:\n%s", stdout)
+	s.t.Fatalf("no successful attempt of %s records the %s profile:\n%s", task, profile, stdout)
 	return "", ""
 }
 
@@ -199,6 +206,14 @@ func awaitUncordoned(t *testing.T, s *timingStack, orkerID string) {
 // this process's tag, and returns it pinned by digest.
 func declaringImage(ctx context.Context, t *testing.T, label string) string {
 	t.Helper()
+	return declaringImageFor(ctx, t, "sensor", label)
+}
+
+// declaringImageFor is the shell image, rebuilt with an interface label that
+// declares contract label of profile, pushed to the test registry and pinned
+// by digest.
+func declaringImageFor(ctx context.Context, t *testing.T, profile, label string) string {
+	t.Helper()
 	docker := func(args ...string) string {
 		t.Helper()
 		out, err := exec.CommandContext(ctx, "docker", args...).Output()
@@ -218,7 +233,7 @@ func declaringImage(ctx context.Context, t *testing.T, label string) string {
 	if err := json.Unmarshal([]byte(raw), &iface); err != nil {
 		t.Fatalf("the shell image's interface label %q: %v", raw, err)
 	}
-	iface["devices"] = map[string]string{"sensor": label}
+	iface["devices"] = map[string]string{profile: label}
 	declared, err := json.Marshal(iface)
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +242,7 @@ func declaringImage(ctx context.Context, t *testing.T, label string) string {
 	if err := os.WriteFile(filepath.Join(contextDir, "Dockerfile"), []byte("FROM "+shell+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tag := fmt.Sprintf("%s/orkstack-test/sensor-declares-%s:%s", testRegistry(), label, exampleImageTag())
+	tag := fmt.Sprintf("%s/orkstack-test/%s-declares-%s:%s", testRegistry(), profile, label, exampleImageTag())
 	docker("build", "--quiet", "--provenance=false", "--label", "org.orkstack.activity.interface="+string(declared),
 		"-t", tag, contextDir)
 	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", tag).Run() })

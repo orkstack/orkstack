@@ -163,29 +163,3 @@ func TestComposedChild_KeepsProfiledTaskFields(t *testing.T) {
 		t.Fatalf("the child definition lost profile fields: %v", got)
 	}
 }
-
-// TestOlderEngine_SubmitsProfiledDefinition records what a release before
-// profiles does with a stored definition that names them: it reads stored
-// Orkflows with DiscardUnknown and re-validates nothing at submit, so it does
-// not refuse: it drops the profile fields, so the task runs without its
-// devices. Before device profiles are offered, a definition format such an
-// engine refuses replaces this record (design §4.3); if this test fails
-// because the older shape now refuses, that guard is in place.
-func TestOlderEngine_SubmitsProfiledDefinition(t *testing.T) {
-	older := olderMessage(t, &orkstackv1.Orkflow{}, map[string][]int32{"Task": {26}})
-	stored, err := protojson.Marshal(&orkstackv1.Orkflow{Name: "render", Tasks: []*orkstackv1.Task{{
-		Id: "fetch", Devices: []string{"amd"},
-	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded := older.New().Interface()
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(stored, decoded); err != nil {
-		t.Fatalf("the older engine refused the stored definition (a guard is now in place; update this test): %v", err)
-	}
-	tasks := decoded.ProtoReflect().Get(decoded.ProtoReflect().Descriptor().Fields().ByName("tasks")).List()
-	task := tasks.Get(0).Message()
-	if task.Descriptor().Fields().ByName("devices") != nil {
-		t.Fatal("the older shape is not older: it still has the profile fields")
-	}
-}

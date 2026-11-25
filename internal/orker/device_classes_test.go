@@ -10,7 +10,9 @@ const sampleProcDevices = `Character devices:
   4 tty
 166 ttyACM
 188 ttyUSB
+195 nvidia
 226 drm
+511 nvidia-uvm
 
 Block devices:
   8 sd
@@ -61,6 +63,51 @@ func TestClassifyDevice(t *testing.T) {
 
 // TestResolveDevicePath: a path resolves on the host and must stay under
 // /dev; a link out of it is refused, whatever it points at.
+// TestClassifyGPUNode_NVIDIAClasses: the nvidia classes (design §4.9) are
+// the gpu kind's alone: a GPU node or the control node under the nvidia
+// driver (or its older name, nvidia-frontend), and the two UVM nodes under
+// nvidia-uvm. nvidia-modeset is display-only and stays refused, as do the
+// caps nodes and any other name under those drivers.
+func TestClassifyGPUNode_NVIDIAClasses(t *testing.T) {
+	drivers := parseProcDevices(sampleProcDevices)
+	frontend := parseProcDevices("Character devices:\n195 nvidia-frontend\n")
+	for _, tc := range []struct {
+		name    string
+		drivers map[uint32]string
+		dev     hostDevice
+		want    string
+		wantErr string
+	}{
+		{"a GPU node", drivers, hostDevice{Resolved: "/dev/nvidia0", Char: true, Major: 195, Minor: 0}, "nvidia", ""},
+		{"another GPU node", drivers, hostDevice{Resolved: "/dev/nvidia7", Char: true, Major: 195, Minor: 7}, "nvidia", ""},
+		{"the control node", drivers, hostDevice{Resolved: "/dev/nvidiactl", Char: true, Major: 195, Minor: 255}, "nvidia", ""},
+		{"the driver's older name", frontend, hostDevice{Resolved: "/dev/nvidia0", Char: true, Major: 195, Minor: 0}, "nvidia", ""},
+		{"uvm", drivers, hostDevice{Resolved: "/dev/nvidia-uvm", Char: true, Major: 511, Minor: 0}, "nvidia-uvm", ""},
+		{"uvm tools", drivers, hostDevice{Resolved: "/dev/nvidia-uvm-tools", Char: true, Major: 511, Minor: 1}, "nvidia-uvm", ""},
+		{"modeset is refused", drivers, hostDevice{Resolved: "/dev/nvidia-modeset", Char: true, Major: 195, Minor: 254}, "", "nvidia-modeset"},
+		{"a caps node is refused", drivers, hostDevice{Resolved: "/dev/nvidia-caps/nvidia-cap1", Char: true, Major: 195, Minor: 1}, "", "nvidia-cap1"},
+		{"another name under uvm", drivers, hostDevice{Resolved: "/dev/nvidia0", Char: true, Major: 511, Minor: 0}, "", "nvidia0"},
+		{"a GPU node is no devices class", drivers, hostDevice{Resolved: "/dev/nvidia0", Char: true, Major: 195, Minor: 0}, "", "not of a device class"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			classify := classifyGPUNode
+			if strings.Contains(tc.name, "devices class") {
+				classify = classifyDevice
+			}
+			got, err := classify(tc.dev, tc.drivers)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("classify = %q, %v; want an error naming %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("classify = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveDevicePath(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, resolved string

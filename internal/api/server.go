@@ -200,6 +200,11 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 		NewCacheHandler(svc, stats), handlerOptions...)
 	mux.Handle(cachePath, cacheHandler)
 
+	// ConcurrencyService reads a namespace's concurrency limits from the
+	// limits themselves; it writes nothing.
+	concurrencyPath, concurrencyHandler := orkstackv1connect.NewConcurrencyServiceHandler(svc, handlerOptions...)
+	mux.Handle(concurrencyPath, concurrencyHandler)
+
 	webhookPath, webhookHandler := orkstackv1connect.NewWebhookServiceHandler(svc, handlerOptions...)
 	mux.Handle(webhookPath, webhookHandler)
 

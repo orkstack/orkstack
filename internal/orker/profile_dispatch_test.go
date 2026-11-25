@@ -354,3 +354,56 @@ func TestExecute_TheDeclarationCheckRunsAfterThePullAndCreatesNothing(t *testing
 		})
 	}
 }
+
+// TestProfileGate_GPUCountRequired: at step 3c a task that names this
+// Orker's gpu profile and asks for no unit fails GPU_COUNT_REQUIRED, a
+// ContractViolation never retried, naming the task and the profile; a task
+// that asks for units, or names only another profile, is not refused for it.
+func TestProfileGate_GPUCountRequired(t *testing.T) {
+	amd := Profile{Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU,
+		GPU: &GPUProfile{CDIKind: "amd.com/gpu", Units: []string{"0"}}}
+	for name, tc := range map[string]struct {
+		names   []string
+		gpu     int32
+		offered bool
+		refused bool
+	}{
+		"the gpu profile, no units":                  {names: []string{"amd"}, offered: true, refused: true},
+		"the gpu profile, no units, not yet offered": {names: []string{"amd"}, refused: true},
+		"two profiles, the gpu one, no units":        {names: []string{"sensor", "amd"}, offered: true, refused: true},
+		"the gpu profile, one unit":                  {names: []string{"amd"}, gpu: 1, offered: true},
+		"another profile, no units":                  {names: []string{"sensor"}, offered: true},
+		"another profile, units asked":               {names: []string{"sensor"}, gpu: 1, offered: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &OCIDispatcher{profiles: newProfileState(Profiles{List: []Profile{amd}}, "")}
+			if tc.offered {
+				d.gpu.Store(&gpuOffer{profile: "amd", cdiKind: "amd.com/gpu", units: []string{"0"}})
+			}
+			var refs []*orkstackv1.ProfileRef
+			for _, n := range tc.names {
+				refs = append(refs, &orkstackv1.ProfileRef{Name: n, IdentityDigest: "d1"})
+			}
+			in := declarationTask(refs)
+			in.Resources = &orkstackv1.ResourceRequest{Gpu: tc.gpu}
+			_, failure := d.profileGate(in, &Heartbeater{})
+			if !tc.refused {
+				if failure != nil && failure.Reason == ReasonGPUCountRequired {
+					t.Fatalf("profileGate = %+v; want no GPU_COUNT_REQUIRED", failure)
+				}
+				return
+			}
+			if failure == nil || failure.Reason != ReasonGPUCountRequired {
+				t.Fatalf("profileGate = %+v; want GPU_COUNT_REQUIRED", failure)
+			}
+			if failure.Category() != CategoryContractViolation || failure.NeverStarted {
+				t.Fatalf("category %s, never-started %v; want ContractViolation, not never-started", failure.Category(), failure.NeverStarted)
+			}
+			for _, want := range []string{`"read"`, `"amd"`, "resources.gpu"} {
+				if !strings.Contains(failure.Message, want) {
+					t.Fatalf("message %q does not name %s", failure.Message, want)
+				}
+			}
+		})
+	}
+}

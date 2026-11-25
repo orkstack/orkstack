@@ -173,6 +173,15 @@ func TestReleasePausedRuns_AsksNothingWhereUnindexed(t *testing.T) {
 	}
 }
 
+// A release's queued runs are asked only where the cluster indexes them.
+func TestReleaseQueuedRuns_AsksNothingWhereUnindexed(t *testing.T) {
+	client := &endlessReadClient{}
+	n, ok, err := newRunReader(client, converter.GetDefaultDataConverter()).ReleaseQueuedRuns(context.Background(), "orkstack", "v1")
+	if err != nil || ok || n != 0 || client.calls != 0 {
+		t.Fatalf("ReleaseQueuedRuns = %d, %t, %v after %d calls; want 0, false, nil after none", n, ok, err, client.calls)
+	}
+}
+
 // The census groups live paused runs by namespace and keeps the soonest own
 // pause's end; a closed record still carrying the attribute is not paused.
 func TestPausedRuns_GroupsByNamespace(t *testing.T) {

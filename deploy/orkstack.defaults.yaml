@@ -139,6 +139,7 @@ engine:
     requeue_backoff_factor: 2  # ork
     requeue_interval_max: 15m  # ork
     retry_after: 1m  # ork
+    fire_unavailable_retry: 5m  # ork
     event_holders_shown: 5  # ork
     api_holders_shown: 10  # ork
   compose_max_depth: 4  # ork

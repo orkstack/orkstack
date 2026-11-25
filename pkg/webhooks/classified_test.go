@@ -9,7 +9,11 @@ import (
 )
 
 // notSubscribable is every event type a subscription can never name.
-var notSubscribable = []Event{"RUN_CREATED", "TASK_LOG", "STREAM_GAP"}
+// A resumed run's two events are here until E85's webhook commit (PR7, before
+// or with PR5's ResumeRun) makes them subscribable, with their documentation
+// and UI: no subscription receives them today (engine.IsSubscribableEvent
+// names neither).
+var notSubscribable = []Event{"RUN_CREATED", "TASK_LOG", "STREAM_GAP", "RUN_RESUMED", "RUN_RESULTS_KEPT"}
 
 // TestWebhooks_EveryEventTypeIsClassified: a new proto event type fails here
 // until it is placed in KnownEvents or in notSubscribable, so no event is

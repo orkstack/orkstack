@@ -167,6 +167,7 @@ func touchesGPUPaths(patterns, changed []string) []string {
 // obligation by editing either.
 var gpuHarnessPaths = []string{
 	gpuListFile,
+	gpuSpecFile,
 	"test/tools/proofrun/gpu*.go",
 	"scripts/proof.sh",
 	"scripts/proof-part.sh",
@@ -196,19 +197,24 @@ func gitFileAt(commit, file string) ([]byte, bool, error) {
 // base commit itself: the copy must be byte for byte the list at that commit,
 // or empty where the commit has none (scripts/proof.sh writes it so).
 func gpuBaseCopyProblems(baseFile, baseCommit string) []string {
-	want, _, err := gitFileAt(baseCommit, gpuListFile)
+	return listBaseCopyProblems("GPU-host list", gpuListFile, baseFile, baseCommit)
+}
+
+// listBaseCopyProblems is gpuBaseCopyProblems for any list file, named label.
+func listBaseCopyProblems(label, listFile, baseFile, baseCommit string) []string {
+	want, _, err := gitFileAt(baseCommit, listFile)
 	if err != nil {
-		return []string{"the base's GPU-host list cannot be read from the base commit to check the proof's copy: " + err.Error()}
+		return []string{"the base's " + label + " cannot be read from the base commit to check the proof's copy: " + err.Error()}
 	}
 	got, err := os.ReadFile(baseFile)
 	if os.IsNotExist(err) {
 		got, err = nil, nil
 	}
 	if err != nil {
-		return []string{"the proof's copy of the base's GPU-host list cannot be read: " + err.Error()}
+		return []string{"the proof's copy of the base's " + label + " cannot be read: " + err.Error()}
 	}
 	if !bytes.Equal(got, want) {
-		return []string{fmt.Sprintf("the proof's copy of the base's GPU-host list (%s) is not %s at the base commit %s", baseFile, gpuListFile, short(baseCommit))}
+		return []string{fmt.Sprintf("the proof's copy of the base's %s (%s) is not %s at the base commit %s", label, baseFile, listFile, short(baseCommit))}
 	}
 	return nil
 }
@@ -558,6 +564,7 @@ func (m *merger) mergeGPU() {
 			var got ledger
 			if readJSON(filepath.Join(reading.Dir, suiteGPU+"-tests.json"), &got) == nil {
 				l = &got
+				m.gpuDir = reading.Dir
 				break
 			}
 			for _, g := range reading.Record.Gates {
@@ -641,6 +648,17 @@ func mergeGPUTierProof(partsDir, out, name string) int {
 			for _, p := range l.Problems {
 				problems = append(problems, "gpu: "+p)
 			}
+			sl, sp := readGPUSpecsLedger(readings[0].Dir, tierGPU)
+			problems = append(problems, sp...)
+			m.gpuSpecs = sl
+			proof.GPUSpecsGateRan = sl != nil
+			if sl != nil {
+				if ledgers, ok := proof.Ledgers.(map[string]any); ok {
+					ledgers[suiteGPUSpecs] = map[string]any{"listed": sl.Listed, "pass": sl.Pass, "problems": len(sl.Problems)}
+				} else {
+					problems = append(problems, "the proof record's ledgers are not a map")
+				}
+			}
 		}
 	}
 	status := 0
@@ -651,6 +669,9 @@ func mergeGPUTierProof(partsDir, out, name string) int {
 	ledgersOK := map[string]bool{}
 	if m.gpu != nil {
 		ledgersOK[suiteGPU] = m.gpu.ok()
+	}
+	if m.gpuSpecs != nil {
+		ledgersOK[suiteGPUSpecs] = len(m.gpuSpecs.Problems) == 0
 	}
 	verdict(proof, status, ledgersOK)
 	if err := os.MkdirAll(out, 0o755); err != nil {
@@ -663,6 +684,12 @@ func mergeGPUTierProof(partsDir, out, name string) int {
 	}
 	if m.gpu != nil {
 		if err := writeJSON(filepath.Join(out, suiteGPU+"-tests.json"), m.gpu); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun merge:", err)
+			return 2
+		}
+	}
+	if m.gpuSpecs != nil {
+		if err := writeJSON(filepath.Join(out, suiteGPUSpecs+"-tests.json"), m.gpuSpecs); err != nil {
 			fmt.Fprintln(os.Stderr, "proofrun merge:", err)
 			return 2
 		}
@@ -728,6 +755,30 @@ func mergeGPUProblems(gpuDir, tree, mainTip string) []string {
 			problems = append(problems, "the change deletes "+gpuListFile+", which main's tip carries: the GPU-host list is never removed by a merge")
 		}
 	}
+	// The spec twin (gpuspecs.go): its list and every spec either list names
+	// are covered paths too, so a listed spec cannot change without a proof.
+	treeSpecs, err := readGPUSpecs(gpuSpecFile)
+	if err != nil {
+		problems = append(problems, "the GPU spec list cannot be read: "+err.Error())
+	}
+	var tipSpecs []nightlySpecEntry
+	specBytes, specHas, err := gitFileAt(mainTip, gpuSpecFile)
+	switch {
+	case err != nil:
+		required = append(required, "main's tip's GPU spec list cannot be read ("+err.Error()+")")
+	case specHas:
+		if tipSpecs, err = parseGPUSpecs(specBytes, mainBranch+":"+gpuSpecFile); err != nil {
+			required = append(required, "main's tip's GPU spec list cannot be parsed ("+err.Error()+")")
+		}
+		if _, statErr := os.Stat(gpuSpecFile); statErr != nil {
+			if os.IsNotExist(statErr) {
+				problems = append(problems, "the change deletes "+gpuSpecFile+", which main's tip carries: the GPU spec list is never removed by a merge")
+			} else {
+				problems = append(problems, "the GPU spec list cannot be examined: "+statErr.Error())
+			}
+		}
+	}
+	paths = append(paths, gpuSpecPaths(treeSpecs, tipSpecs)...)
 	changed, err := changedFiles(mainTip)
 	if err != nil {
 		required = append(required, "the changed files cannot be listed ("+err.Error()+")")
@@ -784,6 +835,9 @@ func gpuProofProblems(dir, tree string) []string {
 	}
 	if !r.GPUHost || !r.GPUGateRan {
 		p = append(p, "the GPU-host proof's GPU gate did not run on the GPU host (gpu_host and gpu_gate_ran)")
+	}
+	if r.GPUGateRan && !r.GPUSpecsGateRan {
+		p = append(p, "the GPU-host proof's GPU spec gate did not run (gpu_specs_gate_ran): its Playwright specs were not run on the GPU host")
 	}
 	if r.Result != "pass" {
 		p = append(p, "the GPU-host proof did not pass")

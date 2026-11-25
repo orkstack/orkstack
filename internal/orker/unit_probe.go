@@ -40,19 +40,67 @@ func probeUnitNodes(paths []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	view := make([]viewEntry, 0, len(paths))
-	for _, p := range paths {
-		if p == gpuLockViewPath {
-			view = append(view, statView(p))
-			continue
-		}
-		view = append(view, unitView(p, path.Base(p)))
+	// Before any device is opened: an Orker that gets this line and no report
+	// knows the engine did start the probe, and that the silence is the unit's.
+	if _, err := io.WriteString(stdout, unitProbeStarted); err != nil {
+		fmt.Fprintf(stderr, "orker probe unit: %v\n", err)
+		return 1
 	}
+	view := unitViewsWithin(paths, unitDriverTimeout, func(p string) viewEntry {
+		if p == gpuLockViewPath {
+			return statView(p)
+		}
+		return unitView(p, path.Base(p))
+	})
 	if err := writeProbeView(stdout, view); err != nil {
 		fmt.Fprintf(stderr, "orker probe unit: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// unitProbeStarted is the first line `orker probe unit` writes; its report,
+// one JSON object as every probe's is, follows it.
+const unitProbeStarted = "orker probe unit: started\n"
+
+// unitDriverTimeout bounds a unit's driver answer (design §4.7.7): a driver
+// answers a version ioctl in well under a millisecond (design Q7). It is the
+// probe process's own bound, so that the container engine's create and start
+// are no part of it.
+const unitDriverTimeout = 5 * time.Second
+
+// unitViewsWithin is ask of every path, at the same time, each answer bounded
+// by within: one that does not come is reported as its node's error. Its ask
+// is left behind, since an ioctl the kernel does not return from cannot be
+// given up; the process's end is what ends it.
+func unitViewsWithin(paths []string, within time.Duration, ask func(string) viewEntry) []viewEntry {
+	answers := make([]chan viewEntry, len(paths))
+	for i, p := range paths {
+		answers[i] = make(chan viewEntry, 1)
+		go func() { answers[i] <- ask(p) }()
+	}
+	bound := time.NewTimer(within)
+	defer bound.Stop()
+	spent := false
+	view := make([]viewEntry, 0, len(paths))
+	for i, p := range paths {
+		if !spent {
+			select {
+			case v := <-answers[i]:
+				view = append(view, v)
+				continue
+			case <-bound.C:
+				spent = true
+			}
+		}
+		select {
+		case v := <-answers[i]:
+			view = append(view, v)
+		default:
+			view = append(view, viewEntry{Path: p, Error: "the driver did not answer within " + within.String()})
+		}
+	}
+	return view
 }
 
 // unitView is one node's view, with its driver's answer, or an error.
@@ -87,22 +135,49 @@ func unitHealthy(want []viewWant, probed []viewEntry) error {
 	return nil
 }
 
-// unitProbeTimeout is a unit probe's budget (design §4.7.7): its driver
-// answers a version ioctl in well under a millisecond (design Q7).
-const unitProbeTimeout = 5 * time.Second
+// unitProbeRunTimeout bounds a unit probe's container, its create, start and
+// end: what the engine takes. Removing one that overran takes its own time
+// beyond it. The driver's own answer has unitDriverTimeout, inside it.
+const unitProbeRunTimeout = 60 * time.Second
+
+// unitVerdict is what one probe says of its unit.
+type unitVerdict int
+
+const (
+	// unitNoVerdict: the engine never started the probe, so it says nothing of
+	// the unit, whose state stays what it was.
+	unitNoVerdict unitVerdict = iota
+	unitIsHealthy
+	unitIsUnhealthy
+)
+
+// unitProbeOutcome is one probe's verdict, why it is not healthy, and the
+// containers it left that could not be removed: each may still hold the unit.
+type unitProbeOutcome struct {
+	verdict   unitVerdict
+	detail    string
+	leftovers []ProbeLeftover
+}
 
 // probeGPUUnit runs one unit's probe container: the unit's CDI device, the
 // labels the lock-scoped reap finds it by, `orker probe unit` over its nodes.
-// It reports whether the unit is healthy and, when not, why. Only the
-// context's own end is an error; a probe that cannot run, times out, or
-// reports what the audit does not hold is an unhealthy unit. The caller holds
-// the unit (Capacity.probeUnit) and checked the image's build.
+// Only the context's own end, a lock that is not the held one, and an image
+// that is gone are errors.
+// A probe that reported judges the unit, whether or not its container ended;
+// one that started and reported nothing is an unhealthy unit, as is one the
+// engine answered and refused (a device that is gone); one the engine never
+// started gives no verdict. The caller holds the unit (Capacity.probeUnit) and
+// checked the image's build.
 func (d *OCIDispatcher) probeGPUUnit(ctx context.Context, rt bootProber, root, image string, offer *gpuOffer,
 	index int, nodes []auditedDevice,
-) (bool, string, error) {
+) (unitProbeOutcome, error) {
+	var leftovers []ProbeLeftover
+	unhealthy := func(format string, args ...any) (unitProbeOutcome, error) {
+		return unitProbeOutcome{verdict: unitIsUnhealthy, detail: fmt.Sprintf(format, args...), leftovers: leftovers}, nil
+	}
 	dir, err := os.MkdirTemp(root, "ork-unitprobe-*")
 	if err != nil {
-		return false, fmt.Sprintf("the unit probe's directory could not be created under %s: %v", root, err), nil
+		return unhealthy("the unit probe's directory could not be created under %s: %v", root, err)
 	}
 	defer func() {
 		if err := removeSealedTree(dir); err != nil {
@@ -121,7 +196,7 @@ func (d *OCIDispatcher) probeGPUUnit(ctx context.Context, rt bootProber, root, i
 	args = append(args, gpuLockViewPath)
 	spec, err := d.probeSpec(dir, image, args, nil)
 	if err != nil {
-		return false, fmt.Sprintf("the unit probe could not be set up: %v", err), nil
+		return unhealthy("the unit probe could not be set up: %v", err)
 	}
 	spec.Mounts = append(spec.Mounts, Mount{Source: lockPath, Destination: gpuLockViewPath, ReadOnly: true})
 	spec.CDIDevices = []string{offer.cdiKind + "=" + offer.units[index]}
@@ -130,20 +205,41 @@ func (d *OCIDispatcher) probeGPUUnit(ctx context.Context, rt bootProber, root, i
 	if d.OrkerID != "" {
 		spec.Labels["ork.probe"] = d.OrkerID
 	}
-	call, cancel := context.WithTimeout(ctx, unitProbeTimeout)
+	call, cancel := context.WithTimeout(ctx, unitProbeRunTimeout)
 	defer cancel()
-	run, err := rt.RunBootProbe(call, spec)
-	switch {
-	case ctx.Err() != nil:
-		return false, "", fmt.Errorf("the unit probe was interrupted: %w", ctx.Err())
-	case err != nil:
-		return false, fmt.Sprintf("unit %d's probe did not run: %v", index, err), nil
+	run, runErr := rt.RunBootProbe(call, spec)
+	if ctx.Err() != nil {
+		return unitProbeOutcome{}, fmt.Errorf("the unit probe was interrupted: %w", ctx.Err())
 	}
-	d.warnProbeLeftovers(run.Leftovers)
-	d.removeProbeContainer(ctx, run.Container)
-	probed, err := parseProbeView([]byte(run.Stdout))
-	if err != nil {
-		return false, fmt.Sprintf("unit %d's probe printed no report the Orker can read: %v", index, err), nil
+	leftovers = run.Leftovers
+	d.warnProbeLeftovers(leftovers)
+	report, started := strings.CutPrefix(run.Stdout, unitProbeStarted)
+	probed, reportErr := parseProbeView([]byte(report))
+	switch {
+	case runErr == nil:
+		d.removeProbeContainer(ctx, run.Container)
+		switch {
+		case !started:
+			return unhealthy("unit %d's probe did not begin as `orker probe unit` does", index)
+		case reportErr != nil:
+			return unhealthy("unit %d's probe printed no report the Orker can read: %v", index, reportErr)
+		}
+	case started && reportErr == nil:
+		// It reported; only its container's end never came, or failed.
+	case started && call.Err() != nil:
+		return unhealthy("unit %d's probe started and gave no report within %s", index, unitProbeRunTimeout)
+	case started:
+		return unhealthy("unit %d's probe started and gave no report: %v", index, runErr)
+	case call.Err() != nil:
+		return unitProbeOutcome{verdict: unitNoVerdict, leftovers: leftovers, detail: fmt.Sprintf(
+			"the container engine did not start unit %d's probe within %s", index, unitProbeRunTimeout)}, nil
+	case errors.Is(runErr, ErrProbeImageUnavailable) && !errors.Is(runErr, errEngineUnreachable):
+		return unitProbeOutcome{detail: runErr.Error()}, fmt.Errorf("%w: %w", errProbeImageGone, runErr)
+	case engineGaveNoAnswer(runErr):
+		return unitProbeOutcome{verdict: unitNoVerdict, leftovers: leftovers, detail: fmt.Sprintf(
+			"the container engine did not start unit %d's probe: %v", index, runErr)}, nil
+	default:
+		return unhealthy("unit %d's probe did not run: %v", index, runErr)
 	}
 	// The lock as the container sees it, judged apart from the unit: a
 	// directory that is not the held one is drift, never an unhealthy unit.
@@ -156,14 +252,24 @@ func (d *OCIDispatcher) probeGPUUnit(ctx context.Context, rt bootProber, root, i
 		}
 		lockSeen = true
 		if msg := viewDiff(viewWant{Check: checkBind, Own: viewEntry{Path: gpuLockViewPath, Kind: viewDir, Dev: lockDev, Ino: lockIno}}, p); msg != "" {
-			return false, msg, fmt.Errorf("%w: %s", errHostLockMismatch, msg)
+			return unitProbeOutcome{verdict: unitIsUnhealthy, detail: msg, leftovers: leftovers}, fmt.Errorf("%w: %s", errHostLockMismatch, msg)
 		}
 	}
 	if !lockSeen {
-		return false, fmt.Sprintf("unit %d's probe did not report the GPU host lock directory", index), nil
+		return unhealthy("unit %d's probe did not report the GPU host lock directory", index)
 	}
 	if err := unitHealthy(want, nodesSeen); err != nil {
-		return false, fmt.Sprintf("unit %d: %v", index, err), nil
+		return unhealthy("unit %d: %v", index, err)
 	}
-	return true, "", nil
+	return unitProbeOutcome{verdict: unitIsHealthy, leftovers: leftovers}, nil
+}
+
+// errProbeImageGone is the engine's definite answer that it has not got the
+// probe's image: the image's fault, which the profile says, and no unit's.
+var errProbeImageGone = errors.New("the probe image is not there")
+
+// engineGaveNoAnswer says whether a probe's error is the engine's silence
+// rather than its answer.
+func engineGaveNoAnswer(err error) bool {
+	return errors.Is(err, ErrProbeTimedOut) || errors.Is(err, errEngineUnreachable)
 }

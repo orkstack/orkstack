@@ -13,7 +13,7 @@ import (
 
 func TestVerifyResumePlan_RunsOnlyThePlanTheResetNames(t *testing.T) {
 	key := ResumePlanKey{Scope: 42, N: 1, PlanDigest: testDigest}
-	facts := resetFacts{BaseRunID: "base", Reason: key.String(), ScheduledEventID: 8, StartedEventID: 9}
+	facts := ResetFacts{BaseRunID: "base", Reason: key.String(), ScheduledEventID: 8, StartedEventID: 9}
 	record := func(edit func(*orkstackv1.ResumePlanRecord)) artifacts.RecordRead[*orkstackv1.ResumePlanRecord] {
 		r := &orkstackv1.ResumePlanRecord{BaseExecutionRunId: "base", RScheduledEventId: 8, RStartedEventId: 9,
 			Block: &orkstackv1.ResumeBlock{Scope: 42}}
@@ -68,7 +68,7 @@ func TestPlanKeyOf_OnlyAReasonOfNoVersionIsNoResume(t *testing.T) {
 	} {
 		_, resume, err := planKeyOf("ork-1", tc.reason)
 		var app *temporal.ApplicationError
-		isFinal := errors.As(err, &app) && app.NonRetryable() && app.Type() == reasonResumePlanInvalid
+		isFinal := errors.As(err, &app) && app.NonRetryable() && app.Type() == ReasonResumePlanInvalid
 		if resume != tc.resume || isFinal != tc.final || (err != nil) != tc.final {
 			t.Errorf("planKeyOf(%q) = %v, %v; want resume %v, final %v", tc.reason, resume, err, tc.resume, tc.final)
 		}
@@ -82,7 +82,7 @@ func TestUnansweredPlanRead_RetriesOnlyWhatAnotherTryCanChange(t *testing.T) {
 			t.Errorf("%v became final", err)
 		}
 	}
-	if got := unansweredPlanRead(artifacts.ErrInvalidRecordKey); !errors.As(got, &app) || !app.NonRetryable() || app.Type() != reasonResumePlanInvalid {
+	if got := unansweredPlanRead(artifacts.ErrInvalidRecordKey); !errors.As(got, &app) || !app.NonRetryable() || app.Type() != ReasonResumePlanInvalid {
 		t.Errorf("an invalid key = %v, want a final RESUME_PLAN_INVALID", got)
 	}
 }

@@ -336,6 +336,21 @@ func clocksAgree(recorded, current map[string]any) error {
 			return fmt.Errorf("waited %s, the recorded %s", c, r)
 		}
 	}
+	// The wait an event ends (waitEnd.waited) is the run's clock, which the
+	// re-execution does not reproduce: a publish's retries, mocked, take no
+	// time. Both must carry a duration; its value is the recording's.
+	recEnd, _ := recorded["waitEnd"].(map[string]any)
+	curEnd, _ := current["waitEnd"].(map[string]any)
+	if (recEnd == nil) != (curEnd == nil) {
+		return fmt.Errorf("waitEnd %v, the recorded %v", curEnd, recEnd)
+	}
+	if recEnd != nil {
+		_, rerr := time.ParseDuration(fmt.Sprint(recEnd["waited"]))
+		_, cerr := time.ParseDuration(fmt.Sprint(curEnd["waited"]))
+		if rerr != nil || cerr != nil {
+			return fmt.Errorf("waitEnd.waited %v, the recorded %v", curEnd["waited"], recEnd["waited"])
+		}
+	}
 	return nil
 }
 
@@ -345,6 +360,11 @@ func clocklessEvent(event map[string]any) map[string]any {
 		return event
 	}
 	out := maps.Clone(event)
+	if end, ok := event["waitEnd"].(map[string]any); ok {
+		end = maps.Clone(end)
+		end["waited"] = "<duration>"
+		out["waitEnd"] = end
+	}
 	message = eventInstant.ReplaceAllString(message, "<instant>")
 	message = eventWaited.ReplaceAllString(message, "waited <duration> for")
 	out["message"] = eventSnapshotFail.ReplaceAllString(message, "$1: <the store's error>")
@@ -356,8 +376,10 @@ func clocklessEvent(event map[string]any) map[string]any {
 // input, with its recorded acquire answers, grants, cancel, task results and
 // publish failures fed back, and every payload current code sends (task
 // inputs, events, the release) is compared with what the recorded build
-// sent. Wall clocks, and a failed write's store error, are set aside
-// (clocklessEvent).
+// sent. Wall clocks (an event's instants and waits, and the wait an event
+// ends), and a failed write's store error, are set aside (clocklessEvent);
+// clocksAgree holds the instants and waits of a message within two seconds
+// of the recording, and only the presence of the wait an event ends.
 func TestConcurrencyRunHistories_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	for _, f := range concurrencyRunFixtures {
 		if !f.payload {

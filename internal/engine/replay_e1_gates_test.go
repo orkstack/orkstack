@@ -84,7 +84,7 @@ func replayCapturingDispatch(t *testing.T, recorded *historypb.History, runID st
 	must.OKf(t, err, "new replayer")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return capture, replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
-		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
+		OriginalExecution: replayExecution(runID, recorded),
 	})
 }
 
@@ -191,7 +191,7 @@ func TestFairnessPinCreationHistories_CatchTheInterceptorMissing(t *testing.T) {
 	must.OKf(t, err, "new replayer")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	if err := replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
-		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
+		OriginalExecution: replayExecution(runID, recorded),
 	}); err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy(t *testing.T) 
 		must.OKf(t, err, "new replayer")
 		replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 		return replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
-			OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
+			OriginalExecution: replayExecution(runID, recorded),
 		})
 	}
 	keyed := &commandRewriter{priority: temporal.Priority{FairnessKey: "added", FairnessWeight: 5},

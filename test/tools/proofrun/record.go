@@ -109,6 +109,11 @@ type proofRecord struct {
 	// of the GPU-host tier has both.
 	GPUHost    bool `json:"gpu_host"`
 	GPUGateRan bool `json:"gpu_gate_ran"`
+	// GPUSpecsGateRan says whether the GPU gate's Playwright half ran
+	// (gpuspecs.go): the specs scripts/proof-gpu-specs.txt lists, on the GPU
+	// host, after the gpuhost Go tests. It is part of the GPU gate, so it
+	// is set exactly where the gate ran, with no rows too.
+	GPUSpecsGateRan bool `json:"gpu_specs_gate_ran"`
 }
 
 // mainBranch is the branch a merge candidate fast-forwards, and the only base
@@ -292,6 +297,13 @@ func cmdRecord(args []string) int {
 		ledgers["ui-e2e"] = map[string]any{"listed": ul.Listed, "pass": ul.Pass, "deferred": ul.Deferred, "problems": len(ul.Problems)}
 		ledgerFiles["ui-e2e"] = "ui-e2e-tests.json"
 		r.GuardRetries, r.GuardCeiling = &ul.GuardRetries, &ul.GuardRetryCeiling
+	}
+	// The GPU gate's Playwright half writes its own ledger beside the gpu
+	// one (gpuspecs.go); the merger reads it from the part.
+	var sl uiLedger
+	if readJSON(filepath.Join(*dir, suiteGPUSpecs+"-tests.json"), &sl) == nil {
+		ledgers[suiteGPUSpecs] = map[string]any{"listed": sl.Listed, "pass": sl.Pass, "problems": len(sl.Problems)}
+		ledgerFiles[suiteGPUSpecs] = suiteGPUSpecs + "-tests.json"
 	}
 	r.Ledgers = ledgers
 	if *imagesFile != "" {
@@ -641,11 +653,12 @@ func nightlyProofOfTreeProblems(nightlyDir, tree, treeName string) []string {
 // nightlyRunJobs are the jobs of nightly.yml outside its proof, whose own
 // conclusion is their verdict: the vulnerability scan's three lanes (the Go
 // module, the JavaScript dependencies, the release images), the published
-// releases' notes against their CHANGELOG.md sections, and the README's
-// Quickstart. The proof's own jobs are judged by its proof.json, never by
+// releases' notes against their CHANGELOG.md sections, the table of NVIDIA's
+// CDI hook builds against NVIDIA's signed repository (E91-N1), and the
+// README's Quickstart. The proof's own jobs are judged by its proof.json, never by
 // their colour (an excused timing miss leaves a part red while the proof
 // passes); `flakes` reports and gates nothing.
-var nightlyRunJobs = []string{"vuln", "vuln-js", "vuln-images", "release-notes", "quickstart"}
+var nightlyRunJobs = []string{"vuln", "vuln-js", "vuln-images", "release-notes", "cdi-hook-table", "quickstart"}
 
 // verifyNightlyOf is release.yml's nightly check: the release is not tagged
 // while the nightly of its commit is red (AGENTS.md §11).

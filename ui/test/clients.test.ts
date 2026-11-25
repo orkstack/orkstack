@@ -18,15 +18,15 @@ test('every generated file declares at most one service', () => {
 		expect(`${file}: ${declared}`).toBe(`${file}: ${Math.min(declared, 1)}`);
 		services += declared;
 	}
-	// Seventeen services; EventSourceService has no client module until the
+	// Eighteen services; EventSourceService has no client module until the
 	// UI gains its event-source pages, and AttemptService is called only by
 	// Orkers, so it has none.
-	expect(services).toBe(17);
+	expect(services).toBe(18);
 });
 
 test('each client module imports only its own service', () => {
 	const modules = readdirSync(root + 'clients').filter((f) => f.endsWith('.ts'));
-	expect(modules.length).toBe(15);
+	expect(modules.length).toBe(16);
 	for (const module of modules) {
 		const source = read(`clients/${module}`);
 		const generated = [...source.matchAll(/from '\.\.\/gen\/orkstack\/v1\/(\w+)'/g)].map((m) => m[1]);

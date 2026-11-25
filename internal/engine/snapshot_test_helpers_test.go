@@ -35,6 +35,21 @@ func (s *testSnapshotStore) WriteSnapshot(_ context.Context, namespace, runID st
 	return uri, nil
 }
 
+func (s *testSnapshotStore) CreateSnapshot(_ context.Context, namespace, runID string, sequence int64, data []byte) (string, error) {
+	uri := fmt.Sprintf("memory://snapshots/%s/%s/%d.pb", namespace, runID, sequence)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.objects[uri]; ok {
+		return "", artifacts.ErrSnapshotExists
+	}
+	s.objects[uri] = append([]byte(nil), data...)
+	return uri, nil
+}
+
+func (s *testSnapshotStore) SnapshotURI(namespace, runID string, sequence int64) (string, error) {
+	return fmt.Sprintf("memory://snapshots/%s/%s/%d.pb", namespace, runID, sequence), nil
+}
+
 func (s *testSnapshotStore) WriteSnapshotOverlay(_ context.Context, namespace, runID string, sequence int64, data []byte) (string, error) {
 	uri := fmt.Sprintf("memory://snapshots/%s/%s/%d.ovl", namespace, runID, sequence)
 	s.mu.Lock()

@@ -82,7 +82,7 @@ func (f *laneSource) run(ctx context.Context) {
 					f.verdicts[v.Action]++
 					f.mu.Unlock()
 					f.settled.Add(1)
-					f.rename(LanePath(k, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(v.Seq)+`,"ok":true}`))
+					f.rename(LanePath(k, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(v.Seq)+`,"verdictId":"`+v.VerdictID+`","ok":true}`))
 				}
 			}
 		}
@@ -336,5 +336,20 @@ func TestInstance_AShortWaitSpendsNothing(t *testing.T) {
 	defer src.mu.Unlock()
 	if src.verdicts[ActionAck] != 1 || src.verdicts[ActionRelease] != 0 {
 		t.Fatalf("verdicts %v: a wait within the park releases nothing", src.verdicts)
+	}
+}
+
+// TestInstance_AHoldBoundCloseCountsNoSettlement: an exchange its container
+// closed at the hold bound says nothing of how the broker settles, so it
+// neither ends nor extends a run of refused settlements.
+func TestInstance_AHoldBoundCloseCountsNoSettlement(t *testing.T) {
+	in := &Instance{Now: time.Now, Config: InstanceConfig{RejectBreaker: 20}}
+	in.breakers, in.waiter = NewBreakers(20, ""), NewWaiter(time.Minute, 1)
+	refused := Settled{Error: &StepError{Kind: KindRefused}}
+	for range settleRefusedInARow - 1 {
+		in.breakers.Settled(true)
+	}
+	if !in.settled(context.Background(), Exchange{Kind: ExchangeHoldExpired, Settled: refused}) || in.breakers.settleRefused != settleRefusedInARow-1 {
+		t.Fatalf("a close at the hold bound changed the run of refused settlements: %d", in.breakers.settleRefused)
 	}
 }

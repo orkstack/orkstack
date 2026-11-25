@@ -1590,7 +1590,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed).
 		WithRootIndex(rootIndexed).
-		WithPausedIndex(pausedIndexed)
+		WithPausedIndex(pausedIndexed).
+		WithQueuedIndex(concurrencyIndexed && namespaceIndexed)
 
 	// The retention policy store and controller: the deployment's maximum run
 	// retention (never a user-facing Temporal setting, AGENTS.md §7) and the
@@ -1658,6 +1659,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: engine.ActivityWriteCheckpoint})
 	runWorker.RegisterActivityWithOptions(snapshotActivities.ReadContinuationChunk,
 		activity.RegisterOptions{Name: engine.ActivityReadContinuationChunk})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteResumeEnding,
+		activity.RegisterOptions{Name: engine.ActivityWriteResumeEnding})
 	// The local activity that counts a fan-out's task-sourced array, over the
 	// same store internal/api reads artifacts with.
 	runWorker.RegisterActivityWithOptions(
@@ -1673,6 +1676,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	resume := engine.NewResumeActivities(commitStore, artifactStore).
 		WithHistory(temporalClient.WorkflowService(), cfg.temporalNamespace, resumeRecords)
+	runWorker.RegisterActivityWithOptions(resume.ReadResetFacts,
+		activity.RegisterOptions{Name: engine.ActivityReadResetFacts})
 	runWorker.RegisterActivityWithOptions(resume.LoadResumePlan,
 		activity.RegisterOptions{Name: engine.ActivityLoadResumePlan})
 	runWorker.RegisterActivityWithOptions(resume.AdoptRecorded,
@@ -1702,7 +1707,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// The concurrency gates' reads of the cluster, and the census's pass, as
 	// local activities of the worker that runs their workflow tasks (E88
 	// §5.1.8). The census reports nowhere until the telemetry gauges read it.
-	engine.RegisterGateActivities(runWorker, engine.NewGateActivities(temporalClient))
+	gateActivities := engine.NewGateActivities(temporalClient)
+	engine.RegisterGateActivities(runWorker, gateActivities)
 	concurrencyGauges := telemetry.NewConcurrencyGauges(sinks.Default(), cfg.censusSettings.Interval,
 		cfg.censusSettings.Timeout, !concurrencyIndexed || !namespaceIndexed, logger)
 	engine.RegisterCensusActivities(runWorker, engine.NewCensusActivities(temporalClient, censusSink{gauges: concurrencyGauges}))
@@ -1744,6 +1750,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// The continuation metrics, measured by the run worker's own local
 		// activities (registered above, on this same instance).
 		snapshotActivities.WithContinuationObserver(continuationObserver{observer})
+		resume.WithObserver(continuationObserver{observer})
 	}
 	// The archive sweep: a finished run that did not archive itself gets its
 	// archive from its history. It only writes, and the cluster's own
@@ -1782,6 +1789,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		cleanupMetrics  *telemetry.CleanupObserver
 		triggerMetrics  *telemetry.TriggerMetrics
 		scheduleMetrics *telemetry.ScheduleMetrics
+		concMetrics     *telemetry.ConcurrencyMetrics
 	)
 	if wireEventObserver(tcfg) {
 		route := func(ctx context.Context, namespace string) (*telemetry.Providers, bool) {
@@ -1796,6 +1804,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		}, logger)
 		triggerMetrics = telemetry.NewTriggerMetrics(sinks.Default(), route, logger)
 		scheduleMetrics = telemetry.NewScheduleMetrics(sinks.Default(), route, objectLabels, logger)
+		concMetrics = telemetry.NewConcurrencyMetrics(sinks.Default(), route, tcfg.OrkflowLabel, logger)
+		gateActivities.WithArrivalObserver(arrivalObserver{concMetrics})
+		observer.WithConcurrencyMetrics(concMetrics)
 		hooks := telemetry.NewWebhookMetrics(sinks.Default(), route, objectLabels, logger)
 		webhookMetrics.Store(hooks)
 		webhookActivities.WithObserver(webhookObserver{hooks})
@@ -2170,6 +2181,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Admissions:                    admissionObserver,
 		TriggerMetrics:                triggerMetrics,
 		ScheduleMetrics:               scheduleMetrics,
+		ConcurrencyMetrics:            concMetrics,
 		// One usage measurement is shared by GetUsage and an enforced
 		// budget's admission check, reused for ORK_USAGE_CACHE_TTL.
 		UsageCacheTTL:  api.UsageCacheTTLFromEnv(),

@@ -592,8 +592,8 @@ directory the floor lists.
 `resources` uses `cpu` and `memory` request strings in the Kubernetes spelling
 (`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and create when they do
 not read as a limit (rule 6d). `gpu` is a count of units of the task's gpu
-profile (rule 6d); it needs an Orker that offers a gpu profile, and this
-release's Orkers offer none, so submit refuses such a task. A request is reserved for the task's lifetime and
+profile (rule 6d); it needs an Orker that offers a gpu profile, and submit
+refuses a task whose pool does not (`PROFILE_UNAVAILABLE`). A request is reserved for the task's lifetime and
 is also its limit. Orker policy may refuse a request above its cap but never
 silently raises or clamps it; a submit refuses a task whose request is above
 the cap of every Orker of its pool (`RESOURCES_UNSATISFIABLE`). `network` accepts
@@ -1000,6 +1000,14 @@ tasks:
   `retry:` with more than one attempt.
 - `devices:` is refused on awaited, sleeping and composed tasks, which run no
   container.
+- **GPU units.** A `gpu` profile is the one kind whose entries are counted:
+  the task names it in `devices:` and sets `resources.gpu` to the number of
+  units it needs. Each unit is exclusive to its task while the task runs, and
+  an Orker takes such a task only when it can bind the whole count
+  ([DEPLOY.md](./DEPLOY.md#running-a-gpu-orker), "Running a GPU Orker"). A task
+  that names the profile without `resources.gpu` fails
+  `GPU_COUNT_REQUIRED` on the Orker before any container, and is not
+  retried.
 
 **Contracts.** A profile can have several definitions, each a **contract**
 with a label, so an operator can roll a change across a pool (docs/DEPLOY.md,
@@ -1591,14 +1599,20 @@ tasks:
       src: "{{ .each.file.path }}"
 ```
 
-- `over_artifact` — `<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.
+- `over_artifact` — `<task>/<name>`, an artifact a task in this fan-out's own `needs:` records, or `_inputs/<name>`, an artifact input of this Orkflow. Exactly one of `over` and `over_artifact`.
 - `format` — required with `over_artifact`: `jsonl` (each line one JSON value) or `lines` (each line a string).
 - `batch` — optional: one item per batch of this many consecutive non-empty lines, 1 to 10,000; absent or `1` is one line per item.
 
-The producer may not be a fan-out, an awaited, sleeping or composed task, and
-no template of the fan-out may read the source (`artifact "list/files.jsonl"`):
-it is never staged, and each item receives only its own line or batch. A
-run input artifact (`_inputs/<name>`) is not supported in this release.
+The producer may not be a fan-out, an awaited or a sleeping task. A composed
+task is one: its artifacts are those its child returns (`outputs:`), and one
+the child does not return is refused when the Orkflow is created. An artifact
+input (`_inputs/<name>`, see "Passing artifacts to a child run") is declared by
+this Orkflow and needs no task, so such a fan-out may start with the run; a run
+that did not receive it starts no task (`CHILD_INPUT_ARTIFACT_MISSING`). No
+template of the fan-out may read the source (`artifact "list/files.jsonl"`): it
+is never staged, and each item receives only its own line or batch. In both
+cases the run has claimed the object before its lines are read, so it outlives
+the run that produced it for as long as this run needs it.
 
 **Lines.** A line ends at an LF; one CR right before it (or at the end of the
 file) is removed, and a last line without an LF counts. Empty lines are
@@ -2187,7 +2201,7 @@ tasks:
 |---|---|---|
 | `limit` | yes | how many runs may hold the key at once, from 1 |
 | `key` | no | the key's template; absent is the Orkflow's own key, shared by all its versions in the namespace that runs it |
-| `on_limit` | no | what a run does when every slot is held: `queue`, the default and the only strategy this release supports |
+| `on_limit` | no | what a run does when every slot is held: `queue` (the default) waits in line; `refuse` is refused at submit; `skip` is refused at submit too, and a schedule's fire skips instead |
 | `queue_timeout` | no | how long a run waits in line, a Go duration of whole seconds (`30m`, `2h`); absent is the deployment's default (`engine.concurrency.default_queue_timeout`, 2h) |
 | `max_queued` | no | how many runs may wait in line for the key, checked when a run is submitted, best-effort; absent sets no bound of its own |
 
@@ -2200,6 +2214,15 @@ tasks:
   starting with a letter or a digit and not with `ork:`. A key that is not is
   refused `CONCURRENCY_KEY_INVALID`, naming its first bad byte: at validate
   when the key is literal, and at submit when it is rendered.
+- **A key is readable.** Never render a secret or personal data into one. The
+  rendered key, the template as written, and an id made by hashing the key
+  with its namespace are stored unencrypted in Temporal while the limit is in
+  use, and in its record of finished executions until that expires. The id is
+  an unsalted hash, so a key with few possible values can be guessed from it.
+  Anyone who may read the namespace's runs reads the key too (`orkctl
+  concurrency list`, a queued run's events, a refusal's message), and
+  encrypting payloads will not hide any of it
+  ([SECURITY_MODEL.md](SECURITY_MODEL.md#a-concurrency-key-is-readable)).
 - **Every declaration in a namespace** that renders the same key shares its
   slots and its line, across Orkflows and versions. Keys are never shared
   across namespaces.
@@ -2228,6 +2251,20 @@ tasks:
   ended counts as holding until the limit's own check frees it, so a full
   line can refuse a run a little early. These checks may refuse early; they
   never let a run past a bound.
+- **`refuse` and `skip`** never wait. A run whose key is at its limit is
+  refused at submit `CONCURRENCY_LIMIT_REACHED` (`FAILED_PRECONDITION`, a
+  trigger's 412), before a run id exists, naming the runs that hold the key
+  and any that are not making progress. A holding run that has ended counts
+  as free, and the limit is asked to check its holders. A run accepted in the
+  moment before another takes the last slot ends `FAILED`
+  `RUN_CONCURRENCY_LIMIT` without starting a task. While the limit is
+  rebuilding its record of running runs it cannot say the key is full, so
+  the submit is refused `CONCURRENCY_CHECK_UNAVAILABLE` (`scope=key`) and can
+  be sent again. Under `skip`, a schedule's fire that meets a full key starts
+  no run and completes `FIRE_SKIPPED_CONCURRENCY`, so the schedule never
+  pauses for it ([ORKFLOW_SCHEDULES.md](./ORKFLOW_SCHEDULES.md)); a submit
+  or trigger is refused exactly as under `refuse`. `queue_timeout` and
+  `max_queued` apply only to `queue`.
 - **A run that ends while it waits**, or that its limit refuses, starts no
   task, failure handlers included: it never held the key, so it ends `FAILED`
   or `CANCELED` with its own reason and nothing runs.
@@ -2246,7 +2283,7 @@ tasks:
 - **A paused run gives its slot back** once nothing of it runs (an open
   `await:` or `sleep:` does not count), so the next run in line can start; a
   run unpaused before then keeps it. On unpause it asks again and joins the
-  back of the line: it stays `RUNNING`, starts nothing new until it holds the
+  back of the line, whatever its `on_limit`: it stays `RUNNING`, starts nothing new until it holds the
   slot again, and fails `RUN_QUEUE_TIMEOUT` if its `queue_timeout`, counted
   from the unpause, passes first. A run that is failing when it is paused
   keeps its slot.
@@ -2256,8 +2293,8 @@ tasks:
   not get the slot back before its `queue_timeout`, the handlers do not run,
   and its error and each handler say so: "failure handlers did not run: the
   concurrency slot on key … was not regained within …".
-- `on_limit: refuse`, `skip`, `cancel_oldest` and `replace` are refused at
-  validate as not available yet.
+- `on_limit: cancel_oldest` and `replace` are refused at validate as not
+  available yet.
 - The block is part of the definition digest, its timeout in its short form
   (`2h` and `120m` are one definition), and an Orkflow that omits it keeps
   its digest. It is not part of the declared interface.
@@ -2354,8 +2391,11 @@ them; a task's own `env:` may point an SDK at the file.
    `"4Gi"`, `"1000000"`; `Gi`, not `GB`), refused with the path otherwise
    (6d). `resources.gpu`, when present, is units of the task's gpu profile, 1 to 64:
    the task must name that profile in `devices:`, and a pinned task holds
-   none (6d). Gpu profiles are not offered by this release, so submit refuses
-   a task that names one (`PROFILE_UNAVAILABLE`). Whether a request fits is Orker policy, checked at dispatch.
+   none (6d). Submit admits such a task when every Orker of its pool offers
+   the profile (`PROFILE_UNAVAILABLE` otherwise) and the pool's largest GPU
+   cap holds the count (`RESOURCES_UNSATISFIABLE` otherwise). Whether a request
+   fits one Orker is Orker policy, checked at dispatch against that Orker's
+   `orker.resources.max_gpu` (`RESOURCE_REQUEST_REFUSED`).
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks, and
    `.each` under rule 25.
@@ -2575,8 +2615,10 @@ them; a task's own `env:` may point an SDK at the file.
 53. A fan-out over an artifact's lines sets `each.over_artifact` and not
     `each.over`; `over_artifact` is `<task>/<name>`, split on the first `/`,
     with a task id and a file name (no `/`, no NUL, not `.` or `..`), and the
-    task is in the fan-out's own `needs:` and is not a fan-out, an awaited,
-    sleeping or composed task; `each.format` is `jsonl` or `lines`; and
+    task is in the fan-out's own `needs:` and is not a fan-out, an awaited or
+    a sleeping task, and a composed one's child returns that artifact; or it
+    is `_inputs/<name>` and the name is an artifact input of this Orkflow;
+    `each.format` is `jsonl` or `lines`; and
     `each.batch` is 1 to 10,000. With `batch` of 2 or more, `each.as` is
     refused and `.each` reads only `.each.index` and `.each.count`. `format`
     and `batch` are refused with `over`. No template of the fan-out reads its

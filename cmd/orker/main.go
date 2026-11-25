@@ -1040,8 +1040,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	taskWorker := worker.New(temporalClient, cfg.queue, taskOptions)
+	// Raw: a sealed run's task input is opened with its run tree's key, and
+	// its result sealed under it (internal/orker/payload.go); a task that is
+	// not sealed runs exactly as through ExecuteTask.
 	taskWorker.RegisterActivityWithOptions(
-		activities.ExecuteTask,
+		activities.ExecuteTaskRaw,
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 	taskWorker.RegisterActivityWithOptions(

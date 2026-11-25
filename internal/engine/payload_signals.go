@@ -2,6 +2,7 @@ package engine
 
 import (
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -81,4 +82,66 @@ func (s *runState) unreadableResolution(ctx workflow.Context) {
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, "", s.status, ResolutionUnreadableMessage); err != nil {
 		workflow.GetLogger(ctx).Error("emit an unreadable resolution failed", "run_id", s.runID, "error", err)
 	}
+}
+
+// plainMemo is m with every value marked Plain in a sealed run: a memo is
+// what every list and count is answered from, so it is never sealed
+// (payload-encryption.md §2). In any other run, and for a nil value, which
+// removes its key, it is m as it is.
+func plainMemo(ctx workflow.Context, m map[string]any) map[string]any {
+	scope := runScope(ctx)
+	for k, v := range m {
+		if v != nil {
+			m[k] = payloadcrypt.PlainIn(scope, v)
+		}
+	}
+	return m
+}
+
+// plainActivities are the activities a run schedules whose worker reads its
+// input with no run key, so their arguments are written plaintext in a sealed
+// run too: the SDK's own session activities, which carry a session id, and
+// the Orker's pin release and line index, which an Orker runs as typed
+// activities (opening them is the Orker's side of P20b).
+var plainActivities = map[string]bool{
+	sessionCreationActivity:     true,
+	sessionCompletionActivity:   true,
+	task.ActivityReleasePin:     true,
+	task.ActivityIndexEachLines: true,
+}
+
+const sessionCompletionActivity = "internalSessionCompletionActivity"
+
+// plainActivityInterceptor marks the arguments of plainActivities Plain, on
+// every run worker (RunWorkerInterceptors).
+type plainActivityInterceptor struct {
+	interceptor.WorkerInterceptorBase
+}
+
+func (*plainActivityInterceptor) InterceptWorkflow(_ workflow.Context, next interceptor.WorkflowInboundInterceptor) interceptor.WorkflowInboundInterceptor {
+	return &plainActivityInbound{WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{Next: next}}
+}
+
+type plainActivityInbound struct {
+	interceptor.WorkflowInboundInterceptorBase
+}
+
+func (i *plainActivityInbound) Init(outbound interceptor.WorkflowOutboundInterceptor) error {
+	return i.Next.Init(&plainActivityOutbound{WorkflowOutboundInterceptorBase: interceptor.WorkflowOutboundInterceptorBase{Next: outbound}})
+}
+
+type plainActivityOutbound struct {
+	interceptor.WorkflowOutboundInterceptorBase
+}
+
+func (o *plainActivityOutbound) ExecuteActivity(ctx workflow.Context, activityType string, args ...any) workflow.Future {
+	if plainActivities[activityType] {
+		scope := runScope(ctx)
+		marked := make([]any, len(args))
+		for i, a := range args {
+			marked[i] = payloadcrypt.PlainIn(scope, a)
+		}
+		args = marked
+	}
+	return o.Next.ExecuteActivity(ctx, activityType, args...)
 }
