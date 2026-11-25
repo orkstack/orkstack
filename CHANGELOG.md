@@ -23,19 +23,29 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - Drain-first Orker stops.
 - Secrets masked in task logs.
 - A whole-run `timeout:`.
+- GPU profiles through CDI.
 
 **Upgrading:** upgrade every engine before any Orker, and read the **BREAKING** entries first ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#3-rolling-a-release-forward)).
 
 ### Added
 
 - On a versioned deployment, `ork.pool.release.backlog.tasks` and `.age` show each pool's waiting tasks by release, so a stranded release is told from demand ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#a-pools-backlog-as-metrics)).
+- Added GPU profiles: a host-native Orker can give tasks exclusive GPU units through CDI with `devices:` and `resources.gpu`; tested on AMD and Intel GPUs. ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-gpu-orker))
+- Experimental: `gpu` profiles accept NVIDIA CDI specs (toolkit 1.19.1+, root-owned mount sources, `--disable-hook update-ldcache`); emulation-proven, not tested on NVIDIA hardware. ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-gpu-orker))
+- An Orker with any profile refuses to boot unless its engine's default runtime is runc or crun, checked by name and by binary; set the engine's default runtime back. ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-gpu-orker))
+- An Orker with a gpu profile refuses to boot unless `orker.cdi.spec_dirs` holds every directory its engine reads CDI specs from; add the missing ones. ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-gpu-orker))
 - `orkctl admin principal list` and Access → People list who signed in over a window (30 days by default), newest first, with their name and when they last signed in ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#in-the-web-ui)).
 - The audit trail filters on `decision` (`allowed`, `denied`, `would-deny`) and `principal_verified`, and Admin → Audit has one-click Denied, Would deny (observed) and Principal not verified filters ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#filtering-lists)).
 - An engine now boots on a Temporal credential without admin rights when its namespace's retention already covers OrkStack's; a shorter one refuses the boot, naming the retention to set ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-without-temporal-admin-rights)).
 - A composed task can pass files to its child run: bind the child's `type: artifact` inputs under `artifacts:`, and a child task reads one as `{{ artifact "_inputs/<name>" }}` ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#passing-artifacts-to-a-child-run)).
 - An Orkflow can return files: an `outputs:` entry `{artifact: <task>/<name>}` becomes the composing task's artifact, read downstream as `{{ artifact "<task>/<output>" }}` ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#outputs)).
+- The run page, `orkctl run get`, `orkctl run artifact download --task _inputs` and evidence bundles show and fetch the artifacts a child run received and returned ([RUN_EVIDENCE.md](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md)).
 - An Orkflow can declare `concurrency:` to limit how many of its runs hold one key at once; the rest wait in line, and a paused run gives its slot back ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#concurrency-limits-concurrency)).
+- A concurrency limit can `refuse` or `skip` a run at a full key instead of queueing it; a schedule's fire a limit keeps from starting completes and says why, so the schedule never pauses for it ([ORKFLOW_SCHEDULES.md](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#a-fire-a-concurrency-limit-keeps-from-starting)).
+- The run page shows why a run waits for its concurrency slot and behind whom, Runs gets a Queued tile, and `orkctl orkflow get`, `orkctl stats` and the UI name a limit and count queued runs ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#concurrency-limits-concurrency)).
 - `orkctl run list -F queued=true`, `queued_on=KEY` and `holding=KEY`, and the stats' `queued` and `executing` counts, show who waits for and holds a key ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#filtering-lists)).
+- `orkctl concurrency list` and `get` show who holds each concurrency key and who waits, read from the limit itself ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#concurrency-limits)).
+- The observability kit alerts on concurrency limits (a dead census, growing or stuck lines, queued runs filling `max_running`), and `ork.concurrency.arrivals` counts each request for a slot ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#concurrency-limits)).
 - Webhooks can subscribe to `RUN_QUEUED` and `TASK_QUEUED` by name; a webhook with no events still receives only a run's start and end ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md)).
 - `orkctl admin restore reconcile` removes, after a restore of Temporal, the runs cleanup had retired that the restore brought back; it needs the new `system.restore` permission ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#backup-and-disaster-recovery)).
 - Prometheus alert rules for the observability kit, each with a runbook, plus runbooks for Temporal outages and for backup and restore ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md)).
@@ -45,7 +55,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - Each engine exports every pool's backlog, `ork.pool.backlog.tasks` and `.age`, its rates and `ork.pool.pollers`, to scale Orkers on; `engine.pool_metrics.*` picks the pools ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#a-pools-backlog-as-metrics)).
 - Metrics for retention cleanup, webhook deliveries, schedules and HTTP triggers, and the `telemetry.object_labels` setting that adds schedule names and webhook ids to them ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - A fan-out can run every item even when some fail (`each.on_item_failure: continue`, optionally bounded by `max_failed_items`), and its failure handlers get the items that succeeded ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#when-an-item-fails-on_item_failure-continue)).
-- A fan-out can run one item per line, or per `batch:` of lines, of an upstream task's artifact: `each.over_artifact: <task>/<name>` with `format: jsonl` or `lines` ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#fan-out-over-an-artifacts-lines-over_artifact)).
+- A fan-out can run one item per line, or per `batch:` of lines, of an upstream task's or artifact input's file: `each.over_artifact` with `format: jsonl` or `lines` ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#fan-out-over-an-artifacts-lines-over_artifact)).
 - Pause a run with `orkctl run pause`: running work finishes, nothing new starts and its child runs pause too, until `orkctl run unpause` ([API.md](https://github.com/orkstack/orkstack/blob/main/docs/API.md#pauserunrequest)).
 - A pause lasts at most its timeout (`engine.run_pause_timeout`, 7 days by default), and `run list --filter status=PAUSED` lists paused runs ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-paused-run-index)).
 - Webhooks can subscribe to `RUN_PAUSED` and `RUN_UNPAUSED`; like task events they are opt-in, so a subscription with no events does not receive them ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md)).
@@ -55,6 +65,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `orkctl run tokens` lists the identity tokens a run was issued, never a token, and `orkctl run inspect` shows each identity an attempt holds ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#what-was-issued)).
 - Schedules, triggers and event sources whose Orkflow asks for an identity need `--consent=DIGEST` to the digest shown; plans and promotions warn when a consent is stale ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#consent)).
 - Namespaces now hold an identity policy (audiences, grants, attempts beyond retries), set with `orkctl namespace update` or `settings.identity`; tasks cannot use it yet ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#a-namespaces-identity-policy)).
+- Once task identity lands, the engine records every task result of a run that uses it; Orkers adopt, stage and reuse only those records ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#results-the-engine-records)).
 - New `identity.results.commit_wait` (15m): how long an Orker waits for an engine to record a result of a run that uses task identity, once task identity lands ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#results-the-engine-records)).
 - New `identity.attempts.*`, `identity.token.*`, `identity.issuance.records` and `identity.unscoped_orkers` settings, read once task identity lands ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md)).
 - New `orker.identity.*` and `orker.log.mask_grace` settings: an Orker that reaches an engine keeps identity tokens on memory-backed storage it chooses at boot and reports in `DescribeOrker` ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#on-the-orker)).
@@ -143,6 +154,8 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- The evidence bundle of a shared Orkflow's child run holds its owner's definition, which needs `orkflow.read` there, instead of calling it deleted or mismatched ([RUN_EVIDENCE.md](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#states)).
+- A run diff reads a shared Orkflow's child run from its owner's definition, and no longer calls it the same Orkflow as the namespace's own of that name ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#run-diff)).
 - The Admin pages no longer hang when an activity image's registry does not answer: the activity catalog lists it with `resolve_error` within 10 seconds ([API.md](https://github.com/orkstack/orkstack/blob/main/docs/API.md)).
 - A stopping Orker no longer exits before the cluster has a finished task's result, which made the task run again on another Orker, spending an attempt ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#stop-timeouts)).
 - A task that succeeded just before its Orker stopped no longer fails `context canceled`: the Orker stops its worker only once the cluster has the result ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#removing-an-orker-safely-cordon-and-drain)).
@@ -159,6 +172,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 - **BREAKING:** webhooks now refuse loopback, link-local (cloud metadata), private and other non-public addresses, at registration and delivery; list receivers' networks in `webhooks.allowed_networks` ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#where-a-delivery-may-go)).
 - A webhook's URL is no longer written into Temporal with its deliveries, and attempt errors are now a code and a short sentence; rotate a URL that holds a credential ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#what-the-cluster-holds)).
+- An await's callback URL, a trigger's URL and the web UI no longer tell a caller with no credential why a read failed; the engine's log has the cause.
 - Any Orker can write results every namespace reads: give each trust zone its own deployment and bucket, and set `ORK_ORKER_NAMESPACES` so an honest Orker refuses other namespaces' tasks ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#trust-zones-a-deployment-per-zone)).
 - The six first-party activity images now carry OpenSSL 3.5.9-r1, which fixes CVE-2026-88823, CVE-2026-95691, CVE-2026-95692 and CVE-2026-107496.
 

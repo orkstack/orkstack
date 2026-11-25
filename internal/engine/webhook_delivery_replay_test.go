@@ -101,7 +101,7 @@ func TestWebhookDeliveryHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *tes
 	}
 
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.RegisterWorkflowWithOptions(engine.WebhookDeliveryWorkflow, workflow.RegisterOptions{Name: engine.WebhookDeliveryWorkflowType})
 	sends := map[string][]any{}
 	env.RegisterActivityWithOptions(func(_ context.Context, in engine.WebhookDeliveryInput) (webhooks.Result, error) {

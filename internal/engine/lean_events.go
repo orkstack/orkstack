@@ -4,6 +4,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 )
 
 // leanEventPathChange is the workflow.GetVersion change id of the lean event
@@ -125,8 +126,9 @@ func (s *runState) publishDetached(ctx workflow.Context, window int, event *orks
 		}
 	}
 	s.pendingItemPublishes = append(s.pendingItemPublishes, detachedPublish{
-		future: workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey),
-		event:  event,
+		future: workflow.ExecuteActivity(activityCtx, ActivityPublishEvent,
+			payloadcrypt.Seal(s.scope, event), payloadcrypt.Seal(s.scope, snapshotURI), payloadcrypt.PlainIn(s.scope, dedupeKey)),
+		event: event,
 	})
 }
 

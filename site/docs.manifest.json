@@ -156,6 +156,16 @@
 					]
 				},
 				{
+					"route": "docs/build/concurrency",
+					"title": "Limit concurrent runs",
+					"description": "Let only so many runs hold one key at once, and see who waits in line.",
+					"parts": [
+						{
+							"source": "site/content/how-to/concurrency.md"
+						}
+					]
+				},
+				{
 					"route": "docs/build/handle-failure",
 					"title": "Handle failure",
 					"description": "Run clean-up and compensation tasks when something fails.",
@@ -446,6 +456,16 @@
 					"parts": [
 						{
 							"source": "site/content/how-to/device-profiles.md"
+						}
+					]
+				},
+				{
+					"route": "docs/operate/gpu-profiles",
+					"title": "Give a task GPU units",
+					"description": "Define a GPU profile on an Orker and ask for units in a task with devices: and resources.gpu.",
+					"parts": [
+						{
+							"source": "site/content/how-to/gpu-profiles.md"
 						}
 					]
 				},

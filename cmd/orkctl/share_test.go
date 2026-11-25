@@ -82,3 +82,49 @@ func TestStatsRows_NameASharedOrkflowsOwner(t *testing.T) {
 		t.Fatalf("own usage cell = %q", got)
 	}
 }
+
+// An Orkflow that declares a concurrency limit names it, in the words the
+// UI's Concurrency fact uses (ui/src/lib/concurrency.ts, concurrencyLabel).
+func TestRenderOrkflow_ShowsItsConcurrencyLimit(t *testing.T) {
+	cases := []struct {
+		name string
+		spec *orkstackv1.ConcurrencySpec
+		want string
+	}{
+		{"a key, a timeout and a bound", &orkstackv1.ConcurrencySpec{Limit: 1, Key: "db-migrate:{{ .inputs.env }}",
+			OnLimit: orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE, QueueTimeoutSeconds: 7200, MaxQueued: 50},
+			"Concurrency: limit 1 on key db-migrate:{{ .inputs.env }}; the rest wait in line up to 2h, at most 50"},
+		{"its own key, the default timeout", &orkstackv1.ConcurrencySpec{Limit: 2},
+			"Concurrency: limit 2 on this Orkflow's own key; the rest wait in line up to the deployment's default"},
+		{"half an hour", &orkstackv1.ConcurrencySpec{Limit: 3, QueueTimeoutSeconds: 1800},
+			"Concurrency: limit 3 on this Orkflow's own key; the rest wait in line up to 30m"},
+		{"an hour and five seconds", &orkstackv1.ConcurrencySpec{Limit: 1, QueueTimeoutSeconds: 3605},
+			"Concurrency: limit 1 on this Orkflow's own key; the rest wait in line up to 1h0m5s"},
+		{"another strategy, as the DSL writes it", &orkstackv1.ConcurrencySpec{Limit: 2, OnLimit: orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_CANCEL_OLDEST},
+			"Concurrency: limit 2 on this Orkflow's own key; on_limit cancel_oldest"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wf := &orkstackv1.Orkflow{Name: "deploy", Version: "1", Tasks: []*orkstackv1.Task{{Id: "ship", Uses: "shell"}}, Concurrency: c.spec}
+			var out bytes.Buffer
+			if err := renderOrkflow(&out, wf, ""); err != nil {
+				t.Fatal(err)
+			}
+			if got := collapseSpaces(detailLine(t, out.String(), "Concurrency:")); got != c.want {
+				t.Fatalf("Concurrency line = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// An Orkflow that declares no concurrency limit names none.
+func TestRenderOrkflow_NamesNoLimitItDoesNotDeclare(t *testing.T) {
+	wf := &orkstackv1.Orkflow{Name: "deploy", Version: "1", Tasks: []*orkstackv1.Task{{Id: "ship", Uses: "shell"}}}
+	var out bytes.Buffer
+	if err := renderOrkflow(&out, wf, ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Concurrency:") {
+		t.Fatalf("an Orkflow with no limit names one:\n%s", out.String())
+	}
+}

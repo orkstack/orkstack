@@ -66,6 +66,13 @@ test('U2 absentMembers lists every non-present member with its sentence', () => 
 		{ path: 'orkflow/source.yaml', state: 'rejected', reason: reasonText('definition_digest_mismatch') },
 		{ path: 'tasks/x/commit.json', state: 'reclaimed', reason: 'brand_new_token' }
 	]);
+	expect(reasonText('definition_not_readable')).toBe(
+		"the exporter may not read the shared Orkflow in its owner's namespace; the run's definition digest still attests it"
+	);
+	expect(definitionLine({ ...m, definition: { state: 'withheld', reason: 'definition_not_readable', stored_definition_digest: '' } })).toContain(
+		"source.yaml withheld: you may not read it in its owner's namespace"
+	);
+	expect(evidenceSummary({ ...m, counts: { ...m.counts, withheld: 1 } })).toContain(' · 1 withheld · ');
 	expect(reasonText('object_missing')).toBe(
 		'the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved'
 	);

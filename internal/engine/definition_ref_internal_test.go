@@ -124,7 +124,8 @@ func definitionPlan(t *testing.T, ref DefinitionRef) RunPlan {
 // detector is a wall clock that a loaded host moves, and half leaves room for
 // a loaded host's slower cores), and the slowest batch's
 // workflow-side verify and decode — the per-batch work the detector times —
-// is quoted, under the bound the saved-state restore keeps.
+// is quoted, under the bound the saved-state restore keeps, as the least
+// of its runs (leastBatchDecode, throughASlowClock).
 func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 	planned := largeDefinition(t, 120, 32<<10)
 	data, ref, err := EncodeDefinitionObject(planned)
@@ -154,42 +155,30 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 	budget.check(t)
 
 	var merged *orkstackv1.Orkflow
-	decoder := &partDecoder{refs: ref.object().GetParts(), decode: func(index int, plain []byte) error {
-		part := &orkstackv1.Orkflow{}
-		if err := proto.Unmarshal(plain, part); err != nil {
-			return err
-		}
-		return mergeDefinitionPart(&merged, index, part)
-	}}
-	batch := int(DefaultContinuationChunksPerTask * DefaultContinuationChunkBytes)
-	// Bounded on the decode thread's CPU time (passClock), as the restore is.
-	clock := newPassClock(t)
-	var worst time.Duration
-	for off := 0; off < len(data); off += batch {
-		end := min(len(data), off+batch)
-		clock.between()
-		begin := clock.now()
-		for chunk := off; chunk < end; chunk += int(DefaultContinuationChunkBytes) {
-			must.OK(t, decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]))
-		}
-		worst = max(worst, clock.now()-begin)
-	}
+	bound := gatedSizeBound(restoreBatchDecodeBound)
+	decode := leastBatchDecode(t, data, bound, throughASlowClock(), func() *partDecoder {
+		merged = nil
+		return &partDecoder{refs: ref.object().GetParts(), decode: func(index int, plain []byte) error {
+			part := &orkstackv1.Orkflow{}
+			if err := proto.Unmarshal(plain, part); err != nil {
+				return err
+			}
+			return mergeDefinitionPart(&merged, index, part)
+		}}
+	})
 	if !proto.Equal(merged, planned) {
 		t.Fatal("the batches did not decode the definition")
 	}
-	bound := restoreBatchDecodeBound
-	if raceBuild {
-		bound *= raceSlowdown
+	if decode.worst > bound {
+		t.Fatalf("the slowest batch decoded in %s of %s, the least of %d runs (%v), over %s",
+			decode.worst, decode.kind, len(decode.runs), decode.runs, bound)
 	}
-	if worst > bound {
-		t.Fatalf("the slowest batch decoded in %s of %s, over %s", worst, clock.kind(), bound)
-	}
-	t.Logf("a %d-byte definition (%d parts) loaded and ran in %s; slowest batch decode %s (bound %s)",
-		ref.SizeBytes, len(ref.Parts), elapsed, worst, bound)
+	t.Logf("a %d-byte definition (%d parts) loaded and ran in %s; slowest batch decode %s (runs %v, bound %s)",
+		ref.SizeBytes, len(ref.Parts), elapsed, decode.worst, decode.runs, bound)
 	if !raceBuild {
 		proof.WriteJSON(t, "definition-by-reference", "definition-load-deadlock-budget.json", map[string]any{
-			"definition_bytes": ref.SizeBytes, "parts": len(ref.Parts), "slowest_batch_ms": float64(worst.Microseconds()) / 1000,
-			"bound_ms": bound.Milliseconds(), "run_seconds": elapsed.Seconds(),
+			"definition_bytes": ref.SizeBytes, "parts": len(ref.Parts), "slowest_batch_ms": float64(decode.worst.Microseconds()) / 1000,
+			"bound_ms": bound.Milliseconds(), "run_seconds": elapsed.Seconds(), "decode_runs": len(decode.runs),
 		})
 	}
 }

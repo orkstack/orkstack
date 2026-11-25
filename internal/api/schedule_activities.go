@@ -55,7 +55,11 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	outcome := telemetry.ScheduleFireStarted
 	switch {
 	case err == nil:
-	case reason != "":
+	case reason == engine.FireSkippedConcurrencyCode:
+		outcome = telemetry.ScheduleFireSkipped
+	case reason == engine.FireNotStartedConcurrencyCode:
+		outcome = telemetry.ScheduleFireNotStarted
+	case reason != "" && reason != engine.FireConcurrencyUnavailableCode:
 		outcome = telemetry.ScheduleFireRefused
 	default:
 		outcome = telemetry.ScheduleFireUnavailable
@@ -90,7 +94,7 @@ func (a *ScheduleActivities) prepareScheduledRun(
 		AllowEmptyPool: false,
 	}, origin)
 	if err != nil {
-		reason, err := fireError(err)
+		reason, err := a.fireError(err)
 		return nil, reason, err
 	}
 
@@ -100,7 +104,7 @@ func (a *ScheduleActivities) prepareScheduledRun(
 	// A census too old to pin profile contracts on is Unavailable: the
 	// local activity's policy retries the fire, which plans again.
 	if err := a.svc.profileCensusFresh(sub); err != nil {
-		reason, err := fireError(err)
+		reason, err := a.fireError(err)
 		return nil, reason, err
 	}
 	run := a.svc.newPendingRun(a.svc.newRunID(), sub.wf, sub.input, origin)
@@ -178,11 +182,33 @@ func refusedFire(msg string) error {
 	return temporal.NewNonRetryableApplicationError(msg, engine.ScheduleFireRefusedType, nil)
 }
 
-// fireError sorts a preparation failure. A caller-shaped Connect code is a
-// refusal and is final, and its reason is the code's name; anything else —
-// an unreachable store or cluster — is returned as-is, with no reason, and
-// retried by the local activity's policy within its budget.
-func fireError(err error) (string, error) {
+// fireError sorts a preparation failure. A concurrency limit's refusal
+// starts no run without failing the fire (E88 §7.2): a skip limit's full
+// key is skipped, a full line or a max_running filled by queued runs is not
+// started, and a limit that cannot be checked is asked again for
+// fire_unavailable_retry first; its reason is the fire's code. Any other
+// caller-shaped Connect code is a refusal and is final, and its reason is
+// the code's name; anything else — an unreachable store or cluster — is
+// returned as-is, with no reason, and retried by the local activity's
+// policy within its budget.
+func (a *ScheduleActivities) fireError(err error) (string, error) {
+	notStarted := func(code, msg string, retry time.Duration) (string, error) {
+		return code, engine.NewFireNotStarted(engine.FireNotStarted{Code: code, Message: msg, RetryFor: retry})
+	}
+	if l := limitReachedOf(err); l != nil && l.strategy == engine.ConcurrencyStrategySkip {
+		return notStarted(engine.FireSkippedConcurrencyCode,
+			fmt.Sprintf("key %s was full; this fire started no run (%s)", l.key, connectMessage(err)), 0)
+	}
+	if isBusy(err) {
+		return notStarted(engine.FireNotStartedConcurrencyCode, "this fire started no run: "+connectMessage(err), 0)
+	}
+	if isCheckUnavailable(err) {
+		retry := a.svc.concurrency.FireUnavailableRetry
+		if retry <= 0 {
+			retry = engine.DefaultConcurrencySettings().FireUnavailableRetry
+		}
+		return notStarted(engine.FireConcurrencyUnavailableCode, connectMessage(err), retry)
+	}
 	var ce *connect.Error
 	if errors.As(err, &ce) {
 		switch ce.Code() {

@@ -353,6 +353,20 @@ func TestScheduleGet_Refused_Golden(t *testing.T) {
 	requireGolden(t, "schedule-get-refused.golden", renderScheduleString(t, s))
 }
 
+// A fire a concurrency limit kept from starting a run, and one whose run
+// it kept from beginning, say why in NOTE.
+func TestScheduleGet_Skipped_Golden(t *testing.T) {
+	s := goldenSchedule()
+	at := timestamppb.New(fixedNow)
+	s.RecentFires = []*orkstackv1.ScheduleFire{
+		{ScheduledAt: at, ActualAt: at, DetailsAvailable: true, SkipCode: "FIRE_SKIPPED_CONCURRENCY",
+			SkipMessage: "key db:prod was full; this fire started no run"},
+		{ScheduledAt: at, ActualAt: at, DetailsAvailable: true, RunId: "ork-01k3", SkipCode: "FIRE_NOT_STARTED_CONCURRENCY",
+			SkipMessage: "this fire started no run: waited 2h0m0s for key db:prod's slot without starting"},
+	}
+	requireGolden(t, "schedule-get-skipped.golden", renderScheduleString(t, s))
+}
+
 func TestScheduleGet_Plain_Golden(t *testing.T) {
 	s := &orkstackv1.Schedule{Id: "sch-00000000000000b1", Name: "plain", Namespace: "default", OrkflowName: "hello-ork",
 		Spec:      &orkstackv1.ScheduleSpec{Interval: durationpb.New(15 * time.Minute), Overlap: orkstackv1.OverlapPolicy_OVERLAP_POLICY_SKIP},

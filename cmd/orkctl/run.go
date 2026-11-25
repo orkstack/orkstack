@@ -461,6 +461,14 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	writeOriginLines(header, run.GetOrigin())
 	fmt.Fprintf(header, "Input:\t%s\n", payloadSummary(run.GetInput(), run.GetId(), run.GetNamespace()))
 	fmt.Fprintf(header, "Output:\t%s\n", payloadSummary(run.GetOutput(), run.GetId(), run.GetNamespace()))
+	// The artifacts a child run received and a run returns; a run with
+	// neither prints nothing new.
+	for _, line := range artifactLines("Received", run.GetInputArtifacts()) {
+		fmt.Fprintln(header, line)
+	}
+	for _, line := range artifactLines("Returned", run.GetOutputArtifacts()) {
+		fmt.Fprintln(header, line)
+	}
 	if run.GetError() != nil {
 		fmt.Fprintf(header, "Error:\t%s\n", errorLine(run.GetError()))
 	}
@@ -666,4 +674,23 @@ func renderTaskRunTable(out io.Writer, run *orkstackv1.Run) error {
 		return fmt.Errorf("write output: %w", err)
 	}
 	return nil
+}
+
+// artifactLines are the header lines of artifacts passed between the runs of
+// a tree: "Received:\tdataset  from run ork-1, task build (dataset.tar)",
+// the label on the first line only. Names are terminal-safe.
+func artifactLines(label string, artifacts []*orkstackv1.NamedArtifact) []string {
+	lines := make([]string, 0, len(artifacts))
+	for i, a := range artifacts {
+		head := ""
+		if i == 0 {
+			head = label + ":"
+		}
+		from := "from run " + terminalSafe(a.GetRunId()) + ", task " + terminalSafe(a.GetTaskId())
+		if source := a.GetArtifact().GetMetadata()["source_name"]; source != "" && source != a.GetName() {
+			from += " (" + terminalSafe(source) + ")"
+		}
+		lines = append(lines, head+"\t"+terminalSafe(a.GetName())+"  "+from)
+	}
+	return lines
 }

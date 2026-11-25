@@ -121,6 +121,7 @@ func (s EngineSettings) Validate() error {
 type EngineClient struct {
 	auth      orkstackv1connect.AuthServiceClient
 	identity  orkstackv1connect.IdentityServiceClient
+	attempts  orkstackv1connect.AttemptServiceClient
 	transport *http.Transport
 }
 
@@ -185,6 +186,7 @@ func NewEngineClient(s EngineSettings) (*EngineClient, error) {
 	return &EngineClient{
 		auth:      orkstackv1connect.NewAuthServiceClient(client, base, opts...),
 		identity:  orkstackv1connect.NewIdentityServiceClient(client, base, opts...),
+		attempts:  orkstackv1connect.NewAttemptServiceClient(client, base, opts...),
 		transport: transport,
 	}, nil
 }
@@ -206,6 +208,18 @@ func (c *EngineClient) Whoami(ctx context.Context) (*orkstackv1.GetSigninRespons
 // returned as the engine's connect error, unchanged, for the caller to map.
 func (c *EngineClient) Mint(ctx context.Context, req *orkstackv1.MintAttemptTokensRequest) (*orkstackv1.MintAttemptTokensResponse, error) {
 	resp, err := c.identity.MintAttemptTokens(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
+
+// CommitResult asks the engine to record an attempt's result, or with
+// preflight set whether it may (AttemptService.CommitResult). As with Mint,
+// the engine takes the Orker from the credential, and a refusal is returned
+// as the engine's connect error, unchanged, for the caller to map.
+func (c *EngineClient) CommitResult(ctx context.Context, req *orkstackv1.CommitResultRequest) (*orkstackv1.CommitResultResponse, error) {
+	resp, err := c.attempts.CommitResult(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err
 	}

@@ -81,6 +81,8 @@ func built(t *testing.T) []metriccatalog.Instrument {
 	telemetry.NewGCObserver(p, nil, archive.ReclaimDryRun, time.Hour, logger)
 	telemetry.NewRetentionObserver(p, logger)
 	telemetry.WatchOrkerPresence(p, "o1", "p", false, logger)
+	// The concurrency census's gauges are built from a table at boot.
+	telemetry.NewConcurrencyGauges(p, time.Minute, 5*time.Minute, false, logger)
 	inst, err := telemetry.NewOrkerInstruments(p)
 	must.OK(t, err)
 	// The Orker's twins are built at its first attempt.

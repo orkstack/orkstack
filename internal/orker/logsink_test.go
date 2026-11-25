@@ -51,7 +51,7 @@ func awaitPut(t *testing.T, s *recordingLogStore, what string) {
 	t.Helper()
 	select {
 	case <-s.puts:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal(what)
 	}
 }

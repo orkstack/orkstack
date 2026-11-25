@@ -485,6 +485,83 @@ func TestReclaim_LateCommitBetweenListAndDeleteIsCaughtAtReList(t *testing.T) {
 	}
 }
 
+// TestReclaim_ALateEngineRecordKeepsProducerForGood: what an engine recorded
+// for a run's task is a commit that a memo hit can be handed, so one present
+// under a retired run's attested prefix keeps everything the run produced, as
+// a commit does: at the verification and at the re-list before a delete.
+func TestReclaim_ALateEngineRecordKeepsProducerForGood(t *testing.T) {
+	attested, err := artifacts.AttestedRunPrefix("default", "ork-p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("at the verification", func(t *testing.T) {
+		w, ids := retiredProducer(t)
+		w.attested["ork-p"] = 1
+		r := w.reclaimer(ReclaimDelete)
+		w.warm(r)
+		report := r.RunOnce(context.Background())
+		if report.RunsLateCommit != 1 || tally(report, OutcomeKept, ReasonLateCommit) != 2 {
+			t.Fatalf("late commits %d kept %d", report.RunsLateCommit, tally(report, OutcomeKept, ReasonLateCommit))
+		}
+		for _, id := range ids {
+			if !w.exists(id) || len(w.markers[id]) == 0 {
+				t.Fatalf("%s was touched with an engine's record present", id)
+			}
+		}
+	})
+	t.Run("between the verification and the delete", func(t *testing.T) {
+		w, ids := retiredProducer(t)
+		r := w.reclaimer(ReclaimDelete)
+		w.warm(r)
+		w.onList = func(key string, n int) {
+			if key == attested && n == 2 {
+				w.mu.Lock()
+				w.attested["ork-p"] = 1
+				w.mu.Unlock()
+			}
+		}
+		w.listed = map[string]int{}
+		r.RunOnce(context.Background())
+		if w.listed[attested] < 2 {
+			t.Fatalf("the attested prefix was listed %d times; want it again before the delete", w.listed[attested])
+		}
+		for _, id := range ids {
+			if !w.exists(id) {
+				t.Fatalf("deleted %s after an engine's record appeared", id)
+			}
+		}
+	})
+	// A listing that does not answer keeps, at the verification and at the
+	// re-list, and the run finishes once the store answers.
+	for _, at := range []int{1, 2} {
+		t.Run(fmt.Sprintf("listing %d unreadable", at), func(t *testing.T) {
+			w, ids := retiredProducer(t)
+			r := w.reclaimer(ReclaimDelete)
+			w.warm(r)
+			w.onList = func(key string, n int) {
+				if key == attested && n == at {
+					w.mu.Lock()
+					w.fail["ListUnder "+attested] = errStore
+					w.mu.Unlock()
+				}
+			}
+			w.listed = map[string]int{}
+			r.RunOnce(context.Background())
+			for _, id := range ids {
+				if !w.exists(id) {
+					t.Fatalf("deleted %s with the attested prefix unread", id)
+				}
+			}
+			w.onList = nil
+			delete(w.fail, "ListUnder "+attested)
+			r.RunOnce(context.Background())
+			if _, ok := w.records["ork-p"]; !ok || w.exists(ids[0]) {
+				t.Fatal("the run was not reclaimed once the store answered")
+			}
+		})
+	}
+}
+
 func TestReclaim_MarkerAddedDuringDeleteRelists(t *testing.T) {
 	w, ids := retiredProducer(t)
 	w.reference("ork-x", w.now.Add(-time.Hour), w.now.Add(-30*time.Minute))

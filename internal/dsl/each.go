@@ -337,7 +337,9 @@ func EachSumAnchor(wf *orkstackv1.Orkflow, limit int32) string {
 // validateEach enforces rules 19–23, and rule 24's two non-template halves
 // (a fan-out's source and its needs may not name a fan-out), on the compiled
 // message, so a hand-built request meets them.
-func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, closures map[string]map[string]struct{}) error {
+func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, closures map[string]map[string]struct{},
+	artifactInputs map[string]struct{},
+) error {
 	for taskIndex, task := range wf.GetTasks() {
 		spec := task.GetEach()
 		if spec == nil {
@@ -364,7 +366,7 @@ func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, clos
 
 		// Rule 53: a fan-out over an artifact's lines.
 		if spec.GetOverArtifact() != "" || spec.GetSource().GetArtifact() != nil {
-			if err := validateEachLines(task, taskIndex, byID); err != nil {
+			if err := validateEachLines(task, taskIndex, byID, artifactInputs); err != nil {
 				return err
 			}
 		} else if err := validateEachArray(spec, at, byID, closures, wf, id); err != nil {

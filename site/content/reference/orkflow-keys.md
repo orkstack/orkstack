@@ -28,9 +28,24 @@ tasks:
 | `labels` | no | A map of strings, for filtering. |
 | `inputs` | no | The run's parameters: [Input](#input). |
 | `outputs` | no | What a run returns: a map from a name to a template. |
+| `concurrency` | no | How many runs may hold one key at once: [Concurrency](#concurrency). |
 | `pins` | no | Named groups of tasks that run on one Orker: [Pin](#pin). |
 | `timeout` | no | A time limit for the whole run, a duration string such as `90s`, `45m` or `6h`: whole seconds, `10s` to `8760h`. An integer or `0s` is refused; omit it for no limit. [Details](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#run-timeout-timeout). |
 | `tasks` | yes | The tasks: [Task](#task). |
+
+## Concurrency
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `limit` | required | How many runs may hold the key at once. |
+| `key` | the Orkflow's own | The key's template. **Templated.** |
+| `on_limit` | `queue` | What a run does when every slot is held: `queue`, `refuse` or `skip`. |
+| `queue_timeout` | the deployment's | How long a run waits in line. |
+| `max_queued` | no bound of its own | How many runs may wait in line for the key. |
+
+Never put a secret or personal data in a key. Keys are stored unencrypted, and
+anyone who can read the namespace's runs can read them.
+[Details](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#concurrency-limits-concurrency).
 
 ## Input
 
@@ -90,7 +105,7 @@ Read an input as `{{ .inputs.<name> }}`.
 | Key | Required | Meaning |
 |---|---|---|
 | `over` | yes, or `over_artifact` | The array, as one template. |
-| `over_artifact` | yes, or `over` | `<task>/<artifact>`: one item per line of an artifact a task in `needs:` writes. |
+| `over_artifact` | yes, or `over` | `<task>/<artifact>`: one item per line of an artifact a task in `needs:` records; or `_inputs/<name>`, an artifact input. |
 | `format` | with `over_artifact` | `jsonl` (a JSON value per line) or `lines` (a string per line). |
 | `batch` | no | With `over_artifact`: lines per item, 1 to 10,000. Default 1. |
 | `as` | no | The element's name under `.each`. Default `item`; refused with `batch`. |

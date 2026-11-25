@@ -93,29 +93,6 @@ func TestProfileState_NothingDeclaredReportsNothing(t *testing.T) {
 	}
 }
 
-func TestBoot_RefusesUnimplementedProfileKind(t *testing.T) {
-	declared, err := ParseProfiles([]byte(validProfilesDoc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy := DefaultSecurityPolicy()
-	a := NewActivitiesWithOptions(nil, Options{
-		Policy: &policy, Runtime: &layoutProbeRuntime{}, OrkerID: "o1", WorkRoot: t.TempDir(), Profiles: declared,
-	})
-	err = a.Boot(t.Context())
-	if err == nil {
-		t.Fatal("Boot accepted profiles of kinds this build does not implement")
-	}
-	for _, want := range []string{ReasonProfileInvalid, "amd (kind gpu)"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Boot error %q does not name %q", err, want)
-		}
-	}
-	if strings.Contains(err.Error(), "sensor (kind") {
-		t.Fatalf("Boot refused the devices kind, which this build implements: %v", err)
-	}
-}
-
 // TestBoot_RefusesADeviceOfNoClass: a devices profile naming a node that is
 // not of a device class refuses the boot, before anything polls.
 func TestBoot_RefusesADeviceOfNoClass(t *testing.T) {

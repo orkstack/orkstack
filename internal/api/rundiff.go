@@ -13,7 +13,10 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -34,6 +37,7 @@ var taskDiffFields = diffFields[2:]
 // each to a sentence.
 const (
 	reasonDefinitionUnavailable = "definition_unavailable"
+	reasonDefinitionNotReadable = "definition_not_readable"
 	reasonDefinitionMismatch    = "definition_digest_mismatch"
 	reasonTaskNotInDefinition   = "task_not_in_definition"
 	reasonNoAttemptStore        = "no_attempt_store"
@@ -117,7 +121,7 @@ func (s *Service) DiffRuns(
 	res := &orkstackv1.DiffRunsResponse{
 		From:                 shallowRun(fromRun),
 		To:                   shallowRun(toRun),
-		SameOrkflow:          fromRun.GetOrkflowName() == toRun.GetOrkflowName(),
+		SameOrkflow:          engine.OrkflowKey(fromRun) == engine.OrkflowKey(toRun),
 		SameDefinitionDigest: fromRun.GetOrkflowDefinitionDigest() == toRun.GetOrkflowDefinitionDigest(),
 		FieldsCompared:       fields,
 	}
@@ -142,7 +146,7 @@ func (s *Service) DiffRuns(
 	to := &diffSide{run: toRun, records: map[string][]*orkstackv1.TaskAttempt{}}
 	if compared("image") {
 		for _, side := range []*diffSide{from, to} {
-			definition, err := s.pinnedDefinition(ctx, ns.GetName(), side.run)
+			definition, err := s.pinnedDefinition(ctx, side.run)
 			if err != nil {
 				return nil, err
 			}
@@ -319,9 +323,10 @@ func shallowRun(run *orkstackv1.Run) *orkstackv1.Run {
 	return shallow
 }
 
-// definitionLabel is the run-level definition value: name@version digest.
+// definitionLabel is the run-level definition value: name@version digest, the
+// name qualified by its owner for a shared Orkflow's child run.
 func definitionLabel(run *orkstackv1.Run) string {
-	label := run.GetOrkflowName() + "@" + run.GetOrkflowVersion()
+	label := engine.OrkflowKey(run) + "@" + run.GetOrkflowVersion()
 	if digest := run.GetOrkflowDefinitionDigest(); digest != "" {
 		label += " " + digest
 	}
@@ -345,11 +350,56 @@ func inputDiff(from, to *orkstackv1.Run) (string, error) {
 	return dsl.Unified(from.GetId()+"/input.json", to.GetId()+"/input.json", fromText+"\n", toText+"\n"), nil
 }
 
+// definitionNamespace is the namespace that owns the document a run pinned:
+// the run's own, or a shared Orkflow's owner.
+func definitionNamespace(run *orkstackv1.Run) string {
+	if owner := run.GetOrkflowNamespace(); owner != "" {
+		return owner
+	}
+	return artifacts.ResolveNamespace(run.GetNamespace())
+}
+
+// mayReadDefinition reports whether a caller who may read run may be shown
+// the document it pinned: always its own namespace's, and another's (a shared
+// Orkflow's child run) only with orkflow.read there, as GetOrkflow asks.
+// Holding a permission on the run is not holding one in its Orkflow's
+// namespace. While the access document cannot be read it fails rather than
+// answer no: a bundle keeps what it says. What the run itself recorded, its
+// attempts' images among it, is the run's and is not decided here.
+func (s *Service) mayReadDefinition(ctx context.Context, run *orkstackv1.Run) (bool, error) {
+	owner := run.GetOrkflowNamespace()
+	if owner == "" {
+		return true, nil
+	}
+	if !s.access.enabled() || !s.access.enforcing() {
+		return true, nil
+	}
+	policy, unavailable := s.access.policy(ctx)
+	may, err := s.mayWithIDs(ctx, authz.Request{Action: authz.Action(authz.PermOrkflowRead),
+		Subject:  subjectOf(authn.FromContext(ctx)),
+		Resource: authz.Resource{Namespace: owner, Orkflow: run.GetOrkflowName()}, Policy: policy})
+	if err != nil || may {
+		return may, err
+	}
+	if unavailable {
+		return false, connect.NewError(connect.CodeUnavailable, ErrPolicyUnavailable)
+	}
+	return false, nil
+}
+
 // pinnedDefinition reads the definition document a run pinned. A document
 // that is gone, or that does not hash to the digest the run recorded, cannot
-// answer for the run and says why; any other store error fails the call.
-func (s *Service) pinnedDefinition(ctx context.Context, namespace string, run *orkstackv1.Run) (pinnedDefinition, error) {
-	wf, err := s.orkflows.Get(ctx, namespace, run.GetOrkflowName(), run.GetOrkflowVersion())
+// answer for the run and says why, and neither can another namespace's that
+// the caller may not read; any other store error fails the call.
+func (s *Service) pinnedDefinition(ctx context.Context, run *orkstackv1.Run) (pinnedDefinition, error) {
+	readable, err := s.mayReadDefinition(ctx, run)
+	if err != nil {
+		return pinnedDefinition{}, err
+	}
+	if !readable {
+		return pinnedDefinition{reason: reasonDefinitionNotReadable}, nil
+	}
+	wf, err := s.orkflows.Get(ctx, definitionNamespace(run), run.GetOrkflowName(), run.GetOrkflowVersion())
 	switch {
 	case errors.Is(err, artifacts.ErrNotFound):
 		// The version was deleted; runs pinned to it keep their snapshot.

@@ -29,6 +29,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"go.temporal.io/api/serviceerror"
+	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -281,6 +282,9 @@ type Config struct {
 	// schedule fires and the schedule API's requests. Nil counts nothing.
 	TriggerMetrics  *telemetry.TriggerMetrics
 	ScheduleMetrics *telemetry.ScheduleMetrics
+	// ConcurrencyMetrics counts a concurrency limit's submit refusals as
+	// arrivals (ork.concurrency.arrivals); nil counts none.
+	ConcurrencyMetrics *telemetry.ConcurrencyMetrics
 
 	// UsageCacheTTL is how long one whole usage measurement is reused, by
 	// GetUsage and by the admission gate alike. Used verbatim: zero or
@@ -668,8 +672,9 @@ type Service struct {
 	observer   engine.EventObserver
 	admissions engine.AdmissionObserver
 	// triggerMetrics and scheduleMetrics are Config's; nil counts nothing.
-	triggerMetrics  *telemetry.TriggerMetrics
-	scheduleMetrics *telemetry.ScheduleMetrics
+	triggerMetrics     *telemetry.TriggerMetrics
+	scheduleMetrics    *telemetry.ScheduleMetrics
+	concurrencyMetrics *telemetry.ConcurrencyMetrics
 	// usage measures a namespace's reserved consumption for GetUsage and for
 	// an enforced budget's admission check — one measurement both share
 	// (usage.go). It is a measuring component, not a map of answers: its
@@ -752,8 +757,10 @@ type Service struct {
 	transferBudget  int32
 	floorThroughput int64
 	logger          *slog.Logger
-	now             func() time.Time
-	newRunID        func() string
+	// doorFaults bounds what the unauthenticated doors log (doorFault).
+	doorFaults rate.Sometimes
+	now        func() time.Time
+	newRunID   func() string
 
 	// starts stands in for the cluster's first-start read when no reader
 	// is wired (a unit test); retentionRead caches the cluster's reported
@@ -810,6 +817,7 @@ func NewService(cfg Config) *Service {
 		identityAdmissions:       cfg.IdentityAdmissions,
 		triggerMetrics:           cfg.TriggerMetrics,
 		scheduleMetrics:          cfg.ScheduleMetrics,
+		concurrencyMetrics:       cfg.ConcurrencyMetrics,
 		artifacts:                cfg.Artifacts,
 		limits:                   cfg.Limits,
 		eachMaxItems:             eachMaxItemsOf(cfg.EachMaxItems),
@@ -875,6 +883,7 @@ func NewService(cfg Config) *Service {
 	if svc.logger == nil {
 		svc.logger = slog.Default()
 	}
+	svc.doorFaults.Interval = time.Second
 	// cmd/ork validates engine.concurrency.* at boot; a partly set value
 	// from anywhere else would pin zeros into every limited run's plan, so it
 	// is the defaults instead, and said.

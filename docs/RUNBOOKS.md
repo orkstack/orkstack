@@ -806,6 +806,118 @@ Severity warning; fires after 5m. HTTP triggers answer unavailable.
 - **Fix:** See Temporal outages, above.
 - **Related:** [OrkStackTemporalUnreachable](#orkstacktemporalunreachable), [temporal-outages](#temporal-outages)
 
+## Concurrency limits
+
+### OrkStackConcurrencyCensusDead
+
+Severity warning; fires after 5m. The concurrency census has not run.
+
+- **What it means:** The census Schedule does not fire, or its pass fails every time: every concurrency gauge is stale, and the alerts below are blind.
+- **Impact:** Queues, stalled holders and rebuilds go unseen; the limits themselves keep working.
+- **Confirm:** `orkctl concurrency list` answers; kit: `ork_concurrency_census_local_age_seconds` grows on every replica.
+- **Fix:** Check the engines' logs for the census, and Temporal. An engine recreates a missing census Schedule at boot: restart one.
+- **Related:** [OrkStackConcurrencyCensusPartial](#orkstackconcurrencycensuspartial), [OrkStackTemporalUnreachable](#orkstacktemporalunreachable)
+
+### OrkStackConcurrencyCensusPartial
+
+Severity info; fires after 15m. The concurrency census reads only some limits.
+
+- **What it means:** Some limits did not answer the census, or the census could not read the cluster.
+- **Impact:** The gauges, and the alerts on them, miss the limits it did not read.
+- **Confirm:** `orkctl concurrency list` shows the limits that are not answering.
+- **Fix:** Check Temporal's health and the engines' logs; a limit that keeps not answering is reported by ConcurrencyRebuildFailing or ConcurrencyHolderStalled.
+- **Related:** [OrkStackConcurrencyCensusDead](#orkstackconcurrencycensusdead)
+
+### OrkStackConcurrencyQueueGrowing
+
+Severity info; fires after 30m. A concurrency limit's line keeps growing.
+
+- **What it means:** Runs arrive faster than the limit lets them start.
+- **Impact:** Waits grow until runs time out in line (`RUN_QUEUE_TIMEOUT`).
+- **Confirm:** `orkctl concurrency list` shows the key's waiting count.
+- **Fix:** Raise the limit, spread the runs over more keys, or cancel queued runs you do not need (`orkctl run list -F queued=true`).
+- **Related:** [OrkStackConcurrencyQueuedTooLong](#orkstackconcurrencyqueuedtoolong)
+
+### OrkStackConcurrencyQueuedTooLong
+
+Severity warning; fires after 5m. A run has waited over half its queue timeout.
+
+- **What it means:** The key's holders run long, or a holder is stuck.
+- **Impact:** Waiting runs will soon fail `RUN_QUEUE_TIMEOUT`.
+- **Confirm:** `orkctl concurrency get KEY` shows the holders and how long the line has waited.
+- **Fix:** End a stuck holder, raise the limit, or lengthen `queue_timeout`.
+- **Related:** [OrkStackConcurrencyHolderStalled](#orkstackconcurrencyholderstalled), [OrkStackConcurrencyQueueGrowing](#orkstackconcurrencyqueuegrowing)
+
+### OrkStackConcurrencyQueueFillsMaxRunning
+
+Severity warning; fires after 15m. Queued runs use up a namespace's max_running.
+
+- **What it means:** A queued run is a run in flight: a long line counts against `max_running` and other submits are refused.
+- **Impact:** Runs unrelated to the limit cannot start; schedules' fires complete without a run.
+- **Confirm:** `orkctl run list -F queued=true` lists the queued runs; `orkctl namespace get NS` shows max_running.
+- **Fix:** Cancel queued runs you do not need, raise `--max-running`, or bound the line with `max_queued`.
+- **Related:** [OrkStackConcurrencyQueueGrowing](#orkstackconcurrencyqueuegrowing)
+
+### OrkStackConcurrencyHolderStalled
+
+Severity warning; fires after 15m. A run holding a concurrency slot makes no progress.
+
+- **What it means:** The run keeps failing to make progress while it holds the slot, so the runs behind it wait.
+- **Impact:** The key's line does not move.
+- **Confirm:** `orkctl concurrency get KEY` marks the holder not making progress.
+- **Fix:** Read the run (`orkctl run get ID`), then cancel it, with `--force` if a cancel does not end it.
+- **Related:** [OrkStackConcurrencyQueuedTooLong](#orkstackconcurrencyqueuedtoolong)
+
+### OrkStackConcurrencyRebuildFailing
+
+Severity warning; fires after 10m. A concurrency limit cannot read which runs hold it.
+
+- **What it means:** The limit lost its record, and its reading of the cluster's runs keeps failing.
+- **Impact:** It grants nothing: its line waits, and refuse and skip limits are refused as unavailable.
+- **Confirm:** `orkctl concurrency get KEY` shows the limit reading its holders, failing since when.
+- **Fix:** Check Temporal's visibility (the index of runs); the limit retries by itself.
+- **Related:** [OrkStackConcurrencyIndexMissing](#orkstackconcurrencyindexmissing), [OrkStackTemporalUnreachable](#orkstacktemporalunreachable)
+
+### OrkStackConcurrencyQueueMismatch
+
+Severity info; fires after 30m. The runs marked queued and the limits' lines disagree.
+
+- **What it means:** A run's queued mark, or a limit's record of its line, is out of date.
+- **Impact:** `orkctl run list -F queued=true` and `orkctl concurrency list` show different runs waiting.
+- **Confirm:** Compare `orkctl run list -F queued=true` with `orkctl concurrency list`.
+- **Fix:** Nothing at once: the runs re-assert their place and the limits check their holders. If it persists, read the engines' logs.
+- **Related:** [OrkStackConcurrencyCensusPartial](#orkstackconcurrencycensuspartial)
+
+### OrkStackConcurrencyUnavailable
+
+Severity warning; fires after 5m. Concurrency limits do not answer.
+
+- **What it means:** The limit did not answer within engine.concurrency.acquire_timeout, or was rebuilding its record when asked.
+- **Impact:** Runs fail `RUN_CONCURRENCY_UNAVAILABLE`, and submits are refused `CONCURRENCY_CHECK_UNAVAILABLE`.
+- **Confirm:** `orkctl concurrency list` shows limits not answering.
+- **Fix:** Check Temporal and the engines; see ConcurrencyRebuildFailing.
+- **Related:** [OrkStackConcurrencyRebuildFailing](#orkstackconcurrencyrebuildfailing), [OrkStackTemporalUnreachable](#orkstacktemporalunreachable)
+
+### OrkStackConcurrencyFireNotStarted
+
+Severity info; fires after 30m. Schedules' fires start no run.
+
+- **What it means:** A concurrency limit's line was full, max_running was full of queued runs, or the limit could not be checked.
+- **Impact:** Those fires' work is not done; the schedules do not pause for it.
+- **Confirm:** `orkctl schedule get NAME` shows each fire's NOTE.
+- **Fix:** Read the NOTE: shorten the line, raise the limit or max_running, or see ConcurrencyUnavailable.
+- **Related:** [OrkStackConcurrencyUnavailable](#orkstackconcurrencyunavailable), [OrkStackScheduleFiresFailing](#orkstackschedulefiresfailing)
+
+### OrkStackConcurrencyIndexMissing
+
+Severity warning; fires after 5m. The cluster does not index concurrency limits.
+
+- **What it means:** Runs of an Orkflow that declares `concurrency:` are refused `CONCURRENCY_UNSUPPORTED (cause=index)`.
+- **Impact:** No limited Orkflow runs.
+- **Confirm:** `orkctl run list -F queued=true` is refused; the engine's boot log says which attribute is missing.
+- **Fix:** Register the search attributes (docs/DEPLOY.md, "Search attributes") and restart the engines.
+- **Related:** [OrkStackConcurrencyRebuildFailing](#orkstackconcurrencyrebuildfailing)
+
 ## Retention cleanup and artifact GC
 
 ### OrkStackCleanupDisabled

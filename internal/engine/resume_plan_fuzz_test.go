@@ -98,7 +98,7 @@ func fuzzPlanInput(data []byte) ResumePlanInput {
 		if g.n(8) == 0 {
 			row.ReadingBack = true
 			row.Status = sCanc
-			row.Error = &orkstackv1.Error{Code: notReadBackReason}
+			row.Error = &orkstackv1.Error{Code: ReasonResumeNotReadBack}
 		}
 		if t.Each != nil {
 			for k := range g.n(4) {
@@ -189,7 +189,7 @@ func referenceRerunSet(in ResumePlanInput, plan *ResumePlan) map[ResumeUnit]bool
 			r := row(u)
 			switch {
 			case in.Evidence.Kept[u] == KeptGone && (r.Status == sOK || r.ReadingBack ||
-				r.GetError().GetCode() == notReadBackReason || in.Class == ResumeBaseForceCanceled):
+				r.GetError().GetCode() == ReasonResumeNotReadBack || in.Class == ResumeBaseForceCanceled):
 				ref[u] = true
 			case r.Status != sOK && r.Status != sSkip:
 				ref[u] = true

@@ -28,10 +28,13 @@ type gpuLockView interface {
 }
 
 // unitBinding is what step 6b adds to the container spec: the bound units'
-// CDI names and the labels the lock-scoped reap finds them by.
+// CDI names and the labels the lock-scoped reap finds them by; and to the
+// attempt's record: the profile and the units' positions in its list.
 type unitBinding struct {
-	cdi    []string
-	labels map[string]string
+	profile string
+	indices []int
+	cdi     []string
+	labels  map[string]string
 }
 
 // bindUnits is dispatch step 6b: after the pull, before the render, a task
@@ -75,7 +78,18 @@ func (d *OCIDispatcher) bindUnits(_ context.Context, in *orkstackv1.ExecuteTaskI
 		return unitBinding{}, failure
 	}
 	indices := admission.Units()
+	// The reservation is what the poll's admission read of the task; the task is
+	// what asks. Were the two ever to differ, a container with no unit, or with
+	// one too many, is never the answer.
+	if len(indices) != int(want) {
+		failure := Fail(ReasonGPUUnitsUnavailable,
+			"invariant failure: task %q asks for %d gpu units, and its admission holds %d", in.GetTaskId(), want, len(indices))
+		d.logger().Error("gpu units could not be bound: an invariant of the ledger failed",
+			"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "error", failure)
+		return unitBinding{}, failure
+	}
 	b := unitBinding{
+		profile: offer.profile, indices: indices,
 		cdi: make([]string, len(indices)),
 		labels: map[string]string{
 			labelUnitsLock: offer.lock.identity(),

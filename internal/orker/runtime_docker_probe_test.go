@@ -14,11 +14,10 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
-// probeBudget is the per-attempt budget a scenario gives a bind probe that is
-// meant to overrun it. It is long enough that a stand-in `docker run` which
-// exits at once finishes inside it on a host with four times as many busy
-// processes as CPUs, and short enough that a scenario with two overruns costs
-// about two seconds.
+// probeBudget is the per-attempt budget a scenario states for a bind probe that
+// overruns it. Where it runs under countingDocker.slow it is only what the
+// refusal quotes: an attempt ends when the stand-in holds it, and one the
+// stand-in answers has no budget to beat, however slow the host.
 const probeBudget = time.Second
 
 // runs reports how many `docker run` invocations the stand-in has counted.
@@ -172,7 +171,7 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 			for flag, content := range tt.flags {
 				fake.set(flag, content)
 			}
-			runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: tt.budget}
+			runtime := fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: tt.budget})
 
 			root := t.TempDir()
 			if tt.rootName != "" {
@@ -231,7 +230,7 @@ func TestDockerRuntime_RunBootProbeTimeoutNamesTheDaemonAndTheSetting(t *testing
 	fake := newCountingDocker(t)
 	fake.set("present", "")
 	fake.set("slowruns", "9")
-	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
+	runtime := fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget})
 	root := t.TempDir()
 
 	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
@@ -258,7 +257,7 @@ func TestDockerRuntime_RunBootProbeReportsAContainerItCouldNotRemove(t *testing.
 	fake.set("present", "")
 	fake.set("slowruns", "9")
 	fake.set("rmfailall", "")
-	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
+	runtime := fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget})
 
 	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
@@ -306,7 +305,7 @@ func TestDockerRuntime_RunBootProbeSlowImageInspectIsTheDaemonsNotTheImages(t *t
 	fake := newCountingDocker(t)
 	fake.set("present", "")
 	fake.set("inspecthang", "")
-	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
+	runtime := fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget})
 
 	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
@@ -344,7 +343,7 @@ func TestDockerRuntime_RunBootProbeSlowEngineIsTheDaemonsNotThePostures(t *testi
 			fake := newCountingDocker(t)
 			fake.set("present", "")
 			fake.set(tt.flag, "")
-			runtime := &DockerRuntime{Bin: fake.bin, CLI: tt.cli, BindProbeTimeout: probeBudget}
+			runtime := fake.slow(&DockerRuntime{Bin: fake.bin, CLI: tt.cli, BindProbeTimeout: probeBudget})
 
 			_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
@@ -501,7 +500,7 @@ func TestBoot_NamesTheBindProbeOutcome(t *testing.T) {
 			activities := NewActivitiesWithOptions(nil, Options{
 				OrkerID:  fmt.Sprintf("orker-probe-boot-%d-%d", os.Getpid(), i),
 				WorkRoot: t.TempDir(),
-				Runtime:  &DockerRuntime{Bin: fake.bin, BindProbeTimeout: tt.budget},
+				Runtime:  fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: tt.budget}),
 			})
 			t.Cleanup(activities.Close)
 
@@ -585,6 +584,198 @@ func TestDockerRuntime_BindProbeTimeoutPrecedence(t *testing.T) {
 			t.Setenv(BindProbeTimeoutVar, tt.env)
 			if got := (&DockerRuntime{BindProbeTimeout: tt.field}).bindProbeTimeout(); got != tt.want {
 				t.Fatalf("bindProbeTimeout = %s; want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDockerRuntime_RunBootProbeFailedSaysWhatTheContainerSaid: a run that
+// ended without success hands back what its container wrote and what could
+// not be removed, so a caller can tell one that started from one that never
+// did.
+func TestDockerRuntime_RunBootProbeFailedSaysWhatTheContainerSaid(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("runexit", "")
+	fake.set("runsays", "orker probe unit: started")
+	fake.set("rmfailall", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+	run, err := runtime.RunBootProbe(t.Context(), probeSpecUnder(t, t.TempDir()))
+	if !errors.Is(err, ErrPostureRefused) || errors.Is(err, errEngineUnreachable) {
+		t.Fatalf("RunBootProbe = %v, want ErrPostureRefused from an engine that answered", err)
+	}
+	if !strings.HasPrefix(run.Stdout, unitProbeStarted) || len(run.Leftovers) != 1 {
+		t.Fatalf("run = %+v; want the container's words and the one it could not remove", run)
+	}
+}
+
+// TestDockerRuntime_RunBootProbeUnreachableEngine: the CLI's own word that no
+// engine answered is told from a refusal the engine gave.
+func TestDockerRuntime_RunBootProbeUnreachableEngine(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("rununreachable", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+	if _, err := runtime.RunBootProbe(t.Context(), probeSpecUnder(t, t.TempDir())); !errors.Is(err, errEngineUnreachable) || !errors.Is(err, ErrPostureRefused) {
+		t.Fatalf("RunBootProbe = %v, want ErrPostureRefused and errEngineUnreachable", err)
+	}
+}
+
+// TestDockerRuntime_AnImageNobodyAnsweredForIsNotAbsent: a pull or a label
+// read the engine gave no answer to is told from an image it says it has not
+// got, by its own word or by its silence past the bound; what the caller sees
+// of a pull that failed is otherwise what it was.
+func TestDockerRuntime_AnImageNobodyAnsweredForIsNotAbsent(t *testing.T) {
+	const image = "ghcr.io/orkstack/orker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for name, tc := range map[string]struct {
+		flag        string
+		unreachable bool
+	}{"no daemon": {"imagesunreachable", true}, "the registry has none": {"pullfail", false}} {
+		t.Run(name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			fake.set(tc.flag, "")
+			runtime := &DockerRuntime{Bin: fake.bin}
+			if _, err := runtime.Pull(t.Context(), image); err == nil || errors.Is(err, errEngineUnreachable) != tc.unreachable {
+				t.Fatalf("Pull = %v; want an error, the engine's silence %v", err, tc.unreachable)
+			}
+			if _, _, err := runtime.ImageLabel(t.Context(), image, LabelBuild); err == nil || errors.Is(err, errEngineUnreachable) != tc.unreachable {
+				t.Fatalf("ImageLabel = %v; want an error, the engine's silence %v", err, tc.unreachable)
+			}
+		})
+	}
+	fake := newCountingDocker(t)
+	fake.set("inspecthang", "")
+	runtime := &DockerRuntime{Bin: fake.bin}
+	if _, present, silent, err := runtime.lookupImage(t.Context(), 50*time.Millisecond, image); present || !silent || err != nil {
+		t.Fatalf("lookupImage of a daemon that hangs = present %v, silent %v, %v; want only silent", present, silent, err)
+	}
+}
+
+// TestDialect_Unreachable: each CLI's words that no engine answered it, and
+// words that are an engine's answer.
+func TestDialect_Unreachable(t *testing.T) {
+	for said, want := range map[string]bool{
+		"Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?":        true,
+		"docker: Cannot connect to the Docker daemon at tcp://x:2375.":                                             true,
+		"Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock": true,
+		"permission denied while trying to connect to the docker API at unix:///var/run/docker.sock":               true,
+		"error during connect: Get \"http://x/v1.51/info\": EOF":                                                   true,
+		"Cannot connect to Podman. Please verify your connection":                                                  true,
+		"unable to connect to Podman socket: dial unix /run/podman/podman.sock: connect: connection refused":       true,
+		"docker: Error response from daemon: CDI device injection failed: unresolvable CDI devices amd.com/gpu=0":  false,
+		"docker: Error response from daemon: no space left on device":                                              false,
+		"Error response from daemon: Get \"https://ghcr.io/v2/\": dial tcp: connect: connection refused":           false,
+		"Error: No such image": false,
+	} {
+		for _, cli := range []string{CLIDocker, CLIPodman} {
+			if got := (dialect{cli: cli}).unreachable(said); got != want {
+				t.Errorf("unreachable(%q) under %s = %v, want %v", said, cli, got, want)
+			}
+		}
+	}
+}
+
+// TestDockerRuntime_APullThatAnswersIsNotSilence: an inspect nobody answered
+// followed by a pull that got its answer is the pull's answer.
+func TestDockerRuntime_APullThatAnswersIsNotSilence(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("inspectunreachable", "")
+	fake.set("pullfail", "")
+	runtime := &DockerRuntime{Bin: fake.bin}
+	_, err := runtime.Pull(t.Context(), "ghcr.io/orkstack/orker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err == nil || errors.Is(err, errEngineUnreachable) || !strings.Contains(err.Error(), "pull access denied") {
+		t.Fatalf("Pull = %v; want the registry's own answer", err)
+	}
+}
+
+// TestDockerRuntime_RunBootProbeUnidentifiedEngine: an engine that cannot be
+// reached to say what it is, is unreachable and not a refusal.
+func TestDockerRuntime_RunBootProbeUnidentifiedEngine(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("versionfail", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+	if _, err := runtime.RunBootProbe(t.Context(), probeSpecUnder(t, t.TempDir())); !errors.Is(err, errEngineUnreachable) || !errors.Is(err, ErrPostureRefused) {
+		t.Fatalf("RunBootProbe = %v, want ErrPostureRefused and errEngineUnreachable", err)
+	}
+}
+
+// TestDockerRuntime_RunBootProbeNeverRetriesAUnit: a probe given a CDI device
+// is run once: a second run would share the unit with a first that could not
+// be removed.
+func TestDockerRuntime_RunBootProbeNeverRetriesAUnit(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("slowruns", "9")
+	runtime := fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget})
+	spec := probeSpecUnder(t, t.TempDir())
+	spec.CDIDevices = []string{"amd.com/gpu=0"}
+	if _, err := runtime.RunBootProbe(t.Context(), spec); !errors.Is(err, ErrProbeTimedOut) || fake.runs() != 1 {
+		t.Fatalf("RunBootProbe = %v after %d runs; want ErrProbeTimedOut after one", err, fake.runs())
+	}
+}
+
+// TestDockerRuntime_ACallEndsAtItsBudget: outside callBound a call and the
+// engine question end at the budget they are given, as an overrun. Nothing here
+// has to be quick: the stand-in holds each call far past its budget.
+func TestDockerRuntime_ACallEndsAtItsBudget(t *testing.T) {
+	const budget = 50 * time.Millisecond
+	fake := newCountingDocker(t)
+	fake.set("inspecthang", "")
+	if _, overran, _ := (&DockerRuntime{Bin: fake.bin}).runWithin(t.Context(), budget, "image", "inspect"); !overran {
+		t.Error("a held call did not end as an overrun of its budget")
+	}
+	fake.set("versionhang", "")
+	if _, overran, _ := (&DockerRuntime{Bin: fake.bin}).dialectWithin(t.Context(), budget); !overran {
+		t.Error("an engine that answers nothing did not end as an overrun of its budget")
+	}
+}
+
+// TestDockerRuntime_TheProbesCallsAreBoundedByItsBudget: BindProbeTimeout is the
+// bound of every step of a boot probe that waits on the daemon: which engine it
+// is, its image, and each container's run, attached and detached.
+func TestDockerRuntime_TheProbesCallsAreBoundedByItsBudget(t *testing.T) {
+	const budget = 73 * time.Minute // no other bound's value
+	for name, probe := range map[string]struct {
+		run   func(*DockerRuntime, ContainerSpec) error
+		bound []string
+	}{
+		"attached": {func(d *DockerRuntime, spec ContainerSpec) error {
+			_, err := d.RunBootProbe(t.Context(), spec)
+			return err
+		}, []string{"version ", "info ", "image inspect ", "run "}},
+		"detached": {func(d *DockerRuntime, spec ContainerSpec) error {
+			_, err := d.StartBootProbe(t.Context(), spec)
+			return err
+		}, []string{"version ", "info ", "run --detach "}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			fake.set("present", "")
+			var withins []time.Duration
+			runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: budget}
+			runtime.callBound = func(ctx context.Context, within time.Duration) (context.Context, context.CancelFunc) {
+				withins = append(withins, within)
+				return context.WithCancel(ctx)
+			}
+			must.OK(t, probe.run(runtime, probeSpecUnder(t, t.TempDir())))
+			// A run's script spans lines, so only the calls' first lines are told apart.
+			calls := fake.calls()
+			if len(calls) < len(probe.bound) {
+				t.Fatalf("calls = %q; want %q", calls, probe.bound)
+			}
+			for i, want := range probe.bound {
+				if !strings.HasPrefix(calls[i], want) {
+					t.Errorf("call %d = %q; want %q", i, calls[i], want)
+				}
+			}
+			// One bound for the engine question, then one a call.
+			if len(withins) != len(probe.bound)+1 {
+				t.Fatalf("%d bounds for %d calls", len(withins), len(probe.bound))
+			}
+			for i, within := range withins {
+				if within != budget {
+					t.Errorf("bound %d is %s; want the probe's budget, %s", i, within, budget)
+				}
 			}
 		})
 	}

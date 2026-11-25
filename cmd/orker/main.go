@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
@@ -1023,6 +1022,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		go activities.WatchIdentitySupport(support).Run(ctx)
 		// The mint every attempt asks, at most max_concurrent at once.
 		activities.Dispatcher().SetIdentityMint(orker.NewIdentityMinter(engine, cfg.identity.MaxConcurrent))
+		activities.Dispatcher().SetResultCommit(orker.NewResultCommitter(engine))
 	}
 	// The periodic profile audit: every audit_interval, each device of an
 	// audited profile again; a difference is drift (docs/DEPLOY.md,
@@ -1040,30 +1040,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	taskWorker := worker.New(temporalClient, cfg.queue, taskOptions)
-	taskWorker.RegisterActivityWithOptions(
-		activities.ExecuteTask,
-		activity.RegisterOptions{Name: task.ActivityExecuteTask},
-	)
-	taskWorker.RegisterActivityWithOptions(
-		activities.DescribeOrker,
-		activity.RegisterOptions{Name: task.ActivityDescribeOrker},
-	)
-	// The line indexer of a fan-out over an artifact's lines, scheduled on
-	// the fan-out's pool channel (docs/DSL.md, "Fan-out over an artifact's
-	// lines"). It starts no container.
-	taskWorker.RegisterActivityWithOptions(
-		activities.IndexEachLines,
-		activity.RegisterOptions{Name: task.ActivityIndexEachLines},
-	)
-	// Registered unconditionally, on the ordinary worker. The engine schedules
-	// it on the pin's own SESSION context, which is what routes it to the host
-	// that owns the directory (§6.4); an Orker with no pins registers a name
-	// nobody will ever schedule, which costs nothing and keeps the registration
-	// block one shape.
-	taskWorker.RegisterActivityWithOptions(
-		activities.ReleasePin,
-		activity.RegisterOptions{Name: task.ActivityReleasePin},
-	)
+	activities.RegisterTaskActivities(taskWorker)
 
 	// The control and presence workers are built before anything starts, so a
 	// refusal leaves nothing polling.

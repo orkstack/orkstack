@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/orker/servicehost"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
@@ -29,17 +31,21 @@ import (
 func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 	requireDocker(t)
 	registry := localcatalog.Registry()
+	cli := containerCLI(t)
+	owner := proof.OrkerID("reachprobe")
+	// Compiling the binary and building and pushing its image is most of this
+	// test's time on a loaded host (276 s of 412 s, measured beside the
+	// fixture images' builds), and none of the probes'.
+	buildCtx, built := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer built()
+	image := buildProbeImage(buildCtx, t, cli, registry, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	cli := containerCLI(t)
 	run := func(args ...string) string {
 		out, err := exec.CommandContext(ctx, containerCLI(t), args...).CombinedOutput()
 		must.OKf(t, err, "%s %s: %s", cli, strings.Join(args, " "), out)
 		return strings.TrimSpace(string(out))
 	}
-	owner := proof.OrkerID("reachprobe")
-	image := buildProbeImage(ctx, t, cli, registry, owner)
-
 	listenerNet := owner + "-open"
 	run("network", "create", "--label", "ork.orker="+owner, listenerNet)
 	t.Cleanup(func() { _ = exec.Command(containerCLI(t), "network", "rm", listenerNet).Run() })
@@ -66,7 +72,13 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 	plantedHost := net.JoinHostPort(hostAddress(t), fmt.Sprint(hostListener.Addr().(*net.TCPAddr).Port))
 
 	d := &orker.OCIDispatcher{Runtime: orker.NewDockerRuntime(), OrkerID: owner}
-	got := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, OperatorAddresses: []string{planted, plantedHost}, Cluster: "127.0.0.1:1"})
+	// The host listener is also the probe's admin port, which question 2 asks
+	// at every way a container reaches its host, the runtime's own name for
+	// it included: a rootless runtime that gives the container the host's
+	// address reaches the host only by that name.
+	hostPort := hostListener.Addr().(*net.TCPAddr).Port
+	got := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, OperatorAddresses: []string{planted, plantedHost},
+		AdminPort: hostPort, Cluster: "127.0.0.1:1"})
 	r := got.Result
 	if !r.Ran {
 		t.Fatalf("the probe did not run: %+v", r)
@@ -75,8 +87,12 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 		t.Error("a service's answer filesystem could not be made and opened")
 	}
 	joined := strings.Join(r.Fitness.Failures, "\n")
-	if !strings.Contains(joined, "question 1: tcp reached "+planted) && !strings.Contains(joined, "question 1: tcp reached "+plantedHost) {
-		t.Fatalf("positive control: the probe reported neither planted address (%s, %s) reached:\n%s", planted, plantedHost, joined)
+	reachedHost := slices.ContainsFunc(r.Fitness.Failures, func(f string) bool {
+		return strings.HasPrefix(f, "question 2: tcp reached ") && strings.Contains(f, fmt.Sprintf(":%d ", hostPort))
+	})
+	if !strings.Contains(joined, "question 1: tcp reached "+planted) && !strings.Contains(joined, "question 1: tcp reached "+plantedHost) && !reachedHost {
+		t.Fatalf("positive control: the probe reported no planted listener reached (%s, %s, or port %d at the host):\n%s",
+			planted, plantedHost, hostPort, joined)
 	}
 	for _, f := range r.Fitness.Failures {
 		if strings.HasPrefix(f, "question 4:") || strings.Contains(f, "not asked") {
@@ -84,6 +100,18 @@ func TestIntegration_ReachProbe_RunsAndJudges(t *testing.T) {
 		}
 	}
 	t.Logf("what this host answers to a service network:\n%s", joined)
+	// A name that does not resolve on a service network was not asked, so the
+	// probe did not run, and says which. A host that answers something else
+	// open reports that instead, so the questions are accepted as far as they
+	// can be, and question 3 is asked of a name no resolver answers.
+	unresolved := d.RunReachProbe(ctx, orker.ReachProbeConfig{Image: image, Cluster: "ork-probe.invalid:7233",
+		Allow: servicehost.Allowances{MetadataReach: true, ContainerReach: true}}).Result
+	if unresolved.Ran && unresolved.Fitness.Fit {
+		t.Errorf("a cluster's name that does not resolve was read as not reached: %+v", unresolved)
+	} else if !unresolved.Ran && !strings.Contains(unresolved.Err, "ork-probe.invalid:7233") {
+		t.Errorf("the probe did not run for another reason: %+v", unresolved)
+	}
+	t.Logf("asked of a name that does not resolve: %+v", unresolved)
 	out := run("ps", "-a", "--filter", "label=ork.orker="+owner, "--format", "{{.ID}} {{.Label \"ork.task\"}}")
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, " reachprobe") {

@@ -380,10 +380,28 @@ are read once a definition and kept, at most 256 definitions a replica. The run'
 budget, so an attempt's deadline has room to wait for an engine. Cleanup
 removes a run's records with its commits.
 
-The Orker's half, which reads, adopts and stages only from these records and
-hands its manifest to the engine, is not built in this release yet: no
-Orker calls `CommitResult`, and an Orker's commit store may read under
-`metadata/attested/` and never writes there.
+For such a run the Orker reads, adopts, stages and takes a memo hit only
+from these records (`docs/OCI_ACTIVITY_CONTRACT.md` §7.1, steps 3, 3d, 5, 5b
+and 13). Its commit check reads the key's record and nothing under
+`metadata/commits/`; a task that holds no identity asks the engine's
+preflight before anything of the attempt is made; each container upstream's
+references must be exactly those its record names
+(`UPSTREAM_RESULT_NOT_RECORDED` otherwise); a memo hit is taken only from an
+engine's record of the task's pool under its memo key, and the memo key of
+such a run is never another kind of run's. At the commit the Orker hands the
+manifest to the engine and asks again, by the one retry rule, for the run's
+`identity.results.commit_wait`, held 5 s inside the attempt's deadline;
+before it gives up it reads the record's key itself, since an engine may
+have written it and not been heard, and only with nothing there fails
+`COMMIT_ENGINE_UNAVAILABLE`, retried. It never writes a result around the
+engine. A record already there, its own or another attempt's, is adopted.
+An upstream's record is found by the producer's own key in the run, never
+by a path its input names. Not everything is staged from a record yet. An
+awaited or a composed upstream of such a run, and the artifacts a composed
+run received (`_inputs`), fail `UPSTREAM_RESULT_NOT_RECORDED` until their own
+records are read. A failure handler stages a failed need's artifacts, and a
+fan-out its item values and its line index, as the cluster carries them, as
+before.
 
 ## Which Orkers serve it
 
@@ -505,7 +523,10 @@ the run id it is about to start, and one for each child run the tree
 composes, each naming its parent's run and record. A record holds what each
 task that runs a container may hold (its pool, its spec digest, and for a
 task that holds an identity its identities, the attempts that may hold them
-and each attempt's deadline) and who may start the run: an engine itself, a
+and each attempt's deadline), what started the tree and the principal that
+submitted it (never in the record of a run of another namespace's Orkflow, or
+of one below it, so that no token of theirs holds `ork_submitted_by`), and who
+may start the run: an engine itself, a
 schedule's fire, or the parent run. It is named by the SHA-256 of its own
 bytes, and a 128-bit random nonce in it keeps that name secret until the run
 starts: the run's plan carries the name, and nothing else does. A write that
@@ -523,7 +544,8 @@ anything is written. Before it signs, the engine checks:
   task's input (`internal/task`, `IdentitySpecDigest`), is the one the
   record holds. It binds the pinned image, the command, `env`, `with`, the
   secrets, the network mode, `run_as_orker_user`, the identities, the
-  credentials, the grants and the device profiles the task names. It does
+  credentials, the grants, and the device profiles the task names with the
+  contract it needs of each. It does
   not bind the run's input, what a task reads from its needs, its pool or
   its resources.
 

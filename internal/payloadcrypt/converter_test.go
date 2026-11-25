@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -30,8 +31,8 @@ func TestSealAndPlain_ReturnTheValueItself(t *testing.T) {
 	if _, err := NewConverter(converter.GetDefaultDataConverter(), nil).ToPayload(Seal(nil, v)); err == nil {
 		t.Fatal("a value sealed under a lost key was written")
 	}
-	if got := Plain(v); got != any(v) {
-		t.Fatalf("Plain(v) = %T, want v itself", got)
+	if got := Unplain(Plain(v)); got != any(v) {
+		t.Fatalf("Unplain(Plain(v)) = %T, want v itself", got)
 	}
 }
 
@@ -42,7 +43,7 @@ func TestConverter_UnsealedIsByteIdentical(t *testing.T) {
 	for _, keys := range []*EngineKeys{nil, mustEngineKeys(t, testKey(t, 1))} {
 		c := NewConverter(inner, keys)
 		for _, v := range []any{nil, "s", 42, []byte{1, 2}, map[string]any{"a": 1}, &wrapperspb.StringValue{Value: "x"}, Plain("p")} {
-			want, err := inner.ToPayload(v)
+			want, err := inner.ToPayload(Unplain(v))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,13 +178,26 @@ func mustEngineKeys(t *testing.T, ks ...*Key) *EngineKeys {
 	return e
 }
 
+// testDeadlockDetectionTimeout is the deadlock detector's budget in this
+// package's mocked-environment tests, as in internal/engine's harnesses: left
+// unset, the SDK applies its production 1 s to every workflow task, so a
+// loaded host, not the code under test, could fail an assertion.
+const testDeadlockDetectionTimeout = 60 * time.Second
+
 // sealedEnv is a test environment whose run carries memo's key field, with
 // the converter built over engineKeys.
 func sealedEnv(t *testing.T, memo *KeyMemo, engineKeys *EngineKeys) *testsuite.TestWorkflowEnvironment {
 	t.Helper()
 	var s testsuite.WorkflowTestSuite
 	env := s.NewTestWorkflowEnvironment()
+	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
 	dc := NewConverter(converter.GetDefaultDataConverter(), engineKeys)
+	if memo != nil {
+		// The activity worker's way to the run's key, as an engine's or an
+		// Orker's reader has it.
+		m := *memo
+		dc = dc.WithReaderKeys(func(context.Context, Context) (*Key, error) { return m.Open(engineKeys, "") })
+	}
 	env.SetDataConverter(dc)
 	env.SetFailureConverter(NewFailureConverter(dc, false))
 	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-root"})

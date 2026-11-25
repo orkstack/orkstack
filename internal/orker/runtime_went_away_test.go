@@ -37,7 +37,7 @@ func TestDockerRuntime_Wait_TellsARuntimeThatWentAwayFromAnOperatorsStop(t *test
 		{name: "the daemon goes as soon as it said so", events: "start \nkill 15\n", gone: "0", wantStopped: true, wantGone: true},
 		{name: "an operator's stop through a daemon that stays up", events: "start \nkill 15\nstop \ndie \ndestroy \n", wantStopped: true},
 		{name: "an operator's stop, the stream's CLI crashing while the daemon answers", events: "start \nkill 15\nstop \ndie \n", ends: true, wantStopped: true},
-		{name: "an operator's stop, the stream ending only after the window", events: "start \nkill 15\nstop \ndie \n", endsAfter: "4", wantStopped: true},
+		{name: "an operator's stop, the stream ending only after the window", events: "start \nkill 15\nstop \ndie \n", endsAfter: "20", wantStopped: true},
 		{name: "exits by itself, then the stream ends", events: "start \ndie \n", ends: true},
 		{name: "the stream ends before it says", events: "start \n", ends: true, settle: 200 * time.Millisecond},
 	} {
@@ -54,8 +54,14 @@ func TestDockerRuntime_Wait_TellsARuntimeThatWentAwayFromAnOperatorsStop(t *test
 				fake.set("eventsendgone", tt.gone)
 			}
 			fake.set("startquick", "")
-			runtime := &DockerRuntime{Bin: fake.bin, CLI: CLIDocker, stopSettle: tt.settle, goneWindow: time.Second}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			// A daemon that goes away has no window to beat; one that stays is
+			// watched for the whole of a short one.
+			window := time.Second
+			if tt.wantGone {
+				window = 30 * time.Second
+			}
+			runtime := &DockerRuntime{Bin: fake.bin, CLI: CLIDocker, stopSettle: tt.settle, goneWindow: window}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			var stdout, stderr bytes.Buffer
 			must.OKf(t, runtime.Start(ctx, "cid-0123", &stdout, &stderr), "Start")

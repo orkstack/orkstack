@@ -150,6 +150,47 @@ func TestIndexEachLines_CreateIfAbsentRetryIsIdempotent(t *testing.T) {
 	}
 }
 
+// A resume that keeps the producer indexes the same committed bytes and is
+// given the index the first run's items read; one that runs the producer
+// again has another source, and another index beside it, never in its place.
+func TestIndexEachLines_AKeptSourceKeepsItsIndexAndANewOneGetsItsOwn(t *testing.T) {
+	rig := newLinesRig(t, fiveRows)
+	first, err := rig.index(t, rig.input(2, 10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := rig.indexes.Get(context.Background(), first.GetIndex().GetUri(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := rig.store.Put(context.Background(), "files.jsonl", strings.NewReader("{\"n\":9}\n"), artifacts.PutOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerun := rig.input(2, 10)
+	rerun.Source = refPtr(again)
+	second, err := rig.index(t, rerun)
+	if err != nil {
+		t.Fatalf("index the rerun producer's source: %v", err)
+	}
+	if second.GetIndex().GetUri() == first.GetIndex().GetUri() || second.GetCount() != 1 {
+		t.Fatalf("the new source's index = %v, %d items; want its own, of 1 item", second.GetIndex(), second.GetCount())
+	}
+
+	kept, err := rig.index(t, rig.input(2, 10))
+	if err != nil {
+		t.Fatalf("index the kept source again: %v", err)
+	}
+	if kept.GetIndex().GetUri() != first.GetIndex().GetUri() || kept.GetIndex().GetSha256() != first.GetIndex().GetSha256() || kept.GetCount() != first.GetCount() {
+		t.Fatalf("the kept source's index = %v, want the first one %v", kept, first)
+	}
+	after, _, err := rig.indexes.Get(context.Background(), first.GetIndex().GetUri(), 1<<20)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("the first index changed (%v)", err)
+	}
+}
+
 func TestIndexEachLines_DifferentExistingIndex(t *testing.T) {
 	rig := newLinesRig(t, fiveRows)
 	ref := artifacts.EachLinesIndexRef{Namespace: "default", RunID: "ork-run", Task: "convert",

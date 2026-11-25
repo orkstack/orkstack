@@ -102,19 +102,21 @@ class Source:
         os.rename(ANS + "/tmp/b", ANS + "/" + LANE + "/body")
         say(LANE + "/message.json", {"schemaVersion": 1, "seq": seq, "id": "dir:" + mid,
                                      "bodyBytes": len(body), "deliveryCount": n})
-        held_at, action = time.monotonic(), None
+        held_at, action, vid = time.monotonic(), None, ""
         while action is None:
             self.tick()
             v = read_json(ASK + "/" + LANE + "/verdict.json")
             if v.get("seq") == seq and v.get("action"):
-                action = v["action"]
+                action, vid = v["action"], v.get("verdictId", "")
             elif stopping or self.orphaned:
-                action = "release"
+                action = "stopped"
             elif time.monotonic() - held_at >= self.hold:
                 action = "hold_expired"
             else:
                 time.sleep(0.2)
         settled = {"schemaVersion": 1, "seq": seq, "ok": True}
+        if vid:
+            settled["verdictId"] = vid  # the settle names the verdict it answers
         if action == "ack":
             os.rename(BROKER + "/held/" + mid, BROKER + "/done/" + mid)
         else:
@@ -122,6 +124,8 @@ class Source:
             os.rename(BROKER + "/held/" + mid, BROKER + to + mid)
             if action == "hold_expired":
                 settled["ok"], settled["error"] = False, {"kind": "hold_expired"}
+        if action == "stopped":
+            return  # no verdict to settle: the exit ends the exchange
         say(LANE + "/settled.json", settled)
 
 

@@ -131,11 +131,25 @@ func (s *Service) prepareAdmission(ctx context.Context, ns *orkstackv1.Namespace
 
 // admittedRunOf is one run's admission and, recursively, its children's.
 func (s *Service) admittedRunOf(ctx context.Context, common artifacts.Admission, wf *orkstackv1.Orkflow, plan *engine.RunPlan) (*admittedRun, error) {
+	// Another namespace's definition, and whatever runs below it, is not told
+	// who submitted the tree: its tokens are read by that namespace's code.
+	if wf.GetDefinitionNamespace() != "" {
+		common.Origin.Principal, common.Origin.Verified = "", false
+	}
 	a := common
-	a.Orkflow, a.OrkflowVersion, a.DefinitionDigest = wf.GetName(), wf.GetVersion(), wf.GetDefinitionDigest()
+	a.Orkflow, a.OrkflowVersion = wf.GetName(), wf.GetVersion()
+	// A record holds the digest's bytes; a definition names its algorithm too.
+	digest, ok := strings.CutPrefix(wf.GetDefinitionDigest(), "sha256:")
+	if !ok {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("the Orkflow %s@%s has no SHA-256 definition digest: %q",
+			wf.GetName(), wf.GetVersion(), wf.GetDefinitionDigest()))
+	}
+	a.DefinitionDigest = digest
+	// A shared child's planned definition is in the namespace it runs in and
+	// names its owner apart; its record, and so its tokens, are its owner's.
 	owner := common.Namespace
-	if o := wf.GetNamespace(); o != "" && artifacts.ResolveNamespace(o) != common.Namespace {
-		owner = artifacts.ResolveNamespace(o)
+	if o := engine.DefinitionOwner(wf); wf.GetDefinitionNamespace() != "" && o != common.Namespace {
+		owner = o
 		a.OrkflowNamespace = owner
 	}
 	orkflowID, err := s.orkflowID(ctx, owner, wf.GetName(), true)

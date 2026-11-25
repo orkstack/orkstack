@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -284,20 +283,18 @@ func TestCapacity_APollParkedForCapacityStillMeetsALaterCordon(t *testing.T) {
 	c.release(second)
 }
 
-func TestExecuteTaskRequest_ReservesTheRequestAndNeverLessThanItCannotRead(t *testing.T) {
+func TestExecuteTaskRequest_ReservesTheRequest(t *testing.T) {
 	policy := DefaultSecurityPolicy() // a cap of 8 cpu, 16Gi; a default of 1 cpu, 1Gi
-	ceiling, _ := policy.ceiling()
 	for name, tc := range map[string]struct {
-		args []any
+		in   *orkstackv1.ExecuteTaskInput
 		want amount
 	}{
-		"a request":            {[]any{&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "1.5", Memory: "512Mi"}}}, amount{milli: 1500, bytes: 512 << 20}},
-		"no request":           {[]any{&orkstackv1.ExecuteTaskInput{}}, amount{milli: 1000, bytes: 1 << 30}},
-		"a request it refuses": {[]any{&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "64"}}}, amount{}},
-		"no arguments":         {nil, ceiling},
-		"an input of no shape": {[]any{"not an input"}, ceiling},
+		"a request":            {&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "1.5", Memory: "512Mi"}}, amount{milli: 1500, bytes: 512 << 20}},
+		"no request":           {&orkstackv1.ExecuteTaskInput{}, amount{milli: 1000, bytes: 1 << 30}},
+		"a gpu request":        {&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Gpu: 1}}, amount{milli: 1000, bytes: 1 << 30, gpu: 1}},
+		"a request it refuses": {&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "64"}}, amount{}},
 	} {
-		if got := executeTaskRequest(policy, &interceptor.ExecuteActivityInput{Args: tc.args}); got != tc.want {
+		if got := executeTaskRequest(policy, tc.in); got != tc.want {
 			t.Errorf("%s: reserves %s, want %s", name, got, tc.want)
 		}
 	}

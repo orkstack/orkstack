@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -67,6 +68,69 @@ type fakeConcReader struct {
 	// hang makes GateLine wait for its context to end, as a gate that
 	// does not answer does.
 	hang bool
+	// closed are the holder runs the cluster reports ended; describeErr
+	// fails the describe; verified records each gate sent a verify.
+	closed      map[string]bool
+	describeErr error
+	verified    []string
+	// gates are the namespace's gates ConcurrencyService lists.
+	gates    []engine.GateView
+	gatesErr error
+}
+
+func (f *fakeConcReader) ClosedRuns(_ context.Context, runs []string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, "describe")
+	if f.describeErr != nil {
+		return nil, f.describeErr
+	}
+	var out []string
+	for _, r := range runs {
+		if f.closed[r] {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeConcReader) Gates(_ context.Context, _ string, pageSize int, token []byte) ([]engine.GateView, []byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gatesErr != nil {
+		return nil, nil, f.gatesErr
+	}
+	start := 0
+	if len(token) > 0 {
+		start = int(token[0])
+	}
+	end := min(start+pageSize, len(f.gates))
+	var next []byte
+	if end < len(f.gates) {
+		next = []byte{byte(end)}
+	}
+	return f.gates[start:end], next, nil
+}
+
+func (f *fakeConcReader) Gate(_ context.Context, gateID string) (engine.GateView, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gatesErr != nil {
+		return engine.GateView{}, false, f.gatesErr
+	}
+	for _, g := range f.gates {
+		if g.GateID == gateID {
+			return g, true, nil
+		}
+	}
+	return engine.GateView{}, false, nil
+}
+
+func (f *fakeConcReader) Verify(_ context.Context, gateID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.verified = append(f.verified, gateID)
+	return nil
 }
 
 func (f *fakeConcReader) ActiveGates(context.Context, string) (int64, error) {
@@ -162,6 +226,11 @@ func TestSubmitRun_PinsTheRunConcurrencyPlan(t *testing.T) {
 			createAsked := caps.questions() // create's warning asks once too
 			must.OKf(t, submitEnv(svc, "migrate", tc.env, ""), "submit")
 			plan := starter.plans[0]
+			// What a resume asks before it lets a run run again (E85): a plan
+			// as submit really pins it, so a stubbed predicate fails here.
+			if !engine.PlanHasConcurrency(plan) {
+				t.Fatal("PlanHasConcurrency = false for a plan submit gave a limit")
+			}
 			c := plan.Concurrency
 			if c == nil || len(c.Slots) != 1 || c.Run == nil || *c.Run != 0 {
 				t.Fatalf("plan Concurrency = %+v, want one run-level slot", c)
@@ -190,7 +259,7 @@ func TestSubmitRun_PinsTheRunConcurrencyPlan(t *testing.T) {
 	svc := concService(t, starter, caps, nil)
 	must.OK(t, applyDoc(t, svc, untimedInnerYAML))
 	must.OKf(t, submitName(svc, "inner"), "submit")
-	if plan := starter.plans[0]; plan.Concurrency != nil || plan.History.Reserve != engine.DefaultHistoryReserve || caps.questions() != 0 {
+	if plan := starter.plans[0]; plan.Concurrency != nil || engine.PlanHasConcurrency(plan) || plan.History.Reserve != engine.DefaultHistoryReserve || caps.questions() != 0 {
 		t.Fatalf("a run with no limit: Concurrency %+v, reserve %+v, %d fleet questions; want none, the default, 0",
 			plan.Concurrency, plan.History.Reserve, caps.questions())
 	}
@@ -458,6 +527,82 @@ func TestSubmitRun_TheKeyAndLineChecks(t *testing.T) {
 	}
 }
 
+// TestSubmitRun_RefuseAndSkipAtAFullKey: a refuse or skip limit refuses a
+// full key CONCURRENCY_LIMIT_REACHED before a run id, naming the runs that
+// hold it and any that are stalled; a holder the cluster reports ended
+// counts as free, and the gate is asked to check its holders. A key under
+// its limit is accepted, a rebuilding gate cannot answer, and neither
+// strategy asks a line bound. The plan pins the declared strategy.
+func TestSubmitRun_RefuseAndSkipAtAFullKey(t *testing.T) {
+	gate := engine.GateID("default", "", "db:prod")
+	full := engine.GateLine{Present: true, Holders: 2, Queued: 0, HolderRuns: []string{"ork-a", "ork-b"}}
+	stalled := full
+	stalled.StalledRuns = []string{"ork-b"}
+	rebuilding := engine.GateLine{Present: true, Rebuilding: true}
+	for _, strategy := range []string{"refuse", "skip"} {
+		block := templatedLimit + "\n  on_limit: " + strategy
+		for _, tc := range []struct {
+			name       string
+			reader     *fakeConcReader
+			wantCode   connect.Code
+			wantText   []string
+			wantVerify bool
+			wantAsked  []string
+		}{
+			{name: "a free slot", reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: {Present: true, Holders: 1}}},
+				wantAsked: []string{"line"}},
+			{name: "a new key", reader: &fakeConcReader{}, wantAsked: []string{"line", "active"}},
+			{name: "a full key", reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: full}},
+				wantCode:  connect.CodeFailedPrecondition,
+				wantText:  []string{"CONCURRENCY_LIMIT_REACHED", "key db:prod is at its limit (2 of 2 running: ork-a, ork-b)"},
+				wantAsked: []string{"line", "describe"}},
+			{name: "a full key with a stalled holder", reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: stalled}},
+				wantCode: connect.CodeFailedPrecondition,
+				wantText: []string{"CONCURRENCY_LIMIT_REACHED", "run ork-b is not making progress; an operator must end it"}},
+			{name: "a holder that has ended", reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: full},
+				closed: map[string]bool{"ork-a": true}}, wantVerify: true, wantAsked: []string{"line", "describe"}},
+			{name: "holders that cannot be described", reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: full},
+				describeErr: errors.New("describe failed")},
+				wantCode: connect.CodeUnavailable, wantText: []string{"CONCURRENCY_CHECK_UNAVAILABLE", "scope=key", "describe failed"}},
+			{name: "a rebuilding gate", reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: rebuilding}},
+				wantCode: connect.CodeUnavailable, wantText: []string{"CONCURRENCY_CHECK_UNAVAILABLE", "scope=key", "rebuilding"}},
+		} {
+			t.Run(strategy+"/"+tc.name, func(t *testing.T) {
+				starter := &concStarter{fakeStarter: &fakeStarter{}, indexed: true}
+				cfg := api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Starter: starter, Capabilities: &fakeCapabilities{},
+					ConcurrencyReader: tc.reader}
+				svc := api.NewService(cfg)
+				must.OK(t, applyDoc(t, svc, limitedYAML(block)))
+				err := submitName(svc, "migrate")
+				if tc.wantCode == 0 {
+					must.OKf(t, err, "submit")
+					if got := starter.plans[0].Concurrency.Slots[0].Strategy; got != strategy {
+						t.Fatalf("plan strategy = %q, want %q", got, strategy)
+					}
+				} else if connect.CodeOf(err) != tc.wantCode {
+					t.Fatalf("submit = %v; want %v", err, tc.wantCode)
+				}
+				for _, text := range tc.wantText {
+					if !strings.Contains(err.Error(), text) {
+						t.Fatalf("submit = %v; want it to name %q", err, text)
+					}
+				}
+				if tc.wantCode != 0 && len(starter.startedRuns()) != 0 {
+					t.Fatal("a refused submit started a run")
+				}
+				if got := len(tc.reader.verified) > 0; got != tc.wantVerify {
+					t.Fatalf("verify sent = %v, want %v", got, tc.wantVerify)
+				}
+				if tc.wantAsked != nil {
+					if got := tc.reader.questions(); strings.Join(got, ",") != strings.Join(tc.wantAsked, ",") {
+						t.Fatalf("asked %v, want %v", got, tc.wantAsked)
+					}
+				}
+			})
+		}
+	}
+}
+
 // TestSubmitRun_AKeyedRetrySkipsTheLineChecks: a bound key's retry returns
 // its run however full the line has become.
 func TestSubmitRun_AKeyedRetrySkipsTheLineChecks(t *testing.T) {
@@ -580,6 +725,41 @@ func TestTriggerInvoke_AFullLineIsTooManyRequests(t *testing.T) {
 	}
 }
 
+// TestTriggerInvoke_ARefuseLimitAnswersByItsClass: a refuse limit's full key
+// is 412 with no Retry-After, a gate that cannot answer is 503, and a key
+// with a free slot starts the run.
+func TestTriggerInvoke_ARefuseLimitAnswersByItsClass(t *testing.T) {
+	gate := engine.GateID("default", "", "db:prod")
+	for _, tc := range []struct {
+		name       string
+		line       engine.GateLine
+		wantStatus int
+	}{
+		{name: "a full key", line: engine.GateLine{Present: true, Holders: 2, HolderRuns: []string{"ork-a", "ork-b"}},
+			wantStatus: http.StatusPreconditionFailed},
+		{name: "a rebuilding gate", line: engine.GateLine{Present: true, Rebuilding: true},
+			wantStatus: http.StatusServiceUnavailable},
+		{name: "a free slot", line: engine.GateLine{Present: true, Holders: 1}, wantStatus: http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &fakeConcReader{lines: map[string]engine.GateLine{gate: tc.line}}
+			f := newFixtureWith(t, func(cfg *api.Config) {
+				cfg.Starter = &concStarter{fakeStarter: cfg.Starter.(*fakeStarter), indexed: true}
+				cfg.Capabilities = &fakeCapabilities{}
+				cfg.ConcurrencyReader = reader
+			})
+			_, err := f.orkflowClient().ApplyOrkflow(context.Background(),
+				connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: limitedYAML(templatedLimit + "\n  on_limit: refuse")}))
+			must.OK(t, err)
+			trigger, secret := f.createTrigger(t, &orkstackv1.CreateTriggerRequest{OrkflowName: "migrate"})
+			status, body, header := f.invokeWithHeaders(t, trigger.GetId(), bearer(secret), "")
+			if status != tc.wantStatus || header.Get("Retry-After") != "" {
+				t.Fatalf("invoke = %d, Retry-After %q: %s; want %d and none", status, header.Get("Retry-After"), body, tc.wantStatus)
+			}
+		})
+	}
+}
+
 // TestApplyOrkflow_WarnsOfALimitTheDeploymentCannotHold: create stores an
 // Orkflow with a limit the deployment could not hold now, and says so; a
 // deployment that can hold it warns of nothing.
@@ -619,5 +799,65 @@ func TestApplyOrkflow_WarnsOfALimitTheDeploymentCannotHold(t *testing.T) {
 	must.OK(t, applyDoc(t, svc, untimedInnerYAML))
 	if caps.questions() != 0 {
 		t.Fatalf("create asked the fleet %d times for an Orkflow with no limit", caps.questions())
+	}
+}
+
+// TestPrepareScheduledRun_AConcurrencyRefusalStartsNoRun: a fire's
+// preparation that a limit refuses says which outcome it is: a skip
+// limit's full key is skipped, a full line is not started, and a check that
+// cannot be made is not started after the retry window it pins; a refuse
+// limit's full key stays a refusal.
+func TestPrepareScheduledRun_AConcurrencyRefusalStartsNoRun(t *testing.T) {
+	gate := engine.GateID("default", "", "db:prod")
+	full := engine.GateLine{Present: true, Holders: 2, HolderRuns: []string{"ork-a", "ork-b"}}
+	for _, tc := range []struct {
+		name, block  string
+		unindexed    bool
+		reader       *fakeConcReader
+		wantRefused  bool
+		wantCode     string
+		wantText     string
+		wantRetryFor time.Duration
+	}{
+		{name: "skip at a full key", block: templatedLimit + "\n  on_limit: skip",
+			reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: full}}, wantCode: engine.FireSkippedConcurrencyCode,
+			wantText: "key db:prod was full; this fire started no run"},
+		{name: "refuse at a full key", block: templatedLimit + "\n  on_limit: refuse",
+			reader: &fakeConcReader{lines: map[string]engine.GateLine{gate: full}}, wantRefused: true},
+		{name: "a full line", block: templatedLimit + "\n  max_queued: 1",
+			reader:   &fakeConcReader{lines: map[string]engine.GateLine{gate: {Present: true, Holders: 2, Queued: 1}}},
+			wantCode: engine.FireNotStartedConcurrencyCode, wantText: "this fire started no run: CONCURRENCY_QUEUE_FULL"},
+		{name: "an unindexed cluster", block: templatedLimit, unindexed: true,
+			reader: &fakeConcReader{}, wantRefused: true},
+		{name: "a line that cannot be read", block: templatedLimit,
+			reader:   &fakeConcReader{lineErr: errors.New("query failed")},
+			wantCode: engine.FireConcurrencyUnavailableCode, wantText: "CONCURRENCY_CHECK_UNAVAILABLE",
+			wantRetryFor: engine.DefaultConcurrencySettings().FireUnavailableRetry},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			starter := &concStarter{fakeStarter: &fakeStarter{}, indexed: !tc.unindexed}
+			svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Starter: starter,
+				Capabilities: &fakeCapabilities{}, ConcurrencyReader: tc.reader})
+			must.OK(t, applyDoc(t, svc, limitedYAML(tc.block)))
+			rec := &orkstackv1.ScheduleRecord{ScheduleId: "sch-1", Name: "nightly", OrkflowName: "migrate"}
+			_, err := api.NewScheduleActivities(svc, nil).PrepareScheduledRun(context.Background(), rec, time.Now())
+			var app *temporal.ApplicationError
+			if !errors.As(err, &app) || !app.NonRetryable() {
+				t.Fatalf("prepare = %v; want a non-retryable application error", err)
+			}
+			if tc.wantRefused {
+				if app.Type() != engine.ScheduleFireRefusedType {
+					t.Fatalf("prepare type %q, want %s", app.Type(), engine.ScheduleFireRefusedType)
+				}
+				return
+			}
+			var got engine.FireNotStarted
+			if app.Type() != engine.ScheduleFireNotStartedType || app.Details(&got) != nil {
+				t.Fatalf("prepare = %v (type %q); want %s with its details", err, app.Type(), engine.ScheduleFireNotStartedType)
+			}
+			if got.Code != tc.wantCode || !strings.Contains(got.Message, tc.wantText) || got.RetryFor != tc.wantRetryFor {
+				t.Fatalf("not started = %+v; want code %s, text %q, retry %s", got, tc.wantCode, tc.wantText, tc.wantRetryFor)
+			}
+		})
 	}
 }

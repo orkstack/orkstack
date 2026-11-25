@@ -16,13 +16,18 @@
 #
 # A change that touches a path the header below names merges only with a
 # passing GPU-host-tier proof of its tree (make merge-check GPU=proof/<name>).
+# Joined it, 2026-11-24 Daniel Santos: internal/orker/cdi_null_edits.go,
+# cdi_hooks.go and cdi_nvidia_edits.go, which decide which CDI specs the audit
+# reads and what it admits (the hook-build table and its type stay out: no NVIDIA
+# device is on the host), and cmd/orkctl/*_gpuhost_test.go.
 #
 # paths: internal/orker/device_classes.go internal/orker/cdi_audit.go internal/orker/cdi_host_linux.go
+#   internal/orker/cdi_null_edits.go internal/orker/cdi_hooks.go internal/orker/cdi_nvidia_edits.go
 #   internal/orker/profiles.go internal/orker/gpu_lock_linux.go internal/orker/gpu_lock_procfs.go
 #   internal/orker/capacity_units.go internal/orker/unit_probe.go internal/orker/unit_probe_linux.go
 #   internal/orker/unit_reap.go internal/orker/dispatch_units.go internal/orker/gpu_boot.go
 #   internal/orker/profile_gate.go internal/orker/profile_audit.go internal/orker/device_mapping.go
-#   internal/orker/*_gpuhost_test.go scripts/gpu-host-setup.sh
+#   internal/orker/*_gpuhost_test.go cmd/orkctl/*_gpuhost_test.go scripts/gpu-host-setup.sh
 github.com/orkstack/orkstack/internal/orker	TestGPUHost_SetupSpecPassesTheAudit	TestAuditGPUSpecs_AcceptsTheHookless	2026-11-18 Daniel Santos	the spec gpu-host-setup.sh installs, read by dockerd's validator and the audit on the real nodes
 github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_UnitsExclusive	TestCapacity_BindTakesLowestFreeUsable,TestBindUnits_NamesTheBoundUnitsAndLabelsThem	2026-11-18 Daniel Santos	two gpu: 1 tasks each see one render node and distinct drivers, with a progress control
 github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_TwoUnitTask	TestCapacity_GPUCeilingFixedAcrossHealth,TestCapacity_BindTakesLowestFreeUsable	2026-11-18 Daniel Santos	gpu: 2 under max_gpu 2 gets both; a concurrent gpu: 1 is not polled until they are freed

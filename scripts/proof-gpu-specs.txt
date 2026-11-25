@@ -1,0 +1,21 @@
+# The Playwright spec files that need the GPU host (AGENTS.md §11, docs/PROOFS.md,
+# "The GPU-host tier"): the spec side of scripts/proof-gpu-tests.txt. A proof
+# without ORK_PROOF_GPU_HOST=1 leaves them out of its Playwright phase and
+# records each test of a spec both the base's list and the tree's list carry as
+# host-deferred; a spec only the tree carries is planned with no outcome, so the
+# change that adds it lands through a GPU-host-tier proof. A GPU-host-tier proof
+# (a full proof with the flag, or make proof-gpu) runs them, one file at a time,
+# alone, after the gpuhost Go tests. The list changes only with the user's
+# approval, and it is parsed as strictly as the nightly spec list:
+#
+#   spec<TAB>covering merge-gate specs<TAB>approved<TAB>reason
+#
+# A spec is a file under ui/e2e/. Every spec named here must be a listed spec
+# file, and every covering spec a listed spec file that is on neither this list
+# nor scripts/proof-nightly-specs.txt; a spec on both lists is refused, and a
+# stale row fails the gate. "Approved" is "YYYY-MM-DD <name>". A list with no
+# row is valid.
+#
+# A change that touches this file or a spec it names merges only with a passing
+# GPU-host-tier proof of its tree (make merge-check GPU=proof/<name>); there is
+# no paths: header, the rows are the paths.

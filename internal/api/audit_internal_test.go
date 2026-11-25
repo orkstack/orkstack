@@ -61,18 +61,20 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.CacheServiceGetCacheStatsProcedure:        true,
 	// InspectActivity resolves one reference against the registry and writes
 	// nothing (docs/ACTIVITY_IMAGES.md "Declaring the interface").
-	orkstackv1connect.ActivityServiceInspectActivityProcedure:      true,
-	orkstackv1connect.SystemServiceGetSystemInfoProcedure:          true,
-	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure:     true,
-	orkstackv1connect.SystemServicePreviewArtifactReclaimProcedure: true,
-	orkstackv1connect.SystemServiceGetImagePolicyProcedure:         true,
-	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:     true,
-	orkstackv1connect.SystemServiceListReleasesProcedure:           true,
-	orkstackv1connect.StatsServiceGetStatsProcedure:                true,
-	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure:     true,
-	orkstackv1connect.StatsServiceGetFlakeIndexProcedure:           true,
-	orkstackv1connect.StatsServiceGetUsageProcedure:                true,
-	orkstackv1connect.AuditServiceListAuditRecordsProcedure:        true,
+	orkstackv1connect.ActivityServiceInspectActivityProcedure:          true,
+	orkstackv1connect.SystemServiceGetSystemInfoProcedure:              true,
+	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure:         true,
+	orkstackv1connect.SystemServicePreviewArtifactReclaimProcedure:     true,
+	orkstackv1connect.SystemServiceGetImagePolicyProcedure:             true,
+	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:         true,
+	orkstackv1connect.SystemServiceListReleasesProcedure:               true,
+	orkstackv1connect.ConcurrencyServiceGetConcurrencyLimitProcedure:   true,
+	orkstackv1connect.ConcurrencyServiceListConcurrencyLimitsProcedure: true,
+	orkstackv1connect.StatsServiceGetStatsProcedure:                    true,
+	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure:         true,
+	orkstackv1connect.StatsServiceGetFlakeIndexProcedure:               true,
+	orkstackv1connect.StatsServiceGetUsageProcedure:                    true,
+	orkstackv1connect.AuditServiceListAuditRecordsProcedure:            true,
 	// PlanAutomation and ExportAutomation write nothing, ever
 	// (docs/AUTOMATION.md): an apply is the client sending the plan's
 	// requests to the audited write RPCs, each recorded under its own action.

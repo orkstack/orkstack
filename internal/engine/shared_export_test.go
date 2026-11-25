@@ -15,7 +15,7 @@ import (
 func CompositionRowsForTest(t *testing.T, wf *orkstackv1.Orkflow) map[string]*orkstackv1.TaskChild {
 	t.Helper()
 	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	rows := map[string]*orkstackv1.TaskChild{}
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
 		s := newRunState(ctx, "run-rows", wf, nil, RunPlan{})

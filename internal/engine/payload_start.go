@@ -237,8 +237,10 @@ func keylessEnding(ctx workflow.Context, continued bool, cause string) (any, err
 	})
 	var snapshotURI string
 	if err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteFailedRunSnapshot,
-		payloadcrypt.Plain(namespace), payloadcrypt.Plain(runID), (*orkstackv1.ContinuationObject)(nil),
-		payloadcrypt.Plain(header), payloadcrypt.Plain(sequence)).Get(localCtx, &snapshotURI); err != nil {
+		// A local activity's arguments are never converted; its result, a
+		// snapshot's URI, is the run's own and plaintext here, as nothing of
+		// the run was read.
+		namespace, runID, (*orkstackv1.ContinuationObject)(nil), header, sequence).Get(localCtx, &snapshotURI); err != nil {
 		workflow.GetLogger(ctx).Error("write the snapshot of a run whose start cannot be read failed",
 			"run_id", runID, "error", err)
 		return nil, failure
@@ -252,8 +254,10 @@ func keylessEnding(ctx workflow.Context, continued bool, cause string) (any, err
 		Timestamp: now,
 	}
 	activityCtx := workflow.WithActivityOptions(ectx, eventActivityOptions())
-	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, payloadcrypt.Plain(event),
-		payloadcrypt.Plain(snapshotURI), payloadcrypt.Plain(fmt.Sprintf("%s#%d", runID, sequence))).Get(ectx, nil); err != nil {
+	// A keyless run is not sealed, so nothing it writes is: its one event
+	// is built from its memo's plaintext alone.
+	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event,
+		snapshotURI, fmt.Sprintf("%s#%d", runID, sequence)).Get(ectx, nil); err != nil {
 		workflow.GetLogger(ctx).Error("publish event failed",
 			"run_id", runID, "event", event.GetType().String(), "error", err)
 	}

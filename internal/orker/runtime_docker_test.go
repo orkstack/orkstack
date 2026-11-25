@@ -509,9 +509,12 @@ func TestDockerRuntime_StartWhoseStateCannotBeObservedIsUnknown(t *testing.T) {
 				"esac\n"
 			bin := filepath.Join(dir, "docker")
 			must.OKf(t, os.WriteFile(bin, []byte(script), 0o755), "write fake docker binary")
-			// The deadline is short: a daemon that never answers is asked
-			// again until it passes.
-			runtime := &DockerRuntime{Bin: bin, startState: time.Second}
+			// A daemon that never answers is asked again until the deadline
+			// passes, so there it is short; one that answers has none to beat.
+			runtime := &DockerRuntime{Bin: bin, startState: 30 * time.Second}
+			if tc.wantUnknown {
+				runtime.startState = time.Second
+			}
 
 			var stdout, stderr bytes.Buffer
 			err := runtime.Start(context.Background(), "fake-container", &stdout, &stderr)
@@ -558,7 +561,10 @@ func TestDockerRuntime_StartAsksAgainWhenAnObservationFails(t *testing.T) {
 				"esac\n"
 			bin := filepath.Join(dir, "docker")
 			must.OKf(t, os.WriteFile(bin, []byte(script), 0o755), "write fake docker binary")
-			runtime := &DockerRuntime{Bin: bin, startState: 2 * time.Second}
+			runtime := &DockerRuntime{Bin: bin, startState: 30 * time.Second}
+			if tc.wantUnknown {
+				runtime.startState = 2 * time.Second
+			}
 
 			var stdout, stderr bytes.Buffer
 			err := runtime.Start(context.Background(), "fake-container", &stdout, &stderr)

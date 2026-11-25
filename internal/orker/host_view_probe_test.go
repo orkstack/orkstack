@@ -346,7 +346,7 @@ func TestProfileGate_RefusesAnUnavailableProfile(t *testing.T) {
 	if _, failure := a.profiles.gate(refs, inspect, time.Now()); failure == nil || failure.Reason != ReasonProfileNotOffered {
 		t.Fatalf("gate = %v, want %s", failure, ReasonProfileNotOffered)
 	}
-	if failure := a.profiles.recheck(refs, inspect, time.Now()); failure == nil || failure.Reason != ReasonProfileNotOffered {
+	if failure := a.profiles.recheck(context.Background(), refs, inspect, time.Now(), false); failure == nil || failure.Reason != ReasonProfileNotOffered {
 		t.Fatalf("recheck = %v, want %s", failure, ReasonProfileNotOffered)
 	}
 }

@@ -50,9 +50,10 @@ func newSlowDockerShim(t *testing.T, realDocker string) *slowDockerShim {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 S='` + dir + `'
+hang() { echo >> "$S/hangs"; exec sleep 300; }
 echo "$*" >> "$S/calls"
 if [ "$1" = image ]; then
-  if [ -e "$S/inspecthang" ]; then exec sleep 300; fi
+  if [ -e "$S/inspecthang" ]; then hang; fi
   if [ "$2" = inspect ]; then
     if [ -e "$S/present" ]; then echo "sha256:0000000000000000000000000000000000000000000000000000000000000000"; exit 0; fi
     echo x >> "$S/realinspects"
@@ -76,7 +77,7 @@ esac
 if [ "$1" = run ]; then
   n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
   n=$((n+1)); echo "$n" > "$S/runs"
-  if [ -e "$S/hang" ] && [ "$n" -le "$(cat "$S/hang")" ]; then exec sleep 300; fi
+  if [ -e "$S/hang" ] && [ "$n" -le "$(cat "$S/hang")" ]; then hang; fi
   if [ -e "$S/timeouterr" ] && [ "$n" -le "$(cat "$S/timeouterr")" ]; then
     echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
   fi
@@ -288,6 +289,10 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 				must.OKf(t, err, "identify the engine on the real daemon")
 			}
 			runtime.Bin = shim.bin
+			if !tt.realBind {
+				// What overruns is what the shim holds, never what it answers.
+				orker.ExpireOnHang(runtime, filepath.Join(shim.dir, "hangs"))
+			}
 			activities := orker.NewActivitiesWithOptions(store, orker.Options{
 				Runtime:  runtime,
 				OrkerID:  proof.OrkerID(fmt.Sprintf("bindprobe-%d", i)),

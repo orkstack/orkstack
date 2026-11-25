@@ -456,6 +456,7 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 		rule32 = append(rule32, childInputIssues(i, wf.GetTasks()[i], node)...)
 		rule32 = append(rule32, childArtifactIssues(i, wf.GetTasks()[i], node, children)...)
 	}
+	rule32 = append(rule32, eachSourceIssues(wf, children)...)
 	refs, err := dsl.OutputReferences(wf)
 	if err == nil {
 		for _, ref := range refs {
@@ -624,20 +625,46 @@ func childArtifactIssues(taskIndex int, t *orkstackv1.Task, node *composeNode,
 		if !ok {
 			continue
 		}
-		returned := producer.Orkflow.GetOutputArtifacts()
-		if _, ok := returned[b.GetName()]; !ok {
-			names := make([]string, 0, len(returned))
-			for k := range returned {
-				names = append(names, k)
-			}
-			sort.Strings(names)
-			list := "none"
-			if len(names) > 0 {
-				list = strings.Join(names, ", ")
-			}
-			issues = append(issues, issue(name, fmt.Sprintf(
-				"artifacts.%s: %s returns no artifact %q (artifact outputs: %s)",
-				name, dsl.ComposedLabel(producer.Ref), b.GetName(), list)))
+		if why := returnsNoArtifact(producer, b.GetName()); why != "" {
+			issues = append(issues, issue(name, fmt.Sprintf("artifacts.%s: %s", name, why)))
+		}
+	}
+	return issues
+}
+
+// returnsNoArtifact is why a composed task's child returns no artifact name,
+// or "" when it does.
+func returnsNoArtifact(producer *composeNode, name string) string {
+	returned := producer.Orkflow.GetOutputArtifacts()
+	if _, ok := returned[name]; ok {
+		return ""
+	}
+	names := make([]string, 0, len(returned))
+	for k := range returned {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	list := "none"
+	if len(names) > 0 {
+		list = strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s returns no artifact %q (artifact outputs: %s)", dsl.ComposedLabel(producer.Ref), name, list)
+}
+
+// eachSourceIssues is rule 32 for a fan-out over the lines of a composed
+// task's artifact: its child must return that artifact, or the fan-out could
+// only ever fail EACH_OVER_MISSING.
+func eachSourceIssues(wf *orkstackv1.Orkflow, children map[string]*composeNode) []*orkstackv1.ValidationIssue {
+	var issues []*orkstackv1.ValidationIssue
+	for i, t := range wf.GetTasks() {
+		art := t.GetEach().GetSource().GetArtifact()
+		producer, ok := children[art.GetProducer()]
+		if art == nil || !ok {
+			continue
+		}
+		if why := returnsNoArtifact(producer, art.GetName()); why != "" {
+			issues = append(issues, composeIssue(fmt.Sprintf("tasks[%d].each.over_artifact", i),
+				"each.over_artifact: "+why, orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR))
 		}
 	}
 	return issues

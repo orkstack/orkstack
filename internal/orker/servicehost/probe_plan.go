@@ -148,3 +148,25 @@ func JudgeAllowed(obs []Observation, allow Allowances) Fitness {
 	}
 	return JudgeProbe(kept, QuestionMetadata, QuestionLoopback, QuestionCluster, QuestionCanary)
 }
+
+// JudgeAnswered is a probe's result from what it answered. A name that
+// gave it no address to ask is a target it never asked, and not asked is never clean: the
+// probe did not run, and the result names the target. Two names are not held
+// to that: a question the operator accepted, whose answer changes nothing,
+// and a metadata endpoint's own name, which resolves only inside its cloud
+// and whose addresses are asked by themselves. Something the probe did reach
+// stands whatever else went unasked.
+func JudgeAnswered(obs []Observation, allow Allowances) ProbeResult {
+	r := ProbeResult{Ran: true, Fitness: JudgeAllowed(obs, allow)}
+	if !r.Fitness.Fit {
+		return r
+	}
+	for _, o := range obs {
+		host, _, err := net.SplitHostPort(o.Target)
+		if !o.Unresolved || allow.accepts(o.Question) || (err == nil && o.Question == QuestionMetadata && contains(MetadataAddresses, host)) {
+			continue
+		}
+		return ProbeResult{Err: fmt.Sprintf("question %d could not be asked of %s: the name leads to no address the probe may ask on a service network", o.Question, o.Target)}
+	}
+	return r
+}

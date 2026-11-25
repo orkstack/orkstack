@@ -2,7 +2,10 @@ package orker
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -290,7 +293,9 @@ func TestStopRegistry_NamesTheAttemptsItWaitsFor(t *testing.T) {
 // returned before the grace ended idle still owes its result then: the worker
 // stops only once the cluster has taken it (proof 44757103560, orkctl-012).
 func TestStop_TheWorkerStopsOnlyOnceTheResultsOwedAtT1AreTaken(t *testing.T) {
-	a := newCordonActivities(t, t.TempDir())
+	a := owedActivities(t)
+	waiting := &logSignal{Handler: slog.NewTextHandler(io.Discard, nil), phrase: "before the worker stops", seen: make(chan struct{})}
+	a.dispatcher.Logger = slog.New(waiting)
 	a.reports.owe([]byte("token"), "run/work#1", true)
 	var stoppedOwing atomic.Int32
 	stopped := make(chan struct{})
@@ -304,11 +309,28 @@ func TestStop_TheWorkerStopsOnlyOnceTheResultsOwedAtT1AreTaken(t *testing.T) {
 	select {
 	case <-stopped:
 		t.Fatalf("the worker stopped while %d result was still owed; the SDK would report it failed", stoppedOwing.Load())
-	case <-time.After(200 * time.Millisecond):
+	case <-waiting.seen: // the stop is waiting for the result
+	case <-time.After(stopDeadline):
+		t.Fatal("the stop neither waited for the owed result nor stopped its worker")
 	}
 	a.reports.settle([]byte("token"))
 	got := awaitStop(t, out)
 	if got.Ended != GraceEndedIdle || stoppedOwing.Load() != 0 {
 		t.Fatalf("outcome = %+v, owed when the worker stopped = %d; want an idle end with nothing owed", got, stoppedOwing.Load())
 	}
+}
+
+// logSignal closes seen at the first record whose message holds phrase.
+type logSignal struct {
+	slog.Handler
+	phrase string
+	once   sync.Once
+	seen   chan struct{}
+}
+
+func (l *logSignal) Handle(ctx context.Context, r slog.Record) error {
+	if strings.Contains(r.Message, l.phrase) {
+		l.once.Do(func() { close(l.seen) })
+	}
+	return l.Handler.Handle(ctx, r)
 }

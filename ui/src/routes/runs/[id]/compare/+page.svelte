@@ -17,6 +17,7 @@
 	import { withNamespace } from '#lib/namespace.ts';
 	import { runCommand } from '#lib/runDetail.ts';
 	import { diffSummary, isNarrowed, unavailableLines } from '#lib/runDiff.ts';
+	import { runOrkflowLabel } from '#lib/sharing.ts';
 	import type { PageProps } from './$types';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
 
@@ -75,7 +76,7 @@
 			facts={[
 				{ label: 'From', value: from },
 				{ label: 'To', value: to },
-				{ label: 'Orkflow', value: d ? (d.sameOrkflow ? (d.from?.orkflowName ?? '—') : 'different') : '—', testid: 'compare-fact-orkflow' },
+				{ label: 'Orkflow', value: d ? (d.sameOrkflow ? (runOrkflowLabel(d.from) || '—') : 'different') : '—', testid: 'compare-fact-orkflow' },
 				{
 					label: 'Definition',
 					value: !d ? '—' : !d.fieldsCompared.includes('definition') ? 'not compared' : definitionIdentical ? 'same' : 'different',

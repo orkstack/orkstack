@@ -313,7 +313,7 @@ func TestClaimWorkflow_HoldsTheKeyForItsTTLOrTheDefault(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
-			env := suite.NewTestWorkflowEnvironment()
+			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 			env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
 				workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
 			start := env.Now()

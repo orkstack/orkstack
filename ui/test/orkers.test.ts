@@ -205,3 +205,11 @@ test('a gpu profile below its per-task ceiling is unavailable, named and said in
 	expect(note.includes('(UNITS_BELOW_CEILING)')).toBe(true);
 	expect(profileCauseChip(cause)).toEqual({ word: 'unavailable', failure: false });
 });
+
+test('a gpu profile whose probes the container engine does not start names the engine, not a unit', () => {
+	const cause = create(ProfileCordonSchema, { cause: ProfileCordon_Cause.UNAVAILABLE, profile: 'gpu', reason: ProfileCordonReason.PROBE_NOT_STARTED });
+	const note = profileCauseNote(cause, () => '');
+	expect(note.includes('the container engine does not start its unit probes')).toBe(true);
+	expect(note.includes('(PROBE_NOT_STARTED)')).toBe(true);
+	expect(profileCauseChip(cause)).toEqual({ word: 'unavailable', failure: false });
+});

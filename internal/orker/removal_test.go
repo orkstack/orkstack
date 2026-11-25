@@ -3,6 +3,7 @@ package orker
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -247,15 +248,81 @@ func TestDockerRuntime_CreateFailuresNameTheContainer(t *testing.T) {
 		t.Errorf("the failed create returned id %q, want the name it asked for", id)
 	}
 
+	// Stopped once the create itself is in flight, whatever the dialect's two
+	// questions before it took.
 	fake = newCountingDocker(t)
 	fake.set("createhang", "")
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	calls := fake.watch()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	id, err = (&DockerRuntime{Bin: fake.bin}).Create(ctx, spec)
-	if !errors.Is(err, ErrCreateUnanswered) {
-		t.Fatalf("Create past its deadline = %v, want ErrCreateUnanswered", err)
+	type created struct {
+		id  ContainerID
+		err error
 	}
-	if !strings.HasPrefix(string(id), "ork-") {
-		t.Errorf("the unanswered create returned id %q, want the name it asked for", id)
+	done := make(chan created, 1)
+	go func() {
+		id, err := (&DockerRuntime{Bin: fake.bin}).Create(ctx, spec)
+		done <- created{id, err}
+	}()
+	calls.waitFor(t, "create ")
+	cancel()
+	got := <-done
+	if !errors.Is(got.err, ErrCreateUnanswered) {
+		t.Fatalf("Create stopped in flight = %v, want ErrCreateUnanswered", got.err)
+	}
+	if !strings.HasPrefix(string(got.id), "ork-") {
+		t.Errorf("the unanswered create returned id %q, want the name it asked for", got.id)
+	}
+}
+
+// A create that was never sent names no container and is never "unanswered":
+// its context ended while the engine was still saying what it is, or its CLI
+// never started. Only a create that reached the engine leaves it unknown what
+// it made.
+func TestDockerRuntime_ACreateNeverSentIsNotUnanswered(t *testing.T) {
+	t.Run("the context ends in the dialect question", func(t *testing.T) {
+		fake := newCountingDocker(t)
+		fake.set("infohang", "")
+		calls := fake.watch()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		type created struct {
+			id  ContainerID
+			err error
+		}
+		done := make(chan created, 1)
+		go func() {
+			id, err := (&DockerRuntime{Bin: fake.bin}).Create(ctx, validSpec())
+			done <- created{id, err}
+		}()
+		calls.waitFor(t, "info ")
+		cancel()
+		got := <-done
+		if got.id != "" || got.err == nil || errors.Is(got.err, ErrCreateUnanswered) || !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("Create = %q, %v; want no id and the caller's own end", got.id, got.err)
+		}
+		for _, call := range fake.calls() {
+			if strings.HasPrefix(call, "create") {
+				t.Errorf("the engine was asked %q", call)
+			}
+		}
+	})
+	spoken := dockerDialect
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		bin  string
+	}{
+		{"the context has ended", ended, newCountingDocker(t).bin},
+		{"the CLI cannot be started", context.Background(), filepath.Join(t.TempDir(), "no-such-cli")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := (&DockerRuntime{Bin: tc.bin, spoken: &spoken}).Create(tc.ctx, validSpec())
+			if id != "" || err == nil || errors.Is(err, ErrCreateUnanswered) {
+				t.Fatalf("Create = %q, %v; want no id, and not ErrCreateUnanswered", id, err)
+			}
+		})
 	}
 }
