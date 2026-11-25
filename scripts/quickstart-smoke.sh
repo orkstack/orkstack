@@ -392,6 +392,7 @@ PY
 			;;
 		decide-and-route) check_example "$name" "$S" "decide=$S direct=$S canary=SKIPPED hold=SKIPPED notify-owner=SKIPPED report=$S" ;;
 		each-fan-out) check_example "$name" "$S" "list=$S convert=$S merge=$S" ;;
+		each-lines) check_example "$name" "$S" "rows=$S per-row=$S per-batch=$S report=$S" ;;
 		http-post) check_example "$name" "$S" "publish=$S archive=$S summarize=$S" ;;
 		inputs-and-escaping) check_example "$name" "$S" "regional=$S publish=SKIPPED archive=$S" ;;
 		notify-block) check_example "$name" "$S" "body=$S post=$S" ;;

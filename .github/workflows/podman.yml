@@ -70,11 +70,6 @@ jobs:
         timeout-minutes: 3
         with:
           persist-credentials: false
-      # Docker Hub pulls go through its mirror, set before any container or
-      # builder of this job starts (.github/actions/registry-mirror).
-      - name: registry mirror
-        uses: ./.github/actions/registry-mirror
-        timeout-minutes: 3
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:

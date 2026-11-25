@@ -78,8 +78,8 @@ func ParseTarget(s string) (Target, error) {
 	if len(f) != 4 {
 		return Target{}, fmt.Errorf("target %q: want four fields, QUESTION,KIND,VIA,HOST:PORT", s)
 	}
-	q, err := strconv.Atoi(f[0])
-	if err != nil || q < servicehost.QuestionMetadata || q > servicehost.QuestionCanary {
+	q, ok := canonicalInt(f[0])
+	if !ok || q < servicehost.QuestionMetadata || q > servicehost.QuestionCanary {
 		return Target{}, fmt.Errorf("target %q: the question is 1 to 4", s)
 	}
 	t := Target{Question: q, Kind: f[1], Via: f[2], Addr: f[3]}
@@ -107,10 +107,19 @@ func ParseTarget(s string) (Target, error) {
 	if host == "" {
 		return Target{}, fmt.Errorf("target %q: the address names no host", s)
 	}
-	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+	// A port no dialler takes (+80) would fail to dial, and a failed dial
+	// reads as a closed path: refused here instead.
+	if p, ok := canonicalInt(port); !ok || p < 1 || p > 65535 {
 		return Target{}, fmt.Errorf("target %q: the port is 1 to 65535", s)
 	}
 	return t, nil
+}
+
+// canonicalInt reads a number in its one spelling: no sign, no leading
+// zero, so what is accepted formats back to the same text.
+func canonicalInt(s string) (int, bool) {
+	n, err := strconv.Atoi(s)
+	return n, err == nil && strconv.Itoa(n) == s
 }
 
 // Ask tries every target, at most parallel at once, each within timeout,

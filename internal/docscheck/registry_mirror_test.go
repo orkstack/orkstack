@@ -16,6 +16,10 @@ import (
 // Docker Hub mirror (docs/PROOFS.md §5).
 const mirrorAction = "./.github/actions/registry-mirror"
 
+// proofHostAction runs mirrorAction itself, with the DNS it needs, before
+// anything of Docker's, so a job that uses it restarts the daemon once.
+const proofHostAction = "./.github/actions/proof-host"
+
 // mirrorExempt are the jobs that drive Docker and pull nothing from Docker
 // Hub, with why.
 var mirrorExempt = map[string]string{
@@ -27,6 +31,7 @@ var mirrorExempt = map[string]string{
 var usesDocker = regexp.MustCompile(`\b(docker|podman)\b|quickstart-smoke|kind-orker\.sh|integration\.sh`)
 
 type workflowStep struct {
+	ID   string         `yaml:"id"`
 	Name string         `yaml:"name"`
 	If   string         `yaml:"if"`
 	Uses string         `yaml:"uses"`
@@ -120,13 +125,19 @@ func TestWorkflows_DockerHubPullsGoThroughTheMirror(t *testing.T) {
 		must.OK(t, yaml.Unmarshal(b, &doc))
 		for name, job := range doc.Jobs {
 			key := filepath.Base(file) + "/" + name
-			mirror, first := -1, -1
+			mirror, first, restarts := -1, -1, 0
 			for i, s := range job.Steps {
-				if s.Uses == mirrorAction && mirror < 0 {
-					mirror = i
-					if s.If != "" {
-						t.Errorf("%s runs %s only if %s; it must run unconditionally", key, mirrorAction, s.If)
+				if s.Uses == mirrorAction || s.Uses == proofHostAction {
+					restarts++
+					if mirror < 0 {
+						mirror = i
 					}
+					if s.If != "" {
+						t.Errorf("%s runs %s only if %s; it must run unconditionally", key, s.Uses, s.If)
+					}
+				}
+				if strings.Contains(s.Run, "systemctl restart docker") {
+					t.Errorf("%s restarts Docker in a step of its own (%s); only %s does", key, s.Name, mirrorAction)
 				}
 				if dockerStep(s, targets) && first < 0 {
 					first = i
@@ -149,6 +160,9 @@ func TestWorkflows_DockerHubPullsGoThroughTheMirror(t *testing.T) {
 			if mirror < 0 || mirror > first {
 				t.Errorf("%s drives Docker at step %d and does not run %s before it", key, first, mirrorAction)
 			}
+			if restarts > 1 {
+				t.Errorf("%s restarts Docker %d times: docker.service may start 3 times in 60 s, the runner's boot among them; %s runs %s itself", key, restarts, proofHostAction, mirrorAction)
+			}
 		}
 	}
 	if checked == 0 {
@@ -161,21 +175,73 @@ func TestWorkflows_DockerHubPullsGoThroughTheMirror(t *testing.T) {
 	}
 }
 
-// The action verifies what it set, and proof-host, which rewrites
-// daemon.json for its DNS, keeps the mirror rather than replacing the file.
-// Podman, which reads no daemon.json, names the mirror in registries.conf.
+// One action writes daemon.json and restarts Docker, once: docker.service may
+// start 3 times in 60 s, the runner's boot among them. It clears that count
+// first, verifies what it set, and says why when the restart fails. proof-host runs
+// it with its DNS, before anything of Docker's, and a container then resolves
+// the name that DNS serves. Podman, which reads no daemon.json, names the
+// mirror in registries.conf.
 func TestWorkflows_TheMirrorIsKeptAndVerified(t *testing.T) {
 	root := repoRoot(t)
 	action := readFile(t, filepath.Join(root, ".github", "actions", "registry-mirror", "action.yml"))
-	for _, want := range []string{"https://mirror.gcr.io", "systemctl restart docker", "RegistryConfig.Mirrors", "exit 1"} {
-		if !strings.Contains(action, want) {
+	last := -1
+	for _, want := range []string{"https://mirror.gcr.io", ".dns = [$d]", "systemctl reset-failed docker", "systemctl restart docker", "journalctl", "RegistryConfig.Mirrors", "does not report the mirror"} {
+		at := strings.Index(action, want)
+		if at < 0 {
 			t.Errorf("the registry-mirror action has no %q", want)
+			continue
+		}
+		if at < last {
+			t.Errorf("the registry-mirror action has %q too early", want)
+		}
+		last = at
+	}
+	if n := strings.Count(action, "systemctl restart docker"); n != 1 {
+		t.Errorf("the registry-mirror action restarts Docker %d times; want once", n)
+	}
+
+	path := filepath.Join(root, ".github", "actions", "proof-host", "action.yml")
+	var host struct {
+		Runs struct {
+			Steps []workflowStep `yaml:"steps"`
+		} `yaml:"runs"`
+	}
+	must.OK(t, yaml.Unmarshal([]byte(readFile(t, path)), &host))
+	mirror := -1
+	for i, s := range host.Runs.Steps {
+		if s.Uses == mirrorAction {
+			mirror = i
+			// The DNS is the one an earlier step of proof-host set, under the
+			// name that step writes, and the container check runs on it.
+			dns, _ := s.With["dns"].(string)
+			ref := regexp.MustCompile(`^\$\{\{ steps\.([a-z]+)\.outputs\.dns \}\}$`).FindStringSubmatch(dns)
+			if ref == nil {
+				t.Fatalf("proof-host gives the registry-mirror action dns %q; want an earlier step's output", dns)
+			}
+			wrote, checked := false, false
+			for j, o := range host.Runs.Steps {
+				wrote = wrote || j < i && o.ID == ref[1] && strings.Contains(o.Run, `echo "dns=172.17.0.1" >>"$GITHUB_OUTPUT"`)
+				checked = checked || j > i && o.If == "steps."+ref[1]+".outputs.dns != ''" && strings.Contains(o.Run, "getent hosts host.docker.internal")
+			}
+			if !wrote || !checked {
+				t.Errorf("proof-host's DNS: set by step %q before the daemon's restart %v, resolved in a container after it %v", ref[1], wrote, checked)
+			}
+			if s.If != "" {
+				t.Errorf("proof-host runs the registry-mirror action only if %s", s.If)
+			}
+			continue
+		}
+		if strings.Contains(s.Run, "daemon.json") || strings.Contains(s.Run, "systemctl restart docker") {
+			t.Errorf("proof-host's step %q sets up the Docker daemon itself; only %s does", s.Name, mirrorAction)
+		}
+		if mirror < 0 && regexp.MustCompile(`\bdocker (run|pull|compose|load|image)\b`).MatchString(s.Run) {
+			t.Errorf("proof-host's step %q drives Docker before it runs %s", s.Name, mirrorAction)
 		}
 	}
-	host := readFile(t, filepath.Join(root, ".github", "actions", "proof-host", "action.yml"))
-	if regexp.MustCompile(`echo '\{[^']*\}' \| sudo tee /etc/docker/daemon\.json`).MatchString(host) {
-		t.Error("proof-host replaces /etc/docker/daemon.json, dropping the mirror; merge into it")
+	if mirror < 0 {
+		t.Errorf("proof-host does not run %s", mirrorAction)
 	}
+
 	podman := readFile(t, filepath.Join(root, ".github", "workflows", "podman.yml"))
 	for _, want := range []string{`prefix = "docker.io"`, `location = "mirror.gcr.io"`} {
 		if !strings.Contains(podman, want) {

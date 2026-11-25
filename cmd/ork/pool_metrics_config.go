@@ -23,9 +23,15 @@ type poolMetricsSettings struct {
 // than engine.MaxPoolMetricsPools pools, or an interval outside its bounds is
 // refused at boot naming the setting, never clamped.
 func poolMetricsFromEnv() (poolMetricsSettings, error) {
+	return parsePoolMetrics(env("ORK_POOL_METRICS_POOLS", ""), env("ORK_POOL_METRICS_INTERVAL", ""))
+}
+
+// parsePoolMetrics is poolMetricsFromEnv on the two settings' values, "" for
+// one that is unset.
+func parsePoolMetrics(pools, interval string) (poolMetricsSettings, error) {
 	s := poolMetricsSettings{interval: engine.DefaultPoolMetricsInterval}
 	var errs []error
-	for _, pool := range strings.Split(env("ORK_POOL_METRICS_POOLS", ""), ",") {
+	for _, pool := range strings.Split(pools, ",") {
 		pool = strings.TrimSpace(pool)
 		if pool == "" {
 			continue
@@ -39,11 +45,11 @@ func poolMetricsFromEnv() (poolMetricsSettings, error) {
 	if len(s.pools) > engine.MaxPoolMetricsPools {
 		errs = append(errs, fmt.Errorf("ORK_POOL_METRICS_POOLS names %d pools; at most %d", len(s.pools), engine.MaxPoolMetricsPools))
 	}
-	if raw := env("ORK_POOL_METRICS_INTERVAL", ""); raw != "" {
-		d, err := time.ParseDuration(raw)
+	if interval != "" {
+		d, err := time.ParseDuration(interval)
 		if err != nil || d < engine.MinPoolMetricsInterval || d > engine.MaxPoolMetricsInterval {
 			errs = append(errs, fmt.Errorf("ORK_POOL_METRICS_INTERVAL=%q must be a duration from %s to %s",
-				raw, engine.MinPoolMetricsInterval, engine.MaxPoolMetricsInterval))
+				interval, engine.MinPoolMetricsInterval, engine.MaxPoolMetricsInterval))
 		} else {
 			s.interval = d
 		}

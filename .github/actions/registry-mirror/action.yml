@@ -1,44 +1,68 @@
 name: registry-mirror
-description: Make the runner's Docker daemon pull Docker Hub images through mirror.gcr.io, Google's public cache of Docker Hub, and fail unless the daemon reports the mirror (docs/PROOFS.md §5).
+description: Configure the runner's Docker daemon in one restart - pull Docker Hub images through mirror.gcr.io, Google's public cache of Docker Hub, and optionally a DNS server - and fail unless the daemon took it (docs/PROOFS.md §5).
 
 # Docker Hub limits anonymous pulls per IP, and a hosted runner's address is
 # shared, so a proof's pulls of its Docker Hub images could be refused. The
 # daemon asks the mirror first and falls back to Docker Hub itself on a miss;
 # a pull by digest is verified against that digest either way, so nothing a
-# job runs changes. A job runs this before any container or builder of its
-# own: it restarts the daemon, which would stop them. It merges into
-# daemon.json, so a later step that sets other keys (proof-host's DNS) keeps
-# the mirror, and it fails rather than leave a daemon that silently pulls
-# from Docker Hub alone. Only a hosted runner is changed: a self-hosted one's
-# daemon is its owner's (CONTRIBUTING.md, "Linux hosts").
+# job runs changes. A job runs this, or proof-host, which runs it, before any
+# container or builder of its own, and once: it restarts the daemon, which
+# would stop them. Only a hosted runner is pointed at the mirror: a
+# self-hosted one's daemon is its owner's (CONTRIBUTING.md, "Linux hosts").
+#
+# docker.service may start 3 times in 60 seconds (its StartLimitBurst): the
+# runner's boot, whatever provisioning did just after it, and every restart of
+# ours count. A job that restarted the daemon twice within its first minute
+# had the second fail at once (nightly 45026978739) with a bare "Job for
+# docker.service failed.", which is consistent with that limit: it is what
+# Ubuntu 24.04's systemctl (systemd 255), which has no words for the limit's
+# result, prints for it. The journal was not kept. So there is one restart,
+# the count is cleared before it, and a restart that fails prints the unit's
+# own account of why.
 
 inputs:
   mirror:
     description: The mirror's URL
     required: false
     default: https://mirror.gcr.io
+  dns:
+    description: The DNS server the daemon gives its containers; none by default
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
-    - name: registry mirror
-      if: runner.environment == 'github-hosted'
+    - name: docker daemon
+      if: runner.environment == 'github-hosted' || inputs.dns != ''
       shell: bash
       env:
-        MIRROR: ${{ inputs.mirror }}
+        MIRROR: ${{ runner.environment == 'github-hosted' && inputs.mirror || '' }}
+        DNS: ${{ inputs.dns }}
       run: |
         set -euo pipefail
         file=/etc/docker/daemon.json
         current='{}'
         if sudo test -s "$file"; then current="$(sudo cat "$file")"; fi
-        jq --arg m "$MIRROR" '."registry-mirrors" = (((."registry-mirrors" // []) + [$m]) | unique)' <<<"$current" |
+        jq --arg m "$MIRROR" --arg d "$DNS" '
+          if $m == "" then . else ."registry-mirrors" = (((."registry-mirrors" // []) + [$m]) | unique) end
+          | if $d == "" then . else .dns = [$d] end' <<<"$current" |
           sudo tee "$file.new" >/dev/null
         sudo mv "$file.new" "$file"
-        sudo systemctl restart docker
-        mirrors="$(timeout -k 5 60 docker info --format '{{json .RegistryConfig.Mirrors}}')"
-        host="${MIRROR#https://}"
-        if ! jq -e --arg h "$host" 'any(.[]; contains($h))' <<<"$mirrors" >/dev/null; then
-          echo "the Docker daemon does not report the mirror $MIRROR after its restart (it reports $mirrors)" >&2
+        # A host whose Docker has no such unit fails here and loses nothing.
+        sudo systemctl reset-failed docker.service docker.socket || true
+        if ! sudo timeout -k 10 120 systemctl restart docker; then
+          echo "the Docker daemon did not restart with $(sudo cat "$file" | tr -d '\n')" >&2
+          sudo systemctl status --no-pager --full docker.service docker.socket >&2 || true
+          sudo journalctl --no-pager --since=-5min -u docker.service -u docker.socket >&2 || true
           exit 1
         fi
-        echo "Docker Hub pulls go through $MIRROR (daemon mirrors: $mirrors)" | tee -a "$GITHUB_STEP_SUMMARY"
+        if [ -n "$MIRROR" ]; then
+          mirrors="$(timeout -k 5 60 docker info --format '{{json .RegistryConfig.Mirrors}}')"
+          host="${MIRROR#https://}"
+          if ! jq -e --arg h "$host" 'any(.[]; contains($h))' <<<"$mirrors" >/dev/null; then
+            echo "the Docker daemon does not report the mirror $MIRROR after its restart (it reports $mirrors)" >&2
+            exit 1
+          fi
+          echo "Docker Hub pulls go through $MIRROR (daemon mirrors: $mirrors)" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
