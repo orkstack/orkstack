@@ -647,19 +647,19 @@ func setModeRecord(ctx context.Context, a setModeRecordArgs, storeCfg artifacts.
 
 func setModeRecordIn(ctx context.Context, a setModeRecordArgs, modes *artifacts.ModeStore, endpoint string, audit *api.AuditRecorder, out io.Writer, logger *slog.Logger) error {
 	fmt.Fprintf(out, "mode record: %s (endpoint %s)\n", modes.Location(), endpoint)
-	rec, etag, err := modes.Get(ctx)
+	rec, etag, readErr := modes.Get(ctx)
 	replacing := "none"
 	switch {
-	case err == nil:
+	case readErr == nil:
 		replacing = rec.Mode
 		if !a.force {
 			return fmt.Errorf("the mode record decodes and names %q: lower a readable record with `orkctl admin auth lower`, or pass --force when no engine can start", rec.Mode)
 		}
-	case errors.Is(err, artifacts.ErrModeRecordUnreadable):
+	case errors.Is(readErr, artifacts.ErrModeRecordUnreadable):
 		replacing = "unreadable"
-	case errors.Is(err, artifacts.ErrNotFound):
+	case errors.Is(readErr, artifacts.ErrNotFound):
 	default:
-		return fmt.Errorf("read the mode record: %w", err)
+		return fmt.Errorf("read the mode record: %w", readErr)
 	}
 	host, _ := os.Hostname()
 	at := time.Now().UTC()
@@ -676,6 +676,14 @@ func setModeRecordIn(ctx context.Context, a setModeRecordArgs, modes *artifacts.
 		cond = artifacts.PutConditions{IfAbsent: true}
 	}
 	next := artifacts.ModeRecord{Mode: a.mode, RaisedAt: at, UpdatedAt: at, UpdatedBy: "ork --set-mode-record on " + host, Reason: a.reason}
+	// When the deployment left enforce: what lowering to asserted waits from.
+	// A record that is gone or cannot be read may have been enforcing.
+	if a.mode != artifacts.AuthModeEnforce {
+		next.LeftEnforceAt = at
+		if readErr == nil && rec.Mode != artifacts.AuthModeEnforce {
+			next.LeftEnforceAt = rec.LeftEnforceAt
+		}
+	}
 	if _, err := modes.Put(ctx, next, cond); err != nil {
 		return fmt.Errorf("write the mode record: %w", err)
 	}

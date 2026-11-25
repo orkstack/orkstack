@@ -972,8 +972,9 @@ var runStateFieldClass = map[string]fieldClass{
 }
 
 // chainAdmission is the admission a switch completes the run's chain record
-// for: an admitted run an engine started itself. A child run, or a run a
-// fire started, has a parent and no chain record.
+// for: an admitted run an engine started itself, an event source's message
+// included. A child run, or a run a fire started, has a parent and no chain
+// record.
 func (s *runState) chainAdmission() string {
 	if s.plan.Identity == nil {
 		return ""

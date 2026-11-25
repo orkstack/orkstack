@@ -974,7 +974,8 @@ internal never appears on any of those surfaces.
   that settled the delivery, and is unrelated to a webhook's delivery record
   and to the audit trail.
 - **Origin** means the immutable record of what started a run: a kind
-  (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), the
+  (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`,
+  `event-source`), the
   originating object's id, a caller-supplied reference and the principal. A
   child's origin also names its parent task, the parent's and root's Orkflow,
   and the root's origin.
@@ -1124,6 +1125,12 @@ Version, Signal, Timer, child workflow, parent-close policy, local activity,
 marker, Temporal memo, search attribute, visibility query, Temporal Schedule id or
 workflow id. (A proto comment on an engine-internal message may say what
 implements it.)
+
+An idempotency key is its caller's: where `auth.mode` is `enforce`, a key names
+a run only to the principal who used it, and only for the submission it was
+used for; a trigger's key is the trigger's, and for one claim's life after the
+deployment last entered `enforce` a key claimed before that also names its run
+to whoever may read that run, or to the trigger that started it.
 
 An Orkflow name is unique within a namespace. Names are validated, never
 sanitized, by the same rule at each boundary:
@@ -2333,6 +2340,8 @@ internal/dist/         Release artifacts: binaries, archives, checksums, release
 internal/healthcheck/  The `--healthcheck` probe of ork and orker
 internal/buildinfo/    Which commit a binary was built from, as all three commands report it
 internal/hostpolicy/   The Host allowlist every listener applies (API and admin)
+internal/held/         The held check for an event source's instance: one function, which
+                       the engine's door and the identity mint both call
 images/                First-party OCI activity images and source images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing and secret masking
@@ -2406,7 +2415,7 @@ Agent ownership is split as follows:
 - UI agents: `ui/` and `site/`;
 - artifact agents: `pkg/artifacts`;
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
-  the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`, `internal/jwt`,
+  the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`, `internal/held`, `internal/jwt`,
   `internal/listfilter` and `internal/enumname` (engine and CLI agents share
   both), `pkg/eventsources` (the engine and the Orker both link it), `internal/hostpolicy` (the API and admin listeners share it), `internal/webui` (UI and engine agents share it), and this file.
 

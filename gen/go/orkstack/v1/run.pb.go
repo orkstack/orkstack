@@ -296,7 +296,7 @@ func (RetryState) EnumDescriptor() ([]byte, []int) {
 // SubmitRun RPC produces SUBMIT, or RUN_AGAIN when the request names a
 // source run the server confirms exists; the trigger door produces TRIGGER
 // from its stored record; schedule and composition code produce SCHEDULE
-// and PARENT_RUN. A caller who could claim "trigger" would be claiming an
+// and PARENT_RUN, and an event source's engine code EVENT_SOURCE. A caller who could claim "trigger" would be claiming an
 // audit fact, so no request field carries a kind.
 type RunOriginKind int32
 
@@ -321,6 +321,9 @@ const (
 	// RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the
 	// SOURCE run's id, which the server confirmed exists in this namespace.
 	RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN RunOriginKind = 5
+	// EVENT_SOURCE: a message an event source accepted. id is the source's id
+	// (evs-…). Only the engine stamps it; no request can.
+	RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE RunOriginKind = 6
 )
 
 // Enum value maps for RunOriginKind.
@@ -332,14 +335,16 @@ var (
 		3: "RUN_ORIGIN_KIND_SCHEDULE",
 		4: "RUN_ORIGIN_KIND_PARENT_RUN",
 		5: "RUN_ORIGIN_KIND_RUN_AGAIN",
+		6: "RUN_ORIGIN_KIND_EVENT_SOURCE",
 	}
 	RunOriginKind_value = map[string]int32{
-		"RUN_ORIGIN_KIND_UNSPECIFIED": 0,
-		"RUN_ORIGIN_KIND_SUBMIT":      1,
-		"RUN_ORIGIN_KIND_TRIGGER":     2,
-		"RUN_ORIGIN_KIND_SCHEDULE":    3,
-		"RUN_ORIGIN_KIND_PARENT_RUN":  4,
-		"RUN_ORIGIN_KIND_RUN_AGAIN":   5,
+		"RUN_ORIGIN_KIND_UNSPECIFIED":  0,
+		"RUN_ORIGIN_KIND_SUBMIT":       1,
+		"RUN_ORIGIN_KIND_TRIGGER":      2,
+		"RUN_ORIGIN_KIND_SCHEDULE":     3,
+		"RUN_ORIGIN_KIND_PARENT_RUN":   4,
+		"RUN_ORIGIN_KIND_RUN_AGAIN":    5,
+		"RUN_ORIGIN_KIND_EVENT_SOURCE": 6,
 	}
 )
 
@@ -3781,8 +3786,8 @@ type RunOrigin struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Kind  RunOriginKind          `protobuf:"varint,1,opt,name=kind,proto3,enum=orkstack.v1.RunOriginKind" json:"kind,omitempty"`
 	// id names the originating object for the kinds that have one — a
-	// trigger id, a schedule id, a parent run id, a source run id — and is
-	// empty for SUBMIT. Opaque: nothing parses it or derives anything from
+	// trigger id, a schedule id, a parent run id, a source run id, an event
+	// source's id — and is empty for SUBMIT. Opaque: nothing parses it or derives anything from
 	// its shape (AGENTS.md §7).
 	Id string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
 	// reference is caller-supplied correlation text — a CI job URL, a ticket
@@ -3792,14 +3797,16 @@ type RunOrigin struct {
 	// at the request boundary and never sanitized (AGENTS.md §7): an
 	// over-long or malformed reference is INVALID_ARGUMENT and starts no run.
 	// Opaque to OrkStack: it is never an expression, a selector or a routing
-	// key. A client renders it as a link only when it parses as an http(s)
-	// URL, and as text otherwise.
+	// key. For EVENT_SOURCE it is the message's identity as its source image
+	// reported it, text a publisher chose, and a client never renders it as a
+	// link. For SUBMIT, TRIGGER and RUN_AGAIN a client renders it as a link
+	// only when it parses as an http(s) URL, and as text otherwise.
 	Reference string `protobuf:"bytes,3,opt,name=reference,proto3" json:"reference,omitempty"`
 	// description is the originating object's own human label at the moment
 	// of submit — Trigger.description for TRIGGER, the schedule's name for
-	// SCHEDULE — copied so a run stays explainable after the trigger is
-	// deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256
-	// bytes by truncation.
+	// SCHEDULE, the source's name for EVENT_SOURCE — copied so a run stays
+	// explainable after that object is deleted. Empty for SUBMIT, RUN_AGAIN and
+	// PARENT_RUN. Bounded to 256 bytes by truncation.
 	Description string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
 	// principal is what the deployment's gateway asserted in the
 	// Ork-Principal request header on the submitting request — the trigger
@@ -6625,14 +6632,15 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"$RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED\x10\x03\x12$\n" +
 	" RETRY_STATE_RETRY_POLICY_NOT_SET\x10\x04\x12 \n" +
 	"\x1cRETRY_STATE_CANCEL_REQUESTED\x10\x05\x12%\n" +
-	"!RETRY_STATE_INTERNAL_SERVER_ERROR\x10\x06*\xc6\x01\n" +
+	"!RETRY_STATE_INTERNAL_SERVER_ERROR\x10\x06*\xe8\x01\n" +
 	"\rRunOriginKind\x12\x1f\n" +
 	"\x1bRUN_ORIGIN_KIND_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16RUN_ORIGIN_KIND_SUBMIT\x10\x01\x12\x1b\n" +
 	"\x17RUN_ORIGIN_KIND_TRIGGER\x10\x02\x12\x1c\n" +
 	"\x18RUN_ORIGIN_KIND_SCHEDULE\x10\x03\x12\x1e\n" +
 	"\x1aRUN_ORIGIN_KIND_PARENT_RUN\x10\x04\x12\x1d\n" +
-	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\xe6\x04\n" +
+	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05\x12 \n" +
+	"\x1cRUN_ORIGIN_KIND_EVENT_SOURCE\x10\x06*\xe6\x04\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16EVENT_TYPE_RUN_CREATED\x10\x01\x12\x1a\n" +

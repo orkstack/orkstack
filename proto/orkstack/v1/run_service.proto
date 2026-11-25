@@ -392,8 +392,9 @@ message SubmitRunRequest {
   string orkflow_version = 2;            // orkflow version; empty = latest
   Payload input = 3;
   // idempotency_key, optional, makes a retry safe: a repeat under the same
-  // key, in the same namespace, is answered with the run the key names
-  // instead of starting a second one, even when the first answer was lost.
+  // key, in the same namespace and, with auth.mode enforce, by the same
+  // caller, is answered with the run the key names instead of starting a
+  // second one, even when the first answer was lost.
   // A key belongs to one submission: the same key with another
   // orkflow_name, orkflow_version as written, source_run_id or input is
   // refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference
@@ -563,7 +564,7 @@ message ListRunsRequest {
         path: "origin.kind"
         label: "Started by"
         operators: [FILTER_OPERATOR_EQUALS]
-        allowed_values: ["SUBMIT", "TRIGGER", "SCHEDULE", "PARENT_RUN", "RUN_AGAIN"]
+        allowed_values: ["SUBMIT", "TRIGGER", "SCHEDULE", "PARENT_RUN", "RUN_AGAIN", "EVENT_SOURCE"]
       },
       {
         path: "origin.id"

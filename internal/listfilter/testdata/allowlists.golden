@@ -125,7 +125,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   orkflow_name         = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   status               = != =a,b       PENDING RUNNING PAUSED SUCCEEDED FAILED CANCELED SKIPPED
   created_at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
-  origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
+  origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN EVENT_SOURCE
   origin.id            =               text; needs origin.kind=
   origin.root_run_id   =               text
   queued               =               true; a row that has ended never matches

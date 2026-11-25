@@ -510,11 +510,14 @@ anything — not admission, routing or retries.
 | `TRIGGER` (`trigger`) | the trigger door | trigger id | `Ork-Origin-Reference` header | the trigger's description | `Ork-Principal` |
 | `SCHEDULE` (`schedule`) | a schedule fire | schedule id | the nominal fire time | the schedule's name | — |
 | `PARENT_RUN` (`parent-run`) | a composed task | parent run id | — | — | — |
+| `EVENT_SOURCE` (`event-source`) | an event source's message | source id | the message's identity | the source's name | — |
 
 The kind is never taken from a client. A caller may add only a `reference`
 (`--origin-ref`, the submit dialog's **Origin reference**, or the trigger
 door's header): at most 256 bytes, no control characters, validated and never
-sanitized — an invalid one is `InvalidArgument` and starts nothing. `principal`
+sanitized — an invalid one is `InvalidArgument` and starts nothing. An
+`EVENT_SOURCE` reference is text a publisher chose, and is never rendered as a
+link. `principal`
 is the `Ork-Principal` assertion, recorded and never authenticated. A run
 recorded before origins existed has kind `UNSPECIFIED`, renders `unrecorded`
 (never `submit`) and matches no origin filter.

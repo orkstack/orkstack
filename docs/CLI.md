@@ -2266,7 +2266,7 @@ Flags:
 - `--fair-share-weight FLOAT64` — this namespace's share of dispatch when several namespaces' tasks wait for one pool, pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect only where the cluster has fair dispatch enabled
 - `--grant STRINGARRAY` — set a grant as NAME=PROVIDER:PRINCIPAL (repeatable)
 - `--grant-current-only STRINGARRAY` — let only a run of its Orkflow's current version use the grant NAME (repeatable)
-- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, parent-run or run-again (repeatable)
+- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, event-source, parent-run or run-again (repeatable)
 - `--grant-orkflow STRINGARRAY` — let an Orkflow use a grant, as NAME=ORKFLOW: a name, * or <owner>/<name> (repeatable)
 - `--hold STRING` — close this namespace to new runs, with the reason the next operator reads (runs already accepted finish untouched)
 - `--identities-current-only` — give an identity only to a run of its Orkflow's current version
@@ -3568,10 +3568,10 @@ newest first, narrowed by --filter. When more runs match than one page
 holds, the command prints the next page's command.
 
 --filter origin.kind=KIND keeps runs by what started them (SUBMIT, TRIGGER,
-SCHEDULE, PARENT_RUN or RUN_AGAIN), and --filter origin.id=ID beside it
-narrows that to one originating object (a trigger or schedule id, a source
-or parent run id). A run started before origins were recorded matches no
-origin.kind filter.
+SCHEDULE, PARENT_RUN, RUN_AGAIN or EVENT_SOURCE), and --filter origin.id=ID
+beside it narrows that to one originating object (a trigger, schedule or
+event source id, a source or parent run id). A run started before origins
+were recorded matches no origin.kind filter.
 
 --filter origin.root_run_id=ID keeps every run below that root of a composed
 chain, however deep. The root itself holds no root, so it is not listed.
@@ -3581,7 +3581,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   orkflow_name         = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   status               = != =a,b       PENDING RUNNING PAUSED SUCCEEDED FAILED CANCELED SKIPPED
   created_at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
-  origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
+  origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN EVENT_SOURCE
   origin.id            =               text; needs origin.kind=
   origin.root_run_id   =               text
   queued               =               true; a row that has ended never matches

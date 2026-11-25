@@ -325,10 +325,10 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			"newest first, narrowed by --filter. When more runs match than one page\n" +
 			"holds, the command prints the next page's command.\n\n" +
 			"--filter origin.kind=KIND keeps runs by what started them (SUBMIT, TRIGGER,\n" +
-			"SCHEDULE, PARENT_RUN or RUN_AGAIN), and --filter origin.id=ID beside it\n" +
-			"narrows that to one originating object (a trigger or schedule id, a source\n" +
-			"or parent run id). A run started before origins were recorded matches no\n" +
-			"origin.kind filter.\n\n" +
+			"SCHEDULE, PARENT_RUN, RUN_AGAIN or EVENT_SOURCE), and --filter origin.id=ID\n" +
+			"beside it narrows that to one originating object (a trigger, schedule or\n" +
+			"event source id, a source or parent run id). A run started before origins\n" +
+			"were recorded matches no origin.kind filter.\n\n" +
 			"--filter origin.root_run_id=ID keeps every run below that root of a composed\n" +
 			"chain, however deep. The root itself holds no root, so it is not listed.",
 		Args: cobra.NoArgs,

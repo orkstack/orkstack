@@ -496,13 +496,50 @@ engine's own configuration, prints the store it is about to change, refuses
 a record that still decodes (that one is lowered with `orkctl`; `--force`
 overrides it when no engine can start at all), writes the audit record
 `auth.mode.record.set` and stops, changing nothing, if that record cannot be
-written, then overwrites the record and exits without serving.
+written, then overwrites the record and exits without serving. A record set
+below `enforce` in place of one that enforced, could not be read or was gone
+says the deployment left `enforce` now, so lowering to `asserted` waits.
 
 What the record cannot stop: someone who deletes it while every engine is
 down, a bucket lifecycle rule or a restore that removes it, or an engine of
 an earlier release, which knows nothing of it. Exclude `metadata/identity/`
 from every lifecycle rule, and turn on versioning (and object lock, where
 the store has it) for it.
+
+## Idempotency keys
+
+With `auth.mode: enforce` an idempotency key is its caller's: it names a run
+only to the principal who used it, and only for the submission it was used
+for. Two callers' `nightly` are two keys, so nobody is answered another's run
+by using its key, and nobody's run is kept from starting by somebody who took
+the key first. A trigger's key is the trigger's. In `observe` and `asserted`
+a key is shared by everybody who submits into its namespace, because the
+caller may be a name nobody verified.
+
+A change of mode moves where a key is claimed, so for one key's life after it
+(the longest `engine.idempotency_ttl` any engine advertises, and five minutes)
+a submission looks in both places:
+
+| Mode | A new key is | A submission also reads |
+|---|---|---|
+| `enforce` | the caller's | the namespace's shared key, after the deployment last entered `enforce` |
+| `observe` | the namespace's | the caller's own key, when the request carries a credential that verifies, after the deployment last left `enforce`, or its mode record was written |
+| `asserted` | the namespace's | nothing else: it verifies nobody |
+
+Where the key stands in both places, the caller is answered its own. A shared
+key read in `enforce` may be another caller's. Its run is answered, or started
+if it never was, only to a caller with `run.read` on it; any other is refused
+`permission_denied`, whatever it submitted, and starts nothing: use another
+key. A trigger is answered only the runs it started itself, and is refused 403
+otherwise. Where either place cannot be read, the submission is `unavailable`:
+submit again under the same key. A key that is not valid UTF-8 is refused, in
+every mode.
+
+Two things follow from a principal's id being a name. A service account
+deleted and made again under the same name inherits, for a key's life, the
+keys its predecessor used. One workload that authenticates in two ways (a
+platform token and a service account) has two ids, so its retry under the
+other starts a second run.
 
 ## Every engine enforces
 

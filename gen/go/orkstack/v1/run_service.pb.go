@@ -1533,8 +1533,9 @@ type SubmitRunRequest struct {
 	OrkflowVersion string                 `protobuf:"bytes,2,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"` // orkflow version; empty = latest
 	Input          *Payload               `protobuf:"bytes,3,opt,name=input,proto3" json:"input,omitempty"`
 	// idempotency_key, optional, makes a retry safe: a repeat under the same
-	// key, in the same namespace, is answered with the run the key names
-	// instead of starting a second one, even when the first answer was lost.
+	// key, in the same namespace and, with auth.mode enforce, by the same
+	// caller, is answered with the run the key names instead of starting a
+	// second one, even when the first answer was lost.
 	// A key belongs to one submission: the same key with another
 	// orkflow_name, orkflow_version as written, source_run_id or input is
 	// refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference
@@ -5273,22 +5274,22 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"4\n" +
 	"\x0eGetRunResponse\x12\"\n" +
-	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\xb5\x05\n" +
+	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\xc3\x05\n" +
 	"\x0fListRunsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x04 \x01(\tR\tpageToken\x12\x1c\n" +
 	"\tnamespace\x18\x05 \x01(\tR\tnamespace\x122\n" +
 	"\afilters\x18\n" +
-	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xb4\x03\xa2\xbb\x18\xaf\x03\n" +
+	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xc2\x03\xa2\xbb\x18\xbd\x03\n" +
 	"\x0forkstack.v1.Run\x12 \n" +
 	"\forkflow_name\x12\aOrkflow\x1a\x05\x01\x02\x03\x04\x058\x01\x12U\n" +
 	"\x06status\x12\x06Status\x1a\x03\x01\x02\x03\"\aPENDING\"\aRUNNING\"\x06PAUSED\"\tSUCCEEDED\"\x06FAILED\"\bCANCELED\"\aSKIPPED\x12\x19\n" +
 	"\n" +
-	"created_at\x12\aCreated\x1a\x02\x06\a\x12N\n" +
+	"created_at\x12\aCreated\x1a\x02\x06\a\x12\\\n" +
 	"\vorigin.kind\x12\n" +
 	"Started by\x1a\x01\x01\"\x06SUBMIT\"\aTRIGGER\"\bSCHEDULE\"\n" +
-	"PARENT_RUN\"\tRUN_AGAIN\x12&\n" +
+	"PARENT_RUN\"\tRUN_AGAIN\"\fEVENT_SOURCE\x12&\n" +
 	"\torigin.id\x12\tOrigin id\x1a\x01\x012\vorigin.kind\x12!\n" +
 	"\x12origin.root_run_id\x12\bRoot run\x1a\x01\x01\x12.\n" +
 	"\x06queued\x12\x1dQueued for a concurrency slot\x1a\x01\x01@\x01H\x01\x12 \n" +

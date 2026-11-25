@@ -34,8 +34,9 @@ const (
 	TriggerInvokePath = "/v1/triggers/{id}"
 
 	// IdempotencyKeyHeader carries an optional SubmitRun idempotency key. It
-	// is passed straight through: the claim is namespace-scoped already
-	// (submission.claimKey), so a trigger needs no dedup logic of its own.
+	// is passed straight through: a claim is scoped by its namespace, and in
+	// enforce mode by the trigger too (claim_key.go), so a trigger needs no
+	// dedup logic of its own.
 	IdempotencyKeyHeader = "Idempotency-Key"
 
 	// bearerPrefix is the only Authorization scheme this route accepts.
@@ -275,6 +276,10 @@ func triggerSubmitStatus(err error) (int, string) {
 		return http.StatusBadRequest, code.String()
 	case connect.CodeNotFound:
 		return http.StatusNotFound, code.String()
+	case connect.CodePermissionDenied:
+		// The Idempotency-Key names a run this trigger did not start: no
+		// retry under it can succeed.
+		return http.StatusForbidden, code.String()
 	case connect.CodeFailedPrecondition:
 		return http.StatusPreconditionFailed, code.String()
 	case connect.CodeUnavailable, connect.CodeResourceExhausted,

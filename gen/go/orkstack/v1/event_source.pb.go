@@ -1909,6 +1909,125 @@ func (x *Receipt) GetRetiredRun() bool {
 	return false
 }
 
+// InstanceRef names one attempt of one instance of an event source, as an
+// Orker that holds it names it to an engine. An engine believes none of it:
+// it holds every field to what the cluster and the store say.
+type InstanceRef struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// namespace, name and event_source_id name the source.
+	Namespace     string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	EventSourceId string `protobuf:"bytes,3,opt,name=event_source_id,json=eventSourceId,proto3" json:"event_source_id,omitempty"`
+	// index is the instance's index.
+	Index int32 `protobuf:"varint,4,opt,name=index,proto3" json:"index,omitempty"`
+	// epoch is what the source's workflow scheduled the instance under.
+	Epoch int64 `protobuf:"varint,5,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	// attempt is the attempt of that epoch's activity, from 1.
+	Attempt int32 `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// service_digest names the service spec this instance runs. It is compared
+	// with the one its epoch was scheduled with, and used for nothing else.
+	ServiceDigest string `protobuf:"bytes,7,opt,name=service_digest,json=serviceDigest,proto3" json:"service_digest,omitempty"`
+	// judging_revision is the judging spec the Orker holds; 0 is none yet.
+	JudgingRevision int64 `protobuf:"varint,8,opt,name=judging_revision,json=judgingRevision,proto3" json:"judging_revision,omitempty"`
+	// orker_id is never read: which Orker asks is its credential's to say.
+	OrkerId       string `protobuf:"bytes,9,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstanceRef) Reset() {
+	*x = InstanceRef{}
+	mi := &file_orkstack_v1_event_source_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceRef) ProtoMessage() {}
+
+func (x *InstanceRef) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_event_source_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceRef.ProtoReflect.Descriptor instead.
+func (*InstanceRef) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_event_source_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *InstanceRef) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *InstanceRef) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *InstanceRef) GetEventSourceId() string {
+	if x != nil {
+		return x.EventSourceId
+	}
+	return ""
+}
+
+func (x *InstanceRef) GetIndex() int32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *InstanceRef) GetEpoch() int64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *InstanceRef) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *InstanceRef) GetServiceDigest() string {
+	if x != nil {
+		return x.ServiceDigest
+	}
+	return ""
+}
+
+func (x *InstanceRef) GetJudgingRevision() int64 {
+	if x != nil {
+		return x.JudgingRevision
+	}
+	return 0
+}
+
+func (x *InstanceRef) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
+}
+
 var File_orkstack_v1_event_source_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_event_source_proto_rawDesc = "" +
@@ -2076,7 +2195,17 @@ const file_orkstack_v1_event_source_proto_rawDesc = "" +
 	"retiredRun\x1a9\n" +
 	"\vBrokerEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*r\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9a\x02\n" +
+	"\vInstanceRef\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12&\n" +
+	"\x0fevent_source_id\x18\x03 \x01(\tR\reventSourceId\x12\x14\n" +
+	"\x05index\x18\x04 \x01(\x05R\x05index\x12\x14\n" +
+	"\x05epoch\x18\x05 \x01(\x03R\x05epoch\x12\x18\n" +
+	"\aattempt\x18\x06 \x01(\x05R\aattempt\x12%\n" +
+	"\x0eservice_digest\x18\a \x01(\tR\rserviceDigest\x12)\n" +
+	"\x10judging_revision\x18\b \x01(\x03R\x0fjudgingRevision\x12\x19\n" +
+	"\borker_id\x18\t \x01(\tR\aorkerId*r\n" +
 	"\rDeliveryClass\x12\x1e\n" +
 	"\x1aDELIVERY_CLASS_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cDELIVERY_CLASS_AT_LEAST_ONCE\x10\x01\x12\x1f\n" +
@@ -2135,7 +2264,7 @@ func file_orkstack_v1_event_source_proto_rawDescGZIP() []byte {
 }
 
 var file_orkstack_v1_event_source_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_orkstack_v1_event_source_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_orkstack_v1_event_source_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_orkstack_v1_event_source_proto_goTypes = []any{
 	(DeliveryClass)(0),             // 0: orkstack.v1.DeliveryClass
 	(MessageFormat)(0),             // 1: orkstack.v1.MessageFormat
@@ -2156,65 +2285,66 @@ var file_orkstack_v1_event_source_proto_goTypes = []any{
 	(*EventSourceDeclaration)(nil), // 16: orkstack.v1.EventSourceDeclaration
 	(*SourceImage)(nil),            // 17: orkstack.v1.SourceImage
 	(*Receipt)(nil),                // 18: orkstack.v1.Receipt
-	nil,                            // 19: orkstack.v1.EventSource.MapEntry
-	nil,                            // 20: orkstack.v1.EventSource.ArtifactsEntry
-	nil,                            // 21: orkstack.v1.EventSource.EnvEntry
-	nil,                            // 22: orkstack.v1.MessageMetadata.AttributesEntry
-	nil,                            // 23: orkstack.v1.ServiceInterface.WithEntry
-	nil,                            // 24: orkstack.v1.Receipt.BrokerEntry
-	(*structpb.Struct)(nil),        // 25: google.protobuf.Struct
-	(*ResourceRequest)(nil),        // 26: orkstack.v1.ResourceRequest
-	(*Payload)(nil),                // 27: orkstack.v1.Payload
-	(*timestamppb.Timestamp)(nil),  // 28: google.protobuf.Timestamp
-	(*AsksFor)(nil),                // 29: orkstack.v1.AsksFor
-	(*ConsentView)(nil),            // 30: orkstack.v1.ConsentView
-	(*SecretRef)(nil),              // 31: orkstack.v1.SecretRef
-	(*IdentityRef)(nil),            // 32: orkstack.v1.IdentityRef
-	(*CredentialRef)(nil),          // 33: orkstack.v1.CredentialRef
-	(*structpb.Value)(nil),         // 34: google.protobuf.Value
-	(*FieldSchema)(nil),            // 35: orkstack.v1.FieldSchema
+	(*InstanceRef)(nil),            // 19: orkstack.v1.InstanceRef
+	nil,                            // 20: orkstack.v1.EventSource.MapEntry
+	nil,                            // 21: orkstack.v1.EventSource.ArtifactsEntry
+	nil,                            // 22: orkstack.v1.EventSource.EnvEntry
+	nil,                            // 23: orkstack.v1.MessageMetadata.AttributesEntry
+	nil,                            // 24: orkstack.v1.ServiceInterface.WithEntry
+	nil,                            // 25: orkstack.v1.Receipt.BrokerEntry
+	(*structpb.Struct)(nil),        // 26: google.protobuf.Struct
+	(*ResourceRequest)(nil),        // 27: orkstack.v1.ResourceRequest
+	(*Payload)(nil),                // 28: orkstack.v1.Payload
+	(*timestamppb.Timestamp)(nil),  // 29: google.protobuf.Timestamp
+	(*AsksFor)(nil),                // 30: orkstack.v1.AsksFor
+	(*ConsentView)(nil),            // 31: orkstack.v1.ConsentView
+	(*SecretRef)(nil),              // 32: orkstack.v1.SecretRef
+	(*IdentityRef)(nil),            // 33: orkstack.v1.IdentityRef
+	(*CredentialRef)(nil),          // 34: orkstack.v1.CredentialRef
+	(*structpb.Value)(nil),         // 35: google.protobuf.Value
+	(*FieldSchema)(nil),            // 36: orkstack.v1.FieldSchema
 }
 var file_orkstack_v1_event_source_proto_depIdxs = []int32{
-	25, // 0: orkstack.v1.EventSource.with:type_name -> google.protobuf.Struct
-	26, // 1: orkstack.v1.EventSource.resources:type_name -> orkstack.v1.ResourceRequest
+	26, // 0: orkstack.v1.EventSource.with:type_name -> google.protobuf.Struct
+	27, // 1: orkstack.v1.EventSource.resources:type_name -> orkstack.v1.ResourceRequest
 	0,  // 2: orkstack.v1.EventSource.delivery:type_name -> orkstack.v1.DeliveryClass
 	1,  // 3: orkstack.v1.EventSource.format:type_name -> orkstack.v1.MessageFormat
 	8,  // 4: orkstack.v1.EventSource.match:type_name -> orkstack.v1.MatchRule
-	27, // 5: orkstack.v1.EventSource.input:type_name -> orkstack.v1.Payload
-	19, // 6: orkstack.v1.EventSource.map:type_name -> orkstack.v1.EventSource.MapEntry
-	20, // 7: orkstack.v1.EventSource.artifacts:type_name -> orkstack.v1.EventSource.ArtifactsEntry
+	28, // 5: orkstack.v1.EventSource.input:type_name -> orkstack.v1.Payload
+	20, // 6: orkstack.v1.EventSource.map:type_name -> orkstack.v1.EventSource.MapEntry
+	21, // 7: orkstack.v1.EventSource.artifacts:type_name -> orkstack.v1.EventSource.ArtifactsEntry
 	10, // 8: orkstack.v1.EventSource.pause:type_name -> orkstack.v1.EventSourcePause
-	28, // 9: orkstack.v1.EventSource.created_at:type_name -> google.protobuf.Timestamp
-	28, // 10: orkstack.v1.EventSource.updated_at:type_name -> google.protobuf.Timestamp
-	29, // 11: orkstack.v1.EventSource.asks_for:type_name -> orkstack.v1.AsksFor
-	30, // 12: orkstack.v1.EventSource.consented:type_name -> orkstack.v1.ConsentView
-	31, // 13: orkstack.v1.EventSource.secrets:type_name -> orkstack.v1.SecretRef
-	32, // 14: orkstack.v1.EventSource.identities:type_name -> orkstack.v1.IdentityRef
-	33, // 15: orkstack.v1.EventSource.credentials:type_name -> orkstack.v1.CredentialRef
-	21, // 16: orkstack.v1.EventSource.env:type_name -> orkstack.v1.EventSource.EnvEntry
+	29, // 9: orkstack.v1.EventSource.created_at:type_name -> google.protobuf.Timestamp
+	29, // 10: orkstack.v1.EventSource.updated_at:type_name -> google.protobuf.Timestamp
+	30, // 11: orkstack.v1.EventSource.asks_for:type_name -> orkstack.v1.AsksFor
+	31, // 12: orkstack.v1.EventSource.consented:type_name -> orkstack.v1.ConsentView
+	32, // 13: orkstack.v1.EventSource.secrets:type_name -> orkstack.v1.SecretRef
+	33, // 14: orkstack.v1.EventSource.identities:type_name -> orkstack.v1.IdentityRef
+	34, // 15: orkstack.v1.EventSource.credentials:type_name -> orkstack.v1.CredentialRef
+	22, // 16: orkstack.v1.EventSource.env:type_name -> orkstack.v1.EventSource.EnvEntry
 	3,  // 17: orkstack.v1.MatchRule.field:type_name -> orkstack.v1.MessageField
-	34, // 18: orkstack.v1.MatchRule.equals:type_name -> google.protobuf.Value
-	34, // 19: orkstack.v1.MatchRule.in:type_name -> google.protobuf.Value
+	35, // 18: orkstack.v1.MatchRule.equals:type_name -> google.protobuf.Value
+	35, // 19: orkstack.v1.MatchRule.in:type_name -> google.protobuf.Value
 	3,  // 20: orkstack.v1.MapRule.field:type_name -> orkstack.v1.MessageField
 	4,  // 21: orkstack.v1.EventSourcePause.cause:type_name -> orkstack.v1.PauseCause
-	28, // 22: orkstack.v1.EventSourcePause.since:type_name -> google.protobuf.Timestamp
+	29, // 22: orkstack.v1.EventSourcePause.since:type_name -> google.protobuf.Timestamp
 	5,  // 23: orkstack.v1.EventSourceStatus.state:type_name -> orkstack.v1.EventSourceState
 	0,  // 24: orkstack.v1.EventSourceStatus.delivery:type_name -> orkstack.v1.DeliveryClass
-	28, // 25: orkstack.v1.MessageMetadata.published_at:type_name -> google.protobuf.Timestamp
-	22, // 26: orkstack.v1.MessageMetadata.attributes:type_name -> orkstack.v1.MessageMetadata.AttributesEntry
-	23, // 27: orkstack.v1.ServiceInterface.with:type_name -> orkstack.v1.ServiceInterface.WithEntry
+	29, // 25: orkstack.v1.MessageMetadata.published_at:type_name -> google.protobuf.Timestamp
+	23, // 26: orkstack.v1.MessageMetadata.attributes:type_name -> orkstack.v1.MessageMetadata.AttributesEntry
+	24, // 27: orkstack.v1.ServiceInterface.with:type_name -> orkstack.v1.ServiceInterface.WithEntry
 	16, // 28: orkstack.v1.ServiceInterface.event_source:type_name -> orkstack.v1.EventSourceDeclaration
 	0,  // 29: orkstack.v1.EventSourceDeclaration.delivery:type_name -> orkstack.v1.DeliveryClass
 	15, // 30: orkstack.v1.SourceImage.interface:type_name -> orkstack.v1.ServiceInterface
 	6,  // 31: orkstack.v1.Receipt.outcome:type_name -> orkstack.v1.ReceiptOutcome
-	28, // 32: orkstack.v1.Receipt.received_at:type_name -> google.protobuf.Timestamp
-	28, // 33: orkstack.v1.Receipt.decided_at:type_name -> google.protobuf.Timestamp
-	24, // 34: orkstack.v1.Receipt.broker:type_name -> orkstack.v1.Receipt.BrokerEntry
-	28, // 35: orkstack.v1.Receipt.limit_checked_at:type_name -> google.protobuf.Timestamp
+	29, // 32: orkstack.v1.Receipt.received_at:type_name -> google.protobuf.Timestamp
+	29, // 33: orkstack.v1.Receipt.decided_at:type_name -> google.protobuf.Timestamp
+	25, // 34: orkstack.v1.Receipt.broker:type_name -> orkstack.v1.Receipt.BrokerEntry
+	29, // 35: orkstack.v1.Receipt.limit_checked_at:type_name -> google.protobuf.Timestamp
 	9,  // 36: orkstack.v1.EventSource.MapEntry.value:type_name -> orkstack.v1.MapRule
 	2,  // 37: orkstack.v1.EventSource.ArtifactsEntry.value:type_name -> orkstack.v1.MessagePart
 	13, // 38: orkstack.v1.MessageMetadata.AttributesEntry.value:type_name -> orkstack.v1.AttributeValues
-	35, // 39: orkstack.v1.ServiceInterface.WithEntry.value:type_name -> orkstack.v1.FieldSchema
+	36, // 39: orkstack.v1.ServiceInterface.WithEntry.value:type_name -> orkstack.v1.FieldSchema
 	40, // [40:40] is the sub-list for method output_type
 	40, // [40:40] is the sub-list for method input_type
 	40, // [40:40] is the sub-list for extension type_name
@@ -2239,7 +2369,7 @@ func file_orkstack_v1_event_source_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_event_source_proto_rawDesc), len(file_orkstack_v1_event_source_proto_rawDesc)),
 			NumEnums:      7,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

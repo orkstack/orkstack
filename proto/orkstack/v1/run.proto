@@ -878,7 +878,7 @@ message RunCancelRequest {
 // SubmitRun RPC produces SUBMIT, or RUN_AGAIN when the request names a
 // source run the server confirms exists; the trigger door produces TRIGGER
 // from its stored record; schedule and composition code produce SCHEDULE
-// and PARENT_RUN. A caller who could claim "trigger" would be claiming an
+// and PARENT_RUN, and an event source's engine code EVENT_SOURCE. A caller who could claim "trigger" would be claiming an
 // audit fact, so no request field carries a kind.
 enum RunOriginKind {
   // UNSPECIFIED is what a run recorded before origins existed carries.
@@ -901,6 +901,9 @@ enum RunOriginKind {
   // RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the
   // SOURCE run's id, which the server confirmed exists in this namespace.
   RUN_ORIGIN_KIND_RUN_AGAIN = 5;
+  // EVENT_SOURCE: a message an event source accepted. id is the source's id
+  // (evs-…). Only the engine stamps it; no request can.
+  RUN_ORIGIN_KIND_EVENT_SOURCE = 6;
 }
 
 // RunOrigin is the immutable record of what started a run. It is decided
@@ -912,8 +915,8 @@ enum RunOriginKind {
 message RunOrigin {
   RunOriginKind kind = 1;
   // id names the originating object for the kinds that have one — a
-  // trigger id, a schedule id, a parent run id, a source run id — and is
-  // empty for SUBMIT. Opaque: nothing parses it or derives anything from
+  // trigger id, a schedule id, a parent run id, a source run id, an event
+  // source's id — and is empty for SUBMIT. Opaque: nothing parses it or derives anything from
   // its shape (AGENTS.md §7).
   string id = 2;
   // reference is caller-supplied correlation text — a CI job URL, a ticket
@@ -923,14 +926,16 @@ message RunOrigin {
   // at the request boundary and never sanitized (AGENTS.md §7): an
   // over-long or malformed reference is INVALID_ARGUMENT and starts no run.
   // Opaque to OrkStack: it is never an expression, a selector or a routing
-  // key. A client renders it as a link only when it parses as an http(s)
-  // URL, and as text otherwise.
+  // key. For EVENT_SOURCE it is the message's identity as its source image
+  // reported it, text a publisher chose, and a client never renders it as a
+  // link. For SUBMIT, TRIGGER and RUN_AGAIN a client renders it as a link
+  // only when it parses as an http(s) URL, and as text otherwise.
   string reference = 3;
   // description is the originating object's own human label at the moment
   // of submit — Trigger.description for TRIGGER, the schedule's name for
-  // SCHEDULE — copied so a run stays explainable after the trigger is
-  // deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256
-  // bytes by truncation.
+  // SCHEDULE, the source's name for EVENT_SOURCE — copied so a run stays
+  // explainable after that object is deleted. Empty for SUBMIT, RUN_AGAIN and
+  // PARENT_RUN. Bounded to 256 bytes by truncation.
   string description = 4;
   // principal is what the deployment's gateway asserted in the
   // Ork-Principal request header on the submitting request — the trigger

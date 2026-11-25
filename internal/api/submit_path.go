@@ -167,19 +167,24 @@ func (s *Service) submitKeyed(
 	ctx context.Context,
 	sub submission,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	// Ask what the key names before minting anything. Any error is no
-	// answer, and the claim, which is the authority, decides instead.
-	binding, bound, lookupErr := s.idempotency.Lookup(ctx, sub.claimKey())
-	if lookupErr != nil {
-		s.logger.Debug("idempotency lookup gave no answer; the claim decides",
-			"key", sub.key, "err", lookupErr)
-	}
-
 	// From here the engine finishes what it began, on its own clock.
 	work, cancel := context.WithTimeout(context.WithoutCancel(ctx), submitWorkBound)
 	defer cancel()
-	if lookupErr == nil && bound {
-		return s.answerBinding(work, sub, binding)
+	// Ask what the key names before minting anything. Any error is no
+	// answer, and the claim, which is the authority, decides instead; but not
+	// where a change of mode gave the key two coordinates.
+	if sub.claim.other != "" {
+		if resp, bound, err := s.lookupBoth(work, sub); bound || err != nil {
+			return resp, err
+		}
+	} else {
+		binding, bound, lookupErr := s.idempotency.Lookup(ctx, sub.claim.own)
+		if lookupErr != nil {
+			s.logger.Debug("idempotency lookup gave no answer; the claim decides",
+				"key", sub.key, "err", lookupErr)
+		} else if bound {
+			return s.answerBinding(work, sub, binding)
+		}
 	}
 
 	if err := s.profileCensusFresh(sub); err != nil {
@@ -197,7 +202,7 @@ func (s *Service) submitKeyed(
 		s.deleteAdmissions(work, admitted)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	winner, err := s.claimWithRetry(work, sub.claimKey(), claim)
+	winner, err := s.claimWithRetry(work, sub.claim.own, claim)
 	if err != nil && permanentClaimError(err) {
 		s.deleteAdmissions(work, admitted)
 		return nil, connect.NewError(connect.CodeInternal,
@@ -398,7 +403,7 @@ func (s *Service) startClaimedID(
 	sub submission,
 	binding engine.Claim,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	if err := s.checkClaimAge(ctx, sub.claimKey()); err != nil {
+	if err := s.checkClaimAge(ctx, sub.claim.own); err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("idempotency key %q: %w", sub.key, err))
 	}
@@ -721,7 +726,7 @@ func (s *Service) replaceForeignID(
 		s.deleteAdmissions(ctx, admitted)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if err := s.idempotency.Rebind(ctx, sub.claimKey(), claim, refused); err != nil {
+	if err := s.idempotency.Rebind(ctx, sub.claim.own, claim, refused); err != nil {
 		// Another submission may have moved the key first: go on with the id
 		// it moved it to, read as any key's id is read. Its definition object
 		// written above is left for the sweep, as any unread one is; its
@@ -745,7 +750,7 @@ func (s *Service) followMovedKey(
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	unavailable := connect.NewError(connect.CodeUnavailable,
 		fmt.Errorf("move idempotency key %q from %s: %w; submit again under the same key", sub.key, refused, rebindErr))
-	binding, bound, err := s.idempotency.Lookup(ctx, sub.claimKey())
+	binding, bound, err := s.idempotency.Lookup(ctx, sub.claim.own)
 	if err != nil || !bound || binding.RunID == refused {
 		return nil, unavailable
 	}

@@ -1836,8 +1836,10 @@ tasks:
   written fails the composed task `CHILD_OUTPUTS_UNCLAIMED`
   (`InfrastructureError`), and the child is not run again.
 - **Only a composing task passes them.** A run of an Orkflow with an artifact
-  input is started only by a composed task: a submit, a schedule, a trigger
-  or "run again" of one is refused with `ARTIFACT_INPUT_UNSUPPORTED`, and so
+  input is started only by a composed task: a submit, a schedule, a trigger,
+  an event source's message or "run again" of one is refused with
+  `ARTIFACT_INPUT_UNSUPPORTED` (an event source's for now; a later release
+  passes its message's parts), and so
   is creating or updating a schedule or a trigger to start one, and making
   such a version current while a schedule or a trigger follows current.
 

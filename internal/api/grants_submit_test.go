@@ -292,6 +292,20 @@ func TestSubmit_AnOriginNobodyNamesHoldsNoIdentity(t *testing.T) {
 			t.Errorf("the starter of origin %v reads %v; want a refusal", kind, err)
 		}
 	}
+	// An event source's is a start it names, whose binder is asked for: one
+	// that records none is refused, and never admitted as a person's.
+	{
+		w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
+		err := api.SubmitFrom(ctx, w.svc, msg, &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE,
+			Id: "evs-0123456789abcdef", Description: "orders"})
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "IDENTITY_STARTER_NOT_RECORDED") ||
+			!strings.Contains(err.Error(), "event source orders") || strings.Contains(err.Error(), "rebind") {
+			t.Errorf("an event source's start: %v", err)
+		}
+		if files := w.admissionFiles(t); len(files) != 0 || len(w.starter.startedRuns()) != 0 {
+			t.Errorf("an event source's start left %v and started %v", files, w.starter.startedRuns())
+		}
+	}
 	for _, kind := range []orkstackv1.RunOriginKind{orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN} {
 		w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
 		if err := api.SubmitFrom(ctx, w.svc, msg, &orkstackv1.RunOrigin{Kind: kind}); err != nil {

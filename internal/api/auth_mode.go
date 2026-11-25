@@ -178,10 +178,18 @@ func (g *ModeGuard) Check(ctx context.Context) {
 			g.Missing(ctx)
 		}
 		g.setProblem("the mode record was missing; this engine wrote it again at " + g.Mode)
+		next := g.raised(artifacts.ModeRecord{}, false)
 		g.mu.Lock()
 		g.missing = true
+		// What the lost record said of when enforce was left is kept: what
+		// lowering to asserted waits from.
+		if g.Mode != artifacts.AuthModeEnforce {
+			next.LeftEnforceAt = g.record.LeftEnforceAt
+			if g.record.Mode == artifacts.AuthModeEnforce {
+				next.LeftEnforceAt = next.UpdatedAt
+			}
+		}
 		g.mu.Unlock()
-		next := g.raised(artifacts.ModeRecord{}, false)
 		etag, err := g.Store.Put(ctx, next, artifacts.PutConditions{IfAbsent: true})
 		switch {
 		case err == nil:

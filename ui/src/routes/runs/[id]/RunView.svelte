@@ -288,7 +288,7 @@
 		const path = originRootRunPath(origin);
 		return path ? withNamespace(path, data.namespace) : null;
 	});
-	const originReference = $derived(origin?.reference ? originReferenceURL(origin.reference) : null);
+	const originReference = $derived(originReferenceURL(origin));
 
 	// runError is the STRUCTURED terminal error from the GetRun snapshot — the
 	// only source that carries a §8.1 category. It is $derived rather than

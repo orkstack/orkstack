@@ -38,12 +38,23 @@ test('a run with no origin is unrecorded, never submit', () => {
 });
 
 test('a reference is a link only when it provably is an http(s) URL', () => {
-	expect(originReferenceURL('https://ci.example/jobs/1')).toBe('https://ci.example/jobs/1');
-	expect(originReferenceURL('http://ci.example/x')).toBe('http://ci.example/x');
-	expect(originReferenceURL('INC-4412')).toBeNull();
-	expect(originReferenceURL('javascript:alert(1)')).toBeNull();
-	expect(originReferenceURL('ftp://files.example/x')).toBeNull();
-	expect(originReferenceURL('')).toBeNull();
+	const of = (reference: string, kind = RunOriginKind.SUBMIT) => originReferenceURL(create(RunOriginSchema, { kind, reference }));
+	expect(of('https://ci.example/jobs/1')).toBe('https://ci.example/jobs/1');
+	expect(of('http://ci.example/x')).toBe('http://ci.example/x');
+	expect(of('https://ci.example/x', RunOriginKind.TRIGGER)).toBe('https://ci.example/x');
+	expect(of('https://ci.example/x', RunOriginKind.RUN_AGAIN)).toBe('https://ci.example/x');
+	expect(of('INC-4412')).toBeNull();
+	expect(of('javascript:alert(1)')).toBeNull();
+	expect(of('ftp://files.example/x')).toBeNull();
+	expect(of('')).toBeNull();
+	expect(originReferenceURL(undefined)).toBeNull();
+});
+
+test('a publisher’s text is never a link, whatever it looks like', () => {
+	const url = 'https://ci.example/jobs/1';
+	for (const kind of [RunOriginKind.EVENT_SOURCE, RunOriginKind.SCHEDULE, RunOriginKind.PARENT_RUN, RunOriginKind.UNSPECIFIED, 42 as RunOriginKind]) {
+		expect(originReferenceURL(create(RunOriginSchema, { kind, reference: url }))).toBeNull();
+	}
 });
 
 test('an origin links to the Triggers or Schedules tab or to the source run', () => {
@@ -94,7 +105,7 @@ test('the runs list filters by origin kind, and by origin id only within a kind'
 	const id = fields.find((f) => f.path === 'origin.id');
 	expect(kind?.kind).toBe('enum');
 	expect(kind?.operators).toEqual([FilterOperator.EQUALS]);
-	expect(kind?.values).toEqual(['SUBMIT', 'TRIGGER', 'SCHEDULE', 'PARENT_RUN', 'RUN_AGAIN']);
+	expect(kind?.values).toEqual(['SUBMIT', 'TRIGGER', 'SCHEDULE', 'PARENT_RUN', 'RUN_AGAIN', 'EVENT_SOURCE']);
 	expect(id?.operators).toEqual([FilterOperator.EQUALS]);
 	expect(id?.requires).toBe('origin.kind');
 });

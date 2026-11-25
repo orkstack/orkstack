@@ -413,3 +413,26 @@ message Receipt {
   // has since been retired.
   bool retired_run = 23;
 }
+
+// InstanceRef names one attempt of one instance of an event source, as an
+// Orker that holds it names it to an engine. An engine believes none of it:
+// it holds every field to what the cluster and the store say.
+message InstanceRef {
+  // namespace, name and event_source_id name the source.
+  string namespace = 1;
+  string name = 2;
+  string event_source_id = 3;
+  // index is the instance's index.
+  int32 index = 4;
+  // epoch is what the source's workflow scheduled the instance under.
+  int64 epoch = 5;
+  // attempt is the attempt of that epoch's activity, from 1.
+  int32 attempt = 6;
+  // service_digest names the service spec this instance runs. It is compared
+  // with the one its epoch was scheduled with, and used for nothing else.
+  string service_digest = 7;
+  // judging_revision is the judging spec the Orker holds; 0 is none yet.
+  int64 judging_revision = 8;
+  // orker_id is never read: which Orker asks is its credential's to say.
+  string orker_id = 9;
+}
