@@ -1013,6 +1013,7 @@ func (r *taskRunner) compose() error {
 // which task.json says as `unavailable`, with no run, for a run whose tasks
 // were given none, and where the record does not say the whole lineage.
 func (r *taskRunner) recordedContext() *orkstackv1.RunContext {
+	r.localContext = nil
 	rc := engine.RunContextFromRun(r.run, r.wf, r.opts.task, r.opts.itemSelected, time.Now())
 	if rc == nil {
 		return nil

@@ -23,11 +23,15 @@ type LocalRunContext struct {
 // Orkflow's, its parent's and its root's owner, so a run whose parent is not
 // the root reads it that way too, whatever lies between.
 func LineageOfRun(run *orkstackv1.Run) (RunLineage, bool) {
-	if run.GetId() == "" {
+	origin := run.GetOrigin()
+	if run.GetId() == "" || origin.GetKind() == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED ||
+		run.GetOrkflowName() == "" {
 		return RunLineage{}, false
 	}
-	origin := run.GetOrigin()
 	if origin.GetKind() != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN {
+		if run.GetOrkflowDefinitionDigest() == "" {
+			return RunLineage{}, false
+		}
 		started := recordedOrigin(origin)
 		return RunLineage{Origin: started, RootRunID: run.GetId(), Root: artifacts.RunContextRoot{
 			Orkflow: artifacts.RunContextOrkflow{Name: run.GetOrkflowName(), Version: run.GetOrkflowVersion(),

@@ -143,9 +143,14 @@ type RunParent struct {
 // and attempts stand.
 type lineageSource func() (RunLineage, *Failure)
 
-// fixedLineage is a lineage that is known.
+// fixedLineage is a lineage that is known; one with no root is none.
 func fixedLineage(l RunLineage) lineageSource {
-	return func() (RunLineage, *Failure) { return l, nil }
+	return func() (RunLineage, *Failure) {
+		if l.RootRunID == "" || l.Root.Orkflow.Name == "" {
+			return RunLineage{}, runContextInvalid("names no root")
+		}
+		return l, nil
+	}
 }
 
 // objectLineage is the lineage of in's run from its run tree's object. One it

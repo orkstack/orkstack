@@ -109,6 +109,8 @@ func TestLineageOfRun_AnIncompleteRecordSaysNone(t *testing.T) {
 		t.Fatal("the positive control says no lineage")
 	}
 	for name, drop := range map[string]func(*orkstackv1.Run){
+		"no origin":         func(r *orkstackv1.Run) { r.Origin = nil },
+		"no origin kind":    func(r *orkstackv1.Run) { r.Origin.Kind = orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED },
 		"no run id":         func(r *orkstackv1.Run) { r.Id = "" },
 		"no parent id":      func(r *orkstackv1.Run) { r.Origin.Id = "" },
 		"no root id":        func(r *orkstackv1.Run) { r.Origin.RootRunId = "" },
@@ -123,6 +125,14 @@ func TestLineageOfRun_AnIncompleteRecordSaysNone(t *testing.T) {
 				t.Fatalf("lineage = %+v, want none", l)
 			}
 		})
+	}
+	topLevel := lineageRun(recordedRootOrigin(), recordedRootOrkflow())
+	topLevel.OrkflowDefinitionDigest = ""
+	if l, ok := LineageOfRun(topLevel); ok {
+		t.Fatalf("a top-level run of no definition says %+v", l)
+	}
+	if _, _, f := runContextTaskJSON(testRunContextInput(0, "", ""), fixedLineage(RunLineage{}), false, 1, time.Now()); f == nil || f.Reason != ReasonRunContextInvalid {
+		t.Fatalf("an empty lineage = %v, want %s", f, ReasonRunContextInvalid)
 	}
 	if _, ok := LineageOfRun(nil); ok {
 		t.Fatal("no run says a lineage")

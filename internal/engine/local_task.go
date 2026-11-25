@@ -450,30 +450,37 @@ func JoinContextFromRun(run *orkstackv1.Run, wf *orkstackv1.Orkflow, taskID stri
 // it. It names no object: the caller reads the lineage from the record too
 // (orker.LineageOfRun). A task the run never scheduled was scheduled now, by
 // the local run; a local run is the first of its own attempts. Nil for a run
-// whose tasks were given no context, or that never started.
+// whose tasks were given no context, or that never started, for an item its
+// record does not hold, and for a task that ran with no scheduled time.
 func RunContextFromRun(run *orkstackv1.Run, wf *orkstackv1.Orkflow, taskID string, item *int32, now time.Time) *orkstackv1.RunContext {
 	spec := taskByID(wf, taskID)
 	if spec == nil || run.GetRunContext().GetStatus() != orkstackv1.RunContextStatus_RUN_CONTEXT_STATUS_AVAILABLE ||
 		run.GetCreatedAt() == nil || run.GetStartedAt() == nil {
 		return nil
 	}
-	scheduled := timestamppb.New(now)
+	var row *orkstackv1.TaskRun
 	for _, tr := range run.GetTaskRuns() {
 		if tr.GetTaskId() != taskID {
 			continue
 		}
-		row := tr
-		if item != nil {
+		if row = tr; item != nil {
 			row = nil
 			for _, it := range tr.GetItems() {
 				if it.Item != nil && it.GetItem() == *item {
 					row = it
 				}
 			}
+			if row == nil {
+				return nil
+			}
 		}
-		if row.GetScheduledAt() != nil {
-			scheduled = copyTimestamp(row.GetScheduledAt())
+	}
+	scheduled := copyTimestamp(row.GetScheduledAt())
+	if scheduled == nil {
+		if row.GetAttempt() > 0 || row.GetStartedAt() != nil {
+			return nil
 		}
+		scheduled = timestamppb.New(now)
 	}
 	rc := &orkstackv1.RunContext{
 		CreatedAt:           copyTimestamp(run.GetCreatedAt()),

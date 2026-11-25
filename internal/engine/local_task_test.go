@@ -565,7 +565,7 @@ func TestRunContextFromRun(t *testing.T) {
 	wf := &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{
 		{Id: "plain", Retry: &orkstackv1.RetryPolicy{MaximumAttempts: 3}},
 		{Id: "fan", Each: &orkstackv1.EachSpec{}},
-		{Id: "never"},
+		{Id: "never"}, {Id: "lost"}, {Id: "added"},
 	}}
 	recorded := func() *orkstackv1.Run {
 		return &orkstackv1.Run{Id: "ork-child", CreatedAt: at(10), StartedAt: at(11),
@@ -577,6 +577,7 @@ func TestRunContextFromRun(t *testing.T) {
 				{TaskId: "fan", ScheduledAt: at(30), Items: []*orkstackv1.TaskRun{
 					{TaskId: "fan", Item: proto.Int32(0), ScheduledAt: at(31)}, {TaskId: "fan", Item: proto.Int32(1), ScheduledAt: at(32)}, {TaskId: "fan", Item: proto.Int32(2)}}},
 				{TaskId: "never"},
+				{TaskId: "lost", Attempt: 1, Status: orkstackv1.Status_STATUS_FAILED},
 			}}
 	}
 	want := func(scheduled int64, attempts int32) *orkstackv1.RunContext {
@@ -593,6 +594,9 @@ func TestRunContextFromRun(t *testing.T) {
 		{"fan", proto.Int32(1), want(32, 1)},
 		{"fan", proto.Int32(2), want(99, 1)}, // an item the run never scheduled
 		{"never", nil, want(99, 1)},
+		{"fan", proto.Int32(7), nil}, // an item the record does not hold
+		{"lost", nil, nil},           // a task that ran, with no scheduled time
+		{"added", nil, want(99, 1)},  // a task of an edited document, no row of the run's
 		{"absent", nil, nil},
 	} {
 		if got := engine.RunContextFromRun(recorded(), wf, tc.task, tc.item, now); !proto.Equal(got, tc.want) {

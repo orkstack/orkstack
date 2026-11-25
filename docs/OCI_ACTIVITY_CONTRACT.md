@@ -2603,7 +2603,8 @@ parent is not the root the root's `origin` has no `principal`,
 `principalVerified` or `reference`, as inside a shared Orkflow. `run.context` is
 `cached` for a cached task; and `unavailable`, with none of the keys, without
 `--from-run`, for a run whose tasks were given no context or that never
-started, and where the record does not say the whole lineage.
+started, and where the record does not say the whole lineage, or when the task
+or item that ran was scheduled.
 
 **What it shares with an Orker.** The dispatcher is the Orker's, built by the
 Orker's constructor, on this machine's runtime; the renderer is the Orker's,
