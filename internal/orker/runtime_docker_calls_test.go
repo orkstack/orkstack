@@ -27,9 +27,12 @@ import (
 // daemon that is slow to start a container does), timeoutruns (its content N:
 // the first N `run` invocations answer at once with the daemon's own deadline
 // error, as a daemon whose containerd cannot start the shim does), runother (a
-// refusal that is neither a bind nor a deadline), runexit (the container ran
-// and exited 3), runfailsrc (a refusal that quotes the bind source path),
-// inspecthang (`image inspect` hangs for 30 s), rmfailall (every `rm` is
+// refusal that is neither a bind nor a deadline), rununreachable (the CLI found
+// no daemon), runsays (what the container writes first on its stdout), runexit
+// (the container ran and exited 3), runfailsrc (a refusal that quotes the bind source path),
+// inspecthang (`image inspect` hangs for 30 s), inspectunreachable (no daemon
+// answers an `image inspect`), imagesunreachable (no daemon
+// answers an inspect or a pull of an image), rmfailall (every `rm` is
 // refused), noise (every command first writes a line of its own on stderr, as
 // the podman-docker shim does) and killnotrunning (`kill` answers that the
 // container is not running). For the Podman dialects: podmanengine
@@ -91,12 +94,15 @@ if [ -e "$S/noise" ]; then echo "Emulate Docker CLI using podman. Create /etc/co
 case "$1" in
   image)
     if [ -e "$S/inspecthang" ]; then exec sleep 30; fi
+    if [ -e "$S/inspectunreachable" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
+    if [ -e "$S/imagesunreachable" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1; fi
     if [ -e "$S/present" ]; then
       echo '{"Id":"sha256:abc","Os":"linux","Architecture":"amd64"}'
       exit 0
     fi
     echo "Error: No such image" >&2; exit 1 ;;
   pull)
+    if [ -e "$S/imagesunreachable" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1; fi
     if [ -e "$S/pullfail" ]; then echo "pull access denied" >&2; exit 1; fi
     touch "$S/present"; exit 0 ;;
   inspect)
@@ -174,6 +180,9 @@ case "$1" in
         if [ -e "$S/enginerootfail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
         if [ -e "$S/engineroothang" ]; then exec sleep 30; fi
         if [ -e "$S/engineroot" ]; then cat "$S/engineroot"; else echo /var/lib/docker; fi ;;
+      *CDISpecDirs*) if [ -e "$S/cdidirsfail" ]; then echo "Error: template parsing error" >&2; exit 64; fi; if [ -e "$S/cdidirsnull" ]; then echo null; elif [ -e "$S/cdidirs" ]; then cat "$S/cdidirs"; else echo '["/etc/cdi","/var/run/cdi"]'; fi ;;
+      *OCIRuntime*) if [ -e "$S/defaultruntime" ]; then cat "$S/defaultruntime"; else echo '{"name":"crun","path":"/usr/bin/crun"}'; fi ;;
+      *DefaultRuntime*) if [ -e "$S/defaultruntime" ]; then cat "$S/defaultruntime"; else echo '{"name":"runc","runtimes":{"runc":{"path":"runc"}}}'; fi ;;
       *) echo "[name=seccomp,profile=builtin]" ;;
     esac ;;
   run)
@@ -213,6 +222,8 @@ case "$1" in
     touch "$S/runstarted"
     if [ -e "$S/runfail" ]; then echo "docker: Error response from daemon: bind source path does not exist" >&2; exit 125; fi
     if [ -e "$S/runother" ]; then echo "docker: Error response from daemon: no space left on device" >&2; exit 125; fi
+    if [ -e "$S/rununreachable" ]; then echo "docker: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 125; fi
+    if [ -e "$S/runsays" ]; then cat "$S/runsays"; echo; fi
     if [ -e "$S/runexit" ]; then exit 3; fi
     if [ -e "$S/runfailsrc" ]; then
       src=""

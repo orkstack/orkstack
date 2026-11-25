@@ -570,9 +570,6 @@ func parseGPU(at string, f *cdiFields) (*GPUProfile, error) {
 	if !cdiKindPattern.MatchString(f.Kind) {
 		return nil, fmt.Errorf("%s.cdi.kind: %q is not a CDI kind such as amd.com/gpu", at, f.Kind)
 	}
-	if strings.HasPrefix(f.Kind, "nvidia.com/") {
-		return nil, fmt.Errorf("%s.cdi.kind: nvidia.com kinds are not supported by this release", at)
-	}
 	if len(f.Units) == 0 || len(f.Units) > maxProfileGPUUnits {
 		return nil, fmt.Errorf("%s.cdi.units: declare 1 to %d units", at, maxProfileGPUUnits)
 	}
@@ -697,7 +694,7 @@ func checkOnePerKind(list []Profile) error {
 // advertises on DescribeOrker. A kind joins this list only in the change that
 // implements it end to end.
 func SupportedProfileKinds() []orkstackv1.ProfileKind {
-	return []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}
+	return []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES, orkstackv1.ProfileKind_PROFILE_KIND_GPU}
 }
 
 // CheckSupported refuses a profile whose kind this build does not implement:

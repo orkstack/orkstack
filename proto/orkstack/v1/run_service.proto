@@ -827,7 +827,7 @@ message DiffRunsResponse {
   // adds) is carried as GetRun would carry it.
   Run from = 1;
   Run to = 2;
-  bool same_orkflow = 3;                 // orkflow_name equal (namespace is equal by construction)
+  bool same_orkflow = 3;                 // orkflow_name equal, and the namespace that owns it (a shared Orkflow's child run)
   bool same_definition_digest = 4;       // orkflow_definition_digest equal
   // input_unified_diff is dsl.Unified over the canonical, indented JSON of the
   // two inputs (keys sorted, integers without fraction), labelled

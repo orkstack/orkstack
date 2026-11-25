@@ -13,9 +13,11 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -216,10 +218,13 @@ func NewHeartbeater(ctx context.Context) *Heartbeater {
 	info := activity.GetInfo(ctx)
 	h.ackTimeout = info.HeartbeatTimeout
 	beats := activity.GetClient(ctx)
+	// The attempt's run key, taken once from the attempt's own context: every
+	// beat is sealed with it, whatever context it is sent on.
+	scope := attemptScope(ctx)
 	h.send = func(call context.Context, progress HeartbeatProgress) error {
 		return beats.RecordActivityHeartbeatWithOptions(call, client.RecordActivityHeartbeatOptions{
 			TaskToken:    info.TaskToken,
-			Details:      []any{progress},
+			Details:      []any{payloadcrypt.Seal(scope, progress)},
 			Namespace:    info.Namespace,
 			WorkflowID:   info.WorkflowExecution.ID,
 			ActivityType: info.ActivityType.Name,
@@ -228,7 +233,7 @@ func NewHeartbeater(ctx context.Context) *Heartbeater {
 		})
 	}
 	h.deliver = func(call context.Context, progress HeartbeatProgress) {
-		activity.RecordHeartbeat(call, progress)
+		activity.RecordHeartbeat(call, payloadcrypt.Seal(scope, progress))
 	}
 	h.completeCanceled = func(call context.Context) error {
 		return beats.CompleteActivity(call, info.TaskToken, nil, temporal.NewCanceledError())
@@ -528,7 +533,28 @@ func (h *Heartbeater) setProfiles(p []*orkstackv1.EffectiveProfile) {
 	}
 }
 
-// effectiveProfiles is what setProfiles recorded, or nil.
+// setUnits records the units the attempt holds of profile, by their positions in
+// its list, beside what setProfiles recorded. A list already handed out is never
+// changed.
+func (h *Heartbeater) setUnits(profile string, indices []int) {
+	if h == nil || len(indices) == 0 {
+		return
+	}
+	var out []*orkstackv1.EffectiveProfile
+	for _, p := range h.effectiveProfiles() {
+		if p.GetName() == profile {
+			p = proto.CloneOf(p)
+			p.UnitIndices = nil
+			for _, i := range indices {
+				p.UnitIndices = append(p.UnitIndices, int32(i))
+			}
+		}
+		out = append(out, p)
+	}
+	h.profiles.Store(&out)
+}
+
+// effectiveProfiles is what setProfiles and setUnits recorded, or nil.
 func (h *Heartbeater) effectiveProfiles() []*orkstackv1.EffectiveProfile {
 	if h == nil {
 		return nil

@@ -28,11 +28,6 @@ import (
 // (docs/RESUME.md, "The resume budget").
 const MaxResumesPerRun = 20
 
-// notReadBackReason is the reason a terminal snapshot gives a row that an
-// earlier resume had not read back when the run ended (E85 PR 4 emits it and
-// documents it). Such a row stays kept.
-const notReadBackReason = "RESUME_NOT_READ_BACK"
-
 // forceCanceledReason is E88's run ending for a force cancel (E88 emits it
 // and documents it).
 const forceCanceledReason = "RUN_FORCE_CANCELED"
@@ -644,6 +639,14 @@ func newPlanner(in ResumePlanInput) (*planner, error) {
 			}
 			p.dependents[need] = append(p.dependents[need], id)
 		}
+		// A lines fan-out reruns with its producer because the producer is
+		// one of its own needs. Without that edge its items could be kept
+		// over lines that were replaced. A "_" producer is no task: what the
+		// run itself received (_inputs) never changes.
+		if producer := p.tasks[id].def.GetEach().GetSource().GetArtifact().GetProducer(); producer != "" &&
+			!strings.HasPrefix(producer, "_") && !slices.Contains(p.tasks[id].def.GetNeeds(), producer) {
+			return nil, fmt.Errorf("engine: plan resume: fan-out %q reads the lines of %q, which it does not need", id, producer)
+		}
 	}
 	for src := range p.eachOf {
 		if p.tasks[src] == nil {
@@ -717,7 +720,7 @@ func isFailedSeed(row *orkstackv1.TaskRun) bool {
 // success, or a row an earlier resume kept and had not read back.
 func keptCandidate(row *orkstackv1.TaskRun) bool {
 	return row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED || row.GetReadingBack() ||
-		row.GetError().GetCode() == notReadBackReason
+		row.GetError().GetCode() == ReasonResumeNotReadBack
 }
 
 // answer returns the verification answer for a kept candidate, recording
@@ -761,7 +764,7 @@ func (p *planner) classify() error {
 				// kept when every item is, and the node rule puts it in S
 				// once any item reruns.
 				switch row := task.row; {
-				case row.GetReadingBack() || row.GetError().GetCode() == notReadBackReason:
+				case row.GetReadingBack() || row.GetError().GetCode() == ReasonResumeNotReadBack:
 					// An earlier resume had not read it back: it stays kept
 					// (§4.4); its items carry their own answers.
 					p.kept[u] = true
@@ -1303,12 +1306,22 @@ func checkResumePlan(in ResumePlanInput, plan *ResumePlan) error {
 				return fmt.Errorf("item %s[%d] is in S but its node is not", id, i)
 			}
 		}
-		if node.InRerunSet {
+		if node.InRerunSet || node.Disposition == DispositionWait {
+			// A dependent runs again whole, every item of a fan-out too: an
+			// item kept over a replaced result (an array, or the lines of an
+			// artifact) would be a silently wrong one.
 			for _, dep := range p.dependents[id] {
-				if !in.Facts.Earlier[dep] && !inS(nodeUnit(dep)) {
-					return fmt.Errorf("%s is in S but its dependent %s is not", id, dep)
+				if in.Facts.Earlier[dep] {
+					continue
+				}
+				for _, u := range p.tasks[dep].units() {
+					if !inS(u) {
+						return fmt.Errorf("%s reruns or waits again but its dependent %s does not rerun", id, u)
+					}
 				}
 			}
+		}
+		if node.InRerunSet {
 			if pin := task.def.GetPin(); pin != "" {
 				for _, m := range p.pins[pin] {
 					if !in.Facts.Earlier[m] && !inS(nodeUnit(m)) {

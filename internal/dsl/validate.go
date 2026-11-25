@@ -314,7 +314,7 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 
 	// Rules 19–24 (the fan-out's own declaration): before the template
 	// rules, so a malformed `each:` is named before anything that reads it.
-	if err := validateEach(wf, byID, closures); err != nil {
+	if err := validateEach(wf, byID, closures, artifactInputs); err != nil {
 		return err
 	}
 

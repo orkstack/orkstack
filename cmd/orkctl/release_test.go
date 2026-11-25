@@ -107,6 +107,10 @@ func (s *scriptedReleases) ReleasePausedRuns(_ context.Context, build string) (i
 	return n, ok, nil
 }
 
+func (s *scriptedReleases) ReleaseQueuedRuns(context.Context, string) (int64, bool, error) {
+	return 0, false, nil
+}
+
 func (s *scriptedReleases) RunningRuns(context.Context) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

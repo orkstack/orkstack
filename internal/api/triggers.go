@@ -83,7 +83,10 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	}
 	record, found, err := svc.Triggers().Get(r.Context(), id)
 	if err != nil {
-		writeTriggerError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		// The caller has shown no token yet: what the store answered is the
+		// log's.
+		svc.doorFault(r.Context(), "the trigger door could not read its trigger", "trigger", id, "error", err)
+		writeTriggerError(w, http.StatusInternalServerError, "storage_error", "the trigger could not be read; try again")
 		return
 	}
 	if !found {

@@ -172,7 +172,7 @@ func FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds(f *testing.F) {
 		}
 
 		// Every member is accounted for once: a list, or a failure naming it.
-		accounted := len(report.Verified) + len(report.Reclaimed) + len(report.Unrecorded) + len(report.Rejected)
+		accounted := len(report.Verified) + len(report.Reclaimed) + len(report.Unrecorded) + len(report.Rejected) + len(report.Withheld)
 		failed := map[string]bool{}
 		for _, failure := range report.Failures {
 			failed[failure.Path] = true

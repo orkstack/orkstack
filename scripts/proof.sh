@@ -303,7 +303,7 @@ if [ "$TIER" = nightly ]; then
 	RUN[race-repeat]=1
 	RUN[fuzz]=1
 	mapfile -t SPEC_ARGS < <(grep -v '^[[:space:]]*#' scripts/proof-nightly-specs.txt 2>/dev/null |
-		awk -F'\t' 'NF >= 4 && $1 != "" { sub(/^ui\//, "", $1); print $1 }')
+		awk -F'\t' 'NF >= 4 && $1 != "" { gsub(/^[ \t]+|[ \t]+$/, "", $1); sub(/^ui\//, "", $1); print $1 }')
 	if [ ${#SPEC_ARGS[@]} -gt 0 ]; then RUN[ui-e2e]=1; fi
 fi
 if [ "$TIER" = gpu ]; then
@@ -330,11 +330,35 @@ if [ -n "${PROOF_GATES:-}" ]; then
 	fi
 fi
 runs() { [ -n "${RUN[$1]:-}" ]; }
+# The spec files scripts/proof-gpu-specs.txt lists, printed one per line
+# relative to ui/. Never filtered silently: an absent file, or a line that is
+# neither a comment nor blank and lacks four tab-separated columns, is an
+# error (status 1, the line on stderr).
+gpu_spec_files() {
+	local f=scripts/proof-gpu-specs.txt
+	[ -f "$f" ] || { echo "$f is absent" >&2; return 1; }
+	awk -F'\t' '
+		/^[[:space:]]*(#|$)/ { next }
+		NF < 4 || $1 == "" { printf "%s:%d: want four tab-separated columns\n", FILENAME, NR > "/dev/stderr"; bad = 1; next }
+		{ sub(/^ui\//, "", $1); print $1 }
+		END { exit bad }' "$f"
+}
+# The GPU gate's Playwright half needs what the Playwright gate needs (its own
+# Temporal, the store and registry, this tree's images, bun, the UI's
+# dependencies) whenever the list has rows or cannot be read: a list that is
+# present, well-formed and empty needs none.
+gpu_specs_needed() {
+	runs gpu || return 1
+	local files
+	files="$(gpu_spec_files 2>/dev/null)" || return 0
+	[ -n "$files" ]
+}
+ui_stack() { runs ui-e2e || gpu_specs_needed; }
 # What the stack gates need first: this tree's images, the binaries, a Temporal.
-if runs integration || runs ui-e2e || runs activity-fixture || runs observability; then
+if runs integration || ui_stack || runs activity-fixture || runs observability; then
 	if [ -n "$IMAGE_TAG_OWN" ]; then RUN[images]=1; fi
 fi
-if runs integration || runs ui-e2e || runs observability; then
+if runs integration || ui_stack || runs observability; then
 	RUN[binaries]=1
 	RUN[temporal]=1
 fi
@@ -391,17 +415,17 @@ dex_image() {
 	[ -n "$image" ] || return 1
 	docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image"
 }
-if runs integration || runs ui-e2e; then
+if runs integration || ui_stack; then
 	need "the Dex image deploy/dex-image.txt pins (docker pull it)" dex_image
 fi
 # The unit gate needs it too: proofrun's own tests run go test -race.
 if runs race || runs race-repeat || runs unit; then
 	need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
 fi
-if runs ui-check || runs ui-unit || runs ui-e2e || runs site; then
+if runs ui-check || runs ui-unit || ui_stack || runs site; then
 	need "bun on PATH" command -v bun
 fi
-if runs ui-check || runs ui-unit || runs ui-e2e; then
+if runs ui-check || runs ui-unit || ui_stack; then
 	need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
 fi
 if runs site; then
@@ -415,7 +439,7 @@ if runs alerts; then
 	need "the pinned Prometheus image (docker pull \"\$(scripts/check-alerts.sh --image)\")" \
 		bash -c 'docker image inspect "$(scripts/check-alerts.sh --image)"'
 fi
-if runs ui-e2e; then
+if ui_stack; then
 	need "flock on PATH (the Playwright gate's host lock)" command -v flock
 	need "the temporal CLI on PATH (ui/e2e/admin.spec.ts induces a real cluster failure with it)" command -v temporal
 fi
@@ -456,10 +480,38 @@ if runs gpu; then
 	need "the GPU host set up: scripts/gpu-host-setup.sh prints the root steps it still needs" gpu_host_set_up
 	need "the group orkstack-gpu in this process's groups (id -nG): log in again, or run the proof under newgrp orkstack-gpu" gpu_lock_group
 	need "$GPU_LOCK_DIR, mode 0750 (scripts/gpu-host-setup.sh)" gpu_lock_dir
+	# The GPU spec files (scripts/proof-gpu-specs.txt): well-formed, and, with
+	# rows, a browser (the stack they share with the Playwright gate is probed
+	# above through ui_stack).
+	need "scripts/proof-gpu-specs.txt present with four tab-separated columns on every row (see its header)" gpu_spec_files
+	if gpu_specs_needed; then
+		need "the Playwright binary (cd ui && bun install)" test -x "$REPO/ui/node_modules/.bin/playwright"
+	fi
 fi
 if [ -n "$missing" ]; then
 	say "proof: prerequisites absent, nothing measured, nothing written:$missing"
 	exit 77
+fi
+# What TestIntegration_NVIDIAEmulation needs, fetched once everything else is
+# present and only by a tier that runs it: an unreachable registry or repository
+# is a missing prerequisite, and an image or build that is not the pinned one
+# fails the proof (scripts/nvidia-emulation.sh).
+NVIDIA_HOOKS=""
+if runs integration && [ "$TIER" != nightly ]; then
+	NVIDIA_HOOKS="$("$REPO/scripts/nvidia-emulation.sh" 2>"$PR_TMP/nvidia-emulation.log")"
+	case $? in
+	0) ;;
+	77)
+		say "proof: prerequisites absent, nothing measured, nothing written:
+  - what TestIntegration_NVIDIAEmulation needs: $(tail -n1 "$PR_TMP/nvidia-emulation.log")"
+		exit 77
+		;;
+	*)
+		say "proof: what TestIntegration_NVIDIAEmulation needs is not what is pinned, so the proof fails:"
+		sed 's/^/  /' "$PR_TMP/nvidia-emulation.log"
+		exit 1
+		;;
+	esac
 fi
 
 # ---- what dead proofs left -----------------------------------------------------
@@ -707,6 +759,7 @@ git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt"
 git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
 git show "$BASE_COMMIT:scripts/proof-gpu-tests.txt" >"$DIR/gpu-base.txt" 2>/dev/null || : >"$DIR/gpu-base.txt"
+git show "$BASE_COMMIT:scripts/proof-gpu-specs.txt" >"$DIR/gpu-specs-base.txt" 2>/dev/null || : >"$DIR/gpu-specs-base.txt"
 # The gate files this change edits, and the rows its excusing lists add or
 # remove (plan §6.4), computed whatever gates run. A failure is written into
 # the file as an error entry, never as "no gate file changed", and makes the
@@ -889,6 +942,8 @@ STACK_ENV=(
 	ORK_TEST_BIN_DIR="$DIR/bin"
 	ORK_TEST_IMAGE_TAG="$IMAGE_TAG"
 	ORK_TEST_REGISTRY="$REGISTRY"
+	# The verified nvidia-cdi-hook builds of TestIntegration_NVIDIAEmulation.
+	ORK_TEST_NVIDIA_HOOKS="${NVIDIA_HOOKS:-}"
 	# No stop grace for any Orker a gate starts: the default is a day, and a
 	# test, spec or smoke that stops an Orker while it runs a task must not
 	# wait it out. One that sets its own wins.
@@ -1007,8 +1062,72 @@ gpu_gate() {
 		fi
 		printf 'proof %s, pid %s, since %s\n' "$NAME" "$$" "$(date -u +%FT%TZ)" >"$GPU_PROOF_LOCK"
 		say "holding $GPU_PROOF_LOCK: one proof's GPU gate at a time on this host"
-		env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 "$PR" gpu -out "$DIR" -base "$DIR/gpu-base.txt" -host -tier "$TIER" -print-progress
+		local code=0
+		env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 "$PR" gpu -out "$DIR" -base "$DIR/gpu-base.txt" -host -tier "$TIER" -print-progress || code=1
+		# The gate's Playwright half, after the Go tests, still under the GPU lock.
+		gpu_specs_gate || code=1
+		return "$code"
 	} 8>>"$GPU_PROOF_LOCK"
+}
+# The spec files scripts/proof-gpu-specs.txt lists (the spec twin of the list
+# above): one at a time, alone, on one worker, each in its own report, then
+# `proofrun gpu-specs` judges them into gpu-specs-tests.json. The Playwright
+# phase of the merge gate never holds them (proofrun ui-plan). They take the
+# same host-wide lock every Playwright run takes, so a proof's specs and these
+# never overlap on the fixed ports (AGENTS.md §11.1). With no row there is
+# nothing to run and the ledger is empty, so a proof on the GPU host always has one.
+gpu_specs_gate() {
+	local -a files=() reports=()
+	local errs
+	# Never filtered: an absent list or a malformed row stops the gate.
+	if ! errs="$(gpu_spec_files 2>&1 >"$DIR/gpu-spec-files.txt")"; then
+		say "scripts/proof-gpu-specs.txt cannot be read: $errs"
+		return 1
+	fi
+	mapfile -t files <"$DIR/gpu-spec-files.txt"
+	if [ ${#files[@]} -eq 0 ]; then
+		"$PR" gpu-specs -out "$DIR" -tier "$TIER"
+		return
+	fi
+	local lock="${XDG_RUNTIME_DIR:-/tmp}/orkstack-ui-e2e.lock" code=0 image f i=0 report pw="$REPO/ui/node_modules/.bin/playwright"
+	local pwlog="$DIR/gpu-specs-playwright.log"
+	: >"$pwlog"
+	{
+		if ! flock -w 7200 9; then
+			say "another proof's Playwright specs held $lock for two hours"
+			return 1
+		fi
+		say "holding $lock: one proof's Playwright specs at a time on this host"
+		image="$(grep -v '^#' "$REPO/ui/e2e/browser-image.txt" | grep -v '^$' | head -n1)"
+		if ! docker image inspect "$image" >/dev/null 2>&1; then
+			say "pulling the browser-server image $image"
+			docker pull "$image" >"$DIR/browser-image-pull.log" 2>&1 || { say "cannot pull $image: $DIR/browser-image-pull.log"; return 1; }
+		fi
+		(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" "$pw" test --list --reporter=json "${files[@]}") \
+			>"$DIR/gpu-specs-list.json" || { say "playwright test --list of the GPU specs failed"; return 1; }
+		for f in "${files[@]}"; do
+			i=$((i + 1))
+			report="$DIR/gpu-specs-report-$i.json"
+			say "GPU spec $f"
+			(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" ORK_PROOF_OWNER="$PROOF_OWNER" \
+				PLAYWRIGHT_JSON_OUTPUT_FILE="$report" PLAYWRIGHT_JSON_OUTPUT_NAME="$report" \
+				"$pw" test --workers 1 --reporter=list,json "$f") >>"$pwlog" 2>&1 || code=1
+			if [ -s "$report" ]; then
+				reports+=(-report "$report")
+			else
+				# Say which spec left nothing, and still judge the others.
+				say "GPU spec $f produced no Playwright report ($report): it has no outcome"
+				code=1
+			fi
+		done
+	} 9>"$lock"
+	if [ ${#reports[@]} -eq 0 ]; then
+		say "no GPU spec produced a report"
+		return 1
+	fi
+	"$PR" gpu-specs -out "$DIR" -tier "$TIER" -list "$DIR/gpu-specs-list.json" "${reports[@]}" \
+		-log "$pwlog" -config "$REPO/ui/playwright.config.ts" || code=1
+	return "$code"
 }
 step gpu gpu.log gpu_gate
 
@@ -1060,6 +1179,7 @@ ui_e2e_locked() {
 	"$PR" ui-plan -list "$DIR/ui-e2e-list.json" -costs scripts/proof-ui-costs.tsv \
 		-shards 1 -out "$DIR/ui-plan.json" -nightly-mode "$plan_mode" \
 		-nightly-specs "$plan_specs" -nightly-specs-base "$DIR/nightly-specs-base.txt" \
+		-gpu-specs scripts/proof-gpu-specs.txt -gpu-specs-base "$DIR/gpu-specs-base.txt" ${GPU_HOST:+-gpu-host} \
 		-run-files-out "$DIR/ui-run-files.txt" >>"$DIR/ui-e2e.log" 2>&1 || { say "proofrun ui-plan failed"; return 1; }
 	local -a run_specs=()
 	mapfile -t run_specs <"$DIR/ui-run-files.txt"

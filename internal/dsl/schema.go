@@ -184,7 +184,7 @@ var orkflowDescriptions = map[string]string{
 	"tasks[].sleep.seconds": "required, 1 s … 30 days",
 
 	"tasks[].each.over":             "required: one reference to an array",
-	"tasks[].each.over_artifact":    "`<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.",
+	"tasks[].each.over_artifact":    "`<task>/<name>`, an artifact a task in this fan-out's own `needs:` records, or `_inputs/<name>`, an artifact input of this Orkflow. Exactly one of `over` and `over_artifact`.",
 	"tasks[].each.format":           "required with `over_artifact`: `jsonl` (each line one JSON value) or `lines` (each line a string).",
 	"tasks[].each.batch":            "optional: one item per batch of this many consecutive non-empty lines, 1 to 10,000; absent or `1` is one line per item.",
 	"tasks[].each.as":               "the name an item is bound to under `.each`: `^[a-z][a-z0-9_]*$`, at most 64 bytes, never `index` or `count`. Absent means `item`.",

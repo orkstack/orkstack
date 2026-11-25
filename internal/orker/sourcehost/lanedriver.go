@@ -2,6 +2,8 @@ package sourcehost
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -57,6 +59,9 @@ type LaneDriver struct {
 	// receipt that is not required and could not be written. It counts and
 	// logs them; nil drops them.
 	Failed func(kind string, err error)
+
+	// polled is when the current exchange's poll was written.
+	polled time.Time
 }
 
 func (d *LaneDriver) failed(kind string, err error) {
@@ -79,7 +84,7 @@ const (
 	// leased, until the instance gives it a verdict (Release).
 	ExchangeHeld
 	// ExchangeHoldExpired: the container released the message itself at its
-	// hold bound.
+	// hold bound, so whatever verdict was decided for it was not applied.
 	ExchangeHoldExpired
 )
 
@@ -107,6 +112,7 @@ func (d *LaneDriver) Poll(ctx context.Context, waitSeconds int) (Exchange, error
 	if !ok {
 		return Exchange{}, fmt.Errorf("lane %d: an exchange is open", d.Index)
 	}
+	d.polled = d.Now()
 	if err := d.Asks.WriteJSON(LanePath(d.Index, StepPoll), Poll{SchemaVersion: 1, Seq: seq, WaitSeconds: waitSeconds,
 		LeaseSeconds: d.Limits.LeaseSeconds}); err != nil {
 		d.Lane.Close()
@@ -213,8 +219,14 @@ func (d *LaneDriver) Verdict(ctx context.Context, msg HandedMessage, decision De
 		// it. The message is held and judged again.
 		return Exchange{Kind: ExchangeHeld, Message: msg, Decision: Decision{Disposition: Wait, Cause: "confirm"}}, nil
 	}
-	if err := d.settledEarly(); err != nil {
+	if closed, err := d.closed(); err != nil {
 		return Exchange{}, err
+	} else if closed {
+		// The container's own close at the hold bound came first: no verdict
+		// is written, and the receipt says the message was given back.
+		d.recordClose(ctx, msg, decision.Receipt, false)
+		d.Lane.Close()
+		return Exchange{Kind: ExchangeHoldExpired, Message: msg, Decision: decision}, nil
 	}
 	if decision.Receipt.Outcome != "" {
 		if err := d.Recorder.Record(ctx, msg, d.Lane.Seq(), decision.Receipt); err != nil {
@@ -224,27 +236,31 @@ func (d *LaneDriver) Verdict(ctx context.Context, msg HandedMessage, decision De
 			d.failed("receipt", err)
 		}
 	}
-	if err := d.Asks.WriteJSON(LanePath(d.Index, StepVerdict), Verdict{SchemaVersion: 1, Seq: d.Lane.Seq(), Action: decision.Action,
-		DelaySeconds: decision.Delay}); err != nil {
+	id := newVerdictID(d.Lane.Seq())
+	if err := d.Asks.WriteJSON(LanePath(d.Index, StepVerdict), Verdict{SchemaVersion: 1, Seq: d.Lane.Seq(), VerdictID: id,
+		Action: decision.Action, DelaySeconds: decision.Delay}); err != nil {
 		return Exchange{}, fmt.Errorf("%w: %v", ErrAskUnwritable, err)
 	}
 	d.Lane.Await(d.Now(), d.Limits.Settle)
 	for {
-		if raw, err := d.read(StepSettled, MaxSmallStepBytes); err != nil {
+		s, err := d.readSettled()
+		if err != nil {
 			return Exchange{}, err
-		} else if raw != nil {
-			s, err := ReadSettled(raw)
+		}
+		if s != nil {
+			closed, err := d.settles(*s, id)
 			if err != nil {
 				return Exchange{}, err
 			}
-			done, err := d.arrived(s.Seq)
-			if err != nil {
-				return Exchange{}, err
+			d.Lane.Arrived(s.Seq)
+			d.Lane.Close()
+			if closed {
+				// The container closed at its hold bound as the verdict was
+				// written, and both sides ignore that verdict.
+				d.recordClose(ctx, msg, decision.Receipt, true)
+				return Exchange{Kind: ExchangeHoldExpired, Message: msg, Decision: decision}, nil
 			}
-			if done {
-				d.Lane.Close()
-				return Exchange{Kind: ExchangeSettled, Message: msg, Decision: decision, Settled: s}, nil
-			}
+			return Exchange{Kind: ExchangeSettled, Message: msg, Decision: decision, Settled: *s}, nil
 		}
 		if err := d.tick(ctx); err != nil {
 			return Exchange{}, err
@@ -252,25 +268,109 @@ func (d *LaneDriver) Verdict(ctx context.Context, msg HandedMessage, decision De
 	}
 }
 
-// settledEarly looks, before any receipt or verdict is written, for a
-// settle of this exchange the container wrote before it was given one: an
-// image that acknowledged on its own. That is a violation, and nothing is
-// recorded for it. A close at the hold bound is not one: HoldExpired reads
-// it. The Orker sees only what is there when it looks, so a settle written
-// after this look and before the verdict is read as the verdict's.
-func (d *LaneDriver) settledEarly() error {
+// newVerdictID names a verdict: its lane's exchange and 128 random bits, so
+// a settle carrying it back answers exactly this one, and no image can make
+// one up without reading the verdict.
+func newVerdictID(seq int64) string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%d-%s", seq, hex.EncodeToString(b[:]))
+}
+
+// readSettled reads this exchange's settle: nil while there is none (no
+// file, or a leftover of an earlier exchange), a violation for one of an
+// exchange nobody began.
+func (d *LaneDriver) readSettled() (*Settled, error) {
 	raw, err := d.read(StepSettled, MaxSmallStepBytes)
 	if err != nil || raw == nil {
-		return err
+		return nil, err
 	}
 	s, err := ReadSettled(raw)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if s.Seq == d.Lane.Seq() && (s.Error == nil || s.Error.Kind != KindHoldExpired) {
-		return &servicehost.ViolationError{Name: LanePath(d.Index, StepSettled), Reason: "settled without a verdict"}
+	switch {
+	case s.Seq < d.Lane.Seq():
+		return nil, nil
+	case s.Seq > d.Lane.Seq():
+		return nil, d.settleViolation("a step nobody asked for")
 	}
-	return nil
+	return &s, nil
+}
+
+// settles judges this exchange's settle against the verdict given, "" while
+// none was: it names that verdict, or it is the container's own close at its
+// hold bound (closed), which names none. Anything else is a settle nobody
+// asked for, whenever it lands, and nothing is recorded as its outcome.
+//
+// A close answers no verdict, so its time is what is checked: one before the
+// hold bound is a settle without a verdict under another name.
+func (d *LaneDriver) settles(s Settled, id string) (closed bool, err error) {
+	expired := s.Error != nil && s.Error.Kind == KindHoldExpired
+	switch {
+	case expired && s.VerdictID != "":
+		return false, d.settleViolation("closed at the hold bound (" + KindHoldExpired + "), yet it names a verdict")
+	case expired && d.age() < d.Limits.Hold-holdSlack:
+		return false, d.settleViolation("closed (" + KindHoldExpired + ") before its hold bound")
+	case expired:
+		return true, nil
+	case id == "":
+		return false, d.settleViolation("settled without a verdict")
+	case s.VerdictID != id:
+		return false, d.settleViolation("settled, but not answering this lane's verdict (verdictId)")
+	}
+	return false, nil
+}
+
+func (d *LaneDriver) settleViolation(reason string) error {
+	return &servicehost.ViolationError{Name: LanePath(d.Index, StepSettled), Reason: reason}
+}
+
+// holdSlack is how early a container's clock may put its hold bound: one
+// that counts in whole seconds (date +%s) reaches it up to a second early.
+const holdSlack = 2 * time.Second
+
+// age is how long ago this exchange's poll was written, by whichever clock
+// says longer: a container may count on the wall clock or on the monotonic
+// one, and a suspended host moves only the first. The container counts from
+// its hand-over, which comes after the poll, so an exchange younger than the
+// hold bound is one no container could have held that long.
+func (d *LaneDriver) age() time.Duration {
+	now := d.Now()
+	return max(now.Sub(d.polled), now.Round(0).Sub(d.polled.Round(0)))
+}
+
+// closed looks for a settle of this exchange while no verdict of it has been
+// written: true for the container's own close at its hold bound, a
+// violation for any other, an image that acknowledged on its own.
+func (d *LaneDriver) closed() (bool, error) {
+	s, err := d.readSettled()
+	if err != nil || s == nil {
+		return false, err
+	}
+	return d.settles(*s, "")
+}
+
+// recordClose writes the receipt of a message its container gave back at the
+// hold bound. An accepted message (or its duplicate) keeps its own: its run
+// exists, whatever became of the delivery. written says the decided receipt
+// is already there. The exchange is over, so a receipt that cannot be
+// written is told and holds nothing.
+func (d *LaneDriver) recordClose(ctx context.Context, msg HandedMessage, decided Receipt, written bool) {
+	r := Receipt{Outcome: artifacts.ReceiptReleased, Reason: eventsources.ReasonMessageReleasedHoldExpired}
+	if d.Judge.AtMostOnce {
+		// Given back, at most once, is forgotten.
+		r.Outcome = artifacts.ReceiptDropped
+	}
+	if decided.Outcome == artifacts.ReceiptAccepted || decided.Outcome == artifacts.ReceiptDuplicate {
+		r = decided
+	}
+	if written && r.Outcome == decided.Outcome {
+		return
+	}
+	if err := d.Recorder.Record(ctx, msg, d.Lane.Seq(), r); err != nil {
+		d.failed("receipt", err)
+	}
 }
 
 // ErrAskUnwritable is a step the Orker could not write under ask/: its own
@@ -284,25 +384,11 @@ var ErrReceiptRequired = errors.New("a required receipt could not be written")
 // HoldExpired reports whether the container closed the held exchange
 // itself at its hold bound, and writes the release's receipt.
 func (d *LaneDriver) HoldExpired(ctx context.Context, msg HandedMessage) (bool, error) {
-	raw, err := d.read(StepSettled, MaxSmallStepBytes)
-	if err != nil || raw == nil {
+	closed, err := d.closed()
+	if err != nil || !closed {
 		return false, err
 	}
-	s, err := ReadSettled(raw)
-	if err != nil {
-		return false, err
-	}
-	switch {
-	case s.Seq < d.Lane.Seq():
-		return false, nil
-	case s.Seq > d.Lane.Seq():
-		return false, &servicehost.ViolationError{Name: LanePath(d.Index, StepSettled), Reason: "a step nobody asked for"}
-	case s.Error == nil || s.Error.Kind != KindHoldExpired:
-		return false, &servicehost.ViolationError{Name: LanePath(d.Index, StepSettled), Reason: "settled without a verdict"}
-	}
-	if err := d.Recorder.Record(ctx, msg, s.Seq, Receipt{Outcome: artifacts.ReceiptReleased, Reason: eventsources.ReasonMessageReleasedHoldExpired}); err != nil {
-		d.failed("receipt", err)
-	}
+	d.recordClose(ctx, msg, Receipt{}, false)
 	d.Lane.Close()
 	return true, nil
 }

@@ -16,6 +16,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
@@ -147,5 +148,52 @@ func TestSchedule_RequestsAndFiresAreCountedUnderTheirNamespace(t *testing.T) {
 	}
 	if lag := counts(t, reader, telemetry.ScheduleFireLagMetric); lag["ork.namespace=default"] != 2 {
 		t.Fatalf("lag = %v, want one observation per fire", lag)
+	}
+}
+
+// TestSchedule_AFireALimitKeepsFromStartingIsCountedWithItsOutcome: a skip
+// limit's full key and a full line are counted skipped and not_started,
+// never dropped as outcomes outside the contract.
+func TestSchedule_AFireALimitKeepsFromStartingIsCountedWithItsOutcome(t *testing.T) {
+	p, reader := metricProviders(t)
+	gate := engine.GateID("default", "", "db:prod")
+	concReader := &fakeConcReader{lines: map[string]engine.GateLine{gate: {Present: true, Holders: 2, Queued: 1, HolderRuns: []string{"ork-a", "ork-b"}}}}
+	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(),
+		Starter: &concStarter{fakeStarter: &fakeStarter{}, indexed: true}, Capabilities: &fakeCapabilities{}, ConcurrencyReader: concReader,
+		ScheduleMetrics: telemetry.NewScheduleMetrics(p, nil, false, slog.New(slog.NewTextHandler(io.Discard, nil)))})
+	acts := api.NewScheduleActivities(svc, nil)
+	for _, doc := range []string{limitedYAML(templatedLimit + "\n  on_limit: skip"), strings.Replace(limitedYAML(templatedLimit+"\n  max_queued: 1"), "name: migrate", "name: queued", 1)} {
+		must.OK(t, applyDoc(t, svc, doc))
+	}
+	for _, name := range []string{"migrate", "queued"} {
+		rec := &orkstackv1.ScheduleRecord{ScheduleId: "sch-1", Name: "nightly", OrkflowName: name}
+		if _, err := acts.PrepareScheduledRun(context.Background(), rec, time.Now()); err == nil {
+			t.Fatalf("a fire of %s started", name)
+		}
+	}
+	fires := counts(t, reader, telemetry.ScheduleFiresMetric)
+	if fires["ork.namespace=default,outcome=skipped"] != 1 || fires["ork.namespace=default,outcome=not_started"] != 1 {
+		t.Fatalf("fires = %v; want one skipped and one not_started", fires)
+	}
+}
+
+// TestSubmitRun_ALimitsRefusalIsCountedAsAnArrival: a submit a limit refuses
+// counts one arrival under its outcome and the declaration's label.
+func TestSubmitRun_ALimitsRefusalIsCountedAsAnArrival(t *testing.T) {
+	p, reader := metricProviders(t)
+	gate := engine.GateID("default", "", "db:prod")
+	concReader := &fakeConcReader{lines: map[string]engine.GateLine{gate: {Present: true, Holders: 2, HolderRuns: []string{"ork-a", "ork-b"}}}}
+	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(),
+		Starter: &concStarter{fakeStarter: &fakeStarter{}, indexed: true}, Capabilities: &fakeCapabilities{}, ConcurrencyReader: concReader,
+		ConcurrencyMetrics: telemetry.NewConcurrencyMetrics(p, nil, true, slog.New(slog.NewTextHandler(io.Discard, nil)))})
+	must.OK(t, applyDoc(t, svc, limitedYAML(templatedLimit+"\n  on_limit: refuse")))
+	if err := submitName(svc, "migrate"); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("submit = %v; want the limit's refusal", err)
+	}
+	got := counts(t, reader, telemetry.ConcurrencyArrivalsMetric)
+	key := "ork.concurrency.level=run,ork.concurrency.limit=" + engine.CensusLimitLabel("db:{{ .inputs.env }}") +
+		",ork.concurrency.outcome=refused,ork.concurrency.strategy=refuse,ork.namespace=default,ork.orkflow.name=migrate"
+	if got[key] != 1 || len(got) != 1 {
+		t.Fatalf("arrivals = %v; want one refused", got)
 	}
 }

@@ -955,6 +955,59 @@ tasks:
 		`artifacts.dataset: release-block@2.1.0 returns no artifact "bundle.tar" (artifact outputs: none)`, errorIssue)
 }
 
+// TestValidateOrkflow_FanOutOverAComposedTasksArtifact: a fan-out over the
+// lines of an artifact a composed task's child does not return is an error,
+// naming what the child returns; over one it returns there is none.
+func TestValidateOrkflow_FanOutOverAComposedTasksArtifact(t *testing.T) {
+	f := newComposeFixture(t)
+	f.mustApply(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: lister
+version: "1.0.0"
+tasks:
+  - id: list
+    uses: shell
+    with:
+      op: eval
+      command:
+        - "true"
+outputs:
+  rows:
+    artifact: list/rows.jsonl
+`)
+	doc := func(name string) string {
+		return `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: convert-all
+version: "1.0.0"
+tasks:
+  - id: listing
+    uses: orkflow:lister@1.0.0
+  - id: convert
+    uses: shell
+    needs:
+      - listing
+    each:
+      over_artifact: listing/` + name + `
+      format: jsonl
+      max_items: 5
+    with:
+      op: eval
+      command:
+        - "true"
+`
+	}
+	for _, issue := range f.validate(t, doc("rows")) {
+		if issue.GetSeverity() == errorIssue {
+			t.Fatalf("an artifact the child returns is refused: %v", issue)
+		}
+	}
+	requireIssue(t, f.validate(t, doc("rows.jsonl")), "tasks[1].each.over_artifact",
+		`each.over_artifact: lister@1.0.0 returns no artifact "rows.jsonl" (artifact outputs: rows)`, errorIssue)
+}
+
 func TestValidateOrkflow_ArtifactOutputReadAsValue(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, `

@@ -302,6 +302,7 @@ var Schema = []Var{
 	{Path: "engine.concurrency.requeue_backoff_factor", Env: "ORK_CONCURRENCY_REQUEUE_BACKOFF_FACTOR", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().RequeueBackoffFactor))},
 	{Path: "engine.concurrency.requeue_interval_max", Env: "ORK_CONCURRENCY_REQUEUE_INTERVAL_MAX", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().RequeueIntervalMax)},
 	{Path: "engine.concurrency.retry_after", Env: "ORK_CONCURRENCY_RETRY_AFTER", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().RetryAfter)},
+	{Path: "engine.concurrency.fire_unavailable_retry", Env: "ORK_CONCURRENCY_FIRE_UNAVAILABLE_RETRY", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultConcurrencySettings().FireUnavailableRetry)},
 	{Path: "engine.concurrency.event_holders_shown", Env: "ORK_CONCURRENCY_EVENT_HOLDERS_SHOWN", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().EventHoldersShown))},
 	{Path: "engine.concurrency.api_holders_shown", Env: "ORK_CONCURRENCY_API_HOLDERS_SHOWN", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultConcurrencySettings().APIHoldersShown))},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the

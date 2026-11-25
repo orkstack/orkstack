@@ -251,7 +251,7 @@ func TestDataConverter_GuardsASealedRun(t *testing.T) {
 
 	run := func(withMemo bool) error {
 		var s testsuite.WorkflowTestSuite
-		env := s.NewTestWorkflowEnvironment()
+		env := generousDeadlock(s.NewTestWorkflowEnvironment())
 		env.SetDataConverter(engine.DataConverter())
 		env.SetFailureConverter(engine.FailureConverter())
 		if withMemo {

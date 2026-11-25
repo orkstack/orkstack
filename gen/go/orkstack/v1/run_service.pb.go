@@ -2822,7 +2822,7 @@ type DiffRunsResponse struct {
 	// adds) is carried as GetRun would carry it.
 	From                 *Run `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"`
 	To                   *Run `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
-	SameOrkflow          bool `protobuf:"varint,3,opt,name=same_orkflow,json=sameOrkflow,proto3" json:"same_orkflow,omitempty"`                              // orkflow_name equal (namespace is equal by construction)
+	SameOrkflow          bool `protobuf:"varint,3,opt,name=same_orkflow,json=sameOrkflow,proto3" json:"same_orkflow,omitempty"`                              // orkflow_name equal, and the namespace that owns it (a shared Orkflow's child run)
 	SameDefinitionDigest bool `protobuf:"varint,4,opt,name=same_definition_digest,json=sameDefinitionDigest,proto3" json:"same_definition_digest,omitempty"` // orkflow_definition_digest equal
 	// input_unified_diff is dsl.Unified over the canonical, indented JSON of the
 	// two inputs (keys sorted, integers without fraction), labelled

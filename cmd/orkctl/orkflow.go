@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -204,6 +205,10 @@ func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow, id string) error {
 	if seconds := wf.GetTimeoutSeconds(); seconds > 0 {
 		fmt.Fprintf(header, "Timeout:\t%s\n", timeoutLabel(seconds))
 	}
+	// Only an Orkflow that limits its runs names its limit.
+	if spec := wf.GetConcurrency(); spec != nil {
+		fmt.Fprintf(header, "Concurrency:\t%s\n", concurrencyLabel(spec))
+	}
 	// Only a shared Orkflow names who else may compose it: an Orkflow is
 	// closed to every other namespace unless its definition says otherwise.
 	if len(wf.GetSharedWith()) > 0 {
@@ -289,4 +294,29 @@ func renderValidationIssues(out io.Writer, issues []*orkstackv1.ValidationIssue)
 		}
 	}
 	return failed, warnings
+}
+
+// concurrencyLabel is a declared concurrency limit in one sentence, the
+// words of the UI's Concurrency fact (ui/src/lib/concurrency.ts).
+func concurrencyLabel(spec *orkstackv1.ConcurrencySpec) string {
+	key := "this Orkflow's own key"
+	if spec.GetKey() != "" {
+		key = "key " + spec.GetKey()
+	}
+	upTo := "the deployment's default"
+	if seconds := spec.GetQueueTimeoutSeconds(); seconds > 0 {
+		upTo = timeoutLabel(seconds)
+	}
+	var rest string
+	switch spec.GetOnLimit() {
+	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE, orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED:
+		rest = "the rest wait in line up to " + upTo
+		if spec.GetMaxQueued() > 0 {
+			rest += fmt.Sprintf(", at most %d", spec.GetMaxQueued())
+		}
+	default:
+		// Only queue makes a run wait; any other strategy is named as the DSL writes it.
+		rest = "on_limit " + strings.ToLower(strings.TrimPrefix(spec.GetOnLimit().String(), "CONCURRENCY_STRATEGY_"))
+	}
+	return fmt.Sprintf("limit %d on %s; %s", spec.GetLimit(), key, rest)
 }

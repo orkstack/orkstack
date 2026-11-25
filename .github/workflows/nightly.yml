@@ -167,6 +167,36 @@ jobs:
           ORK_RELEASE_REPO: ${{ github.repository }}
         run: make release-notes-check
 
+  cdi-hook-table:
+    # The table of NVIDIA's nvidia-cdi-hook builds an Orker accepts
+    # (internal/orker/cdi_hook_table.go) against NVIDIA's signed package
+    # repository (`go run ./internal/orker/cmd/gencdihooks -check`): a toolkit
+    # release at or above the floor that the table lacks, or a row that no
+    # longer derives, makes the nightly red; the fix is to regenerate the
+    # table and review the new rows with their fixtures (E91, AGENTS.md §11).
+    # It reads that repository over the network, which is why it is here and
+    # in no proof. release.yml requires it (E91-N1).
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.4"
+      - name: cdi-hook-table
+        timeout-minutes: 20
+        env:
+          # Pure Go: go-rpmutils then reads zstd with klauspost, not cgo.
+          CGO_ENABLED: "0"
+        run: go run ./internal/orker/cmd/gencdihooks -check
+
   quickstart:
     # The getting-started path, end to end: the README's Quickstart as
     # written, on a clone of this commit, where the root compose.yaml builds

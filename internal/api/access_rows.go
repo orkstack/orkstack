@@ -771,6 +771,10 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.WebhookServiceDeleteWebhookProcedure:    {res: webhookByID, checks: perms(authz.PermWebhookWrite)},
 	orkstackv1connect.WebhookServiceRedeliverWebhookProcedure: {res: deliveryByID, checks: perms(authz.PermWebhookRedeliver)},
 
+	// ConcurrencyService
+	orkstackv1connect.ConcurrencyServiceListConcurrencyLimitsProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermRunRead)},
+	orkstackv1connect.ConcurrencyServiceGetConcurrencyLimitProcedure:   {res: inNamespace("namespace"), checks: perms(authz.PermRunRead)},
+
 	// StatsService and CacheService
 	orkstackv1connect.StatsServiceGetStatsProcedure:            {res: inNamespace("namespace"), checks: perms(authz.PermStatsRead)},
 	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermStatsRead)},

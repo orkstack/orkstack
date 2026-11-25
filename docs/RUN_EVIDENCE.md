@@ -31,13 +31,14 @@ evidence").
 ```text
 MANIFEST.json                              first member, always
 run.jsonl                                  the archive body, verbatim (metadata/runs/{run-id}.jsonl)
-orkflow/source.yaml                        Orkflow.source_yaml of the pinned version, verbatim bytes
+orkflow/source.yaml                        Orkflow.source_yaml of the pinned version, verbatim bytes (a shared Orkflow's: its owner's)
 tasks/{task-id}/commit.json                ActivityCommit, the stored bytes (SUCCEEDED tasks only)
 tasks/{task-id}/values.json                the committed values.json
 tasks/{task-id}/artifacts/{member-name}    each output artifact (SUCCEEDED and FAILED tasks)
 tasks/{task-id}/attempts/{n}.json          the TaskAttempt record, the stored bytes
 tasks/{task-id}/attempts/{n}/stdout.log    that attempt's uploaded streams
 tasks/{task-id}/attempts/{n}/stderr.log
+tasks/_inputs/artifacts/{member-name}      each artifact a child run received (after every task)
 ```
 
 Members appear in exactly this order: the run's members, then tasks in the
@@ -60,6 +61,14 @@ A fan-out over an artifact's lines (`each.over_artifact`) exports the same way:
 one entry per item, and a batch is one item. Its line index is a record of the
 run, not a member; its source is the producing task's own `artifact` member,
 and a batch's slice file is an input the Orker staged, never exported.
+
+A child run's received artifacts (`docs/DSL.md` "Passing artifacts to a child
+run") follow every task, as `artifact` members with `task_id` `_inputs` under
+`tasks/_inputs/artifacts/`; there is no `tasks[]` entry for `_inputs`. A
+composed task's artifacts are the ones its child returned, listed like any
+task's. Both carry `source_run_id`, `source_task_id` and `source_name`. The
+keys are additive, so `schema_version` is unchanged. A scope of one task
+carries that task's members only; `_inputs` is the scope of the received ones.
 
 A `SKIPPED` task has no members and one `tasks[]` entry. A `FAILED` or
 `CANCELED` task has no `commit.json` and no `values.json`, and has artifact
@@ -124,6 +133,10 @@ digest, keeps the `sha256:` prefix the run recorded.
 }
 ```
 
+Two keys appear only where they say something: `orkflow_namespace`, beside
+`orkflow_name`, is the namespace that owns a shared Orkflow whose child run
+this is, and `counts.withheld` counts the withheld members.
+
 `MANIFEST.json` is not listed in `members`: it cannot carry its own digest.
 Each member has:
 
@@ -136,10 +149,11 @@ Each member has:
 | `origin` | the object the bytes came from: the recorded URI for an artifact, values, log or commit; the store key for the archive body and an attempt record; the version document key plus `#source_yaml` for the definition. A location, never a credential |
 | `size_bytes`, `sha256` | of the bytes as read (`present`) or as recorded (`reclaimed`) |
 | `state`, `reason` | below |
+| `source_run_id`, `source_task_id`, `source_name` | for an artifact passed between the runs of a tree: the run, task and artifact name that recorded it. Audit data |
 
 `scope` records what was asked: `task_id` narrows the per-task members to one
 task (the run's own members are always included), `logs: false` drops every
-`stdout.log`/`stderr.log`, `artifacts: false` drops the output artifacts.
+`stdout.log`/`stderr.log`, `artifacts: false` drops the output artifacts and the received ones.
 `values.json`, `commit.json` and attempt records are never excluded.
 
 A change a version-1 reader could misread bumps `schema_version` (additive
@@ -187,6 +201,7 @@ records no gap stays version 1.
 | `reclaimed` | the store answered NotFound for an object the run recorded: the cleanup worker (commits, attempt-linked logs), a bucket lifecycle rule or `DeleteUnreferencedObjects` (artifact objects), or `DeleteOrkflow` (the definition) | the **recorded** digest, preserved; empty for `source` | no |
 | `unrecorded` | an attempt number between 1 and the highest known attempt for which the attempt store holds no record — the Orker died before filing one, or it was reclaimed | empty | no |
 | `rejected` | an object exists at the coordinates but is not what the run pinned: today only the definition, when the stored document does not hash to the run's definition digest | empty; `definition.stored_definition_digest` carries the document's | no |
+| `withheld` | the exporter may not read the object: today only the definition of a shared Orkflow's child run, when the caller lacks `orkflow.read` on it in its owner's namespace. While the access document cannot be read and configuration's bindings do not grant it, the export fails `Unavailable` instead | empty | no |
 
 Absence is a member, not a gap: nothing the run recorded is omitted silently.
 A store that cannot answer is not absence: the export fails `Unavailable`
@@ -206,6 +221,7 @@ are two members.
 | token | sentence |
 |---|---|
 | `definition_deleted` | the pinned definition was deleted from the orkflow store; the run's definition digest still attests it |
+| `definition_not_readable` | the exporter may not read the shared Orkflow in its owner's namespace; the run's definition digest still attests it |
 | `definition_digest_mismatch` | a document exists at the pinned coordinates but does not hash to the digest this run pinned |
 | `commit_missing` | the commit record was reclaimed by cleanup; its recorded digest is preserved |
 | `object_missing` | the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved |
@@ -240,9 +256,12 @@ a workload artifact named `commit.json` collides with nothing.
    sweep"), and its export can be retried then.
 3. Every member is resolved from the **archived** run snapshot, never from a
    coordinate the caller supplied.
-4. The definition is read by the run's name and version and attested by
-   recomputing its definition digest; a document that does not hash to the
-   pinned digest is `rejected`.
+4. The definition is read by the run's name and version, in the namespace that
+   owns it (a shared Orkflow's child run pinned its owner's document), and
+   attested by recomputing its definition digest; a document that does not hash
+   to the pinned digest is `rejected`. Another namespace's document is read
+   only for a caller with `orkflow.read` there, and is `withheld` from any
+   other ([ACCESS.md](ACCESS.md)).
 5. A commit is read only at the `CommitRef.uri` the snapshot recorded, and its
    bytes must hash to `CommitRef.sha256` (carried through, never recomputed by
    re-marshalling); otherwise the export is `DataLoss`.
@@ -279,13 +298,15 @@ string. Its rules:
 7. A `schema_version` other than 1 or 2 is refused, and so is a version 2
    without `event_gaps` or a version 1 with them.
 8. The manifest must agree with itself: a member whose `state` is not one of
-   `present`, `reclaimed`, `unrecorded` or `rejected` is `unknown state`, and
+   `present`, `reclaimed`, `unrecorded`, `rejected` or `withheld` is `unknown
+   state`, and
    a `path` listed a second time is `listed twice in manifest`. The engine
    never writes either; the rule exists so that every listed member is
    accounted for exactly once, as verified, a finding, or a failure.
 
-Reclaimed, unrecorded and rejected members are findings, not failures: the
-command exits 0 and lists them with their reasons. So is each event gap of a
+Reclaimed, unrecorded, rejected and withheld members are findings, not
+failures: the command exits 0 and lists each under its own state with its
+reason, and never among the verified. So is each event gap of a
 version-2 bundle, printed as a notice:
 
 ```text
@@ -314,7 +335,8 @@ FAILED: 1 member does not match MANIFEST.json
 ```
 
 `--json` prints the report as one document — the manifest embedded, then the
-`verified`, `reclaimed`, `unrecorded`, `rejected` and `failures` lists, and
+`verified`, `reclaimed`, `unrecorded`, `rejected` and `failures` lists,
+`withheld` when a member is, and
 `event_gaps` for a version-2 bundle.
 
 ## verify --against-store
@@ -331,7 +353,9 @@ immutable, so only states may move:
 - a file `present` that is live `reclaimed` with the same recorded digest is
   the finding `reclaimed since export` (exit 0: the bytes were true when
   exported and the digest still agrees); a file `reclaimed` that is live
-  `present` is `restored since export`.
+  `present` is `restored since export`;
+- a member `withheld` in one and not the other is the finding `readable to only
+  one of the exporter and this caller` (exit 0: nothing moved in the store).
 
 It prints the offline report, then a `store:` block (`every member agrees with
 the store`, or the findings and failures), and exits 1 on any failure in

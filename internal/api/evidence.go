@@ -73,8 +73,8 @@ func (s *Service) ExportRunEvidence(
 	if err := checkItemRequiresTask(taskID, msg.Item); err != nil {
 		return err
 	}
-	if taskID != "" && !hasTask(run, taskID) {
-		return connect.NewError(connect.CodeNotFound, fmt.Errorf("task %q not found in run %q", taskID, run.GetId()))
+	if err := checkArtifactTask(run, taskID); err != nil {
+		return err
 	}
 	if _, err := itemRunOf(run, taskID, msg.Item); err != nil {
 		return err
@@ -173,6 +173,7 @@ func (e *evidenceExport) build(
 		EventGaps:        eventGaps,
 		RunID:            archived.GetId(),
 		Namespace:        namespace,
+		OrkflowNamespace: archived.GetOrkflowNamespace(),
 		OrkflowName:      archived.GetOrkflowName(),
 		OrkflowVersion:   archived.GetOrkflowVersion(),
 		DefinitionDigest: archived.GetOrkflowDefinitionDigest(),
@@ -194,7 +195,7 @@ func (e *evidenceExport) build(
 	m.Members = append(m.Members, e.smallMember("run.jsonl", evidence.KindRun, "", 0, runKey, body))
 
 	// 7. The definition, addressed by the digest the run pinned.
-	if err := e.definition(ctx, m, namespace, archived); err != nil {
+	if err := e.definition(ctx, m, archived); err != nil {
 		return nil, err
 	}
 
@@ -207,18 +208,50 @@ func (e *evidenceExport) build(
 			return nil, err
 		}
 	}
+	// 8b. What a child received, as artifact members of the reserved
+	// producer _inputs: no task row of its own, so no task entry.
+	if !msg.GetExcludeArtifacts() && (msg.GetTaskId() == "" || msg.GetTaskId() == dsl.InputsProducer) {
+		if err := checkReceived(archived); err != nil {
+			return nil, err
+		}
+		for _, received := range archived.GetInputArtifacts() {
+			ref := received.GetArtifact()
+			member, err := e.stat(ctx, "tasks/"+dsl.InputsProducer+"/artifacts/"+evidence.MemberName(received.GetName()),
+				evidence.KindArtifact, dsl.InputsProducer, 0, ref)
+			if err != nil {
+				return nil, err
+			}
+			member.Name = received.GetName()
+			withSource(&member, ref)
+			m.Members = append(m.Members, member)
+		}
+	}
 	// 9.
 	m.Counts = evidence.CountMembers(m.Members)
 	return m, nil
 }
 
-func (e *evidenceExport) definition(ctx context.Context, m *evidence.Manifest, namespace string, archived *orkstackv1.Run) error {
+// definition is the document the run pinned: its owner's, which for a shared
+// Orkflow's child run is another namespace. A caller who may not read that
+// Orkflow is given its coordinates and digest, and none of its bytes.
+func (e *evidenceExport) definition(ctx context.Context, m *evidence.Manifest, archived *orkstackv1.Run) error {
+	namespace := definitionNamespace(archived)
 	origin, err := artifacts.OrkflowKey(namespace, archived.GetOrkflowName(), archived.GetOrkflowVersion())
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("definition key of run %q: %w", archived.GetId(), err))
 	}
 	origin += "#source_yaml"
 	const sourcePath = "orkflow/source.yaml"
+	readable, err := e.s.mayReadDefinition(ctx, archived)
+	if err != nil {
+		return err
+	}
+	if !readable {
+		m.Definition = evidence.Definition{State: evidence.StateWithheld, Reason: evidence.ReasonDefinitionNotReadable}
+		m.Members = append(m.Members, evidence.Member{Path: sourcePath, Kind: evidence.KindSource, Origin: origin,
+			State: evidence.StateWithheld, Reason: evidence.ReasonDefinitionNotReadable})
+		return nil
+	}
 	doc, err := e.s.orkflows.Get(ctx, namespace, archived.GetOrkflowName(), archived.GetOrkflowVersion())
 	switch {
 	case errors.Is(err, artifacts.ErrNotFound):
@@ -345,6 +378,7 @@ func (e *evidenceExport) row(
 				return err
 			}
 			member.Name = ref.GetName()
+			withSource(&member, ref)
 			m.Members = append(m.Members, member)
 		}
 	}
@@ -602,4 +636,12 @@ func evidenceTime(t time.Time, set bool) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
+}
+
+// withSource copies a passed artifact's recorded source onto its member.
+func withSource(member *evidence.Member, ref *orkstackv1.ArtifactRef) {
+	md := ref.GetMetadata()
+	member.SourceRunID = md[engine.ArtifactSourceRunKey]
+	member.SourceTaskID = md[engine.ArtifactSourceTaskKey]
+	member.SourceName = md[engine.ArtifactSourceNameKey]
 }

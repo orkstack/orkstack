@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -317,7 +318,7 @@ func (d *DockerRuntime) runWithin(
 ) (answer cliAnswer, overran bool, err error) {
 	bin, err := d.bin()
 	if err != nil {
-		return cliAnswer{}, false, err
+		return cliAnswer{}, false, notStarted(err)
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, within)
 	defer cancel()
@@ -338,6 +339,8 @@ func (d *DockerRuntime) runWithin(
 	case isExitErr(runErr):
 		answer.code = exitCodeOf(runErr)
 		return answer, overran, nil
+	case errors.Is(runErr, errCLINotStarted):
+		return answer, overran, fmt.Errorf("docker %s: %w", args[0], runErr)
 	case cmdCtx.Err() != nil:
 		return answer, overran, fmt.Errorf("docker %s: %w", args[0], cmdCtx.Err())
 	default:
@@ -358,16 +361,25 @@ func (d *DockerRuntime) Pull(ctx context.Context, pinned string) (PullInfo, erro
 	// One inspect answers both questions — is the image local, and what are
 	// its platform facts — so a cached image (the common case) costs one
 	// docker process rather than two. A non-zero exit is "absent".
-	info, present, err := d.lookupImage(ctx, pinned)
+	info, present, silent, err := d.lookupImage(ctx, controlTimeout, pinned)
 	if err != nil {
 		return PullInfo{}, err
 	}
 	if !present {
-		answer, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", pinned)
-		if err != nil {
+		answer, overran, err := d.runWithin(ctx, d.pullTimeout(), "pull", "--quiet", pinned)
+		// An engine that gave the inspect no answer has not said the image is
+		// absent, so a pull it does not answer either is its silence and not
+		// the image's absence. A pull that answered is an answer, and one that
+		// overran after an inspect that answered is a slow registry.
+		silent = d.grammar().unreachable(answer.said()) || (silent && (overran || err != nil))
+		switch {
+		case err != nil && silent:
+			return PullInfo{}, fmt.Errorf("%w: pull %s: %w", errEngineUnreachable, pinned, err)
+		case err != nil:
 			return PullInfo{}, fmt.Errorf("pull %s: %w", pinned, err)
-		}
-		if answer.code != 0 {
+		case answer.code != 0 && silent:
+			return PullInfo{}, fmt.Errorf("%w: pull %s: docker exited %d: %s", errEngineUnreachable, pinned, answer.code, answer.said())
+		case answer.code != 0:
 			return PullInfo{}, fmt.Errorf("pull %s: docker exited %d: %s", pinned, answer.code, answer.said())
 		}
 		// Re-inspected only after an actual pull, for the facts of what was
@@ -425,7 +437,7 @@ func (d *DockerRuntime) imagePresent(ctx context.Context, within time.Duration, 
 // inspectImage reads the platform facts the commit records as audit data. An
 // absent image is an error.
 func (d *DockerRuntime) inspectImage(ctx context.Context, ref string) (PullInfo, error) {
-	info, present, err := d.lookupImage(ctx, ref)
+	info, present, _, err := d.lookupImage(ctx, controlTimeout, ref)
 	if err != nil {
 		return PullInfo{}, err
 	}
@@ -436,15 +448,16 @@ func (d *DockerRuntime) inspectImage(ctx context.Context, ref string) (PullInfo,
 }
 
 // lookupImage is one `image inspect`: whether ref is local, and if it is, its
-// platform facts. A non-zero exit means absent; only a CLI that could not run,
-// or output that does not decode, is an error.
-func (d *DockerRuntime) lookupImage(ctx context.Context, ref string) (PullInfo, bool, error) {
-	answer, err := d.control(ctx, "image", "inspect", "--format", "{{json .}}", ref)
-	if err != nil {
-		return PullInfo{}, false, err
+// platform facts. A non-zero exit means absent, with silent saying that the
+// engine gave no answer within `within` and so has not said so; only a CLI
+// that could not run, or output that does not decode, is an error.
+func (d *DockerRuntime) lookupImage(ctx context.Context, within time.Duration, ref string) (info PullInfo, present, silent bool, err error) {
+	answer, overran, err := d.runWithin(ctx, within, "image", "inspect", "--format", "{{json .}}", ref)
+	if err != nil && !overran {
+		return PullInfo{}, false, false, err
 	}
-	if answer.code != 0 {
-		return PullInfo{}, false, nil
+	if answer.code != 0 || overran {
+		return PullInfo{}, false, overran || d.grammar().unreachable(answer.said()), nil
 	}
 	var raw struct {
 		ID           string   `json:"Id"`
@@ -454,13 +467,13 @@ func (d *DockerRuntime) lookupImage(ctx context.Context, ref string) (PullInfo, 
 		Variant      string   `json:"Variant"`
 	}
 	if err := json.Unmarshal([]byte(answer.stdout), &raw); err != nil {
-		return PullInfo{}, false, fmt.Errorf("image inspect %s: decode: %w", ref, err)
+		return PullInfo{}, false, false, fmt.Errorf("image inspect %s: decode: %w", ref, err)
 	}
 	platform := raw.Os + "/" + raw.Architecture
 	if raw.Variant != "" {
 		platform += "/" + raw.Variant
 	}
-	return PullInfo{PlatformDigest: raw.ID, Platform: platform}, true, nil
+	return PullInfo{PlatformDigest: raw.ID, Platform: platform}, true, false, nil
 }
 
 func (d *DockerRuntime) pullTimeout() time.Duration {
@@ -500,7 +513,8 @@ func (d *DockerRuntime) bindProbeTimeout() time.Duration {
 // cut off when its connection dropped, it says nothing of what the daemon went
 // on to do, and the name is the only handle on what it may have made. Only a
 // CLI that gave no answer at all, ErrCreateUnanswered, leaves the daemon possibly
-// still working.
+// still working. A create that was never sent, its context ended in the dialect
+// question or its CLI not started, names nothing and is never unanswered.
 func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
 	spoken, err := d.dialect(ctx)
 	if err != nil {
@@ -512,6 +526,9 @@ func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (Contain
 		return "", err
 	}
 	answer, err := d.control(ctx, args...)
+	if errors.Is(err, errCLINotStarted) {
+		return "", fmt.Errorf("create container: %w", err)
+	}
 	if err != nil {
 		return ContainerID(name), fmt.Errorf("%w: %w", ErrCreateUnanswered, err)
 	}
@@ -1664,7 +1681,10 @@ func parseOtherContainers(answer, orkerID string) []OtherOrkerContainer {
 // host-view probe's build check. An image the daemon does not have is an
 // error; an image without the label is ok false.
 func (d *DockerRuntime) ImageLabel(ctx context.Context, ref, key string) (string, bool, error) {
-	answer, err := d.control(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", ref)
+	answer, overran, err := d.runWithin(ctx, controlTimeout, "image", "inspect", "--format", "{{json .Config.Labels}}", ref)
+	if overran || (answer.code != 0 && d.grammar().unreachable(answer.said())) {
+		return "", false, fmt.Errorf("%w: image inspect %s: no answer within %s: %s", errEngineUnreachable, ref, controlTimeout, answer.said())
+	}
 	if err != nil {
 		return "", false, err
 	}
@@ -1954,6 +1974,8 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (B
 		return BootProbeRun{}, fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
 		return BootProbeRun{}, probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
+	case err != nil && d.grammar().unreachable(err.Error()):
+		return BootProbeRun{}, fmt.Errorf("%w: %w: %w", ErrPostureRefused, errEngineUnreachable, err)
 	case err != nil:
 		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
@@ -1982,6 +2004,10 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (B
 		if err != nil {
 			return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
 				ErrProbeImageUnavailable, image, err)
+		}
+		if answer.code != 0 && spoken.unreachable(answer.said()) {
+			return BootProbeRun{}, fmt.Errorf("%w: %w: pull %s: docker exited %d: %s",
+				ErrProbeImageUnavailable, errEngineUnreachable, image, answer.code, answer.said())
 		}
 		if answer.code != 0 {
 			return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
@@ -2054,7 +2080,14 @@ func (d *DockerRuntime) runProbeContainer(
 	// answer, and it is final.
 	var attempts []string
 	var leftovers []ProbeLeftover
-	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
+	var failed BootProbeRun
+	tries := bindProbeAttempts
+	if len(spec.CDIDevices) > 0 {
+		// A second run would share the unit with a first that could not be
+		// removed; the unit probe's own next pass is the retry.
+		tries = 1
+	}
+	for attempt := 1; attempt <= tries; attempt++ {
 		name := containerName(spec.Labels["ork.task"])
 		flags, _ := dockerContainerFlags(spec, name, spoken)
 		answer, overran, runErr := d.runWithin(ctx, budget, append(verb, flags...)...)
@@ -2086,15 +2119,20 @@ func (d *DockerRuntime) runProbeContainer(
 			final = fmt.Errorf("%w: docker exited %d: %s", ErrNotBindable, answer.code, said)
 		case saysDeadline(said, sources...):
 			attempts = append(attempts, fmt.Sprintf("attempt %d: the daemon answered %q", attempt, truncateString(said, 300)))
+		case spoken.unreachable(said):
+			final = fmt.Errorf("%w: %w: docker exited %d: %s", ErrPostureRefused, errEngineUnreachable, answer.code, said)
 		default:
 			final = fmt.Errorf("%w: the runtime would not run the boot probe's container, which is built as a task's is: "+
 				"docker exited %d: %s", ErrPostureRefused, answer.code, said)
 		}
+		// What the container said before its run ended, for a caller that can
+		// tell by it that it did start.
+		failed = BootProbeRun{Stdout: answer.stdout, Leftovers: leftovers}
 		if final != nil {
-			return BootProbeRun{}, probeLeftovers(final, leftovers)
+			return failed, probeLeftovers(final, leftovers)
 		}
 	}
-	return BootProbeRun{}, probeTimedOut(fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
+	return failed, probeTimedOut(fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, tries),
 		attempts, leftoverTexts(leftovers))
 }
 
@@ -2340,6 +2378,17 @@ func (d *DockerRuntime) ReachControlFromInside(ctx context.Context) (bool, error
 		return false, err
 	}
 	return spoken.rootless, nil
+}
+
+// HostAlias is the name this runtime gives its containers for the host, ""
+// for none (dialect.hostAlias): the reach probe asks the host's listeners at
+// it too.
+func (d *DockerRuntime) HostAlias(ctx context.Context) (string, error) {
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		return "", err
+	}
+	return spoken.hostAlias(), nil
 }
 
 // ServiceNetworksRefused is ErrServiceNetworkUnsupported for a runtime that
@@ -2627,4 +2676,64 @@ func terminalSafeShort(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// DefaultRuntime asks the engine for its default OCI runtime and where its
+// binary is (runtimeQuery).
+func (d *DockerRuntime) DefaultRuntime(ctx context.Context) (runtimeFacts, error) {
+	askCtx, cancel := context.WithTimeout(ctx, controlTimeout)
+	defer cancel()
+	spoken, _, err := d.dialectWithin(askCtx, controlTimeout)
+	if err != nil {
+		return runtimeFacts{}, fmt.Errorf("ask the container engine for its default runtime: %w", err)
+	}
+	query := spoken.runtimeQuery()
+	answer, overran, err := d.runWithin(askCtx, controlTimeout, "info", "--format", query)
+	switch {
+	case overran || askCtx.Err() != nil:
+		return runtimeFacts{}, fmt.Errorf("the container engine did not answer `%s info --format %q` within %s", spoken.cli, query, controlTimeout)
+	case err != nil:
+		return runtimeFacts{}, fmt.Errorf("ask the container engine for its default runtime: %w", err)
+	case answer.code != 0:
+		return runtimeFacts{}, fmt.Errorf("`%s info --format %q` exited %d: %s", spoken.cli, query, answer.code, answer.said())
+	}
+	return spoken.parseRuntimeFacts(answer.stdout)
+}
+
+var _ defaultRuntimeAsker = (*DockerRuntime)(nil)
+var _ cdiSpecDirsAsker = (*DockerRuntime)(nil)
+
+// CDISpecDirs asks the engine which directories it reads CDI specs from. The
+// docker CLI reports them; the podman CLI does not, so its documented defaults
+// are returned with reported false and the Orker says so.
+func (d *DockerRuntime) CDISpecDirs(ctx context.Context) (dirs []string, reported bool, err error) {
+	askCtx, cancel := context.WithTimeout(ctx, controlTimeout)
+	defer cancel()
+	spoken, _, err := d.dialectWithin(askCtx, controlTimeout)
+	if err != nil {
+		return nil, false, fmt.Errorf("ask the container engine for its CDI spec directories: %w", err)
+	}
+	if spoken.cli == CLIPodman {
+		return slices.Clone(DefaultCDISpecDirs), false, nil
+	}
+	answer, overran, err := d.runWithin(askCtx, controlTimeout, "info", "--format", "{{json .CDISpecDirs}}")
+	switch {
+	case overran || askCtx.Err() != nil:
+		return nil, false, fmt.Errorf("the container engine did not answer `%s info --format {{json .CDISpecDirs}}` within %s", spoken.cli, controlTimeout)
+	case err != nil:
+		return nil, false, fmt.Errorf("ask the container engine for its CDI spec directories: %w", err)
+	case answer.code != 0:
+		// Fails closed: an engine that exits non-zero on the question is not
+		// one that reports nothing (that is a null or empty answer, below), and
+		// its directories are not known to be the defaults.
+		return nil, false, fmt.Errorf("`%s info --format {{json .CDISpecDirs}}` exited %d: %s", spoken.cli, answer.code, answer.said())
+	}
+	text := strings.TrimSpace(answer.stdout)
+	if text == "" || text == "null" || text == "<no value>" {
+		return slices.Clone(DefaultCDISpecDirs), false, nil
+	}
+	if err := json.Unmarshal([]byte(text), &dirs); err != nil {
+		return nil, false, fmt.Errorf("the container engine answered %q for its CDI spec directories: %w", truncateString(text, 200), err)
+	}
+	return dirs, true, nil
 }

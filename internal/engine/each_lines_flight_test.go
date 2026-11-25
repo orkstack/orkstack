@@ -182,15 +182,27 @@ func TestEachLines_IndexHeldByInFlightCap(t *testing.T) {
 }
 
 // cappedLinesPeak runs a lines fan-out beside one sibling under an in-flight
-// cap and reports the most activities in flight at once. The index answers
-// only once the sibling ran, or once its own deadline passes when the cap
-// keeps the sibling waiting, so both are in flight together whenever the cap
-// lets them be.
+// cap and reports the most activities in flight at once. Each of the
+// index and the sibling leaves only once the other has entered, or once its
+// deadline passes when the cap keeps the other waiting: so both are in flight
+// together whenever the cap lets them be, whichever enters first. The deadline
+// is short where the cap must keep them apart, since the run pays it, and only
+// bounds a hang where they must meet.
 func cappedLinesPeak(t *testing.T, limit int32) int32 {
 	t.Helper()
 	var inFlight, peak atomic.Int32
-	sideRan := make(chan struct{})
-	var once sync.Once
+	sideIn, indexIn := make(chan struct{}), make(chan struct{})
+	var sideOnce, indexOnce sync.Once
+	deadline := 2 * time.Second
+	if limit > 1 {
+		deadline = time.Minute
+	}
+	await := func(other <-chan struct{}) {
+		select {
+		case <-other:
+		case <-time.After(deadline):
+		}
+	}
 	enter := func() {
 		n := inFlight.Add(1)
 		for {
@@ -203,16 +215,15 @@ func cappedLinesPeak(t *testing.T, limit int32) int32 {
 	h := newLinesHarness(t, func(context.Context, *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error) {
 		enter()
 		defer inFlight.Add(-1)
-		select {
-		case <-sideRan:
-		case <-time.After(2 * time.Second):
-		}
+		indexOnce.Do(func() { close(indexIn) })
+		await(sideIn)
 		return &orkstackv1.IndexEachLinesResult{Count: 3, TotalLines: 3, Index: linesIndex}, nil
 	}, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		enter()
 		defer inFlight.Add(-1)
 		if in.GetTaskId() == "side0" {
-			once.Do(func() { close(sideRan) })
+			sideOnce.Do(func() { close(sideIn) })
+			await(indexIn)
 		}
 		return listWrites(linesSource)(ctx, in)
 	})

@@ -83,7 +83,7 @@ func replayRunTimeoutHistory(t *testing.T, recorded *historypb.History, runID st
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
-		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
+		OriginalExecution: replayExecution(runID, recorded),
 	})
 }
 

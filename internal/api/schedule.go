@@ -178,6 +178,8 @@ func scheduleProto(view engine.ScheduleView) *orkstackv1.Schedule {
 		fire := &orkstackv1.ScheduleFire{
 			RunId:            f.RunID,
 			Refusal:          f.Refusal,
+			SkipCode:         f.SkipCode,
+			SkipMessage:      f.SkipMessage,
 			DetailsAvailable: f.DetailsAvailable,
 		}
 		if !f.ScheduledAt.IsZero() {

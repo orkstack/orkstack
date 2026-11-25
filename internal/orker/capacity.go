@@ -363,14 +363,39 @@ func (c *Capacity) trim(polled bool, request amount) (*Admission, error) {
 	if request.exceeds(c.ceiling) && !next.within(c.limit) {
 		c.reserved = c.reserved.sub(c.ceiling)
 		c.broadcast()
-		return nil, Fail(ReasonResourceAdmissionMismatch,
-			"the task's resolved request (%s) is larger than the %s it was polled under, and this Orker "+
-				"has %s free beside its other reservations; it is refused rather than run over capacity",
-			request, c.ceiling, c.limit.sub(c.reserved))
+		return nil, admissionMismatch(request, c.ceiling, c.limit.sub(c.reserved))
 	}
 	c.reserved = next
 	c.broadcast()
-	return &Admission{c: c, held: request}, nil
+	return &Admission{c: c, held: request, polled: true}, nil
+}
+
+func admissionMismatch(request, ceiling, free amount) *Failure {
+	return Fail(ReasonResourceAdmissionMismatch,
+		"the task's resolved request (%s) is larger than the %s it was polled under, and this Orker "+
+			"has %s free beside its other reservations; it is refused rather than run over capacity",
+		request, ceiling, free)
+}
+
+// admitUnknown admits an activity whose request cannot be read yet: a polled
+// one keeps all its poll reserved, gpu units included, because unknown is
+// never nothing; a pinned member, which holds no unit, the per-task cap's cpu
+// and memory. Admission.Resolve trims it.
+func (c *Capacity) admitUnknown(polled bool) (*Admission, error) {
+	c.mu.Lock()
+	request := c.ceiling
+	c.mu.Unlock()
+	if !polled {
+		request = request.cpuMemory()
+	}
+	admission, err := c.admit(polled, request)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	admission.unknown = true
+	return admission, nil
 }
 
 // seed reserves held for a container this Orker could not remove at boot: it
@@ -458,6 +483,41 @@ type Admission struct {
 	units     []int // the unit indices bind gave it, ascending; nil before bind
 	container ContainerID
 	done      bool // the reservation has left the attempt: freed, or handed to unremoved
+	polled    bool // it came off the pool's channel, under a permit's ceiling
+	unknown   bool // its request is not known yet (admitUnknown)
+}
+
+// Resolve trims an admission whose request was not known to request, once the
+// attempt's input has been read, before anything else of it runs. One that
+// was known already, and one that is done, is left as it is. A polled
+// attempt's request is held to what it was polled under, as trim holds it.
+func (a *Admission) Resolve(request amount) error {
+	if a == nil {
+		return nil
+	}
+	err := a.resolve(request)
+	if err != nil && a.c.observer != nil {
+		a.c.observer.AdmissionRefused()
+	}
+	return err
+}
+
+// resolve is Resolve's decision, under the lock.
+func (a *Admission) resolve(request amount) error {
+	c := a.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !a.unknown || a.done {
+		return nil
+	}
+	next := c.reserved.sub(a.held).add(request)
+	if a.polled && request.exceeds(c.ceiling) && !next.within(c.limit) {
+		// Its reservation is freed when the attempt, which never runs, is done.
+		return admissionMismatch(request, c.ceiling, c.limit.sub(c.reserved.sub(a.held)))
+	}
+	c.reserved, a.held, a.unknown = next, request, false
+	c.broadcast()
+	return nil
 }
 
 // ContainerCreated records the container whose removal frees the reservation.

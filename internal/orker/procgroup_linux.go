@@ -68,5 +68,5 @@ func startRecovered(cmd *exec.Cmd) (err error) {
 			err = fmt.Errorf("start a runtime CLI: panic: %v", r)
 		}
 	}()
-	return cmd.Start()
+	return notStarted(cmd.Start())
 }

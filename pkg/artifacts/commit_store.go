@@ -378,7 +378,17 @@ func recordFor(document []byte, c *orkstackv1.ActivityCommit) (CommitRecord, err
 }
 
 // commitKeyShape reports whether key may be a commit store's object: a
-// commit or the boot probe, and, for a read, an engine-recorded result.
+// commit or the boot probe, and, for a read, an engine-recorded result. A key
+// that names either prefix again below its own is neither: an Orker can write
+// anything under metadata/commits/, and such a key ends as a record's does.
 func commitKeyShape(key string, read bool) bool {
-	return key == CommitProbeKey || strings.HasPrefix(key, CommitPrefix+"/") || (read && strings.HasPrefix(key, AttestedPrefix+"/"))
+	if key == CommitProbeKey {
+		return true
+	}
+	rest, ok := strings.CutPrefix(key, CommitPrefix)
+	if !ok && read {
+		rest, ok = strings.CutPrefix(key, AttestedPrefix)
+	}
+	return ok && strings.HasPrefix(rest, "/") &&
+		!strings.Contains(rest, "/"+CommitPrefix+"/") && !strings.Contains(rest, "/"+AttestedPrefix+"/")
 }

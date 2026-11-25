@@ -341,7 +341,7 @@ check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integratio
 	cd ui && bun install --frozen-lockfile && bun run check && bun test test/
 
 .PHONY: merge-check
-merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required), and with GPU=proof/<name> that GPU-host-tier proof of this tree (required when the change touches a path scripts/proof-gpu-tests.txt names)
+merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required), and with GPU=proof/<name> that GPU-host-tier proof of this tree (required when the change touches a path scripts/proof-gpu-tests.txt names, or a spec scripts/proof-gpu-specs.txt lists)
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the tree builds, passes lint and unit tests, and its integration suites compile"
 ifneq ($(strip $(PROOF)),)
@@ -392,7 +392,7 @@ proof-release: ## The pre-release gate: every gate, observability always -> proo
 	@scripts/proof.sh --tier release $(if $(NAME),$(NAME),release)
 
 .PHONY: proof-gpu
-proof-gpu: ## The GPU-host tier's gate alone, on the GPU host: the tests scripts/proof-gpu-tests.txt lists, serially -> proof/<NAME>-gpu/ (set up the host first: scripts/gpu-host-setup.sh)
+proof-gpu: ## The GPU-host tier's gate alone, on the GPU host: the tests scripts/proof-gpu-tests.txt lists, then the specs scripts/proof-gpu-specs.txt lists, serially -> proof/<NAME>-gpu/ (set up the host first: scripts/gpu-host-setup.sh)
 	@ORK_PROOF_GPU_HOST=1 scripts/proof.sh --tier gpu $(if $(NAME),$(NAME),gpu)
 
 # Release artifacts (docs/UPGRADING.md, "Release artifacts"). release.yml

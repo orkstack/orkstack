@@ -302,3 +302,22 @@ func TestContainerAddress_NoAddressOnTheDefaultNetwork(t *testing.T) {
 		}
 	}
 }
+
+// TestHostAlias: the name a runtime gives its containers for the host. A
+// rootless runtime that copies the host's address into the container's
+// namespace leaves that address no way to the host, so the host is reached,
+// and asked about, by this name.
+func TestHostAlias(t *testing.T) {
+	for _, tt := range []struct {
+		x    dialect
+		want string
+	}{
+		{dockerDialect, ""},
+		{dialect{cli: CLIPodman, engine: CLIPodman}, "host.containers.internal"},
+		{dialect{cli: CLIPodman, engine: CLIPodman, rootless: true}, "host.containers.internal"},
+	} {
+		if got := tt.x.hostAlias(); got != tt.want {
+			t.Errorf("%+v: %q; want %q", tt.x, got, tt.want)
+		}
+	}
+}

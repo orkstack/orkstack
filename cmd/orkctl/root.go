@@ -228,6 +228,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newAuthCommand(g),
 		newAutomationCommand(g),
 		newCacheCommand(g),
+		newConcurrencyCommand(g),
 		newNamespaceCommand(g),
 		newOrkflowCommand(g),
 		newOrkerCommand(g),

@@ -713,7 +713,8 @@ func scheduleState(s *orkstackv1.Schedule) string {
 	}
 }
 
-// lastRunLabel is the LAST RUN cell: the newest fire's run, "refused", or "-".
+// lastRunLabel is the LAST RUN cell: the newest fire's run, "refused",
+// "skipped" (a concurrency limit kept it from starting one), or "-".
 func lastRunLabel(s *orkstackv1.Schedule) string {
 	fires := s.GetRecentFires()
 	if len(fires) == 0 {
@@ -725,9 +726,23 @@ func lastRunLabel(s *orkstackv1.Schedule) string {
 		return newest.GetRunId()
 	case newest.GetRefusal() != "":
 		return "refused"
+	case newest.GetSkipCode() != "":
+		return "skipped"
 	default:
 		return dash
 	}
+}
+
+// fireNote is a fire's NOTE cell: why it started no run (its refusal), or
+// why a concurrency limit kept it, or its run, from starting.
+func fireNote(fire *orkstackv1.ScheduleFire) string {
+	switch {
+	case fire.GetRefusal() != "":
+		return fire.GetRefusal()
+	case fire.GetSkipCode() != "":
+		return fire.GetSkipCode() + ": " + fire.GetSkipMessage()
+	}
+	return dash
 }
 
 func renderScheduleList(out io.Writer, list []*orkstackv1.Schedule) error {
@@ -834,17 +849,17 @@ func renderSchedule(out io.Writer, s *orkstackv1.Schedule) error {
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "  SCHEDULED\tSTARTED\tRUN\tREFUSAL")
+	fmt.Fprintln(table, "  SCHEDULED\tSTARTED\tRUN\tNOTE")
 	for _, fire := range s.GetRecentFires() {
 		run := fire.GetRunId()
 		switch {
 		case !fire.GetDetailsAvailable():
 			run = "unavailable"
-		case run == "" && fire.GetRefusal() == "":
+		case run == "" && fire.GetRefusal() == "" && fire.GetSkipCode() == "":
 			run = "preparing"
 		}
 		fmt.Fprintf(table, "  %s\t%s\t%s\t%s\n",
-			formatTime(fire.GetScheduledAt()), formatTime(fire.GetActualAt()), orDash(run), orDash(fire.GetRefusal()))
+			formatTime(fire.GetScheduledAt()), formatTime(fire.GetActualAt()), orDash(run), fireNote(fire))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

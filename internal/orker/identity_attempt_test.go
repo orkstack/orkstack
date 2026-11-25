@@ -165,6 +165,15 @@ func TestExecute_AnIdentityTask(t *testing.T) {
 	}
 	in := baseExportInput("deploy")
 	in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1, Identities: []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts"}}}
+	// A run that holds an identity has its result recorded by the engine.
+	commits := artifacts.NewMemoryCommitStore()
+	d.Commits = commits
+	d.SetResultCommit((&recordingEngine{store: commits, root: "mem://store/"}).commit)
+	key, err := artifacts.CommitKey(in.GetNamespace(), in.GetRunId(), in.GetTaskId())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.CommitUri = "mem://store/" + key
 	if _, err := d.Execute(context.Background(), in); err != nil {
 		t.Fatalf("Execute = %v", err)
 	}

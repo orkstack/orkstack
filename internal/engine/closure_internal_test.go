@@ -245,7 +245,14 @@ func readMetric(name string) metrics.Value {
 // that keeps every pass within it pays one run.
 func leastOfRuns(t *testing.T, bound time.Duration, measure func() (cpu, wall []time.Duration)) (cpu, wall []time.Duration, runs int) {
 	t.Helper()
-	for runs < 3 && (cpu == nil || slices.Max(cpu) > bound) {
+	return leastOfRunsWhile(t, bound, func(runs int) bool { return runs < 3 }, measure)
+}
+
+// leastOfRunsWhile is leastOfRuns with the run count its caller's: it measures
+// while some pass is over bound and again allows another run.
+func leastOfRunsWhile(t *testing.T, bound time.Duration, again func(runs int) bool, measure func() (cpu, wall []time.Duration)) (cpu, wall []time.Duration, runs int) {
+	t.Helper()
+	for cpu == nil || (slices.Max(cpu) > bound && again(runs)) {
 		runs++
 		runCPU, runWall := measure()
 		switch {

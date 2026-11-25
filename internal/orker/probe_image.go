@@ -178,6 +178,11 @@ func (p *probeImageSource) checkRelease(ctx context.Context, rt hostViewRuntime,
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if s, ok := rt.(*silenceRecorder); ok && s.silent && reason != 0 {
+		// The engine's silence is no failure of the release image: the digest
+		// stays verified, and the next check asks again.
+		return "", reason, detail, nil
+	}
 	if reason != 0 {
 		if p.held != "" {
 			// A digest already held stays the probes' image: a pull or an

@@ -21,6 +21,7 @@ const diffFieldCount = 13
 // table). A token this build has never heard of is printed as itself.
 var runDiffReasons = map[string]string{
 	"definition_unavailable":     "the pinned definition is no longer stored",
+	"definition_not_readable":    "this caller may not read the shared Orkflow in its owner's namespace",
 	"definition_digest_mismatch": "the stored definition does not hash to the digest this run pinned",
 	"task_not_in_definition":     "the pinned definition has no task of this id",
 	"no_attempt_store":           "this engine has no task attempt store configured",
@@ -97,9 +98,9 @@ func renderRunDiff(out io.Writer, namespace string, resp *orkstackv1.DiffRunsRes
 		header("Compared", strings.Join(resp.GetFieldsCompared(), ", "))
 	}
 	if resp.GetSameOrkflow() {
-		header("Orkflow", from.GetOrkflowName()+" (same orkflow)")
+		header("Orkflow", runOrkflowLabel(from)+" (same orkflow)")
 	} else {
-		header("Orkflow", from.GetOrkflowName()+" -> "+to.GetOrkflowName()+" (DIFFERENT ORKFLOWS)")
+		header("Orkflow", runOrkflowLabel(from)+" -> "+runOrkflowLabel(to)+" (DIFFERENT ORKFLOWS)")
 	}
 	header("Status", statusLabel(from.GetStatus())+" -> "+statusLabel(to.GetStatus()))
 	header("Finished", formatTime(from.GetFinishedAt())+" -> "+formatTime(to.GetFinishedAt()))

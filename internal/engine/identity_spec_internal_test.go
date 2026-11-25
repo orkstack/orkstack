@@ -35,11 +35,14 @@ func TestIdentitySpecDigest_FromTheInterpreterInput(t *testing.T) {
 				{Name: "vault", Audience: "vault.internal", TtlSeconds: 900, Refresh: orkstackv1.RefreshPolicy_REFRESH_POLICY_BEST_EFFORT}},
 			Credentials: []*orkstackv1.CredentialRef{{Name: "cert", Grant: "pki", Path: "pki/issue/payments",
 				Params: map[string]string{"common_name": "payments.internal", "ttl": "12h"}}},
-			Devices: []string{"gpu-a", "fpga"}},
+			Devices: []string{"gpu-a", "fpga"}, DeviceContracts: map[string]string{"gpu-a": "v2"}},
 	}
 	wf := &orkstackv1.Orkflow{Name: "spec", Version: "1", Namespace: "default", Tasks: tasks}
 	s := &runState{runID: "ork-spec", wf: wf, tasks: map[string]*orkstackv1.Task{}, plan: RunPlan{Namespace: "default",
-		ProfileIdentities: map[string]map[string]string{"payments": {"gpu-a": strings.Repeat("e", 64), "fpga": strings.Repeat("f", 64)}}}}
+		ProfileIdentities: map[string]map[string]string{"payments": {"gpu-a": strings.Repeat("e", 64), "fpga": strings.Repeat("f", 64)}},
+		ProfileContracts: map[string]map[string]ProfileContracts{"payments": {
+			"gpu-a": {Declared: map[string][]string{"v2": {strings.Repeat("c", 64)}}},
+			"fpga":  {Set: []ContractPin{{Label: "v1"}}}}}}}
 	for _, tk := range tasks {
 		s.tasks[tk.GetId()] = tk
 	}
@@ -101,5 +104,23 @@ func TestExecuteTaskInput_IdentityContext(t *testing.T) {
 	s.plan.Identity = nil
 	if got := s.executeTaskInput(tasks[0], "holds", "", nil).GetIdentity(); got != nil {
 		t.Fatalf("a run with no admission: %v", got)
+	}
+}
+
+// TestExecuteTaskInput_AnUpstreamsCommitUriIsWhatItsResultReported: a
+// dependent is dispatched with the commit uri its producer's result named,
+// copied as it is. For a run whose results the engine records that is the
+// record's, under the attested prefix, and the Orker's staging holds it to
+// exactly that (orker.TestRecordedRun_ADependentStagesWhatItsProducerReported).
+func TestExecuteTaskInput_AnUpstreamsCommitUriIsWhatItsResultReported(t *testing.T) {
+	const reported = "s3://bucket/metadata/attested/default/ork-up/apply/commit.json"
+	tasks := []*orkstackv1.Task{{Id: "apply"}, {Id: "report", Needs: []string{"apply"}}}
+	s := &runState{runID: "ork-up", wf: &orkstackv1.Orkflow{Name: "w", Version: "1", Tasks: tasks},
+		tasks:   map[string]*orkstackv1.Task{"apply": tasks[0], "report": tasks[1]},
+		plan:    RunPlan{Namespace: "default", CommitRoot: "s3://bucket"},
+		results: map[string]*orkstackv1.ExecuteTaskResult{"apply": {TaskId: "apply", Commit: &orkstackv1.CommitRef{Uri: reported}}}}
+	up := s.executeTaskInput(tasks[1], "report", "", nil).GetUpstream()
+	if len(up) != 1 || up[0].GetTaskId() != "apply" || up[0].GetCommitUri() != reported {
+		t.Fatalf("upstream = %v; want apply at %s", up, reported)
 	}
 }

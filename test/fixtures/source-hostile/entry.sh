@@ -12,6 +12,9 @@
 #   ignore-beat    never ends itself when the beat stops
 #   billion-limit  reports a delivery limit of a billion
 #   ack-no-verdict settles a message before any verdict
+#   late-settle    settles a message after the verdict exists, naming none
+#   early-close    closes a message at a hold bound that has not come
+#   stop-settle    settles the message it gives back at a stop or a lost beat
 #
 # fill and nest end themselves (exit 1) when the bound does NOT hold, so an
 # image that passes every check in those modes proves the bound held and
@@ -84,7 +87,7 @@ while :; do
   else
     cp "$broker/held/$id" "$ans/tmp/b" && mv "$ans/tmp/b" "$ans/$lane/body"
   fi
-  held_at=$(date +%s) action=''
+  held_at=$(date +%s) action='' v='' vid=''
   if [ "$mode" = ack-no-verdict ]; then
     # Acknowledged on its own, and settled BEFORE the message is handed over,
     # so the Orker meets the settle before any verdict, at the first message,
@@ -97,21 +100,41 @@ while :; do
     continue
   fi
   say "$lane/message.json" "{\"schemaVersion\":1,\"seq\":$seq,\"id\":\"dir:$id\",\"bodyBytes\":$(stat -L -c %s "$ans/$lane/body"),\"deliveryCount\":$n}"
+  if [ "$mode" = early-close ]; then
+    # Acknowledged on its own, and reported as its own close at a hold bound
+    # that has not come: a settle that needs no verdict's id.
+    mv "$broker/held/$id" "$broker/done/$id"
+    say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":false,\"error\":{\"kind\":\"hold_expired\"}}"
+    answered=$seq
+    continue
+  fi
+  if [ "$mode" = late-settle ]; then
+    # Settled on its own once the verdict exists, without reading it: a settle
+    # that names no verdict, which the Orker must refuse whenever it lands.
+    until jq -e "select(.seq==$seq)" "$ask/$lane/verdict.json" >/dev/null 2>&1; do tick; sleep 0.1; done
+    mv "$broker/held/$id" "$broker/done/$id"
+    say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":true}"
+    answered=$seq
+    continue
+  fi
   while [ -z "$action" ]; do
     tick
-    v=$(jq -r "select(.seq==$seq) | .action" "$ask/$lane/verdict.json" 2>/dev/null || true)
+    # One read: the action and the id are one verdict's.
+    read -r v vid < <(jq -r "select(.seq==$seq) | \"\(.action) \(.verdictId)\"" "$ask/$lane/verdict.json" 2>/dev/null) || v='' vid=''
     if [ -n "$v" ]; then action=$v
-    elif [ "$stop" = 1 ] || [ "$orphaned" = 1 ]; then action=release
+    elif [ "$stop" = 1 ] || [ "$orphaned" = 1 ]; then action=stopped
     elif [ $(( $(date +%s) - held_at )) -ge "$hold" ]; then action=hold_expired
     else sleep 0.2; fi
   done
   case $action in
     ack) mv "$broker/held/$id" "$broker/done/$id"
-         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":true}" ;;
+         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"verdictId\":\"$vid\",\"ok\":true}" ;;
     hold_expired) give_back "$id"
          say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":false,\"error\":{\"kind\":\"hold_expired\"}}" ;;
+    stopped) give_back "$id"
+         if [ "$mode" = stop-settle ]; then say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":true}"; fi ;;
     *)   give_back "$id"
-         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":true}" ;;
+         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"verdictId\":\"$vid\",\"ok\":true}" ;;
   esac
   answered=$seq
   if [ "$orphaned" = 1 ]; then exit 3; fi

@@ -379,7 +379,7 @@ func cmdMerge(args []string) int {
 	for name, v := range map[string]any{
 		"unit-tests.json": m.unit, "integration-tests.json": m.integration, "ui-e2e-tests.json": m.ui,
 		suiteRace + "-tests.json": m.race, suiteRaceRepeat + "-tests.json": m.raceRepeat, suiteFuzz + "-tests.json": m.fuzz,
-		suiteGPU + "-tests.json": m.gpu,
+		suiteGPU + "-tests.json": m.gpu, suiteGPUSpecs + "-tests.json": m.gpuSpecs,
 	} {
 		if isNilLedger(v) {
 			continue
@@ -492,6 +492,8 @@ type merger struct {
 	raceRepeat      *ledger
 	fuzz            *ledger
 	gpu             *ledger
+	gpuDir          string // the part directory the gpu ledger was read from
+	gpuSpecs        *uiLedger
 	ui              *uiLedger
 	notes           []string
 	digestNotes     []string
@@ -863,6 +865,7 @@ func (m *merger) merge(name string) {
 		m.checkNightlyUI()
 	}
 	m.mergeUI()
+	m.mergeGPUSpecs()
 	if m.ui != nil {
 		proof.GuardRetries, proof.GuardCeiling = &m.ui.GuardRetries, &m.ui.GuardRetryCeiling
 	}
@@ -940,14 +943,20 @@ func (m *merger) merge(name string) {
 		proof.Ledgers.(map[string]any)[suite] = map[string]any{"summary": l.Summary, "problems": len(l.Problems)}
 	}
 	if m.ui != nil {
-		proof.Ledgers.(map[string]any)["ui-e2e"] = map[string]any{"listed": m.ui.Listed, "pass": m.ui.Pass, "deferred": m.ui.Deferred, "problems": len(m.ui.Problems)}
+		proof.Ledgers.(map[string]any)["ui-e2e"] = map[string]any{"listed": m.ui.Listed, "pass": m.ui.Pass, "deferred": m.ui.Deferred, "host_deferred": m.ui.HostDeferred, "problems": len(m.ui.Problems)}
 	}
 	if m.gpu != nil {
 		proof.Ledgers.(map[string]any)[suiteGPU] = map[string]any{"summary": m.gpu.Summary, "problems": len(m.gpu.Problems)}
 	}
+	if m.gpuSpecs != nil {
+		proof.Ledgers.(map[string]any)[suiteGPUSpecs] = map[string]any{"listed": m.gpuSpecs.Listed, "pass": m.gpuSpecs.Pass, "problems": len(m.gpuSpecs.Problems)}
+	}
 	ledgersOK := map[string]bool{}
 	if m.gpu != nil {
 		ledgersOK[suiteGPU] = m.gpu.ok()
+	}
+	if m.gpuSpecs != nil {
+		ledgersOK[suiteGPUSpecs] = len(m.gpuSpecs.Problems) == 0
 	}
 	for suite, l := range m.laneLedgers() {
 		ledgersOK[suite] = l.ok()
@@ -1937,6 +1946,17 @@ func (m *merger) checkUIDeferredAnchor() {
 	}
 }
 
+// checkGPUSpecAnchor is checkUIDeferredAnchor for the GPU spec list
+// (gpuSpecAnchorProblems), the base's copy read from beside the UI plan.
+func (m *merger) checkGPUSpecAnchor() {
+	mode := nightlyInclude
+	if m.uiPlan.Nightly != nil {
+		mode = m.uiPlan.Nightly.Mode
+	}
+	baseFile := filepath.Join(filepath.Dir(m.uiPlanPath), gpuSpecBaseFileName)
+	m.problems = append(m.problems, gpuSpecAnchorProblems(*m.uiPlan, mode, baseFile, m.plan.BaseCommit)...)
+}
+
 func (m *merger) mergeUnit() {
 	if m.plan.Tier == tierNightly {
 		return
@@ -1980,11 +2000,20 @@ func (m *merger) mergeUI() {
 	// A spec file the plan defers ran nowhere: a part's own deferred entry
 	// for one of its tests stands for nothing (the plan's row is recorded
 	// below), and any outcome for one is a problem.
+	// The GPU specs the plan leaves to the GPU host are recorded the same way,
+	// with their own outcome.
 	deferredSpec := map[string]string{}
+	deferredOutcome := map[string]string{}
 	for _, d := range m.uiPlan.Deferred {
 		deferredSpec[d.File] = d.Entry
+		deferredOutcome[d.File] = "deferred"
+	}
+	for _, d := range m.uiPlan.HostDeferred {
+		deferredSpec[d.File] = d.Entry
+		deferredOutcome[d.File] = outcomeHostDeferred
 	}
 	m.checkUIDeferredAnchor()
+	m.checkGPUSpecAnchor()
 	files := map[string]uiFileEntry{}
 	maxRetries := 0
 	uiParts := m.partNames("ui-e2e:")
@@ -2006,11 +2035,11 @@ func (m *merger) mergeUI() {
 			}
 			for _, e := range shard.Tests {
 				k := e.File + "\x00" + e.Title + "\x00" + e.Project
-				if _, d := deferredSpec[e.File]; d || e.Outcome == "deferred" {
+				if _, d := deferredSpec[e.File]; d || e.Outcome == "deferred" || e.Outcome == outcomeHostDeferred {
 					switch {
-					case d && e.Outcome == "deferred":
+					case d && e.Outcome == deferredOutcome[e.File]:
 					case d:
-						msg := fmt.Sprintf("%s reported %s, which the UI plan defers to the nightly tier", part, uiKey(e))
+						msg := fmt.Sprintf("%s reported %s, which the UI plan defers to the nightly tier or the GPU host", part, uiKey(e))
 						l.Problems = append(l.Problems, msg)
 						m.problems = append(m.problems, msg)
 					default:
@@ -2069,8 +2098,12 @@ func (m *merger) mergeUI() {
 	l.Listed = len(m.uiPlan.Tests)
 	for _, t := range m.uiPlan.Tests {
 		if row, d := deferredSpec[t.File]; d {
-			l.Deferred++
-			l.Tests = append(l.Tests, uiEntry{File: t.File, Title: t.Title, Project: t.Project, Outcome: "deferred", Detail: row})
+			if deferredOutcome[t.File] == outcomeHostDeferred {
+				l.HostDeferred++
+			} else {
+				l.Deferred++
+			}
+			l.Tests = append(l.Tests, uiEntry{File: t.File, Title: t.Title, Project: t.Project, Outcome: deferredOutcome[t.File], Detail: row})
 			continue
 		}
 		if _, ok := seen[t.File+"\x00"+t.Title+"\x00"+t.Project]; !ok {

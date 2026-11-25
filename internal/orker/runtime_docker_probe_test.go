@@ -589,3 +589,128 @@ func TestDockerRuntime_BindProbeTimeoutPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// TestDockerRuntime_RunBootProbeFailedSaysWhatTheContainerSaid: a run that
+// ended without success hands back what its container wrote and what could
+// not be removed, so a caller can tell one that started from one that never
+// did.
+func TestDockerRuntime_RunBootProbeFailedSaysWhatTheContainerSaid(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("runexit", "")
+	fake.set("runsays", "orker probe unit: started")
+	fake.set("rmfailall", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+	run, err := runtime.RunBootProbe(t.Context(), probeSpecUnder(t, t.TempDir()))
+	if !errors.Is(err, ErrPostureRefused) || errors.Is(err, errEngineUnreachable) {
+		t.Fatalf("RunBootProbe = %v, want ErrPostureRefused from an engine that answered", err)
+	}
+	if !strings.HasPrefix(run.Stdout, unitProbeStarted) || len(run.Leftovers) != 1 {
+		t.Fatalf("run = %+v; want the container's words and the one it could not remove", run)
+	}
+}
+
+// TestDockerRuntime_RunBootProbeUnreachableEngine: the CLI's own word that no
+// engine answered is told from a refusal the engine gave.
+func TestDockerRuntime_RunBootProbeUnreachableEngine(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("rununreachable", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+	if _, err := runtime.RunBootProbe(t.Context(), probeSpecUnder(t, t.TempDir())); !errors.Is(err, errEngineUnreachable) || !errors.Is(err, ErrPostureRefused) {
+		t.Fatalf("RunBootProbe = %v, want ErrPostureRefused and errEngineUnreachable", err)
+	}
+}
+
+// TestDockerRuntime_AnImageNobodyAnsweredForIsNotAbsent: a pull or a label
+// read the engine gave no answer to is told from an image it says it has not
+// got, by its own word or by its silence past the bound; what the caller sees
+// of a pull that failed is otherwise what it was.
+func TestDockerRuntime_AnImageNobodyAnsweredForIsNotAbsent(t *testing.T) {
+	const image = "ghcr.io/orkstack/orker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for name, tc := range map[string]struct {
+		flag        string
+		unreachable bool
+	}{"no daemon": {"imagesunreachable", true}, "the registry has none": {"pullfail", false}} {
+		t.Run(name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			fake.set(tc.flag, "")
+			runtime := &DockerRuntime{Bin: fake.bin}
+			if _, err := runtime.Pull(t.Context(), image); err == nil || errors.Is(err, errEngineUnreachable) != tc.unreachable {
+				t.Fatalf("Pull = %v; want an error, the engine's silence %v", err, tc.unreachable)
+			}
+			if _, _, err := runtime.ImageLabel(t.Context(), image, LabelBuild); err == nil || errors.Is(err, errEngineUnreachable) != tc.unreachable {
+				t.Fatalf("ImageLabel = %v; want an error, the engine's silence %v", err, tc.unreachable)
+			}
+		})
+	}
+	fake := newCountingDocker(t)
+	fake.set("inspecthang", "")
+	runtime := &DockerRuntime{Bin: fake.bin}
+	if _, present, silent, err := runtime.lookupImage(t.Context(), 50*time.Millisecond, image); present || !silent || err != nil {
+		t.Fatalf("lookupImage of a daemon that hangs = present %v, silent %v, %v; want only silent", present, silent, err)
+	}
+}
+
+// TestDialect_Unreachable: each CLI's words that no engine answered it, and
+// words that are an engine's answer.
+func TestDialect_Unreachable(t *testing.T) {
+	for said, want := range map[string]bool{
+		"Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?":        true,
+		"docker: Cannot connect to the Docker daemon at tcp://x:2375.":                                             true,
+		"Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock": true,
+		"permission denied while trying to connect to the docker API at unix:///var/run/docker.sock":               true,
+		"error during connect: Get \"http://x/v1.51/info\": EOF":                                                   true,
+		"Cannot connect to Podman. Please verify your connection":                                                  true,
+		"unable to connect to Podman socket: dial unix /run/podman/podman.sock: connect: connection refused":       true,
+		"docker: Error response from daemon: CDI device injection failed: unresolvable CDI devices amd.com/gpu=0":  false,
+		"docker: Error response from daemon: no space left on device":                                              false,
+		"Error response from daemon: Get \"https://ghcr.io/v2/\": dial tcp: connect: connection refused":           false,
+		"Error: No such image": false,
+	} {
+		for _, cli := range []string{CLIDocker, CLIPodman} {
+			if got := (dialect{cli: cli}).unreachable(said); got != want {
+				t.Errorf("unreachable(%q) under %s = %v, want %v", said, cli, got, want)
+			}
+		}
+	}
+}
+
+// TestDockerRuntime_APullThatAnswersIsNotSilence: an inspect nobody answered
+// followed by a pull that got its answer is the pull's answer.
+func TestDockerRuntime_APullThatAnswersIsNotSilence(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("inspectunreachable", "")
+	fake.set("pullfail", "")
+	runtime := &DockerRuntime{Bin: fake.bin}
+	_, err := runtime.Pull(t.Context(), "ghcr.io/orkstack/orker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err == nil || errors.Is(err, errEngineUnreachable) || !strings.Contains(err.Error(), "pull access denied") {
+		t.Fatalf("Pull = %v; want the registry's own answer", err)
+	}
+}
+
+// TestDockerRuntime_RunBootProbeUnidentifiedEngine: an engine that cannot be
+// reached to say what it is, is unreachable and not a refusal.
+func TestDockerRuntime_RunBootProbeUnidentifiedEngine(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("versionfail", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+	if _, err := runtime.RunBootProbe(t.Context(), probeSpecUnder(t, t.TempDir())); !errors.Is(err, errEngineUnreachable) || !errors.Is(err, ErrPostureRefused) {
+		t.Fatalf("RunBootProbe = %v, want ErrPostureRefused and errEngineUnreachable", err)
+	}
+}
+
+// TestDockerRuntime_RunBootProbeNeverRetriesAUnit: a probe given a CDI device
+// is run once: a second run would share the unit with a first that could not
+// be removed.
+func TestDockerRuntime_RunBootProbeNeverRetriesAUnit(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("slowruns", "9")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
+	spec := probeSpecUnder(t, t.TempDir())
+	spec.CDIDevices = []string{"amd.com/gpu=0"}
+	if _, err := runtime.RunBootProbe(t.Context(), spec); !errors.Is(err, ErrProbeTimedOut) || fake.runs() != 1 {
+		t.Fatalf("RunBootProbe = %v after %d runs; want ErrProbeTimedOut after one", err, fake.runs())
+	}
+}
