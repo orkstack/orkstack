@@ -15,7 +15,7 @@
 # reads at build time. Its version is the commit's time when
 # SOURCE_DATE_EPOCH is passed, as `make ui` passes it, so one commit builds
 # the same bytes.
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS ui-build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.5@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18 AS ui-build
 WORKDIR /src/ui
 COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
 RUN bun install --frozen-lockfile
@@ -36,7 +36,7 @@ COPY --from=ui-build /src/ui/build/ /
 # database linked in). The context never carries internal/webui/dist, so the
 # UI ork embeds (internal/webui) is always the ui stage's, never a build left
 # in the checkout.
-FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS binaries
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS binaries
 ARG TARGETARCH
 ARG VERSION=dev
 # The context holds no .git, so a build reports a commit only when told one;
@@ -54,13 +54,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 	CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH GOTOOLCHAIN=local \
 	go build -trimpath -buildvcs=false -tags timetzdata -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/ ./cmd/ork ./cmd/orker ./cmd/orkctl
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS ork
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5 AS ork
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=binaries /out/ork /usr/local/bin/ork
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/ork"]
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS orkctl
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5 AS orkctl
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=binaries /out/orkctl /usr/local/bin/orkctl
 WORKDIR /work
@@ -69,9 +69,9 @@ ENTRYPOINT ["/usr/local/bin/orkctl"]
 # The Orker drives the docker CLI against the host's daemon, through the
 # socket compose.yaml mounts: that makes it root on the host whatever user it
 # runs as, so it runs as root and says so.
-FROM docker:29.9.3-cli@sha256:5a7af0dcb0e46c803efe9b45371dd21cb500e5b4453250394ac6f06d49b6e6f1 AS docker-cli
+FROM docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d AS docker-cli
 
-FROM gcr.io/distroless/static-debian13:latest@sha256:1a64f46364620465ef9e9a8f5413757dfdf22695e050bbfd7303eeaf17a59383 AS orker
+FROM gcr.io/distroless/static-debian13:latest@sha256:4c2cd1dee442c9a99924a378c7c126fac8fef14771579ef567c3f2bdd7a5122a AS orker
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=binaries /out/orker /usr/local/bin/orker
