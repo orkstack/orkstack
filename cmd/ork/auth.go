@@ -341,6 +341,8 @@ func breakGlassFrom(c authConfig) (*authn.BreakGlass, error) {
 type accessSetup struct {
 	access     *api.AccessControl
 	breakGlass func(r *http.Request, p *authn.Principal, reason string)
+	// mode is the authentication mode the deployment runs.
+	mode func() string
 }
 
 // setupAccess reads the mode record, refusing to start beneath it, and, for
@@ -385,7 +387,7 @@ func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCf
 	}
 	go guard.Watch(ctx)
 	if !c.enabled() {
-		return accessSetup{}, nil
+		return accessSetup{mode: guard.Effective}, nil
 	}
 	glass, err := breakGlassFrom(c)
 	if err != nil {
@@ -439,7 +441,7 @@ func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCf
 	logger.Info("authentication",
 		"mode", c.mode, "issuers", c.issuers.Names(), "admins", len(c.admins), "break_glass", glass != nil, "service_accounts", c.publicURL != "",
 		"policy_store", documents.Location(), "policy_refresh", c.policyRefresh, "policy_stale_limit", c.policyStaleLimit)
-	return accessSetup{access: access, breakGlass: breakGlassRecorder(audit, logger, metrics)}, nil
+	return accessSetup{access: access, breakGlass: breakGlassRecorder(audit, logger, metrics), mode: guard.Effective}, nil
 }
 
 // serviceAccountsFrom accepts the access document's service accounts'

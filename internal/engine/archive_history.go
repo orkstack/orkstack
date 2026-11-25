@@ -70,19 +70,23 @@ func (r *TemporalRunReader) EachFinishedRun(
 	}
 }
 
+// errRunNotFinished is a run read for its archive that goes on.
+var errRunNotFinished = errors.New("its history holds no close: it has not finished")
+
 // readForArchive reads a finished run the way its archive holds it: the run
 // GetRun would answer and the events EventsForArchive would, from one walk,
 // with what cannot be recovered stated instead of failing the read. A failure
 // that may heal is an error and nothing is decided from it.
-func (r *TemporalRunReader) readForArchive(ctx context.Context, runID string) (*orkstackv1.Run, ArchiveRead, error) {
+// lastResort settles a force cancel nobody can verify now instead.
+func (r *TemporalRunReader) readForArchive(ctx context.Context, runID string, lastResort bool) (*orkstackv1.Run, ArchiveRead, error) {
 	st := newScanState(true)
-	st.forArchive = true
+	st.forArchive, st.lastResort = true, lastResort
 	projection, err := r.scanWith(ctx, runID, false, 0, false, nil, st)
 	if err != nil {
 		return nil, ArchiveRead{}, err
 	}
 	if !st.closed {
-		return nil, ArchiveRead{}, fmt.Errorf("engine: archive run %s: its history holds no close: it has not finished", runID)
+		return nil, ArchiveRead{}, fmt.Errorf("engine: archive run %s: %w", runID, errRunNotFinished)
 	}
 	return projection.run, ArchiveRead{Events: projection.events, Gaps: st.gaps, CanceledBy: projection.canceledBy}, nil
 }
@@ -172,6 +176,16 @@ func settleRunForArchive(projection *runProjection, st *scanState, status orksta
 type HistoryArchiver struct {
 	reader  *TemporalRunReader
 	archive *RunArchiver
+	// backfill writes the audit records a force-canceled run's lacks.
+	backfill func(ctx context.Context, namespace, runID string) error
+}
+
+// WithForceCancelBackfill has the audit records of a force cancel that could not
+// write them written as its run is archived: before, so a run whose records
+// the store refuses is left to the next pass, unless there will be none.
+func (h *HistoryArchiver) WithForceCancelBackfill(backfill func(ctx context.Context, namespace, runID string) error) *HistoryArchiver {
+	h.backfill = backfill
+	return h
 }
 
 // NewHistoryArchiver builds a writer over the reader and the deployment's
@@ -184,10 +198,42 @@ func NewHistoryArchiver(reader *TemporalRunReader, archive *RunArchiver) *Histor
 // holds is an error matching artifacts.ErrNotFound. Like every archive write it
 // is safe to repeat and safe beside a second writer (RunArchiver.Archive).
 func (h *HistoryArchiver) ArchiveFromHistory(ctx context.Context, runID string) error {
-	run, read, err := h.reader.readForArchive(ctx, runID)
+	_, err := h.archiveFromHistory(ctx, runID, false)
+	return err
+}
+
+// ArchiveLastResort archives one finished run whether or not a force cancel's
+// record in its close can be verified now: one that cannot is archived
+// CANCELED RUN_FORCE_CANCEL_UNVERIFIED, naming nobody, which unverified
+// reports. The cluster is about to delete the run, so no later read can.
+func (h *HistoryArchiver) ArchiveLastResort(ctx context.Context, runID string) (unverified bool, err error) {
+	return h.archiveFromHistory(ctx, runID, true)
+}
+
+func (h *HistoryArchiver) archiveFromHistory(ctx context.Context, runID string, lastResort bool) (bool, error) {
+	run, read, err := h.reader.readForArchive(ctx, runID, lastResort)
 	if err != nil {
-		return err
+		return false, err
 	}
 	applyCanceledBy(run, read.CanceledBy)
-	return h.archive.Archive(ctx, run, read.Events, read.Gaps...)
+	unverified := run.GetError().GetCode() == RunForceCancelUnverifiedCode
+	if err := h.backfilled(ctx, run, lastResort); err != nil {
+		return false, err
+	}
+	return unverified, h.archive.Archive(ctx, run, read.Events, read.Gaps...)
+}
+
+// backfilled writes the audit records a force-canceled run lacks.
+func (h *HistoryArchiver) backfilled(ctx context.Context, run *orkstackv1.Run, lastResort bool) error {
+	if h.backfill == nil || run.GetError().GetCode() != RunForceCanceledCode {
+		return nil
+	}
+	err := h.backfill(ctx, artifacts.ResolveNamespace(run.GetNamespace()), run.GetId())
+	if err != nil && !lastResort {
+		return fmt.Errorf("engine: archive run %s: %w", run.GetId(), err)
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "force cancel: audit records could not be written before the cluster deletes the run", "run_id", run.GetId(), "error", err)
+	}
+	return nil
 }

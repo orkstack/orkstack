@@ -179,6 +179,8 @@ func TestApplyCanceledBy_OnlyARunACancellationEnded(t *testing.T) {
 	}{
 		{"canceled by the request", &orkstackv1.Run{Status: orkstackv1.Status_STATUS_CANCELED, Error: canceled}, "dana@acme", "dana@acme"},
 		{"no principal recorded", &orkstackv1.Run{Status: orkstackv1.Status_STATUS_CANCELED, Error: canceled}, "", ""},
+		{"force-canceled: its verified record names who, never a cancel request", &orkstackv1.Run{Status: orkstackv1.Status_STATUS_CANCELED,
+			Error: &orkstackv1.Error{Code: RunForceCanceledCode}}, "dana@acme", ""},
 		{"terminated from outside", &orkstackv1.Run{Status: orkstackv1.Status_STATUS_CANCELED,
 			Error: &orkstackv1.Error{Code: "RUN_TERMINATED"}}, "dana@acme", ""},
 		{"still draining after the request", &orkstackv1.Run{Status: orkstackv1.Status_STATUS_RUNNING}, "dana@acme", ""},

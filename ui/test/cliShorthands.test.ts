@@ -1,6 +1,7 @@
-import { expect, test } from 'bun:test';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { expect } from 'bun:test';
+import { statSync } from 'node:fs';
 import path from 'node:path';
+import { listTree, readSource, scanTest } from './sourceTree';
 
 // Every orkctl command the UI prints uses the flag's shorthand where one
 // exists (`-n`, not `--namespace`); the long form stays in `orkctl --help`
@@ -13,7 +14,7 @@ import path from 'node:path';
 // Comments are not printed, so they are not read. Generated files are skipped.
 
 const uiDir = path.resolve(import.meta.dir, '..');
-const cliReference = readFileSync(path.join(uiDir, '..', 'docs', 'CLI.md'), 'utf8');
+const cliReference = readSource(path.join(uiDir, '..', 'docs', 'CLI.md'));
 
 /** The long flags that have one shorthand on every command that declares them. */
 function alwaysShortened(reference: string): Map<string, string> {
@@ -40,7 +41,7 @@ function alwaysShortened(reference: string): Map<string, string> {
 
 /** The UI's own sources, relative to ui/: generated clients and validators excluded. */
 function sources(): string[] {
-	return readdirSync(`${uiDir}/src`, { recursive: true })
+	return listTree(`${uiDir}/src`)
 		.filter((f) => /\.(?:ts|svelte)$/.test(f) && !f.startsWith('lib/gen/') && !f.endsWith('.gen.ts'))
 		.filter((f) => statSync(`${uiDir}/src/${f}`).isFile())
 		.map((f) => `src/${f}`);
@@ -54,7 +55,7 @@ function isComment(line: string): boolean {
 function offending(match: (line: string) => string[]): string[] {
 	const bad: string[] = [];
 	for (const file of sources()) {
-		readFileSync(`${uiDir}/${file}`, 'utf8')
+		readSource(`${uiDir}/${file}`)
 			.split('\n')
 			.forEach((line, i) => {
 				if (isComment(line)) return;
@@ -66,7 +67,7 @@ function offending(match: (line: string) => string[]): string[] {
 
 const letters = alwaysShortened(cliReference);
 
-test('the letter table is read from docs/CLI.md', () => {
+scanTest('the letter table is read from docs/CLI.md', () => {
 	expect(letters.get('namespace')).toBe('n');
 	expect(letters.get('json')).toBe('j');
 	expect(letters.get('task')).toBe('t');
@@ -76,13 +77,13 @@ test('the letter table is read from docs/CLI.md', () => {
 	expect(letters.has('input-json')).toBe(false);
 });
 
-test('no UI source prints a long flag that has a shorthand', () => {
+scanTest('no UI source prints a long flag that has a shorthand', () => {
 	const long = new RegExp(`--(${[...letters.keys()].join('|')})(?![\\w-])`, 'g');
 	const bad = offending((line) => [...line.matchAll(long)].map((m) => `--${m[1]}: print -${letters.get(m[1])}`));
 	expect(bad).toEqual([]);
 });
 
-test('no UI source prints a removed orkctl verb', () => {
+scanTest('no UI source prints a removed orkctl verb', () => {
 	// 0.3.0: an Orkflow is created (orkctl orkflow create), an automation
 	// document applied and exported under its own noun, a webhook created.
 	const removed = [

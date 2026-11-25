@@ -37,11 +37,12 @@ func PayloadInterceptor(keys *payloadcrypt.EngineKeys) interceptor.Interceptor {
 }
 
 // unsealedErrorTypes are the workflow types whose local activities' errors
-// are written as they are where the execution carries no key: a run's and a
-// fire's, which read them, and the gate's and the census's, which hold no
-// run's data (ids, counts and the cluster's own words) and which an operator
-// reads when a gate cannot rebuild. Any other type's are withheld.
-var unsealedErrorTypes = []string{RunWorkflowType, ScheduleFireWorkflowType, ConcurrencyGateWorkflowType, ConcurrencyCensusWorkflowType}
+// are written as they are where the execution carries no key: a run's, a
+// fire's and a force cancel's, which read them, and the gate's and the
+// census's, which hold no run's data (ids, counts and the cluster's own words)
+// and which an operator reads when a gate cannot rebuild. Any other type's are
+// withheld.
+var unsealedErrorTypes = []string{RunWorkflowType, ScheduleFireWorkflowType, ConcurrencyGateWorkflowType, ConcurrencyCensusWorkflowType, ForceCancelWorkflowType}
 
 type payloadInterceptor struct {
 	interceptor.InterceptorBase

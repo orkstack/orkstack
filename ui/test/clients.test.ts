@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { listDir, listTree, readSource, scanTest } from './sourceTree';
 
 // F-ui-perf-3: a route loads only the schemas of the services it calls.
 // Generated code is one module per .proto file, so this holds only while
@@ -8,10 +8,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 // client at once — one import of such a factory would put every service's
 // schemas back on every route.
 const root = new URL('../src/lib/', import.meta.url).pathname;
-const read = (path: string) => readFileSync(root + path, 'utf8');
+const read = (path: string) => readSource(root + path);
 
-test('every generated file declares at most one service', () => {
-	const files = readdirSync(root + 'gen/orkstack/v1').filter((f) => f.endsWith('_pb.ts'));
+scanTest('every generated file declares at most one service', () => {
+	const files = listDir(root + 'gen/orkstack/v1').filter((f) => f.endsWith('_pb.ts'));
 	let services = 0;
 	for (const file of files) {
 		const declared = read(`gen/orkstack/v1/${file}`).match(/serviceDesc\(/g)?.length ?? 0;
@@ -24,8 +24,8 @@ test('every generated file declares at most one service', () => {
 	expect(services).toBe(18);
 });
 
-test('each client module imports only its own service', () => {
-	const modules = readdirSync(root + 'clients').filter((f) => f.endsWith('.ts'));
+scanTest('each client module imports only its own service', () => {
+	const modules = listDir(root + 'clients').filter((f) => f.endsWith('.ts'));
 	expect(modules.length).toBe(16);
 	for (const module of modules) {
 		const source = read(`clients/${module}`);
@@ -42,10 +42,10 @@ test('client.ts imports no generated module and builds no client', () => {
 	expect(source).not.toContain('createClient(');
 });
 
-test('nothing outside src/lib/clients creates a client', () => {
+scanTest('nothing outside src/lib/clients creates a client', () => {
 	const src = new URL('../src/', import.meta.url).pathname;
-	const offenders = readdirSync(src, { recursive: true })
+	const offenders = listTree(src)
 		.filter((path) => /\.(ts|svelte)$/.test(path) && !/^lib\/(gen|clients)\//.test(path))
-		.filter((path) => readFileSync(src + path, 'utf8').includes('createClient('));
+		.filter((path) => readSource(src + path).includes('createClient('));
 	expect(offenders).toEqual([]);
 });

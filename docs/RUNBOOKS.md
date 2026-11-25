@@ -571,6 +571,15 @@ Severity warning; fires at once. A paused run failed because its pause ran out.
 - **Fix:** Submit the run again if its work is still wanted. Give pauses longer with `orkctl run pause --timeout` or `engine.run_pause_timeout`.
 - **Related:** [OrkStackRunPausedNearTimeout](#orkstackrunpausedneartimeout)
 
+### OrkStackForceCancelUnsignedLeft
+
+Severity warning; fires at once. Something claims to be a force cancel that nobody signed.
+
+- **What it means:** Two people force-canceled one run at once, or something with a credential of the cluster's namespace started work that claims to be one.
+- **Impact:** Both run. A genuine one is safe to repeat; anything else can end any run whoever started it could already end on the cluster.
+- **Confirm:** the engine log names each ("an execution nobody signed is left alone"); `orkctl admin audit` shows who asked.
+- **Fix:** Nothing, if two people asked. Otherwise find out who holds the cluster's credential, and give the engines signing keys and raise `auth.mode`, so that nothing unsigned is taken.
+
 ### OrkStackAdmissionRefusing
 
 Severity info; fires after 15m. A namespace refuses submissions.

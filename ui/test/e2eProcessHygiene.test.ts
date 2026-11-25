@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { listDir, readSource, scanTest } from './sourceTree';
 
 // The e2e suite shares its host with other stacks, proofs and agents, so a
 // spec may only ever stop the processes it started itself, by handle
@@ -12,10 +12,10 @@ const e2eDir = `${import.meta.dir}/../e2e`;
 // Commands that select processes by name or pattern rather than by handle.
 const patternKill = /\b(pkill|killall|pgrep)\b|xargs\s+kill/;
 
-test('no e2e file stops a process by name or pattern', () => {
+scanTest('no e2e file stops a process by name or pattern', () => {
 	const offenders: string[] = [];
-	for (const name of readdirSync(e2eDir).filter((f: string) => f.endsWith('.ts')).sort()) {
-		const lines = readFileSync(`${e2eDir}/${name}`, 'utf8').split('\n');
+	for (const name of listDir(e2eDir).filter((f: string) => f.endsWith('.ts')).sort()) {
+		const lines = readSource(`${e2eDir}/${name}`).split('\n');
 		lines.forEach((line: string, i: number) => {
 			const code = line.trimStart();
 			if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) return;
@@ -26,7 +26,7 @@ test('no e2e file stops a process by name or pattern', () => {
 });
 
 test('the harness stops processes only through killStarted', () => {
-	const harness = readFileSync(`${e2eDir}/harness.ts`, 'utf8');
+	const harness = readSource(`${e2eDir}/harness.ts`);
 	expect(harness).toContain('export async function killStarted');
 	expect(harness).not.toContain('export async function killAll');
 });

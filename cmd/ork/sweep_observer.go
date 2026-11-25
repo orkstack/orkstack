@@ -27,6 +27,7 @@ func (s sweepObserver) ObserveSweep(ctx context.Context, r archivecleanup.SweepR
 	}
 	s.o.RecordArchiveSweep(ctx, telemetry.ArchiveSweepPass{
 		Archived:        int64(r.Archived),
+		Unverified:      int64(r.Unverified),
 		Failed:          int64(r.Failed),
 		Expired:         int64(r.Expired),
 		Unconfirmed:     int64(r.Unconfirmed),

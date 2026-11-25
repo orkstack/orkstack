@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -149,5 +151,107 @@ func TestListConcurrencyLimits_PagesAndNarrows(t *testing.T) {
 	reader.gatesErr = errors.New("visibility down")
 	if _, err := list(&orkstackv1.ListConcurrencyLimitsRequest{}); connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("a list the cluster cannot answer = %v; want unavailable", err)
+	}
+}
+
+// TestConcurrencyLimits_ReadAnOrkflowsOwnKey: the limit of an Orkflow that
+// declares no key is read under the key a submit plans for it, by get and by
+// list's key=, however long its names are.
+func TestConcurrencyLimits_ReadAnOrkflowsOwnKey(t *testing.T) {
+	starter := &concStarter{fakeStarter: &fakeStarter{}, indexed: true}
+	planner := concService(t, starter, &fakeCapabilities{}, nil)
+	must.OK(t, applyDoc(t, planner, limitedYAML("  limit: 1")))
+	must.OK(t, submitName(planner, "migrate"))
+	long := strings.Repeat("a", 200)
+	for _, key := range []string{starter.plans[0].Concurrency.Slots[0].Key, engine.DefaultRunConcurrencyKey(long, long)} {
+		svc := limitsService(t, &fakeConcReader{gates: []engine.GateView{gateView(key, 1, 0)}})
+		got, err := svc.GetConcurrencyLimit(context.Background(), connect.NewRequest(&orkstackv1.GetConcurrencyLimitRequest{Key: key}))
+		must.OK(t, err)
+		f, err := listfilter.Parse("key=" + key)
+		must.OK(t, err)
+		list, err := svc.ListConcurrencyLimits(context.Background(), connect.NewRequest(&orkstackv1.ListConcurrencyLimitsRequest{Filters: []*orkstackv1.FieldFilter{f}}))
+		must.OK(t, err)
+		if got.Msg.GetLimit().GetKey() != key || len(list.Msg.GetLimits()) != 1 || list.Msg.GetLimits()[0].GetHoldersCount() != 1 {
+			t.Errorf("%s: got %v, listed %v", key, got.Msg.GetLimit(), list.Msg.GetLimits())
+		}
+	}
+}
+
+// TestConcurrencyLimits_ReadEveryKeyTheListAnswers: each key the list answers
+// is read by the same spelling, by get and by key=VALUE, an Orkflow's own key
+// among them, at each key's longest. A key no run uses is not found, another
+// namespace's Orkflow's included, and one neither OrkStack makes nor an
+// author may write is refused.
+func TestConcurrencyLimits_ReadEveryKeyTheListAnswers(t *testing.T) {
+	longest := strings.Repeat("a", dsl.MaxSlug)
+	keys := []string{
+		"db:prod",
+		strings.Repeat("k", dsl.ConcurrencyKeyMaxBytes),
+		engine.DefaultRunConcurrencyKey("default", "migrate"),
+		engine.DefaultRunConcurrencyKey("platform", "shared-migrate"), // a shared Orkflow, composed here
+		engine.DefaultRunConcurrencyKey(longest, longest),
+	}
+	reader := &fakeConcReader{}
+	for _, key := range keys {
+		reader.gates = append(reader.gates, gateView(key, 1, 0))
+	}
+	svc := limitsService(t, reader)
+	list := func(filters ...*orkstackv1.FieldFilter) ([]*orkstackv1.ConcurrencyLimit, error) {
+		resp, err := svc.ListConcurrencyLimits(context.Background(), connect.NewRequest(&orkstackv1.ListConcurrencyLimitsRequest{Filters: filters}))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg.GetLimits(), nil
+	}
+	get := func(key string) (*orkstackv1.ConcurrencyLimit, error) {
+		resp, err := svc.GetConcurrencyLimit(context.Background(), connect.NewRequest(&orkstackv1.GetConcurrencyLimitRequest{Key: key}))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg.GetLimit(), nil
+	}
+	equals := func(key string) *orkstackv1.FieldFilter {
+		return &orkstackv1.FieldFilter{Field: "key", Op: orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []string{key}}
+	}
+	listed, err := list()
+	must.OK(t, err)
+	if len(listed) != len(keys) {
+		t.Fatalf("listed %d limits; want %d", len(listed), len(keys))
+	}
+	for i, want := range listed {
+		if want.GetKey() != keys[i] {
+			t.Fatalf("limit %d is %q; want %q", i, want.GetKey(), keys[i])
+		}
+		got, err := get(want.GetKey())
+		if err != nil || !proto.Equal(got, want) {
+			t.Errorf("get %.60q = %v, %v; want it as the list answers it", want.GetKey(), got, err)
+		}
+		one, err := list(equals(want.GetKey()))
+		if err != nil || len(one) != 1 || !proto.Equal(one[0], want) {
+			t.Errorf("list key=%.60q = %v, %v; want that one limit", want.GetKey(), one, err)
+		}
+	}
+	for _, unused := range []string{
+		engine.DefaultRunConcurrencyKey("payments", "migrate"), // another namespace's Orkflow's own key
+		engine.DefaultRunConcurrencyKey("default", "never-run"),
+		"ork:task:payments/migrate:apply",
+		"db:staging",
+	} {
+		if _, err := get(unused); connect.CodeOf(err) != connect.CodeNotFound {
+			t.Errorf("get %q = %v; want not_found", unused, err)
+		}
+		if one, err := list(equals(unused)); err != nil || len(one) != 0 {
+			t.Errorf("list key=%q = %v, %v; want none", unused, one, err)
+		}
+	}
+	for _, refused := range []string{
+		"", "ork:mine", "ork:orkflow:", "ork:orkflow:default", "ork:orkflow:default/", "ork:orkflow:/migrate",
+		"ork:orkflow:default/migrate/x", "ork:orkflow:Default/migrate", "ork:orkflow:default/migrate ", "ork:task:default/migrate",
+		engine.DefaultRunConcurrencyKey(longest+"a", "migrate"), strings.Repeat("k", dsl.ConcurrencyKeyMaxBytes+1), "has space",
+	} {
+		_, err := get(refused)
+		if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), dsl.ConcurrencyKeyInvalidCode) {
+			t.Errorf("get %.60q = %v; want invalid_argument %s", refused, err, dsl.ConcurrencyKeyInvalidCode)
+		}
 	}
 }

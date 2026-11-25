@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { listTree, readSource, scanTest } from './sourceTree';
 
 // The colour names pages used before the drawing office (surface, fg,
 // brand-600, danger-700, console-bg, …) are gone: every page is drawn in the
@@ -31,14 +31,14 @@ test('fixtures: legacy names are counted, the world’s own are not', () => {
 	expect(legacyUses('class="border bg-surface bg-surface-2 bg-paper text-ink border-rule border-t text-red-strong bg-failed-bg text-2xs"')).toEqual([]);
 });
 
-test('no source spells a legacy colour name', () => {
-	const files = readdirSync(src, { recursive: true })
+scanTest('no source spells a legacy colour name', () => {
+	const files = listTree(src)
 		.map((rel) => `${src}/${rel}`)
 		.filter((p) => /\.(svelte|ts|css|html)$/.test(p) && !p.includes('/lib/gen/') && !/\/(tokens|tailwind-tokens)\.css$/.test(p));
 	let total = 0;
 	const byFile: Record<string, number> = {};
 	for (const path of files) {
-		const n = legacyUses(readFileSync(path, 'utf8')).length;
+		const n = legacyUses(readSource(path)).length;
 		if (n) byFile[path.slice(src.length + 1)] = n;
 		total += n;
 	}
@@ -48,7 +48,7 @@ test('no source spells a legacy colour name', () => {
 
 test('the alias block is gone, and --color-fg is the one alias left', () => {
 	for (const file of ['tokens.css', 'tailwind-tokens.css']) {
-		const text = readFileSync(`${src}/${file}`, 'utf8');
+		const text = readSource(`${src}/${file}`);
 		expect(text.includes('LEGACY ALIASES')).toBe(false);
 		expect(text.match(new RegExp(`--color-(?:${LEGACY})\\s*:`, 'g')) ?? []).toEqual(['--color-fg:']);
 	}

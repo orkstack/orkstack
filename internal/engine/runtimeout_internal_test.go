@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,6 +142,98 @@ func requireCode(t *testing.T, err error, code string) {
 	var applicationErr *temporal.ApplicationError
 	if !errors.As(err, &applicationErr) || applicationErr.Type() != code || !applicationErr.NonRetryable() {
 		t.Fatalf("workflow error = %v, want a non-retryable %s", err, code)
+	}
+}
+
+// A run whose deadline passes while its last dispatch is being recorded fails at
+// once, not when the task it started ends.
+func TestRunTimeout_DueWhileADispatchIsRecorded(t *testing.T) {
+	h := newTimeoutHarness(t)
+	h.taskTakes(2*time.Hour, 0)
+	began := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.env.SetStartTime(began)
+	late := make(chan struct{})
+	h.env.RegisterDelayedCallback(func() { close(late) }, 60500*time.Millisecond)
+	activities := NewSnapshotActivities(h.store)
+	// The environment's clock runs as the wall's while a write is held.
+	h.env.OnActivity(ActivityWriteSnapshot, mock.Anything, mock.Anything, mock.Anything).Return(
+		func(ctx context.Context, run *orkstackv1.Run, seq int64) (string, error) {
+			if rowOf(run, "build").GetStatus() == orkstackv1.Status_STATUS_RUNNING {
+				<-late
+			}
+			return activities.WriteSnapshot(ctx, run, seq)
+		})
+	err := h.run(t, timed(`
+apiVersion: orkstack/v1
+kind: Orkflow
+name: napping
+tasks:
+  - {id: nap, sleep: {seconds: 59}}
+  - id: build
+    uses: shell
+    needs: [nap]
+    with: {op: exec}
+`, "60s"), timeoutPlan(t, 600))
+	requireCode(t, err, RunTimedOutCode)
+	if took := h.env.Now().Sub(began); took > 5*time.Minute {
+		t.Fatalf("the run ended %s after it began, its timeout 1m0s", took)
+	}
+}
+
+// A failing run whose hard end, or whose pause's expiry, comes due while one
+// handler's end is recorded, beside another whose own time has come, ends: no
+// handler is left waiting.
+func TestRunTimeout_AnEndingDueWhileAHandlersEndIsRecorded(t *testing.T) {
+	for name, second := range map[string]string{"an await": "await: {timeout_seconds: 600}", "a sleep": "sleep: {seconds: 600}"} {
+		for ending, plan := range map[string]func() RunPlan{
+			"the hard end": func() RunPlan { return timeoutPlan(t, 541) }, // the timeout's 60 s and this grace
+			"a pause's expiry": func() RunPlan {
+				p := pausePlan(t)
+				p.RunTimeout = &RunTimeoutPlan{HandlerGraceSeconds: 3600, ResolutionsPerPass: DefaultResolutionsPerPass}
+				return p
+			},
+		} {
+			t.Run(ending+", "+name, func(t *testing.T) {
+				h := newTimeoutHarness(t)
+				h.env.OnActivity(task.ActivityExecuteTask, mock.Anything, mock.Anything).Return(
+					nil, temporal.NewNonRetryableApplicationError("broke", task.CategoryActivityFailed, nil))
+				if ending != "the hard end" {
+					h.env.RegisterDelayedCallback(func() { h.env.SignalWorkflow(PauseSignal, pauseSignal(true, "571")) }, 30*time.Second)
+				}
+				var held atomic.Bool
+				late := make(chan struct{})
+				h.env.RegisterDelayedCallback(func() { close(late) }, 601500*time.Millisecond)
+				activities := NewSnapshotActivities(h.store)
+				h.env.OnActivity(ActivityWriteSnapshot, mock.Anything, mock.Anything, mock.Anything).Return(
+					func(ctx context.Context, run *orkstackv1.Run, seq int64) (string, error) {
+						if isTerminal(rowOf(run, "h1").GetStatus()) && !isTerminal(run.GetStatus()) {
+							held.Store(true)
+							<-late
+						}
+						return activities.WriteSnapshot(ctx, run, seq)
+					})
+				err := h.run(t, timed(`
+apiVersion: orkstack/v1
+kind: Orkflow
+name: handlers
+tasks:
+  - id: work
+    uses: shell
+    with: {op: exec}
+  - {id: h1, needs: [work], join: any_failed, await: {timeout_seconds: 600}}
+  - {id: h2, needs: [work], join: any_failed, `+second+`}
+`, "60s"), plan())
+				_, run := h.last(t)
+				if err == nil || run.GetStatus() != orkstackv1.Status_STATUS_FAILED || !held.Load() {
+					t.Fatalf("%v: the run %v, its write held %v", err, run.GetStatus(), held.Load())
+				}
+				for _, id := range []string{"h1", "h2"} {
+					if !isTerminal(rowOf(run, id).GetStatus()) {
+						t.Errorf("%s is left %v", id, rowOf(run, id).GetStatus())
+					}
+				}
+			})
+		}
 	}
 }
 

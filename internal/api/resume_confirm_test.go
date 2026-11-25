@@ -16,14 +16,18 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // resets makes the cluster apply a reset of the base as the server does: the
 // base names the run it started, which is the run's current execution and
 // carries the plan's key; and, when carriesOn, the run goes on.
-func (f *resumeFixture) resets(carriesOn bool) {
-	f.cluster.onReset = func(r engine.ResumeReset) (string, error) {
+func (f *resumeFixture) resets(carriesOn bool) { f.cluster.onReset = f.applies(carriesOn) }
+
+// applies is what resets does with one reset.
+func (f *resumeFixture) applies(carriesOn bool) func(engine.ResumeReset) (string, error) {
+	return func(r engine.ResumeReset) (string, error) {
 		f.cluster.mu.Lock()
 		id := fmt.Sprintf("exec-%d", len(f.cluster.resets)+1)
 		base := f.cluster.executions[r.BaseExecutionRunID]
@@ -547,10 +551,7 @@ func (s *resumeServer) deliver(r engine.ResumeReset) (string, error) {
 }
 
 func (s *resumeServer) apply(r engine.ResumeReset) (string, error) {
-	s.f.resets(true)
-	hook := s.f.cluster.onReset
-	s.f.cluster.onReset = s.receive
-	return hook(r)
+	return s.f.applies(true)(r)
 }
 
 func (s *resumeServer) receive(r engine.ResumeReset) (string, error) {
@@ -630,6 +631,39 @@ func TestResumeRun_FirstSendLandsAsTheSecondIsPrepared(t *testing.T) {
 	again, err := f.confirm(t, nil)
 	if err != nil || !again.GetAlreadyResumed() || s.applied != 1 {
 		t.Fatalf("again = %v, %v", again, err)
+	}
+}
+
+// TestResumeFixture_AReadRunIsItsReaders: a run the fixture's reader answered
+// stays as it was read while a reset changes the run, as the real reader's
+// does, which builds one for each read.
+func TestResumeFixture_AReadRunIsItsReaders(t *testing.T) {
+	f := newResumeFixture(t, nil)
+	f.resets(true)
+	read, sequence, err := f.runReader.GetRunAndSequence(context.Background(), "ork-r")
+	must.OK(t, err)
+	alone, err := f.runReader.GetRun(context.Background(), "ork-r")
+	must.OK(t, err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.cluster.ResetForResume(context.Background(), engine.ResumeReset{BaseExecutionRunID: "exec-1",
+			Reason: engine.ResumePlanKey{Scope: 10, PlanDigest: strings.Repeat("a", 64)}.String()})
+		done <- err
+	}()
+	during := []orkstackv1.Status{read.GetStatus(), alone.GetStatus()} // unguarded, as a request reads its run
+	must.OK(t, <-done)
+	for i, run := range []*orkstackv1.Run{read, alone} {
+		if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || during[i] != orkstackv1.Status_STATUS_FAILED {
+			t.Errorf("run %d was read %v, and is %v after a reset", i, during[i], run.GetStatus())
+		}
+	}
+	if sequence != 9 {
+		t.Errorf("sequence = %d", sequence)
+	}
+	now, sequence, err := f.runReader.GetRunAndSequence(context.Background(), "ork-r")
+	must.OK(t, err)
+	if now.GetStatus() != orkstackv1.Status_STATUS_RUNNING || sequence != 10 {
+		t.Errorf("read again = %v at %d, want it running at 10", now.GetStatus(), sequence)
 	}
 }
 

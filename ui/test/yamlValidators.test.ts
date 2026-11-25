@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test';
 import Ajv, { type ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { CONDITIONS } from '../src/lib/yaml/conditions.gen';
 import { Automation, Orkflow } from '../src/lib/yaml/validators.gen';
 import { CONDITION_OPTIONS, FILES, OUTPUTS, VALIDATOR_OPTIONS, conditionsIn, generate } from './gen-validators';
+import { listDir, listTree, readSource, scanTest } from './sourceTree';
 
 // The editor's validators are compiled ahead of time so the page can refuse
 // eval (test/gen-validators.ts): the checked-in code must be what the
@@ -13,13 +14,13 @@ import { CONDITION_OPTIONS, FILES, OUTPUTS, VALIDATOR_OPTIONS, conditionsIn, gen
 
 const ui = `${import.meta.dir}/..`;
 const repo = `${ui}/..`;
-const docsSchema = (file: string) => readFileSync(`${repo}/docs/schemas/${file}`, 'utf8');
+const docsSchema = (file: string) => readSource(`${repo}/docs/schemas/${file}`);
 const sources = { Orkflow: docsSchema(FILES.Orkflow), Automation: docsSchema(FILES.Automation) };
 const REGENERATE = 'stale: run `cd ui && bun run gen:validators`';
 
 test('the checked-in validators are what docs/schemas/ compiles to, byte for byte', () => {
 	for (const [path, code] of Object.entries(generate(sources))) {
-		const same = readFileSync(`${ui}/${path}`, 'utf8') === code;
+		const same = readSource(`${ui}/${path}`) === code;
 		expect(`${path}: ${same ? 'current' : REGENERATE}`).toBe(`${path}: current`);
 	}
 });
@@ -53,17 +54,17 @@ test('every `if` the walker can meet is compiled, and nothing else is', () => {
 
 test('the generated code evaluates nothing', () => {
 	for (const path of Object.values(OUTPUTS)) {
-		const code = readFileSync(`${ui}/${path}`, 'utf8');
+		const code = readSource(`${ui}/${path}`);
 		expect(`${path}: ${/\bnew Function\b|\beval\s*\(|\brequire\s*\(/.test(code)}`).toBe(`${path}: false`);
 	}
 });
 
-test('nothing in ui/src compiles a validator at run time', () => {
-	const files = readdirSync(`${ui}/src`, { recursive: true }).filter(
+scanTest('nothing in ui/src compiles a validator at run time', () => {
+	const files = listTree(`${ui}/src`).filter(
 		(f) => /\.(?:ts|svelte|js)$/.test(f) && statSync(`${ui}/src/${f}`).isFile() && !Object.values(OUTPUTS).includes(`src/${f}` as never)
 	);
 	expect(files.length > 100).toBe(true);
-	const importers = files.filter((f) => /^\s*import\s+(?!type\b)[^;]*from\s+['"]ajv(?:-formats)?(?:\/[^'"]*)?['"]/m.test(readFileSync(`${ui}/src/${f}`, 'utf8')));
+	const importers = files.filter((f) => /^\s*import\s+(?!type\b)[^;]*from\s+['"]ajv(?:-formats)?(?:\/[^'"]*)?['"]/m.test(readSource(`${ui}/src/${f}`)));
 	expect(importers).toEqual([]);
 });
 
@@ -98,10 +99,10 @@ const DOCUMENTS: Record<'Orkflow' | 'Automation', unknown[]> = {
 		{ apiVersion: 'orkstack/v1', kind: 'Automation', namespace: 'n', schedules: { s: { orkflow: 'x', start_at: '2026-01-02T03:04:05Z' } }, nope: true }
 	]
 };
-const shipped = readdirSync(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')).sort();
+const shipped = listDir(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')).sort();
 
-test('a compiled validator answers exactly as a run-time compile, errors and all', () => {
-	const documents = { ...DOCUMENTS, Orkflow: [...DOCUMENTS.Orkflow, ...shipped.map((f) => Bun.YAML.parse(readFileSync(`${repo}/examples/${f}`, 'utf8')))] };
+scanTest('a compiled validator answers exactly as a run-time compile, errors and all', () => {
+	const documents = { ...DOCUMENTS, Orkflow: [...DOCUMENTS.Orkflow, ...shipped.map((f) => Bun.YAML.parse(readSource(`${repo}/examples/${f}`)))] };
 	const pairs = [
 		['Orkflow', Orkflow as unknown as ValidateFunction, compiled(sources.Orkflow)],
 		['Automation', Automation as unknown as ValidateFunction, compiled(sources.Automation)]

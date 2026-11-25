@@ -164,3 +164,37 @@ func TestCheckConcurrencyKey(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckStoredConcurrencyKey: a key read back is an authored one, or exactly
+// one OrkStack makes for an Orkflow or a task that declares none.
+func TestCheckStoredConcurrencyKey(t *testing.T) {
+	long := strings.Repeat("a", MaxSlug)
+	for key, ok := range map[string]bool{
+		"db-migrate:prod":                            true,
+		"ork:orkflow:default/migrate":                true,
+		"ork:orkflow:" + long + "/" + long:           true,
+		"ork:task:default/migrate:apply":             true,
+		"ork:task:" + long + "/" + long + ":" + long: true,
+		"":                              false,
+		"has space":                     false,
+		strings.Repeat("k", 129):        false,
+		"ork:":                          false,
+		"ork:mine":                      false,
+		"ork:orkflow:":                  false,
+		"ork:orkflow:default":           false,
+		"ork:orkflow:default/":          false,
+		"ork:orkflow:default/a/b":       false,
+		"ork:orkflow:Default/a":         false,
+		"ork:orkflow:" + long + "a/a":   false,
+		"ork:task:default/migrate":      false,
+		"ork:task:default/migrate:a:b":  false,
+		"ork:task:default:migrate/a":    false,
+		"ork:orkflow:default/mi grate":  false,
+		"ork:orkflow:default/migrate\n": false,
+	} {
+		err := CheckStoredConcurrencyKey(key)
+		if (err == nil) != ok || err != nil && !strings.Contains(err.Error(), "CONCURRENCY_KEY_INVALID") {
+			t.Errorf("%q = %v; want accepted %v", key, err, ok)
+		}
+	}
+}

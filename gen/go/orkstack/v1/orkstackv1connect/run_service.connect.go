@@ -41,6 +41,12 @@ const (
 	RunServiceListRunsProcedure = "/orkstack.v1.RunService/ListRuns"
 	// RunServiceCancelRunProcedure is the fully-qualified name of the RunService's CancelRun RPC.
 	RunServiceCancelRunProcedure = "/orkstack.v1.RunService/CancelRun"
+	// RunServiceForceCancelRunProcedure is the fully-qualified name of the RunService's ForceCancelRun
+	// RPC.
+	RunServiceForceCancelRunProcedure = "/orkstack.v1.RunService/ForceCancelRun"
+	// RunServiceGetForceCancelProcedure is the fully-qualified name of the RunService's GetForceCancel
+	// RPC.
+	RunServiceGetForceCancelProcedure = "/orkstack.v1.RunService/GetForceCancel"
 	// RunServicePauseRunProcedure is the fully-qualified name of the RunService's PauseRun RPC.
 	RunServicePauseRunProcedure = "/orkstack.v1.RunService/PauseRun"
 	// RunServiceUnpauseRunProcedure is the fully-qualified name of the RunService's UnpauseRun RPC.
@@ -80,6 +86,24 @@ type RunServiceClient interface {
 	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
+	// ForceCancelRun ends an open run an ordinary cancel does not end. The run
+	// is asked to cancel as CancelRun asks it, and is ended only once it has
+	// made no progress for the grace, or still has not ended at the
+	// deployment's ceiling. Nothing of a run ended that way runs afterwards: no
+	// failure handler, no output; its tasks read as of its last event, and it
+	// ends CANCELED with RUN_FORCE_CANCELED (docs/REASONS.md). Its child runs
+	// are only asked to cancel, unless the request cascades.
+	//
+	// It answers once the force cancel has been started, or one of the run in
+	// flight joined, not once the run has ended: read the run for that. A
+	// request made again joins, or finishes, what an earlier one left, and two
+	// force cancels that were given their whole time and left the run open are
+	// followed by its direct end.
+	ForceCancelRun(context.Context, *connect.Request[v1.ForceCancelRunRequest]) (*connect.Response[v1.ForceCancelRunResponse], error)
+	// GetForceCancel reads one force cancel of a run: where it stands while it
+	// runs, and what it did once it is over. The run's own status and error say
+	// how the run ended; this says what the force cancel reports of itself.
+	GetForceCancel(context.Context, *connect.Request[v1.GetForceCancelRequest]) (*connect.Response[v1.GetForceCancelResponse], error)
 	// PauseRun stops a running run starting anything new, failure handlers
 	// included, and pauses its running child runs too; the one exception is
 	// what an already-open pin needs to finish. Work it already started
@@ -281,6 +305,18 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("CancelRun")),
 			connect.WithClientOptions(opts...),
 		),
+		forceCancelRun: connect.NewClient[v1.ForceCancelRunRequest, v1.ForceCancelRunResponse](
+			httpClient,
+			baseURL+RunServiceForceCancelRunProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ForceCancelRun")),
+			connect.WithClientOptions(opts...),
+		),
+		getForceCancel: connect.NewClient[v1.GetForceCancelRequest, v1.GetForceCancelResponse](
+			httpClient,
+			baseURL+RunServiceGetForceCancelProcedure,
+			connect.WithSchema(runServiceMethods.ByName("GetForceCancel")),
+			connect.WithClientOptions(opts...),
+		),
 		pauseRun: connect.NewClient[v1.PauseRunRequest, v1.PauseRunResponse](
 			httpClient,
 			baseURL+RunServicePauseRunProcedure,
@@ -368,6 +404,8 @@ type runServiceClient struct {
 	getRun                *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
 	listRuns              *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
 	cancelRun             *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
+	forceCancelRun        *connect.Client[v1.ForceCancelRunRequest, v1.ForceCancelRunResponse]
+	getForceCancel        *connect.Client[v1.GetForceCancelRequest, v1.GetForceCancelResponse]
 	pauseRun              *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
 	unpauseRun            *connect.Client[v1.UnpauseRunRequest, v1.UnpauseRunResponse]
 	streamEvents          *connect.Client[v1.StreamEventsRequest, v1.Event]
@@ -401,6 +439,16 @@ func (c *runServiceClient) ListRuns(ctx context.Context, req *connect.Request[v1
 // CancelRun calls orkstack.v1.RunService.CancelRun.
 func (c *runServiceClient) CancelRun(ctx context.Context, req *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error) {
 	return c.cancelRun.CallUnary(ctx, req)
+}
+
+// ForceCancelRun calls orkstack.v1.RunService.ForceCancelRun.
+func (c *runServiceClient) ForceCancelRun(ctx context.Context, req *connect.Request[v1.ForceCancelRunRequest]) (*connect.Response[v1.ForceCancelRunResponse], error) {
+	return c.forceCancelRun.CallUnary(ctx, req)
+}
+
+// GetForceCancel calls orkstack.v1.RunService.GetForceCancel.
+func (c *runServiceClient) GetForceCancel(ctx context.Context, req *connect.Request[v1.GetForceCancelRequest]) (*connect.Response[v1.GetForceCancelResponse], error) {
+	return c.getForceCancel.CallUnary(ctx, req)
 }
 
 // PauseRun calls orkstack.v1.RunService.PauseRun.
@@ -474,6 +522,24 @@ type RunServiceHandler interface {
 	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
+	// ForceCancelRun ends an open run an ordinary cancel does not end. The run
+	// is asked to cancel as CancelRun asks it, and is ended only once it has
+	// made no progress for the grace, or still has not ended at the
+	// deployment's ceiling. Nothing of a run ended that way runs afterwards: no
+	// failure handler, no output; its tasks read as of its last event, and it
+	// ends CANCELED with RUN_FORCE_CANCELED (docs/REASONS.md). Its child runs
+	// are only asked to cancel, unless the request cascades.
+	//
+	// It answers once the force cancel has been started, or one of the run in
+	// flight joined, not once the run has ended: read the run for that. A
+	// request made again joins, or finishes, what an earlier one left, and two
+	// force cancels that were given their whole time and left the run open are
+	// followed by its direct end.
+	ForceCancelRun(context.Context, *connect.Request[v1.ForceCancelRunRequest]) (*connect.Response[v1.ForceCancelRunResponse], error)
+	// GetForceCancel reads one force cancel of a run: where it stands while it
+	// runs, and what it did once it is over. The run's own status and error say
+	// how the run ended; this says what the force cancel reports of itself.
+	GetForceCancel(context.Context, *connect.Request[v1.GetForceCancelRequest]) (*connect.Response[v1.GetForceCancelResponse], error)
 	// PauseRun stops a running run starting anything new, failure handlers
 	// included, and pauses its running child runs too; the one exception is
 	// what an already-open pin needs to finish. Work it already started
@@ -671,6 +737,18 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("CancelRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceForceCancelRunHandler := connect.NewUnaryHandler(
+		RunServiceForceCancelRunProcedure,
+		svc.ForceCancelRun,
+		connect.WithSchema(runServiceMethods.ByName("ForceCancelRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	runServiceGetForceCancelHandler := connect.NewUnaryHandler(
+		RunServiceGetForceCancelProcedure,
+		svc.GetForceCancel,
+		connect.WithSchema(runServiceMethods.ByName("GetForceCancel")),
+		connect.WithHandlerOptions(opts...),
+	)
 	runServicePauseRunHandler := connect.NewUnaryHandler(
 		RunServicePauseRunProcedure,
 		svc.PauseRun,
@@ -759,6 +837,10 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceListRunsHandler.ServeHTTP(w, r)
 		case RunServiceCancelRunProcedure:
 			runServiceCancelRunHandler.ServeHTTP(w, r)
+		case RunServiceForceCancelRunProcedure:
+			runServiceForceCancelRunHandler.ServeHTTP(w, r)
+		case RunServiceGetForceCancelProcedure:
+			runServiceGetForceCancelHandler.ServeHTTP(w, r)
 		case RunServicePauseRunProcedure:
 			runServicePauseRunHandler.ServeHTTP(w, r)
 		case RunServiceUnpauseRunProcedure:
@@ -808,6 +890,14 @@ func (UnimplementedRunServiceHandler) ListRuns(context.Context, *connect.Request
 
 func (UnimplementedRunServiceHandler) CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.CancelRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ForceCancelRun(context.Context, *connect.Request[v1.ForceCancelRunRequest]) (*connect.Response[v1.ForceCancelRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ForceCancelRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) GetForceCancel(context.Context, *connect.Request[v1.GetForceCancelRequest]) (*connect.Response[v1.GetForceCancelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.GetForceCancel is not implemented"))
 }
 
 func (UnimplementedRunServiceHandler) PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {

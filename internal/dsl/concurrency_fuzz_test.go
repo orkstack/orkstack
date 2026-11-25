@@ -48,11 +48,21 @@ func FuzzCompileConcurrency(f *testing.F) {
 // alphabet, starting with a letter or digit and not with ork:; a refusal is
 // always CONCURRENCY_KEY_INVALID.
 func FuzzCheckConcurrencyKey(f *testing.F) {
-	for _, seed := range []string{"db-migrate:prod", "", "ork:x", "-a", "a b", strings.Repeat("k", 129), "A.b_c:d/e@f+g=h-9"} {
+	for _, seed := range []string{"db-migrate:prod", "", "ork:x", "-a", "a b", strings.Repeat("k", 129), "A.b_c:d/e@f+g=h-9", "ork:orkflow:default/a", "ork:task:a/b:c"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, key string) {
 		err := CheckConcurrencyKey(key)
+		// A key read back is an authored one or one of OrkStack's own, and no
+		// other is.
+		stored := CheckStoredConcurrencyKey(key)
+		if stored != nil && !strings.Contains(stored.Error(), "CONCURRENCY_KEY_INVALID") {
+			t.Fatalf("%q refused without its code: %v", key, stored)
+		}
+		if reserved := strings.HasPrefix(key, "ork:"); !reserved && (stored == nil) != (err == nil) ||
+			reserved && stored == nil && (err == nil || len(key) > 611) {
+			t.Fatalf("%q read back = %v, authored = %v", key, stored, err)
+		}
 		if err != nil {
 			if !strings.Contains(err.Error(), "CONCURRENCY_KEY_INVALID") {
 				t.Fatalf("%q refused without its code: %v", key, err)

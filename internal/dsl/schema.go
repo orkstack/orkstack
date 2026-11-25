@@ -80,7 +80,7 @@ func orkflowAnnotations() map[string]annotation {
 		"version":                   {typ: map[string]any{"type": "string"}},
 		"timeout":                   {typ: map[string]any{"type": "string"}},
 		"concurrency.limit":         required,
-		"concurrency.on_limit":      {enum: []string{"queue"}},
+		"concurrency.on_limit":      {enum: concurrencyStrategyWords},
 		"concurrency.queue_timeout": {typ: map[string]any{"type": "string"}},
 		"tasks":                     {required: true, minItems: 1},
 		"pins":                      {keyPattern: slugPattern, keyMax: MaxSlug},

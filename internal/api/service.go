@@ -464,6 +464,8 @@ type Config struct {
 	// Pinned, in whole seconds, into every run's plan and every composed
 	// child's.
 	RunPauseTimeout, RunPauseTimeoutMax time.Duration
+	// ForceCancels answers ForceCancelRun; nil refuses it.
+	ForceCancels ForceCanceler
 	// RunPauseIndexed is whether boot found OrkflowRunPaused usable
 	// (task.EnsureRunPausedSearchAttribute). It is pinned as
 	// engine.PausePlan.Indexed: only such a run writes the attribute, so the
@@ -775,6 +777,8 @@ type Service struct {
 	runTimeoutGraceSeconds int64
 	// pausePlan is what pausePlanFor pins on every run.
 	pausePlan engine.PausePlan
+	// forceCancels is cfg.ForceCancels.
+	forceCancels ForceCanceler
 	// definitionByReference is Config.DefinitionByReference, only with
 	// continuation on; definitionObjects is Config.DefinitionObjects.
 	definitionByReference bool
@@ -883,6 +887,7 @@ func NewService(cfg Config) *Service {
 		pinCreationSeconds:       pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
 		interruptions:            cfg.Interruptions,
 		runTimeoutGraceSeconds:   max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
+		forceCancels:             cfg.ForceCancels,
 		pausePlan:                pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
 		historyMaxBytes:          positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:          composeMaxDepthOf(cfg.ComposeMaxDepth),

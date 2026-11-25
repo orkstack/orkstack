@@ -1202,7 +1202,9 @@
         },
         "on_limit": {
           "enum": [
-            "queue"
+            "queue",
+            "refuse",
+            "skip"
           ]
         },
         "queue_timeout": {

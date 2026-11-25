@@ -282,6 +282,23 @@ func (i *Issuer) UnsignedDecision(mode string) UnsignedVerdict {
 	return UnsignedUnavailable
 }
 
+// Derive answers the value label names for data, under the key this engine
+// signs decisions with (jwt.Signer.Derive): the same on every engine with that
+// key, and another after a rotation.
+func (i *Issuer) Derive(label jwt.DeriveLabel, data []byte) ([]byte, error) {
+	if i == nil {
+		return nil, fmt.Errorf("%w: this engine holds no signing key", ErrCannotSign)
+	}
+	now := i.now().UTC()
+	i.mu.Lock()
+	signer, err := i.decisionSigner(now)
+	i.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return signer.Derive(label, data)
+}
+
 // UnsignedRecord judges an unsigned termination record under the
 // deployment's mode: in observe and enforce it is bad, except one whose run
 // closed, by the cluster's time, before the earliest publication of any key

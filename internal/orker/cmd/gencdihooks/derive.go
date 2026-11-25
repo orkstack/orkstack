@@ -17,7 +17,6 @@ import (
 	"os"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
@@ -556,13 +555,32 @@ func parseVersion(s string) (version, error) {
 	}
 	var v version
 	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 || (len(p) > 1 && p[0] == '0') {
+		n, ok := versionNumber(p)
+		if !ok {
 			return version{}, fmt.Errorf("%q is not MAJOR.MINOR.PATCH", s)
 		}
 		v[i] = n
 	}
 	return v, nil
+}
+
+// maxVersionDigits bounds one number of a version, which then fits any int.
+const maxVersionDigits = 9
+
+// versionNumber reads one number of a version: decimal digits alone, with no sign
+// and no leading zero, which strconv would take.
+func versionNumber(s string) (int, bool) {
+	if s == "" || len(s) > maxVersionDigits || len(s) > 1 && s[0] == '0' {
+		return 0, false
+	}
+	n := 0
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+		n = 10*n + int(s[i]-'0')
+	}
+	return n, true
 }
 
 func compareVersions(a, b version) int {

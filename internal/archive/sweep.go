@@ -55,6 +55,10 @@ type Sweeper struct {
 	mu      sync.Mutex
 	last    SweepPass
 	hasLast bool
+
+	// retention, guarded by mu, is the cluster's as last read: a pass that
+	// cannot read it dates a run's last chance by it.
+	retention time.Duration
 }
 
 // LastCompletedSweep reports this replica's latest pass that ran to its end.
@@ -84,6 +88,10 @@ type RunBodyChecker interface {
 // matching artifacts.ErrNotFound.
 type HistoryArchiver interface {
 	ArchiveFromHistory(ctx context.Context, runID string) error
+	// ArchiveLastResort archives it too, and one whose ending cannot be
+	// verified now as just that, which unverified reports: the cluster is
+	// about to delete it, and no later pass may ask again.
+	ArchiveLastResort(ctx context.Context, runID string) (unverified bool, err error)
 }
 
 // ClusterRetention reads the cluster's own retention, which dates the risk.
@@ -102,6 +110,9 @@ type SweepResult struct {
 	Examined int
 	// Archived is how many this pass archived.
 	Archived int
+	// Unverified is how many of those it archived with an ending that could
+	// not be verified before the cluster deletes them (ArchiveLastResort).
+	Unverified int
 	// Failed is how many it tried to archive and could not.
 	Failed int
 	// Expired is how many the cluster no longer held when this pass came to
@@ -246,6 +257,12 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 		}
 	}
 	retention := s.clusterRetention(ctx)
+	s.mu.Lock()
+	if retention > 0 {
+		s.retention = retention
+	}
+	dated := s.retention
+	s.mu.Unlock()
 	if retention > 0 && 2*s.config.Interval >= retention {
 		result.IntervalTooLong = true
 		s.logger.Error("the cleanup interval leaves the archive sweep no time: a run can be deleted before a pass looks at it",
@@ -276,7 +293,7 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 			if has {
 				return nil
 			}
-			s.archive(ctx, runID, closedAt, &result, note, risk)
+			s.archive(ctx, runID, closedAt, s.lastChance(closedAt, dated), &result, note, risk)
 			return nil
 		})
 	if walkErr != nil {
@@ -305,14 +322,26 @@ func (s *Sweeper) archive(
 	ctx context.Context,
 	runID string,
 	closedAt time.Time,
+	lastChance bool,
 	result *SweepResult,
 	note func(error),
 	risk func(string, time.Time),
 ) {
 	runCtx, cancel := context.WithTimeout(ctx, s.runBudget)
 	defer cancel()
-	err := s.history.ArchiveFromHistory(runCtx, runID)
+	var unverified bool
+	var err error
+	if lastChance {
+		unverified, err = s.history.ArchiveLastResort(runCtx, runID)
+	} else {
+		err = s.history.ArchiveFromHistory(runCtx, runID)
+	}
 	switch {
+	case err == nil && unverified:
+		result.Archived++
+		result.Unverified++
+		s.logger.Error("run archived with an ending that could not be verified before the cluster deletes it",
+			"run_id", runID, "closed_at", closedAt)
 	case err == nil:
 		result.Archived++
 		s.logger.Info("run archived from its history", "run_id", runID, "closed_at", closedAt)
@@ -328,6 +357,18 @@ func (s *Sweeper) archive(
 		s.logger.Error("archive sweep could not archive a run", "run_id", runID, "closed_at", closedAt, "error", err)
 		risk(runID, closedAt)
 	}
+}
+
+// sweepLastChance is how many cleanup intervals before the cluster deletes a
+// run a pass stops waiting for what a later one may verify.
+const sweepLastChance = 3
+
+// lastChance reports whether the cluster, keeping a finished run for
+// retention, deletes one that closed at closedAt within sweepLastChance
+// cleanup intervals; never in the first half of that time, however long the
+// interval.
+func (s *Sweeper) lastChance(closedAt time.Time, retention time.Duration) bool {
+	return retention > 0 && !s.now().Before(closedAt.Add(max(retention-sweepLastChance*s.config.Interval, retention/2)))
 }
 
 // clusterRetention reads the cluster's retention now, zero when it cannot. It

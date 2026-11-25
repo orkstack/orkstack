@@ -551,6 +551,147 @@ func (HeartbeatUnavailableReason) EnumDescriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{7}
 }
 
+// ForceCancelState is what became of a request for a force cancel.
+type ForceCancelState int32
+
+const (
+	ForceCancelState_FORCE_CANCEL_STATE_UNSPECIFIED ForceCancelState = 0
+	// REQUESTED: a force cancel of the run was started. Of a run already
+	// force-canceled, it finishes what an earlier one may have left undone.
+	ForceCancelState_FORCE_CANCEL_STATE_REQUESTED ForceCancelState = 1
+	// WAITING: one of the run was in flight, and the request joined it.
+	ForceCancelState_FORCE_CANCEL_STATE_WAITING ForceCancelState = 2
+	// ALREADY_ENDED: the run had ended, and nothing was started.
+	ForceCancelState_FORCE_CANCEL_STATE_ALREADY_ENDED ForceCancelState = 3
+	// The states below are a finished force cancel's alone.
+	//
+	// FORCE_CANCELED: it ended the run.
+	ForceCancelState_FORCE_CANCEL_STATE_FORCE_CANCELED ForceCancelState = 4
+	// CANCELED: the run ended on its cancel, by its own path.
+	ForceCancelState_FORCE_CANCEL_STATE_CANCELED ForceCancelState = 5
+	// ENDED: the run ended on its own.
+	ForceCancelState_FORCE_CANCEL_STATE_ENDED ForceCancelState = 6
+	// FAILED: it stopped, and cause says why; the run may still be open.
+	ForceCancelState_FORCE_CANCEL_STATE_FAILED ForceCancelState = 7
+	// PENDING: a run below whose force cancel had not ended when its cascade
+	// stopped waiting. It goes on.
+	ForceCancelState_FORCE_CANCEL_STATE_PENDING ForceCancelState = 8
+)
+
+// Enum value maps for ForceCancelState.
+var (
+	ForceCancelState_name = map[int32]string{
+		0: "FORCE_CANCEL_STATE_UNSPECIFIED",
+		1: "FORCE_CANCEL_STATE_REQUESTED",
+		2: "FORCE_CANCEL_STATE_WAITING",
+		3: "FORCE_CANCEL_STATE_ALREADY_ENDED",
+		4: "FORCE_CANCEL_STATE_FORCE_CANCELED",
+		5: "FORCE_CANCEL_STATE_CANCELED",
+		6: "FORCE_CANCEL_STATE_ENDED",
+		7: "FORCE_CANCEL_STATE_FAILED",
+		8: "FORCE_CANCEL_STATE_PENDING",
+	}
+	ForceCancelState_value = map[string]int32{
+		"FORCE_CANCEL_STATE_UNSPECIFIED":    0,
+		"FORCE_CANCEL_STATE_REQUESTED":      1,
+		"FORCE_CANCEL_STATE_WAITING":        2,
+		"FORCE_CANCEL_STATE_ALREADY_ENDED":  3,
+		"FORCE_CANCEL_STATE_FORCE_CANCELED": 4,
+		"FORCE_CANCEL_STATE_CANCELED":       5,
+		"FORCE_CANCEL_STATE_ENDED":          6,
+		"FORCE_CANCEL_STATE_FAILED":         7,
+		"FORCE_CANCEL_STATE_PENDING":        8,
+	}
+)
+
+func (x ForceCancelState) Enum() *ForceCancelState {
+	p := new(ForceCancelState)
+	*p = x
+	return p
+}
+
+func (x ForceCancelState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ForceCancelState) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_run_service_proto_enumTypes[8].Descriptor()
+}
+
+func (ForceCancelState) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_run_service_proto_enumTypes[8]
+}
+
+func (x ForceCancelState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ForceCancelState.Descriptor instead.
+func (ForceCancelState) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{8}
+}
+
+// ForceCancelCascadeState is where a cascade stands.
+type ForceCancelCascadeState int32
+
+const (
+	ForceCancelCascadeState_FORCE_CANCEL_CASCADE_STATE_UNSPECIFIED ForceCancelCascadeState = 0
+	ForceCancelCascadeState_FORCE_CANCEL_CASCADE_STATE_RUNNING     ForceCancelCascadeState = 1
+	// COMPLETE: every run below it found has ended, and a last search confirmed
+	// nothing open.
+	ForceCancelCascadeState_FORCE_CANCEL_CASCADE_STATE_COMPLETE ForceCancelCascadeState = 2
+	// PARTIAL: it reached its end, and something is open, failed, was not
+	// started or could not be told.
+	ForceCancelCascadeState_FORCE_CANCEL_CASCADE_STATE_PARTIAL ForceCancelCascadeState = 3
+	// STOPPED: it was stopped, or ended from outside, before its end.
+	ForceCancelCascadeState_FORCE_CANCEL_CASCADE_STATE_STOPPED ForceCancelCascadeState = 4
+)
+
+// Enum value maps for ForceCancelCascadeState.
+var (
+	ForceCancelCascadeState_name = map[int32]string{
+		0: "FORCE_CANCEL_CASCADE_STATE_UNSPECIFIED",
+		1: "FORCE_CANCEL_CASCADE_STATE_RUNNING",
+		2: "FORCE_CANCEL_CASCADE_STATE_COMPLETE",
+		3: "FORCE_CANCEL_CASCADE_STATE_PARTIAL",
+		4: "FORCE_CANCEL_CASCADE_STATE_STOPPED",
+	}
+	ForceCancelCascadeState_value = map[string]int32{
+		"FORCE_CANCEL_CASCADE_STATE_UNSPECIFIED": 0,
+		"FORCE_CANCEL_CASCADE_STATE_RUNNING":     1,
+		"FORCE_CANCEL_CASCADE_STATE_COMPLETE":    2,
+		"FORCE_CANCEL_CASCADE_STATE_PARTIAL":     3,
+		"FORCE_CANCEL_CASCADE_STATE_STOPPED":     4,
+	}
+)
+
+func (x ForceCancelCascadeState) Enum() *ForceCancelCascadeState {
+	p := new(ForceCancelCascadeState)
+	*p = x
+	return p
+}
+
+func (x ForceCancelCascadeState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ForceCancelCascadeState) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_run_service_proto_enumTypes[9].Descriptor()
+}
+
+func (ForceCancelCascadeState) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_run_service_proto_enumTypes[9]
+}
+
+func (x ForceCancelCascadeState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ForceCancelCascadeState.Descriptor instead.
+func (ForceCancelCascadeState) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{9}
+}
+
 // LiveIdentityState is whether an attempt's identity is current.
 type LiveIdentityState int32
 
@@ -592,11 +733,11 @@ func (x LiveIdentityState) String() string {
 }
 
 func (LiveIdentityState) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_service_proto_enumTypes[8].Descriptor()
+	return file_orkstack_v1_run_service_proto_enumTypes[10].Descriptor()
 }
 
 func (LiveIdentityState) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_service_proto_enumTypes[8]
+	return &file_orkstack_v1_run_service_proto_enumTypes[10]
 }
 
 func (x LiveIdentityState) Number() protoreflect.EnumNumber {
@@ -605,7 +746,7 @@ func (x LiveIdentityState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LiveIdentityState.Descriptor instead.
 func (LiveIdentityState) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{8}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{10}
 }
 
 // LiveUsageUnavailableReason is why a running attempt shows no live CPU and
@@ -684,11 +825,11 @@ func (x LiveUsageUnavailableReason) String() string {
 }
 
 func (LiveUsageUnavailableReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_service_proto_enumTypes[9].Descriptor()
+	return file_orkstack_v1_run_service_proto_enumTypes[11].Descriptor()
 }
 
 func (LiveUsageUnavailableReason) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_service_proto_enumTypes[9]
+	return &file_orkstack_v1_run_service_proto_enumTypes[11]
 }
 
 func (x LiveUsageUnavailableReason) Number() protoreflect.EnumNumber {
@@ -697,7 +838,7 @@ func (x LiveUsageUnavailableReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LiveUsageUnavailableReason.Descriptor instead.
 func (LiveUsageUnavailableReason) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{9}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{11}
 }
 
 type ResumeRunRequest struct {
@@ -4351,6 +4492,928 @@ func (x *CancelRunResponse) GetRun() *Run {
 	return nil
 }
 
+type ForceCancelRunRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RunId     string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Namespace string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
+	// reason is required: at most 512 bytes, with no control or invisible
+	// characters. It is recorded with the run's end.
+	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	// grace is how long the run may show no progress after its cancel before it
+	// is ended. Unset is the least that may be asked: the deployment's
+	// engine.runs.force_cancel_grace, or 30 s more than the longest cancellation
+	// grace of the run's own tasks when that is longer. The most is
+	// engine.runs.max_force_cancel_grace, or that least when it is more. Where
+	// the run's definition cannot be read, the least is the most.
+	Grace *durationpb.Duration `protobuf:"bytes,4,opt,name=grace,proto3" json:"grace,omitempty"`
+	// client_request_id names this request to whoever repeats it: the same
+	// caller's same id is the same request. At most 128 bytes of printable
+	// ASCII; optional. Where the deployment signs nothing it is ignored.
+	ClientRequestId string `protobuf:"bytes,5,opt,name=client_request_id,json=clientRequestId,proto3" json:"client_request_id,omitempty"`
+	// cascade also force-cancels every open run below this one: each is asked to
+	// cancel, given its own grace and ended only if it stalls. It needs the
+	// permissions at the run's namespace, as preview and stop do, because the
+	// runs below may be of any of its Orkflows. A run that has ended still
+	// cascades to what it left open.
+	Cascade bool `protobuf:"varint,6,opt,name=cascade,proto3" json:"cascade,omitempty"`
+	// preview answers the open runs below and does nothing. The reason is not
+	// required.
+	Preview bool `protobuf:"varint,7,opt,name=preview,proto3" json:"preview,omitempty"`
+	// stop stops the newest cascade of this run: it starts no further force
+	// cancel, its run's own stops too unless it has ended it, and those already
+	// started go on. The reason is not required.
+	Stop          bool `protobuf:"varint,8,opt,name=stop,proto3" json:"stop,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForceCancelRunRequest) Reset() {
+	*x = ForceCancelRunRequest{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForceCancelRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForceCancelRunRequest) ProtoMessage() {}
+
+func (x *ForceCancelRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForceCancelRunRequest.ProtoReflect.Descriptor instead.
+func (*ForceCancelRunRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *ForceCancelRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ForceCancelRunRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *ForceCancelRunRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ForceCancelRunRequest) GetGrace() *durationpb.Duration {
+	if x != nil {
+		return x.Grace
+	}
+	return nil
+}
+
+func (x *ForceCancelRunRequest) GetClientRequestId() string {
+	if x != nil {
+		return x.ClientRequestId
+	}
+	return ""
+}
+
+func (x *ForceCancelRunRequest) GetCascade() bool {
+	if x != nil {
+		return x.Cascade
+	}
+	return false
+}
+
+func (x *ForceCancelRunRequest) GetPreview() bool {
+	if x != nil {
+		return x.Preview
+	}
+	return false
+}
+
+func (x *ForceCancelRunRequest) GetStop() bool {
+	if x != nil {
+		return x.Stop
+	}
+	return false
+}
+
+// ForceCancelRunBelow is a run below one that is force-canceled.
+type ForceCancelRunBelow struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// redacted: a run of an Orkflow the caller may not read; only its state is
+	// told.
+	Redacted    bool   `protobuf:"varint,1,opt,name=redacted,proto3" json:"redacted,omitempty"`
+	RunId       string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	ParentRunId string `protobuf:"bytes,3,opt,name=parent_run_id,json=parentRunId,proto3" json:"parent_run_id,omitempty"`
+	// orkflow is its Orkflow's name, "<owner>/<name>" for a shared one.
+	Orkflow string `protobuf:"bytes,4,opt,name=orkflow,proto3" json:"orkflow,omitempty"`
+	// depth is how far below; 0 where only the tree's root names it.
+	Depth int32 `protobuf:"varint,5,opt,name=depth,proto3" json:"depth,omitempty"`
+	// state, request_id, attached and cause are of its force cancel in a
+	// cascade, unset in a preview. Attached: another caller's was in flight, and
+	// the run's end is that one's.
+	State         ForceCancelState `protobuf:"varint,6,opt,name=state,proto3,enum=orkstack.v1.ForceCancelState" json:"state,omitempty"`
+	RequestId     string           `protobuf:"bytes,7,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Attached      bool             `protobuf:"varint,8,opt,name=attached,proto3" json:"attached,omitempty"`
+	Cause         string           `protobuf:"bytes,9,opt,name=cause,proto3" json:"cause,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForceCancelRunBelow) Reset() {
+	*x = ForceCancelRunBelow{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForceCancelRunBelow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForceCancelRunBelow) ProtoMessage() {}
+
+func (x *ForceCancelRunBelow) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForceCancelRunBelow.ProtoReflect.Descriptor instead.
+func (*ForceCancelRunBelow) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *ForceCancelRunBelow) GetRedacted() bool {
+	if x != nil {
+		return x.Redacted
+	}
+	return false
+}
+
+func (x *ForceCancelRunBelow) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ForceCancelRunBelow) GetParentRunId() string {
+	if x != nil {
+		return x.ParentRunId
+	}
+	return ""
+}
+
+func (x *ForceCancelRunBelow) GetOrkflow() string {
+	if x != nil {
+		return x.Orkflow
+	}
+	return ""
+}
+
+func (x *ForceCancelRunBelow) GetDepth() int32 {
+	if x != nil {
+		return x.Depth
+	}
+	return 0
+}
+
+func (x *ForceCancelRunBelow) GetState() ForceCancelState {
+	if x != nil {
+		return x.State
+	}
+	return ForceCancelState_FORCE_CANCEL_STATE_UNSPECIFIED
+}
+
+func (x *ForceCancelRunBelow) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ForceCancelRunBelow) GetAttached() bool {
+	if x != nil {
+		return x.Attached
+	}
+	return false
+}
+
+func (x *ForceCancelRunBelow) GetCause() string {
+	if x != nil {
+		return x.Cause
+	}
+	return ""
+}
+
+// ForceCancelSubtree is the open runs below one, as the cluster's index has
+// them now: a run started a moment ago may not be there yet.
+type ForceCancelSubtree struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Runs  []*ForceCancelRunBelow `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
+	// truncated_by is the bound that cut the search short: "scan" or "timeout";
+	// "could_not_read" when it could not be made.
+	TruncatedBy   string                  `protobuf:"bytes,2,opt,name=truncated_by,json=truncatedBy,proto3" json:"truncated_by,omitempty"`
+	Exclusions    []*ForceCancelExclusion `protobuf:"bytes,3,rep,name=exclusions,proto3" json:"exclusions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForceCancelSubtree) Reset() {
+	*x = ForceCancelSubtree{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForceCancelSubtree) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForceCancelSubtree) ProtoMessage() {}
+
+func (x *ForceCancelSubtree) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForceCancelSubtree.ProtoReflect.Descriptor instead.
+func (*ForceCancelSubtree) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *ForceCancelSubtree) GetRuns() []*ForceCancelRunBelow {
+	if x != nil {
+		return x.Runs
+	}
+	return nil
+}
+
+func (x *ForceCancelSubtree) GetTruncatedBy() string {
+	if x != nil {
+		return x.TruncatedBy
+	}
+	return ""
+}
+
+func (x *ForceCancelSubtree) GetExclusions() []*ForceCancelExclusion {
+	if x != nil {
+		return x.Exclusions
+	}
+	return nil
+}
+
+// ForceCancelExclusion is a run that names a run of the tree as what started
+// it, and may not be acted on.
+type ForceCancelExclusion struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// cause is "other_namespace" or "unreadable".
+	Cause         string `protobuf:"bytes,2,opt,name=cause,proto3" json:"cause,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForceCancelExclusion) Reset() {
+	*x = ForceCancelExclusion{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForceCancelExclusion) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForceCancelExclusion) ProtoMessage() {}
+
+func (x *ForceCancelExclusion) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForceCancelExclusion.ProtoReflect.Descriptor instead.
+func (*ForceCancelExclusion) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *ForceCancelExclusion) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ForceCancelExclusion) GetCause() string {
+	if x != nil {
+		return x.Cause
+	}
+	return ""
+}
+
+// ForceCancelCascade is what a cascade reports of itself.
+type ForceCancelCascade struct {
+	state protoimpl.MessageState  `protogen:"open.v1"`
+	State ForceCancelCascadeState `protobuf:"varint,1,opt,name=state,proto3,enum=orkstack.v1.ForceCancelCascadeState" json:"state,omitempty"`
+	AsOf  *timestamppb.Timestamp  `protobuf:"bytes,2,opt,name=as_of,json=asOf,proto3" json:"as_of,omitempty"`
+	Runs  []*ForceCancelRunBelow  `protobuf:"bytes,3,rep,name=runs,proto3" json:"runs,omitempty"`
+	// left_to_parents is how many deeper runs past the most a cascade covers
+	// (engine.runs.force_cancel_cascade_max) are left to their parents' cancel;
+	// not_started, how many that reaches none of.
+	LeftToParents int32 `protobuf:"varint,4,opt,name=left_to_parents,json=leftToParents,proto3" json:"left_to_parents,omitempty"`
+	NotStarted    int32 `protobuf:"varint,5,opt,name=not_started,json=notStarted,proto3" json:"not_started,omitempty"`
+	// found_by_root_index is how many only the tree's root names.
+	FoundByRootIndex int32                   `protobuf:"varint,6,opt,name=found_by_root_index,json=foundByRootIndex,proto3" json:"found_by_root_index,omitempty"`
+	TruncatedBy      string                  `protobuf:"bytes,7,opt,name=truncated_by,json=truncatedBy,proto3" json:"truncated_by,omitempty"`
+	Exclusions       []*ForceCancelExclusion `protobuf:"bytes,8,rep,name=exclusions,proto3" json:"exclusions,omitempty"`
+	// rerun_suggested: more were found late, or a search was cut short; the same
+	// request made again covers what is left.
+	RerunSuggested bool `protobuf:"varint,9,opt,name=rerun_suggested,json=rerunSuggested,proto3" json:"rerun_suggested,omitempty"`
+	// open_after is what was open below when it ended; unset until it looked.
+	OpenAfter *ForceCancelOpenAfter `protobuf:"bytes,10,opt,name=open_after,json=openAfter,proto3" json:"open_after,omitempty"`
+	// cause is why a search below could not be made; empty when none failed.
+	Cause string `protobuf:"bytes,11,opt,name=cause,proto3" json:"cause,omitempty"`
+	// unread: where it stands could not be asked, so the rest is not known.
+	Unread        bool `protobuf:"varint,12,opt,name=unread,proto3" json:"unread,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForceCancelCascade) Reset() {
+	*x = ForceCancelCascade{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForceCancelCascade) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForceCancelCascade) ProtoMessage() {}
+
+func (x *ForceCancelCascade) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForceCancelCascade.ProtoReflect.Descriptor instead.
+func (*ForceCancelCascade) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *ForceCancelCascade) GetState() ForceCancelCascadeState {
+	if x != nil {
+		return x.State
+	}
+	return ForceCancelCascadeState_FORCE_CANCEL_CASCADE_STATE_UNSPECIFIED
+}
+
+func (x *ForceCancelCascade) GetAsOf() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AsOf
+	}
+	return nil
+}
+
+func (x *ForceCancelCascade) GetRuns() []*ForceCancelRunBelow {
+	if x != nil {
+		return x.Runs
+	}
+	return nil
+}
+
+func (x *ForceCancelCascade) GetLeftToParents() int32 {
+	if x != nil {
+		return x.LeftToParents
+	}
+	return 0
+}
+
+func (x *ForceCancelCascade) GetNotStarted() int32 {
+	if x != nil {
+		return x.NotStarted
+	}
+	return 0
+}
+
+func (x *ForceCancelCascade) GetFoundByRootIndex() int32 {
+	if x != nil {
+		return x.FoundByRootIndex
+	}
+	return 0
+}
+
+func (x *ForceCancelCascade) GetTruncatedBy() string {
+	if x != nil {
+		return x.TruncatedBy
+	}
+	return ""
+}
+
+func (x *ForceCancelCascade) GetExclusions() []*ForceCancelExclusion {
+	if x != nil {
+		return x.Exclusions
+	}
+	return nil
+}
+
+func (x *ForceCancelCascade) GetRerunSuggested() bool {
+	if x != nil {
+		return x.RerunSuggested
+	}
+	return false
+}
+
+func (x *ForceCancelCascade) GetOpenAfter() *ForceCancelOpenAfter {
+	if x != nil {
+		return x.OpenAfter
+	}
+	return nil
+}
+
+func (x *ForceCancelCascade) GetCause() string {
+	if x != nil {
+		return x.Cause
+	}
+	return ""
+}
+
+func (x *ForceCancelCascade) GetUnread() bool {
+	if x != nil {
+		return x.Unread
+	}
+	return false
+}
+
+// ForceCancelOpenAfter is what is open below a run after its cascade.
+type ForceCancelOpenAfter struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Count int32                  `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
+	// run_ids are the first of them the caller may read.
+	RunIds []string `protobuf:"bytes,2,rep,name=run_ids,json=runIds,proto3" json:"run_ids,omitempty"`
+	// unconfirmed_cause is why there may be more: "too_many_runs",
+	// "took_too_long" or "could_not_read"; empty when there are no more.
+	UnconfirmedCause string `protobuf:"bytes,3,opt,name=unconfirmed_cause,json=unconfirmedCause,proto3" json:"unconfirmed_cause,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ForceCancelOpenAfter) Reset() {
+	*x = ForceCancelOpenAfter{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForceCancelOpenAfter) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForceCancelOpenAfter) ProtoMessage() {}
+
+func (x *ForceCancelOpenAfter) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForceCancelOpenAfter.ProtoReflect.Descriptor instead.
+func (*ForceCancelOpenAfter) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *ForceCancelOpenAfter) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *ForceCancelOpenAfter) GetRunIds() []string {
+	if x != nil {
+		return x.RunIds
+	}
+	return nil
+}
+
+func (x *ForceCancelOpenAfter) GetUnconfirmedCause() string {
+	if x != nil {
+		return x.UnconfirmedCause
+	}
+	return ""
+}
+
+type ForceCancelRunResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	State ForceCancelState       `protobuf:"varint,1,opt,name=state,proto3,enum=orkstack.v1.ForceCancelState" json:"state,omitempty"`
+	// request_id is the force cancel's, which the run's records carry: the one
+	// started, or the one joined. Empty when there is none.
+	RequestId string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// attached: the request joined a force cancel already made, so its own
+	// reason and grace are not used; those in force are below.
+	Attached bool `protobuf:"varint,3,opt,name=attached,proto3" json:"attached,omitempty"`
+	// attach_unverified is how many executions claimed to be force cancels of
+	// this run, were nobody's, and were ended.
+	AttachUnverified int32 `protobuf:"varint,4,opt,name=attach_unverified,json=attachUnverified,proto3" json:"attach_unverified,omitempty"`
+	// attach_unknown: whether one is in flight could not be told, so this one
+	// may run beside it.
+	AttachUnknown bool `protobuf:"varint,5,opt,name=attach_unknown,json=attachUnknown,proto3" json:"attach_unknown,omitempty"`
+	// direct: the run was ended by this request, because two force cancels
+	// given their whole time had left it open.
+	Direct bool `protobuf:"varint,6,opt,name=direct,proto3" json:"direct,omitempty"`
+	// The decision in force: who asked, whether this deployment verified them,
+	// why, and the grace. Empty when it could not be read.
+	Principal         string               `protobuf:"bytes,7,opt,name=principal,proto3" json:"principal,omitempty"`
+	PrincipalVerified bool                 `protobuf:"varint,8,opt,name=principal_verified,json=principalVerified,proto3" json:"principal_verified,omitempty"`
+	Reason            string               `protobuf:"bytes,9,opt,name=reason,proto3" json:"reason,omitempty"`
+	Grace             *durationpb.Duration `protobuf:"bytes,10,opt,name=grace,proto3" json:"grace,omitempty"`
+	// cascades: the force cancel started or joined cascades.
+	Cascades bool `protobuf:"varint,11,opt,name=cascades,proto3" json:"cascades,omitempty"`
+	// open_descendants answers a preview.
+	OpenDescendants *ForceCancelSubtree `protobuf:"bytes,12,opt,name=open_descendants,json=openDescendants,proto3" json:"open_descendants,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ForceCancelRunResponse) Reset() {
+	*x = ForceCancelRunResponse{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForceCancelRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForceCancelRunResponse) ProtoMessage() {}
+
+func (x *ForceCancelRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForceCancelRunResponse.ProtoReflect.Descriptor instead.
+func (*ForceCancelRunResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *ForceCancelRunResponse) GetState() ForceCancelState {
+	if x != nil {
+		return x.State
+	}
+	return ForceCancelState_FORCE_CANCEL_STATE_UNSPECIFIED
+}
+
+func (x *ForceCancelRunResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ForceCancelRunResponse) GetAttached() bool {
+	if x != nil {
+		return x.Attached
+	}
+	return false
+}
+
+func (x *ForceCancelRunResponse) GetAttachUnverified() int32 {
+	if x != nil {
+		return x.AttachUnverified
+	}
+	return 0
+}
+
+func (x *ForceCancelRunResponse) GetAttachUnknown() bool {
+	if x != nil {
+		return x.AttachUnknown
+	}
+	return false
+}
+
+func (x *ForceCancelRunResponse) GetDirect() bool {
+	if x != nil {
+		return x.Direct
+	}
+	return false
+}
+
+func (x *ForceCancelRunResponse) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *ForceCancelRunResponse) GetPrincipalVerified() bool {
+	if x != nil {
+		return x.PrincipalVerified
+	}
+	return false
+}
+
+func (x *ForceCancelRunResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ForceCancelRunResponse) GetGrace() *durationpb.Duration {
+	if x != nil {
+		return x.Grace
+	}
+	return nil
+}
+
+func (x *ForceCancelRunResponse) GetCascades() bool {
+	if x != nil {
+		return x.Cascades
+	}
+	return false
+}
+
+func (x *ForceCancelRunResponse) GetOpenDescendants() *ForceCancelSubtree {
+	if x != nil {
+		return x.OpenDescendants
+	}
+	return nil
+}
+
+type GetForceCancelRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RunId     string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Namespace string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
+	// request_id is the force cancel's; empty is the run's newest.
+	RequestId     string `protobuf:"bytes,3,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetForceCancelRequest) Reset() {
+	*x = GetForceCancelRequest{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetForceCancelRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetForceCancelRequest) ProtoMessage() {}
+
+func (x *GetForceCancelRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetForceCancelRequest.ProtoReflect.Descriptor instead.
+func (*GetForceCancelRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *GetForceCancelRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *GetForceCancelRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *GetForceCancelRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+type GetForceCancelResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// state is REQUESTED while it runs.
+	State ForceCancelState `protobuf:"varint,2,opt,name=state,proto3,enum=orkstack.v1.ForceCancelState" json:"state,omitempty"`
+	// cause is what it lacks or why it stopped (docs/REASONS.md, "Force
+	// cancel"); empty when it has nothing to say.
+	Cause     string                 `protobuf:"bytes,3,opt,name=cause,proto3" json:"cause,omitempty"`
+	StartedAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	// Who asked, whether this deployment verified them, why, and the grace.
+	Principal         string               `protobuf:"bytes,5,opt,name=principal,proto3" json:"principal,omitempty"`
+	PrincipalVerified bool                 `protobuf:"varint,6,opt,name=principal_verified,json=principalVerified,proto3" json:"principal_verified,omitempty"`
+	Reason            string               `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	Grace             *durationpb.Duration `protobuf:"bytes,8,opt,name=grace,proto3" json:"grace,omitempty"`
+	// incomplete: the run was ended and something of its end is missing. The
+	// same request made again finishes it.
+	Incomplete bool `protobuf:"varint,9,opt,name=incomplete,proto3" json:"incomplete,omitempty"`
+	// cascade is set on one that cascades.
+	Cascade *ForceCancelCascade `protobuf:"bytes,10,opt,name=cascade,proto3" json:"cascade,omitempty"`
+	// open_descendants are the open runs below now, of one that ended its run
+	// and does not cascade.
+	OpenDescendants *ForceCancelSubtree `protobuf:"bytes,11,opt,name=open_descendants,json=openDescendants,proto3" json:"open_descendants,omitempty"`
+	// newer_unknown: without a request_id, a newer one of the run could not be
+	// judged, and this may not be the newest.
+	NewerUnknown bool `protobuf:"varint,12,opt,name=newer_unknown,json=newerUnknown,proto3" json:"newer_unknown,omitempty"`
+	// unaudited: a record of it, or of its cascade, could not be written to the
+	// audit trail. Nothing of the run's end is missing for it.
+	Unaudited     bool `protobuf:"varint,13,opt,name=unaudited,proto3" json:"unaudited,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetForceCancelResponse) Reset() {
+	*x = GetForceCancelResponse{}
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetForceCancelResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetForceCancelResponse) ProtoMessage() {}
+
+func (x *GetForceCancelResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetForceCancelResponse.ProtoReflect.Descriptor instead.
+func (*GetForceCancelResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *GetForceCancelResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *GetForceCancelResponse) GetState() ForceCancelState {
+	if x != nil {
+		return x.State
+	}
+	return ForceCancelState_FORCE_CANCEL_STATE_UNSPECIFIED
+}
+
+func (x *GetForceCancelResponse) GetCause() string {
+	if x != nil {
+		return x.Cause
+	}
+	return ""
+}
+
+func (x *GetForceCancelResponse) GetStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartedAt
+	}
+	return nil
+}
+
+func (x *GetForceCancelResponse) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *GetForceCancelResponse) GetPrincipalVerified() bool {
+	if x != nil {
+		return x.PrincipalVerified
+	}
+	return false
+}
+
+func (x *GetForceCancelResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *GetForceCancelResponse) GetGrace() *durationpb.Duration {
+	if x != nil {
+		return x.Grace
+	}
+	return nil
+}
+
+func (x *GetForceCancelResponse) GetIncomplete() bool {
+	if x != nil {
+		return x.Incomplete
+	}
+	return false
+}
+
+func (x *GetForceCancelResponse) GetCascade() *ForceCancelCascade {
+	if x != nil {
+		return x.Cascade
+	}
+	return nil
+}
+
+func (x *GetForceCancelResponse) GetOpenDescendants() *ForceCancelSubtree {
+	if x != nil {
+		return x.OpenDescendants
+	}
+	return nil
+}
+
+func (x *GetForceCancelResponse) GetNewerUnknown() bool {
+	if x != nil {
+		return x.NewerUnknown
+	}
+	return false
+}
+
+func (x *GetForceCancelResponse) GetUnaudited() bool {
+	if x != nil {
+		return x.Unaudited
+	}
+	return false
+}
+
 type PauseRunRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	RunId     string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
@@ -4373,7 +5436,7 @@ type PauseRunRequest struct {
 
 func (x *PauseRunRequest) Reset() {
 	*x = PauseRunRequest{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[40]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4385,7 +5448,7 @@ func (x *PauseRunRequest) String() string {
 func (*PauseRunRequest) ProtoMessage() {}
 
 func (x *PauseRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[40]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4398,7 +5461,7 @@ func (x *PauseRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseRunRequest.ProtoReflect.Descriptor instead.
 func (*PauseRunRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{40}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *PauseRunRequest) GetRunId() string {
@@ -4454,7 +5517,7 @@ type PauseRunResponse struct {
 
 func (x *PauseRunResponse) Reset() {
 	*x = PauseRunResponse{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[41]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4466,7 +5529,7 @@ func (x *PauseRunResponse) String() string {
 func (*PauseRunResponse) ProtoMessage() {}
 
 func (x *PauseRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[41]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4479,7 +5542,7 @@ func (x *PauseRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseRunResponse.ProtoReflect.Descriptor instead.
 func (*PauseRunResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{41}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *PauseRunResponse) GetRequestId() string {
@@ -4515,7 +5578,7 @@ type UnpauseRunRequest struct {
 
 func (x *UnpauseRunRequest) Reset() {
 	*x = UnpauseRunRequest{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[42]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4527,7 +5590,7 @@ func (x *UnpauseRunRequest) String() string {
 func (*UnpauseRunRequest) ProtoMessage() {}
 
 func (x *UnpauseRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[42]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4540,7 +5603,7 @@ func (x *UnpauseRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnpauseRunRequest.ProtoReflect.Descriptor instead.
 func (*UnpauseRunRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{42}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *UnpauseRunRequest) GetRunId() string {
@@ -4578,7 +5641,7 @@ type UnpauseRunResponse struct {
 
 func (x *UnpauseRunResponse) Reset() {
 	*x = UnpauseRunResponse{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[43]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4590,7 +5653,7 @@ func (x *UnpauseRunResponse) String() string {
 func (*UnpauseRunResponse) ProtoMessage() {}
 
 func (x *UnpauseRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[43]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4603,7 +5666,7 @@ func (x *UnpauseRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnpauseRunResponse.ProtoReflect.Descriptor instead.
 func (*UnpauseRunResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{43}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *UnpauseRunResponse) GetRequestId() string {
@@ -4631,7 +5694,7 @@ type StreamEventsRequest struct {
 
 func (x *StreamEventsRequest) Reset() {
 	*x = StreamEventsRequest{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[44]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4643,7 +5706,7 @@ func (x *StreamEventsRequest) String() string {
 func (*StreamEventsRequest) ProtoMessage() {}
 
 func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[44]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4656,7 +5719,7 @@ func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamEventsRequest.ProtoReflect.Descriptor instead.
 func (*StreamEventsRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{44}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *StreamEventsRequest) GetRunId() string {
@@ -4735,7 +5798,7 @@ type StreamTaskLogsRequest struct {
 
 func (x *StreamTaskLogsRequest) Reset() {
 	*x = StreamTaskLogsRequest{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[45]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4747,7 +5810,7 @@ func (x *StreamTaskLogsRequest) String() string {
 func (*StreamTaskLogsRequest) ProtoMessage() {}
 
 func (x *StreamTaskLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[45]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4760,7 +5823,7 @@ func (x *StreamTaskLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamTaskLogsRequest.ProtoReflect.Descriptor instead.
 func (*StreamTaskLogsRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{45}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *StreamTaskLogsRequest) GetRunId() string {
@@ -4851,7 +5914,7 @@ type TaskLogChunk struct {
 
 func (x *TaskLogChunk) Reset() {
 	*x = TaskLogChunk{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[46]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4863,7 +5926,7 @@ func (x *TaskLogChunk) String() string {
 func (*TaskLogChunk) ProtoMessage() {}
 
 func (x *TaskLogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[46]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4876,7 +5939,7 @@ func (x *TaskLogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskLogChunk.ProtoReflect.Descriptor instead.
 func (*TaskLogChunk) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{46}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *TaskLogChunk) GetRunId() string {
@@ -4955,7 +6018,7 @@ type LiveIdentity struct {
 
 func (x *LiveIdentity) Reset() {
 	*x = LiveIdentity{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[47]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4967,7 +6030,7 @@ func (x *LiveIdentity) String() string {
 func (*LiveIdentity) ProtoMessage() {}
 
 func (x *LiveIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[47]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4980,7 +6043,7 @@ func (x *LiveIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LiveIdentity.ProtoReflect.Descriptor instead.
 func (*LiveIdentity) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{47}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *LiveIdentity) GetName() string {
@@ -5047,7 +6110,7 @@ type LiveUsage struct {
 
 func (x *LiveUsage) Reset() {
 	*x = LiveUsage{}
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[48]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5059,7 +6122,7 @@ func (x *LiveUsage) String() string {
 func (*LiveUsage) ProtoMessage() {}
 
 func (x *LiveUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_service_proto_msgTypes[48]
+	mi := &file_orkstack_v1_run_service_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5072,7 +6135,7 @@ func (x *LiveUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LiveUsage.ProtoReflect.Descriptor instead.
 func (*LiveUsage) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{48}
+	return file_orkstack_v1_run_service_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *LiveUsage) GetAvailable() bool {
@@ -5472,7 +6535,97 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\"7\n" +
 	"\x11CancelRunResponse\x12\"\n" +
-	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\xac\x01\n" +
+	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\x89\x02\n" +
+	"\x15ForceCancelRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12/\n" +
+	"\x05grace\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x05grace\x12*\n" +
+	"\x11client_request_id\x18\x05 \x01(\tR\x0fclientRequestId\x12\x18\n" +
+	"\acascade\x18\x06 \x01(\bR\acascade\x12\x18\n" +
+	"\apreview\x18\a \x01(\bR\apreview\x12\x12\n" +
+	"\x04stop\x18\b \x01(\bR\x04stop\"\xa2\x02\n" +
+	"\x13ForceCancelRunBelow\x12\x1a\n" +
+	"\bredacted\x18\x01 \x01(\bR\bredacted\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\"\n" +
+	"\rparent_run_id\x18\x03 \x01(\tR\vparentRunId\x12\x18\n" +
+	"\aorkflow\x18\x04 \x01(\tR\aorkflow\x12\x14\n" +
+	"\x05depth\x18\x05 \x01(\x05R\x05depth\x123\n" +
+	"\x05state\x18\x06 \x01(\x0e2\x1d.orkstack.v1.ForceCancelStateR\x05state\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\a \x01(\tR\trequestId\x12\x1a\n" +
+	"\battached\x18\b \x01(\bR\battached\x12\x14\n" +
+	"\x05cause\x18\t \x01(\tR\x05cause\"\xb0\x01\n" +
+	"\x12ForceCancelSubtree\x124\n" +
+	"\x04runs\x18\x01 \x03(\v2 .orkstack.v1.ForceCancelRunBelowR\x04runs\x12!\n" +
+	"\ftruncated_by\x18\x02 \x01(\tR\vtruncatedBy\x12A\n" +
+	"\n" +
+	"exclusions\x18\x03 \x03(\v2!.orkstack.v1.ForceCancelExclusionR\n" +
+	"exclusions\"C\n" +
+	"\x14ForceCancelExclusion\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x14\n" +
+	"\x05cause\x18\x02 \x01(\tR\x05cause\"\xae\x04\n" +
+	"\x12ForceCancelCascade\x12:\n" +
+	"\x05state\x18\x01 \x01(\x0e2$.orkstack.v1.ForceCancelCascadeStateR\x05state\x12/\n" +
+	"\x05as_of\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x04asOf\x124\n" +
+	"\x04runs\x18\x03 \x03(\v2 .orkstack.v1.ForceCancelRunBelowR\x04runs\x12&\n" +
+	"\x0fleft_to_parents\x18\x04 \x01(\x05R\rleftToParents\x12\x1f\n" +
+	"\vnot_started\x18\x05 \x01(\x05R\n" +
+	"notStarted\x12-\n" +
+	"\x13found_by_root_index\x18\x06 \x01(\x05R\x10foundByRootIndex\x12!\n" +
+	"\ftruncated_by\x18\a \x01(\tR\vtruncatedBy\x12A\n" +
+	"\n" +
+	"exclusions\x18\b \x03(\v2!.orkstack.v1.ForceCancelExclusionR\n" +
+	"exclusions\x12'\n" +
+	"\x0frerun_suggested\x18\t \x01(\bR\x0ererunSuggested\x12@\n" +
+	"\n" +
+	"open_after\x18\n" +
+	" \x01(\v2!.orkstack.v1.ForceCancelOpenAfterR\topenAfter\x12\x14\n" +
+	"\x05cause\x18\v \x01(\tR\x05cause\x12\x16\n" +
+	"\x06unread\x18\f \x01(\bR\x06unread\"r\n" +
+	"\x14ForceCancelOpenAfter\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\x05R\x05count\x12\x17\n" +
+	"\arun_ids\x18\x02 \x03(\tR\x06runIds\x12+\n" +
+	"\x11unconfirmed_cause\x18\x03 \x01(\tR\x10unconfirmedCause\"\xf2\x03\n" +
+	"\x16ForceCancelRunResponse\x123\n" +
+	"\x05state\x18\x01 \x01(\x0e2\x1d.orkstack.v1.ForceCancelStateR\x05state\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12\x1a\n" +
+	"\battached\x18\x03 \x01(\bR\battached\x12+\n" +
+	"\x11attach_unverified\x18\x04 \x01(\x05R\x10attachUnverified\x12%\n" +
+	"\x0eattach_unknown\x18\x05 \x01(\bR\rattachUnknown\x12\x16\n" +
+	"\x06direct\x18\x06 \x01(\bR\x06direct\x12\x1c\n" +
+	"\tprincipal\x18\a \x01(\tR\tprincipal\x12-\n" +
+	"\x12principal_verified\x18\b \x01(\bR\x11principalVerified\x12\x16\n" +
+	"\x06reason\x18\t \x01(\tR\x06reason\x12/\n" +
+	"\x05grace\x18\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\x05grace\x12\x1a\n" +
+	"\bcascades\x18\v \x01(\bR\bcascades\x12J\n" +
+	"\x10open_descendants\x18\f \x01(\v2\x1f.orkstack.v1.ForceCancelSubtreeR\x0fopenDescendants\"k\n" +
+	"\x15GetForceCancelRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x03 \x01(\tR\trequestId\"\xbd\x04\n" +
+	"\x16GetForceCancelResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x123\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x1d.orkstack.v1.ForceCancelStateR\x05state\x12\x14\n" +
+	"\x05cause\x18\x03 \x01(\tR\x05cause\x129\n" +
+	"\n" +
+	"started_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12\x1c\n" +
+	"\tprincipal\x18\x05 \x01(\tR\tprincipal\x12-\n" +
+	"\x12principal_verified\x18\x06 \x01(\bR\x11principalVerified\x12\x16\n" +
+	"\x06reason\x18\a \x01(\tR\x06reason\x12/\n" +
+	"\x05grace\x18\b \x01(\v2\x19.google.protobuf.DurationR\x05grace\x12\x1e\n" +
+	"\n" +
+	"incomplete\x18\t \x01(\bR\n" +
+	"incomplete\x129\n" +
+	"\acascade\x18\n" +
+	" \x01(\v2\x1f.orkstack.v1.ForceCancelCascadeR\acascade\x12J\n" +
+	"\x10open_descendants\x18\v \x01(\v2\x1f.orkstack.v1.ForceCancelSubtreeR\x0fopenDescendants\x12#\n" +
+	"\rnewer_unknown\x18\f \x01(\bR\fnewerUnknown\x12\x1c\n" +
+	"\tunaudited\x18\r \x01(\bR\tunaudited\"\xac\x01\n" +
 	"\x0fPauseRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x16\n" +
@@ -5593,7 +6746,23 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"(HEARTBEAT_UNAVAILABLE_REASON_UNSPECIFIED\x10\x00\x12,\n" +
 	"(HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED\x10\x01\x121\n" +
 	"-HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET\x10\x02\x12,\n" +
-	"(HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE\x10\x03*\x9a\x01\n" +
+	"(HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE\x10\x03*\xc3\x02\n" +
+	"\x10ForceCancelState\x12\"\n" +
+	"\x1eFORCE_CANCEL_STATE_UNSPECIFIED\x10\x00\x12 \n" +
+	"\x1cFORCE_CANCEL_STATE_REQUESTED\x10\x01\x12\x1e\n" +
+	"\x1aFORCE_CANCEL_STATE_WAITING\x10\x02\x12$\n" +
+	" FORCE_CANCEL_STATE_ALREADY_ENDED\x10\x03\x12%\n" +
+	"!FORCE_CANCEL_STATE_FORCE_CANCELED\x10\x04\x12\x1f\n" +
+	"\x1bFORCE_CANCEL_STATE_CANCELED\x10\x05\x12\x1c\n" +
+	"\x18FORCE_CANCEL_STATE_ENDED\x10\x06\x12\x1d\n" +
+	"\x19FORCE_CANCEL_STATE_FAILED\x10\a\x12\x1e\n" +
+	"\x1aFORCE_CANCEL_STATE_PENDING\x10\b*\xe6\x01\n" +
+	"\x17ForceCancelCascadeState\x12*\n" +
+	"&FORCE_CANCEL_CASCADE_STATE_UNSPECIFIED\x10\x00\x12&\n" +
+	"\"FORCE_CANCEL_CASCADE_STATE_RUNNING\x10\x01\x12'\n" +
+	"#FORCE_CANCEL_CASCADE_STATE_COMPLETE\x10\x02\x12&\n" +
+	"\"FORCE_CANCEL_CASCADE_STATE_PARTIAL\x10\x03\x12&\n" +
+	"\"FORCE_CANCEL_CASCADE_STATE_STOPPED\x10\x04*\x9a\x01\n" +
 	"\x11LiveIdentityState\x12#\n" +
 	"\x1fLIVE_IDENTITY_STATE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19LIVE_IDENTITY_STATE_FRESH\x10\x01\x12 \n" +
@@ -5612,14 +6781,15 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	")LIVE_USAGE_UNAVAILABLE_REASON_READ_FAILED\x10\t\x12.\n" +
 	"*LIVE_USAGE_UNAVAILABLE_REASON_START_FAILED\x10\n" +
 	"\x123\n" +
-	"/LIVE_USAGE_UNAVAILABLE_REASON_CGROUP_UNVERIFIED\x10\v2\xf8\n" +
-	"\n" +
+	"/LIVE_USAGE_UNAVAILABLE_REASON_CGROUP_UNVERIFIED\x10\v2\xae\f\n" +
 	"\n" +
 	"RunService\x12J\n" +
 	"\tSubmitRun\x12\x1d.orkstack.v1.SubmitRunRequest\x1a\x1e.orkstack.v1.SubmitRunResponse\x12A\n" +
 	"\x06GetRun\x12\x1a.orkstack.v1.GetRunRequest\x1a\x1b.orkstack.v1.GetRunResponse\x12G\n" +
 	"\bListRuns\x12\x1c.orkstack.v1.ListRunsRequest\x1a\x1d.orkstack.v1.ListRunsResponse\x12J\n" +
-	"\tCancelRun\x12\x1d.orkstack.v1.CancelRunRequest\x1a\x1e.orkstack.v1.CancelRunResponse\x12G\n" +
+	"\tCancelRun\x12\x1d.orkstack.v1.CancelRunRequest\x1a\x1e.orkstack.v1.CancelRunResponse\x12Y\n" +
+	"\x0eForceCancelRun\x12\".orkstack.v1.ForceCancelRunRequest\x1a#.orkstack.v1.ForceCancelRunResponse\x12Y\n" +
+	"\x0eGetForceCancel\x12\".orkstack.v1.GetForceCancelRequest\x1a#.orkstack.v1.GetForceCancelResponse\x12G\n" +
 	"\bPauseRun\x12\x1c.orkstack.v1.PauseRunRequest\x1a\x1d.orkstack.v1.PauseRunResponse\x12M\n" +
 	"\n" +
 	"UnpauseRun\x12\x1e.orkstack.v1.UnpauseRunRequest\x1a\x1f.orkstack.v1.UnpauseRunResponse\x12F\n" +
@@ -5649,8 +6819,8 @@ func file_orkstack_v1_run_service_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_run_service_proto_rawDescData
 }
 
-var file_orkstack_v1_run_service_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_orkstack_v1_run_service_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_orkstack_v1_run_service_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
+var file_orkstack_v1_run_service_proto_msgTypes = make([]protoimpl.MessageInfo, 58)
 var file_orkstack_v1_run_service_proto_goTypes = []any{
 	(ResumeCategory)(0),                   // 0: orkstack.v1.ResumeCategory
 	(ResumeMemoState)(0),                  // 1: orkstack.v1.ResumeMemoState
@@ -5660,182 +6830,214 @@ var file_orkstack_v1_run_service_proto_goTypes = []any{
 	(ReferenceState)(0),                   // 5: orkstack.v1.ReferenceState
 	(LiveAttemptState)(0),                 // 6: orkstack.v1.LiveAttemptState
 	(HeartbeatUnavailableReason)(0),       // 7: orkstack.v1.HeartbeatUnavailableReason
-	(LiveIdentityState)(0),                // 8: orkstack.v1.LiveIdentityState
-	(LiveUsageUnavailableReason)(0),       // 9: orkstack.v1.LiveUsageUnavailableReason
-	(*ResumeRunRequest)(nil),              // 10: orkstack.v1.ResumeRunRequest
-	(*ResumeRunResponse)(nil),             // 11: orkstack.v1.ResumeRunResponse
-	(*ResumeTask)(nil),                    // 12: orkstack.v1.ResumeTask
-	(*ResumeCount)(nil),                   // 13: orkstack.v1.ResumeCount
-	(*ResumeDiff)(nil),                    // 14: orkstack.v1.ResumeDiff
-	(*ResumeUnitRef)(nil),                 // 15: orkstack.v1.ResumeUnitRef
-	(*ResumeWarning)(nil),                 // 16: orkstack.v1.ResumeWarning
-	(*ResumeRefusal)(nil),                 // 17: orkstack.v1.ResumeRefusal
-	(*SubmitRunRequest)(nil),              // 18: orkstack.v1.SubmitRunRequest
-	(*AwaitCallback)(nil),                 // 19: orkstack.v1.AwaitCallback
-	(*SubmitRunResponse)(nil),             // 20: orkstack.v1.SubmitRunResponse
-	(*ResolveAwaitRequest)(nil),           // 21: orkstack.v1.ResolveAwaitRequest
-	(*ResolveAwaitResponse)(nil),          // 22: orkstack.v1.ResolveAwaitResponse
-	(*GetRunRequest)(nil),                 // 23: orkstack.v1.GetRunRequest
-	(*GetRunResponse)(nil),                // 24: orkstack.v1.GetRunResponse
-	(*ListRunsRequest)(nil),               // 25: orkstack.v1.ListRunsRequest
-	(*ListRunsResponse)(nil),              // 26: orkstack.v1.ListRunsResponse
-	(*RunArtifact)(nil),                   // 27: orkstack.v1.RunArtifact
-	(*ListRunArtifactsRequest)(nil),       // 28: orkstack.v1.ListRunArtifactsRequest
-	(*ListRunArtifactsResponse)(nil),      // 29: orkstack.v1.ListRunArtifactsResponse
-	(*ReadArtifactRequest)(nil),           // 30: orkstack.v1.ReadArtifactRequest
-	(*ArtifactChunk)(nil),                 // 31: orkstack.v1.ArtifactChunk
-	(*ListTaskAttemptsRequest)(nil),       // 32: orkstack.v1.ListTaskAttemptsRequest
-	(*ListTaskAttemptsResponse)(nil),      // 33: orkstack.v1.ListTaskAttemptsResponse
-	(*TaskAttemptsTiming)(nil),            // 34: orkstack.v1.TaskAttemptsTiming
-	(*GetArtifactProvenanceRequest)(nil),  // 35: orkstack.v1.GetArtifactProvenanceRequest
-	(*ArtifactReference)(nil),             // 36: orkstack.v1.ArtifactReference
-	(*GetArtifactProvenanceResponse)(nil), // 37: orkstack.v1.GetArtifactProvenanceResponse
-	(*InspectRunRequest)(nil),             // 38: orkstack.v1.InspectRunRequest
-	(*LiveAttempt)(nil),                   // 39: orkstack.v1.LiveAttempt
-	(*StoreOutageWait)(nil),               // 40: orkstack.v1.StoreOutageWait
-	(*CapacityWait)(nil),                  // 41: orkstack.v1.CapacityWait
-	(*InspectRunResponse)(nil),            // 42: orkstack.v1.InspectRunResponse
-	(*DiffRunsRequest)(nil),               // 43: orkstack.v1.DiffRunsRequest
-	(*RunFieldDiff)(nil),                  // 44: orkstack.v1.RunFieldDiff
-	(*DiffRunsResponse)(nil),              // 45: orkstack.v1.DiffRunsResponse
-	(*ExportRunEvidenceRequest)(nil),      // 46: orkstack.v1.ExportRunEvidenceRequest
-	(*EvidenceChunk)(nil),                 // 47: orkstack.v1.EvidenceChunk
-	(*CancelRunRequest)(nil),              // 48: orkstack.v1.CancelRunRequest
-	(*CancelRunResponse)(nil),             // 49: orkstack.v1.CancelRunResponse
-	(*PauseRunRequest)(nil),               // 50: orkstack.v1.PauseRunRequest
-	(*PauseRunResponse)(nil),              // 51: orkstack.v1.PauseRunResponse
-	(*UnpauseRunRequest)(nil),             // 52: orkstack.v1.UnpauseRunRequest
-	(*UnpauseRunResponse)(nil),            // 53: orkstack.v1.UnpauseRunResponse
-	(*StreamEventsRequest)(nil),           // 54: orkstack.v1.StreamEventsRequest
-	(*StreamTaskLogsRequest)(nil),         // 55: orkstack.v1.StreamTaskLogsRequest
-	(*TaskLogChunk)(nil),                  // 56: orkstack.v1.TaskLogChunk
-	(*LiveIdentity)(nil),                  // 57: orkstack.v1.LiveIdentity
-	(*LiveUsage)(nil),                     // 58: orkstack.v1.LiveUsage
-	(*RunResume)(nil),                     // 59: orkstack.v1.RunResume
-	(ResumeAction)(0),                     // 60: orkstack.v1.ResumeAction
-	(Status)(0),                           // 61: orkstack.v1.Status
-	(*timestamppb.Timestamp)(nil),         // 62: google.protobuf.Timestamp
-	(*Payload)(nil),                       // 63: orkstack.v1.Payload
-	(*Run)(nil),                           // 64: orkstack.v1.Run
-	(*FieldFilter)(nil),                   // 65: orkstack.v1.FieldFilter
-	(*ArtifactRef)(nil),                   // 66: orkstack.v1.ArtifactRef
-	(*TaskAttempt)(nil),                   // 67: orkstack.v1.TaskAttempt
-	(*TimingQuantity)(nil),                // 68: orkstack.v1.TimingQuantity
-	(*ReservedResources)(nil),             // 69: orkstack.v1.ReservedResources
-	(*ResourceQuantity)(nil),              // 70: orkstack.v1.ResourceQuantity
-	(*durationpb.Duration)(nil),           // 71: google.protobuf.Duration
-	(*Event)(nil),                         // 72: orkstack.v1.Event
+	(ForceCancelState)(0),                 // 8: orkstack.v1.ForceCancelState
+	(ForceCancelCascadeState)(0),          // 9: orkstack.v1.ForceCancelCascadeState
+	(LiveIdentityState)(0),                // 10: orkstack.v1.LiveIdentityState
+	(LiveUsageUnavailableReason)(0),       // 11: orkstack.v1.LiveUsageUnavailableReason
+	(*ResumeRunRequest)(nil),              // 12: orkstack.v1.ResumeRunRequest
+	(*ResumeRunResponse)(nil),             // 13: orkstack.v1.ResumeRunResponse
+	(*ResumeTask)(nil),                    // 14: orkstack.v1.ResumeTask
+	(*ResumeCount)(nil),                   // 15: orkstack.v1.ResumeCount
+	(*ResumeDiff)(nil),                    // 16: orkstack.v1.ResumeDiff
+	(*ResumeUnitRef)(nil),                 // 17: orkstack.v1.ResumeUnitRef
+	(*ResumeWarning)(nil),                 // 18: orkstack.v1.ResumeWarning
+	(*ResumeRefusal)(nil),                 // 19: orkstack.v1.ResumeRefusal
+	(*SubmitRunRequest)(nil),              // 20: orkstack.v1.SubmitRunRequest
+	(*AwaitCallback)(nil),                 // 21: orkstack.v1.AwaitCallback
+	(*SubmitRunResponse)(nil),             // 22: orkstack.v1.SubmitRunResponse
+	(*ResolveAwaitRequest)(nil),           // 23: orkstack.v1.ResolveAwaitRequest
+	(*ResolveAwaitResponse)(nil),          // 24: orkstack.v1.ResolveAwaitResponse
+	(*GetRunRequest)(nil),                 // 25: orkstack.v1.GetRunRequest
+	(*GetRunResponse)(nil),                // 26: orkstack.v1.GetRunResponse
+	(*ListRunsRequest)(nil),               // 27: orkstack.v1.ListRunsRequest
+	(*ListRunsResponse)(nil),              // 28: orkstack.v1.ListRunsResponse
+	(*RunArtifact)(nil),                   // 29: orkstack.v1.RunArtifact
+	(*ListRunArtifactsRequest)(nil),       // 30: orkstack.v1.ListRunArtifactsRequest
+	(*ListRunArtifactsResponse)(nil),      // 31: orkstack.v1.ListRunArtifactsResponse
+	(*ReadArtifactRequest)(nil),           // 32: orkstack.v1.ReadArtifactRequest
+	(*ArtifactChunk)(nil),                 // 33: orkstack.v1.ArtifactChunk
+	(*ListTaskAttemptsRequest)(nil),       // 34: orkstack.v1.ListTaskAttemptsRequest
+	(*ListTaskAttemptsResponse)(nil),      // 35: orkstack.v1.ListTaskAttemptsResponse
+	(*TaskAttemptsTiming)(nil),            // 36: orkstack.v1.TaskAttemptsTiming
+	(*GetArtifactProvenanceRequest)(nil),  // 37: orkstack.v1.GetArtifactProvenanceRequest
+	(*ArtifactReference)(nil),             // 38: orkstack.v1.ArtifactReference
+	(*GetArtifactProvenanceResponse)(nil), // 39: orkstack.v1.GetArtifactProvenanceResponse
+	(*InspectRunRequest)(nil),             // 40: orkstack.v1.InspectRunRequest
+	(*LiveAttempt)(nil),                   // 41: orkstack.v1.LiveAttempt
+	(*StoreOutageWait)(nil),               // 42: orkstack.v1.StoreOutageWait
+	(*CapacityWait)(nil),                  // 43: orkstack.v1.CapacityWait
+	(*InspectRunResponse)(nil),            // 44: orkstack.v1.InspectRunResponse
+	(*DiffRunsRequest)(nil),               // 45: orkstack.v1.DiffRunsRequest
+	(*RunFieldDiff)(nil),                  // 46: orkstack.v1.RunFieldDiff
+	(*DiffRunsResponse)(nil),              // 47: orkstack.v1.DiffRunsResponse
+	(*ExportRunEvidenceRequest)(nil),      // 48: orkstack.v1.ExportRunEvidenceRequest
+	(*EvidenceChunk)(nil),                 // 49: orkstack.v1.EvidenceChunk
+	(*CancelRunRequest)(nil),              // 50: orkstack.v1.CancelRunRequest
+	(*CancelRunResponse)(nil),             // 51: orkstack.v1.CancelRunResponse
+	(*ForceCancelRunRequest)(nil),         // 52: orkstack.v1.ForceCancelRunRequest
+	(*ForceCancelRunBelow)(nil),           // 53: orkstack.v1.ForceCancelRunBelow
+	(*ForceCancelSubtree)(nil),            // 54: orkstack.v1.ForceCancelSubtree
+	(*ForceCancelExclusion)(nil),          // 55: orkstack.v1.ForceCancelExclusion
+	(*ForceCancelCascade)(nil),            // 56: orkstack.v1.ForceCancelCascade
+	(*ForceCancelOpenAfter)(nil),          // 57: orkstack.v1.ForceCancelOpenAfter
+	(*ForceCancelRunResponse)(nil),        // 58: orkstack.v1.ForceCancelRunResponse
+	(*GetForceCancelRequest)(nil),         // 59: orkstack.v1.GetForceCancelRequest
+	(*GetForceCancelResponse)(nil),        // 60: orkstack.v1.GetForceCancelResponse
+	(*PauseRunRequest)(nil),               // 61: orkstack.v1.PauseRunRequest
+	(*PauseRunResponse)(nil),              // 62: orkstack.v1.PauseRunResponse
+	(*UnpauseRunRequest)(nil),             // 63: orkstack.v1.UnpauseRunRequest
+	(*UnpauseRunResponse)(nil),            // 64: orkstack.v1.UnpauseRunResponse
+	(*StreamEventsRequest)(nil),           // 65: orkstack.v1.StreamEventsRequest
+	(*StreamTaskLogsRequest)(nil),         // 66: orkstack.v1.StreamTaskLogsRequest
+	(*TaskLogChunk)(nil),                  // 67: orkstack.v1.TaskLogChunk
+	(*LiveIdentity)(nil),                  // 68: orkstack.v1.LiveIdentity
+	(*LiveUsage)(nil),                     // 69: orkstack.v1.LiveUsage
+	(*RunResume)(nil),                     // 70: orkstack.v1.RunResume
+	(ResumeAction)(0),                     // 71: orkstack.v1.ResumeAction
+	(Status)(0),                           // 72: orkstack.v1.Status
+	(*timestamppb.Timestamp)(nil),         // 73: google.protobuf.Timestamp
+	(*Payload)(nil),                       // 74: orkstack.v1.Payload
+	(*Run)(nil),                           // 75: orkstack.v1.Run
+	(*FieldFilter)(nil),                   // 76: orkstack.v1.FieldFilter
+	(*ArtifactRef)(nil),                   // 77: orkstack.v1.ArtifactRef
+	(*TaskAttempt)(nil),                   // 78: orkstack.v1.TaskAttempt
+	(*TimingQuantity)(nil),                // 79: orkstack.v1.TimingQuantity
+	(*ReservedResources)(nil),             // 80: orkstack.v1.ReservedResources
+	(*ResourceQuantity)(nil),              // 81: orkstack.v1.ResourceQuantity
+	(*durationpb.Duration)(nil),           // 82: google.protobuf.Duration
+	(*Event)(nil),                         // 83: orkstack.v1.Event
 }
 var file_orkstack_v1_run_service_proto_depIdxs = []int32{
-	59, // 0: orkstack.v1.ResumeRunResponse.resume:type_name -> orkstack.v1.RunResume
-	12, // 1: orkstack.v1.ResumeRunResponse.tasks:type_name -> orkstack.v1.ResumeTask
-	13, // 2: orkstack.v1.ResumeRunResponse.counts:type_name -> orkstack.v1.ResumeCount
-	14, // 3: orkstack.v1.ResumeRunResponse.diff:type_name -> orkstack.v1.ResumeDiff
-	60, // 4: orkstack.v1.ResumeRunResponse.action:type_name -> orkstack.v1.ResumeAction
-	16, // 5: orkstack.v1.ResumeRunResponse.warnings:type_name -> orkstack.v1.ResumeWarning
-	0,  // 6: orkstack.v1.ResumeTask.category:type_name -> orkstack.v1.ResumeCategory
-	61, // 7: orkstack.v1.ResumeTask.previous_outcome:type_name -> orkstack.v1.Status
-	1,  // 8: orkstack.v1.ResumeTask.memo:type_name -> orkstack.v1.ResumeMemoState
-	0,  // 9: orkstack.v1.ResumeCount.category:type_name -> orkstack.v1.ResumeCategory
-	15, // 10: orkstack.v1.ResumeDiff.added:type_name -> orkstack.v1.ResumeUnitRef
-	15, // 11: orkstack.v1.ResumeDiff.dropped:type_name -> orkstack.v1.ResumeUnitRef
-	2,  // 12: orkstack.v1.ResumeWarning.kind:type_name -> orkstack.v1.ResumeWarningKind
-	62, // 13: orkstack.v1.ResumeWarning.last_seen_at:type_name -> google.protobuf.Timestamp
-	62, // 14: orkstack.v1.ResumeWarning.until:type_name -> google.protobuf.Timestamp
-	3,  // 15: orkstack.v1.ResumeRefusal.class:type_name -> orkstack.v1.ResumeRefusalClass
-	14, // 16: orkstack.v1.ResumeRefusal.diff:type_name -> orkstack.v1.ResumeDiff
-	63, // 17: orkstack.v1.SubmitRunRequest.input:type_name -> orkstack.v1.Payload
-	64, // 18: orkstack.v1.SubmitRunResponse.run:type_name -> orkstack.v1.Run
-	19, // 19: orkstack.v1.SubmitRunResponse.await_callbacks:type_name -> orkstack.v1.AwaitCallback
-	62, // 20: orkstack.v1.ResolveAwaitResponse.told_at:type_name -> google.protobuf.Timestamp
-	64, // 21: orkstack.v1.GetRunResponse.run:type_name -> orkstack.v1.Run
-	65, // 22: orkstack.v1.ListRunsRequest.filters:type_name -> orkstack.v1.FieldFilter
-	64, // 23: orkstack.v1.ListRunsResponse.runs:type_name -> orkstack.v1.Run
-	4,  // 24: orkstack.v1.RunArtifact.kind:type_name -> orkstack.v1.ArtifactKind
-	66, // 25: orkstack.v1.RunArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
-	27, // 26: orkstack.v1.ListRunArtifactsResponse.artifacts:type_name -> orkstack.v1.RunArtifact
-	4,  // 27: orkstack.v1.ReadArtifactRequest.kind:type_name -> orkstack.v1.ArtifactKind
-	66, // 28: orkstack.v1.ArtifactChunk.artifact:type_name -> orkstack.v1.ArtifactRef
-	67, // 29: orkstack.v1.ListTaskAttemptsResponse.attempts:type_name -> orkstack.v1.TaskAttempt
-	34, // 30: orkstack.v1.ListTaskAttemptsResponse.timings:type_name -> orkstack.v1.TaskAttemptsTiming
-	68, // 31: orkstack.v1.TaskAttemptsTiming.queue_wait:type_name -> orkstack.v1.TimingQuantity
-	4,  // 32: orkstack.v1.GetArtifactProvenanceRequest.kind:type_name -> orkstack.v1.ArtifactKind
-	4,  // 33: orkstack.v1.ArtifactReference.kind:type_name -> orkstack.v1.ArtifactKind
-	61, // 34: orkstack.v1.ArtifactReference.run_status:type_name -> orkstack.v1.Status
-	62, // 35: orkstack.v1.ArtifactReference.run_created_at:type_name -> google.protobuf.Timestamp
-	66, // 36: orkstack.v1.GetArtifactProvenanceResponse.artifact:type_name -> orkstack.v1.ArtifactRef
-	5,  // 37: orkstack.v1.GetArtifactProvenanceResponse.own_reference:type_name -> orkstack.v1.ReferenceState
-	62, // 38: orkstack.v1.GetArtifactProvenanceResponse.released_at:type_name -> google.protobuf.Timestamp
-	36, // 39: orkstack.v1.GetArtifactProvenanceResponse.references:type_name -> orkstack.v1.ArtifactReference
-	62, // 40: orkstack.v1.GetArtifactProvenanceResponse.computed_at:type_name -> google.protobuf.Timestamp
-	6,  // 41: orkstack.v1.LiveAttempt.state:type_name -> orkstack.v1.LiveAttemptState
-	62, // 42: orkstack.v1.LiveAttempt.attempt_scheduled_at:type_name -> google.protobuf.Timestamp
-	62, // 43: orkstack.v1.LiveAttempt.attempt_started_at:type_name -> google.protobuf.Timestamp
-	62, // 44: orkstack.v1.LiveAttempt.next_attempt_at:type_name -> google.protobuf.Timestamp
-	62, // 45: orkstack.v1.LiveAttempt.expires_at:type_name -> google.protobuf.Timestamp
-	7,  // 46: orkstack.v1.LiveAttempt.heartbeat_unavailable_reason:type_name -> orkstack.v1.HeartbeatUnavailableReason
-	62, // 47: orkstack.v1.LiveAttempt.last_heartbeat_at:type_name -> google.protobuf.Timestamp
-	62, // 48: orkstack.v1.LiveAttempt.heartbeat_deadline_at:type_name -> google.protobuf.Timestamp
-	41, // 49: orkstack.v1.LiveAttempt.capacity_wait:type_name -> orkstack.v1.CapacityWait
-	40, // 50: orkstack.v1.LiveAttempt.store_outage_wait:type_name -> orkstack.v1.StoreOutageWait
-	58, // 51: orkstack.v1.LiveAttempt.usage:type_name -> orkstack.v1.LiveUsage
-	69, // 52: orkstack.v1.LiveAttempt.reserved:type_name -> orkstack.v1.ReservedResources
-	57, // 53: orkstack.v1.LiveAttempt.identity:type_name -> orkstack.v1.LiveIdentity
-	62, // 54: orkstack.v1.StoreOutageWait.since:type_name -> google.protobuf.Timestamp
-	70, // 55: orkstack.v1.CapacityWait.reserved:type_name -> orkstack.v1.ResourceQuantity
-	70, // 56: orkstack.v1.CapacityWait.capacity:type_name -> orkstack.v1.ResourceQuantity
-	61, // 57: orkstack.v1.InspectRunResponse.run_status:type_name -> orkstack.v1.Status
-	39, // 58: orkstack.v1.InspectRunResponse.attempts:type_name -> orkstack.v1.LiveAttempt
-	62, // 59: orkstack.v1.InspectRunResponse.computed_at:type_name -> google.protobuf.Timestamp
-	64, // 60: orkstack.v1.DiffRunsResponse.from:type_name -> orkstack.v1.Run
-	64, // 61: orkstack.v1.DiffRunsResponse.to:type_name -> orkstack.v1.Run
-	44, // 62: orkstack.v1.DiffRunsResponse.differences:type_name -> orkstack.v1.RunFieldDiff
-	64, // 63: orkstack.v1.CancelRunResponse.run:type_name -> orkstack.v1.Run
-	71, // 64: orkstack.v1.PauseRunRequest.timeout:type_name -> google.protobuf.Duration
-	62, // 65: orkstack.v1.LiveIdentity.last_refresh:type_name -> google.protobuf.Timestamp
-	62, // 66: orkstack.v1.LiveIdentity.expires_at:type_name -> google.protobuf.Timestamp
-	8,  // 67: orkstack.v1.LiveIdentity.state:type_name -> orkstack.v1.LiveIdentityState
-	9,  // 68: orkstack.v1.LiveUsage.unavailable_reason:type_name -> orkstack.v1.LiveUsageUnavailableReason
-	62, // 69: orkstack.v1.LiveUsage.sampled_at:type_name -> google.protobuf.Timestamp
-	18, // 70: orkstack.v1.RunService.SubmitRun:input_type -> orkstack.v1.SubmitRunRequest
-	23, // 71: orkstack.v1.RunService.GetRun:input_type -> orkstack.v1.GetRunRequest
-	25, // 72: orkstack.v1.RunService.ListRuns:input_type -> orkstack.v1.ListRunsRequest
-	48, // 73: orkstack.v1.RunService.CancelRun:input_type -> orkstack.v1.CancelRunRequest
-	50, // 74: orkstack.v1.RunService.PauseRun:input_type -> orkstack.v1.PauseRunRequest
-	52, // 75: orkstack.v1.RunService.UnpauseRun:input_type -> orkstack.v1.UnpauseRunRequest
-	54, // 76: orkstack.v1.RunService.StreamEvents:input_type -> orkstack.v1.StreamEventsRequest
-	55, // 77: orkstack.v1.RunService.StreamTaskLogs:input_type -> orkstack.v1.StreamTaskLogsRequest
-	28, // 78: orkstack.v1.RunService.ListRunArtifacts:input_type -> orkstack.v1.ListRunArtifactsRequest
-	30, // 79: orkstack.v1.RunService.ReadArtifact:input_type -> orkstack.v1.ReadArtifactRequest
-	32, // 80: orkstack.v1.RunService.ListTaskAttempts:input_type -> orkstack.v1.ListTaskAttemptsRequest
-	21, // 81: orkstack.v1.RunService.ResolveAwait:input_type -> orkstack.v1.ResolveAwaitRequest
-	35, // 82: orkstack.v1.RunService.GetArtifactProvenance:input_type -> orkstack.v1.GetArtifactProvenanceRequest
-	38, // 83: orkstack.v1.RunService.InspectRun:input_type -> orkstack.v1.InspectRunRequest
-	43, // 84: orkstack.v1.RunService.DiffRuns:input_type -> orkstack.v1.DiffRunsRequest
-	46, // 85: orkstack.v1.RunService.ExportRunEvidence:input_type -> orkstack.v1.ExportRunEvidenceRequest
-	10, // 86: orkstack.v1.RunService.ResumeRun:input_type -> orkstack.v1.ResumeRunRequest
-	20, // 87: orkstack.v1.RunService.SubmitRun:output_type -> orkstack.v1.SubmitRunResponse
-	24, // 88: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
-	26, // 89: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
-	49, // 90: orkstack.v1.RunService.CancelRun:output_type -> orkstack.v1.CancelRunResponse
-	51, // 91: orkstack.v1.RunService.PauseRun:output_type -> orkstack.v1.PauseRunResponse
-	53, // 92: orkstack.v1.RunService.UnpauseRun:output_type -> orkstack.v1.UnpauseRunResponse
-	72, // 93: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
-	56, // 94: orkstack.v1.RunService.StreamTaskLogs:output_type -> orkstack.v1.TaskLogChunk
-	29, // 95: orkstack.v1.RunService.ListRunArtifacts:output_type -> orkstack.v1.ListRunArtifactsResponse
-	31, // 96: orkstack.v1.RunService.ReadArtifact:output_type -> orkstack.v1.ArtifactChunk
-	33, // 97: orkstack.v1.RunService.ListTaskAttempts:output_type -> orkstack.v1.ListTaskAttemptsResponse
-	22, // 98: orkstack.v1.RunService.ResolveAwait:output_type -> orkstack.v1.ResolveAwaitResponse
-	37, // 99: orkstack.v1.RunService.GetArtifactProvenance:output_type -> orkstack.v1.GetArtifactProvenanceResponse
-	42, // 100: orkstack.v1.RunService.InspectRun:output_type -> orkstack.v1.InspectRunResponse
-	45, // 101: orkstack.v1.RunService.DiffRuns:output_type -> orkstack.v1.DiffRunsResponse
-	47, // 102: orkstack.v1.RunService.ExportRunEvidence:output_type -> orkstack.v1.EvidenceChunk
-	11, // 103: orkstack.v1.RunService.ResumeRun:output_type -> orkstack.v1.ResumeRunResponse
-	87, // [87:104] is the sub-list for method output_type
-	70, // [70:87] is the sub-list for method input_type
-	70, // [70:70] is the sub-list for extension type_name
-	70, // [70:70] is the sub-list for extension extendee
-	0,  // [0:70] is the sub-list for field type_name
+	70,  // 0: orkstack.v1.ResumeRunResponse.resume:type_name -> orkstack.v1.RunResume
+	14,  // 1: orkstack.v1.ResumeRunResponse.tasks:type_name -> orkstack.v1.ResumeTask
+	15,  // 2: orkstack.v1.ResumeRunResponse.counts:type_name -> orkstack.v1.ResumeCount
+	16,  // 3: orkstack.v1.ResumeRunResponse.diff:type_name -> orkstack.v1.ResumeDiff
+	71,  // 4: orkstack.v1.ResumeRunResponse.action:type_name -> orkstack.v1.ResumeAction
+	18,  // 5: orkstack.v1.ResumeRunResponse.warnings:type_name -> orkstack.v1.ResumeWarning
+	0,   // 6: orkstack.v1.ResumeTask.category:type_name -> orkstack.v1.ResumeCategory
+	72,  // 7: orkstack.v1.ResumeTask.previous_outcome:type_name -> orkstack.v1.Status
+	1,   // 8: orkstack.v1.ResumeTask.memo:type_name -> orkstack.v1.ResumeMemoState
+	0,   // 9: orkstack.v1.ResumeCount.category:type_name -> orkstack.v1.ResumeCategory
+	17,  // 10: orkstack.v1.ResumeDiff.added:type_name -> orkstack.v1.ResumeUnitRef
+	17,  // 11: orkstack.v1.ResumeDiff.dropped:type_name -> orkstack.v1.ResumeUnitRef
+	2,   // 12: orkstack.v1.ResumeWarning.kind:type_name -> orkstack.v1.ResumeWarningKind
+	73,  // 13: orkstack.v1.ResumeWarning.last_seen_at:type_name -> google.protobuf.Timestamp
+	73,  // 14: orkstack.v1.ResumeWarning.until:type_name -> google.protobuf.Timestamp
+	3,   // 15: orkstack.v1.ResumeRefusal.class:type_name -> orkstack.v1.ResumeRefusalClass
+	16,  // 16: orkstack.v1.ResumeRefusal.diff:type_name -> orkstack.v1.ResumeDiff
+	74,  // 17: orkstack.v1.SubmitRunRequest.input:type_name -> orkstack.v1.Payload
+	75,  // 18: orkstack.v1.SubmitRunResponse.run:type_name -> orkstack.v1.Run
+	21,  // 19: orkstack.v1.SubmitRunResponse.await_callbacks:type_name -> orkstack.v1.AwaitCallback
+	73,  // 20: orkstack.v1.ResolveAwaitResponse.told_at:type_name -> google.protobuf.Timestamp
+	75,  // 21: orkstack.v1.GetRunResponse.run:type_name -> orkstack.v1.Run
+	76,  // 22: orkstack.v1.ListRunsRequest.filters:type_name -> orkstack.v1.FieldFilter
+	75,  // 23: orkstack.v1.ListRunsResponse.runs:type_name -> orkstack.v1.Run
+	4,   // 24: orkstack.v1.RunArtifact.kind:type_name -> orkstack.v1.ArtifactKind
+	77,  // 25: orkstack.v1.RunArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
+	29,  // 26: orkstack.v1.ListRunArtifactsResponse.artifacts:type_name -> orkstack.v1.RunArtifact
+	4,   // 27: orkstack.v1.ReadArtifactRequest.kind:type_name -> orkstack.v1.ArtifactKind
+	77,  // 28: orkstack.v1.ArtifactChunk.artifact:type_name -> orkstack.v1.ArtifactRef
+	78,  // 29: orkstack.v1.ListTaskAttemptsResponse.attempts:type_name -> orkstack.v1.TaskAttempt
+	36,  // 30: orkstack.v1.ListTaskAttemptsResponse.timings:type_name -> orkstack.v1.TaskAttemptsTiming
+	79,  // 31: orkstack.v1.TaskAttemptsTiming.queue_wait:type_name -> orkstack.v1.TimingQuantity
+	4,   // 32: orkstack.v1.GetArtifactProvenanceRequest.kind:type_name -> orkstack.v1.ArtifactKind
+	4,   // 33: orkstack.v1.ArtifactReference.kind:type_name -> orkstack.v1.ArtifactKind
+	72,  // 34: orkstack.v1.ArtifactReference.run_status:type_name -> orkstack.v1.Status
+	73,  // 35: orkstack.v1.ArtifactReference.run_created_at:type_name -> google.protobuf.Timestamp
+	77,  // 36: orkstack.v1.GetArtifactProvenanceResponse.artifact:type_name -> orkstack.v1.ArtifactRef
+	5,   // 37: orkstack.v1.GetArtifactProvenanceResponse.own_reference:type_name -> orkstack.v1.ReferenceState
+	73,  // 38: orkstack.v1.GetArtifactProvenanceResponse.released_at:type_name -> google.protobuf.Timestamp
+	38,  // 39: orkstack.v1.GetArtifactProvenanceResponse.references:type_name -> orkstack.v1.ArtifactReference
+	73,  // 40: orkstack.v1.GetArtifactProvenanceResponse.computed_at:type_name -> google.protobuf.Timestamp
+	6,   // 41: orkstack.v1.LiveAttempt.state:type_name -> orkstack.v1.LiveAttemptState
+	73,  // 42: orkstack.v1.LiveAttempt.attempt_scheduled_at:type_name -> google.protobuf.Timestamp
+	73,  // 43: orkstack.v1.LiveAttempt.attempt_started_at:type_name -> google.protobuf.Timestamp
+	73,  // 44: orkstack.v1.LiveAttempt.next_attempt_at:type_name -> google.protobuf.Timestamp
+	73,  // 45: orkstack.v1.LiveAttempt.expires_at:type_name -> google.protobuf.Timestamp
+	7,   // 46: orkstack.v1.LiveAttempt.heartbeat_unavailable_reason:type_name -> orkstack.v1.HeartbeatUnavailableReason
+	73,  // 47: orkstack.v1.LiveAttempt.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	73,  // 48: orkstack.v1.LiveAttempt.heartbeat_deadline_at:type_name -> google.protobuf.Timestamp
+	43,  // 49: orkstack.v1.LiveAttempt.capacity_wait:type_name -> orkstack.v1.CapacityWait
+	42,  // 50: orkstack.v1.LiveAttempt.store_outage_wait:type_name -> orkstack.v1.StoreOutageWait
+	69,  // 51: orkstack.v1.LiveAttempt.usage:type_name -> orkstack.v1.LiveUsage
+	80,  // 52: orkstack.v1.LiveAttempt.reserved:type_name -> orkstack.v1.ReservedResources
+	68,  // 53: orkstack.v1.LiveAttempt.identity:type_name -> orkstack.v1.LiveIdentity
+	73,  // 54: orkstack.v1.StoreOutageWait.since:type_name -> google.protobuf.Timestamp
+	81,  // 55: orkstack.v1.CapacityWait.reserved:type_name -> orkstack.v1.ResourceQuantity
+	81,  // 56: orkstack.v1.CapacityWait.capacity:type_name -> orkstack.v1.ResourceQuantity
+	72,  // 57: orkstack.v1.InspectRunResponse.run_status:type_name -> orkstack.v1.Status
+	41,  // 58: orkstack.v1.InspectRunResponse.attempts:type_name -> orkstack.v1.LiveAttempt
+	73,  // 59: orkstack.v1.InspectRunResponse.computed_at:type_name -> google.protobuf.Timestamp
+	75,  // 60: orkstack.v1.DiffRunsResponse.from:type_name -> orkstack.v1.Run
+	75,  // 61: orkstack.v1.DiffRunsResponse.to:type_name -> orkstack.v1.Run
+	46,  // 62: orkstack.v1.DiffRunsResponse.differences:type_name -> orkstack.v1.RunFieldDiff
+	75,  // 63: orkstack.v1.CancelRunResponse.run:type_name -> orkstack.v1.Run
+	82,  // 64: orkstack.v1.ForceCancelRunRequest.grace:type_name -> google.protobuf.Duration
+	8,   // 65: orkstack.v1.ForceCancelRunBelow.state:type_name -> orkstack.v1.ForceCancelState
+	53,  // 66: orkstack.v1.ForceCancelSubtree.runs:type_name -> orkstack.v1.ForceCancelRunBelow
+	55,  // 67: orkstack.v1.ForceCancelSubtree.exclusions:type_name -> orkstack.v1.ForceCancelExclusion
+	9,   // 68: orkstack.v1.ForceCancelCascade.state:type_name -> orkstack.v1.ForceCancelCascadeState
+	73,  // 69: orkstack.v1.ForceCancelCascade.as_of:type_name -> google.protobuf.Timestamp
+	53,  // 70: orkstack.v1.ForceCancelCascade.runs:type_name -> orkstack.v1.ForceCancelRunBelow
+	55,  // 71: orkstack.v1.ForceCancelCascade.exclusions:type_name -> orkstack.v1.ForceCancelExclusion
+	57,  // 72: orkstack.v1.ForceCancelCascade.open_after:type_name -> orkstack.v1.ForceCancelOpenAfter
+	8,   // 73: orkstack.v1.ForceCancelRunResponse.state:type_name -> orkstack.v1.ForceCancelState
+	82,  // 74: orkstack.v1.ForceCancelRunResponse.grace:type_name -> google.protobuf.Duration
+	54,  // 75: orkstack.v1.ForceCancelRunResponse.open_descendants:type_name -> orkstack.v1.ForceCancelSubtree
+	8,   // 76: orkstack.v1.GetForceCancelResponse.state:type_name -> orkstack.v1.ForceCancelState
+	73,  // 77: orkstack.v1.GetForceCancelResponse.started_at:type_name -> google.protobuf.Timestamp
+	82,  // 78: orkstack.v1.GetForceCancelResponse.grace:type_name -> google.protobuf.Duration
+	56,  // 79: orkstack.v1.GetForceCancelResponse.cascade:type_name -> orkstack.v1.ForceCancelCascade
+	54,  // 80: orkstack.v1.GetForceCancelResponse.open_descendants:type_name -> orkstack.v1.ForceCancelSubtree
+	82,  // 81: orkstack.v1.PauseRunRequest.timeout:type_name -> google.protobuf.Duration
+	73,  // 82: orkstack.v1.LiveIdentity.last_refresh:type_name -> google.protobuf.Timestamp
+	73,  // 83: orkstack.v1.LiveIdentity.expires_at:type_name -> google.protobuf.Timestamp
+	10,  // 84: orkstack.v1.LiveIdentity.state:type_name -> orkstack.v1.LiveIdentityState
+	11,  // 85: orkstack.v1.LiveUsage.unavailable_reason:type_name -> orkstack.v1.LiveUsageUnavailableReason
+	73,  // 86: orkstack.v1.LiveUsage.sampled_at:type_name -> google.protobuf.Timestamp
+	20,  // 87: orkstack.v1.RunService.SubmitRun:input_type -> orkstack.v1.SubmitRunRequest
+	25,  // 88: orkstack.v1.RunService.GetRun:input_type -> orkstack.v1.GetRunRequest
+	27,  // 89: orkstack.v1.RunService.ListRuns:input_type -> orkstack.v1.ListRunsRequest
+	50,  // 90: orkstack.v1.RunService.CancelRun:input_type -> orkstack.v1.CancelRunRequest
+	52,  // 91: orkstack.v1.RunService.ForceCancelRun:input_type -> orkstack.v1.ForceCancelRunRequest
+	59,  // 92: orkstack.v1.RunService.GetForceCancel:input_type -> orkstack.v1.GetForceCancelRequest
+	61,  // 93: orkstack.v1.RunService.PauseRun:input_type -> orkstack.v1.PauseRunRequest
+	63,  // 94: orkstack.v1.RunService.UnpauseRun:input_type -> orkstack.v1.UnpauseRunRequest
+	65,  // 95: orkstack.v1.RunService.StreamEvents:input_type -> orkstack.v1.StreamEventsRequest
+	66,  // 96: orkstack.v1.RunService.StreamTaskLogs:input_type -> orkstack.v1.StreamTaskLogsRequest
+	30,  // 97: orkstack.v1.RunService.ListRunArtifacts:input_type -> orkstack.v1.ListRunArtifactsRequest
+	32,  // 98: orkstack.v1.RunService.ReadArtifact:input_type -> orkstack.v1.ReadArtifactRequest
+	34,  // 99: orkstack.v1.RunService.ListTaskAttempts:input_type -> orkstack.v1.ListTaskAttemptsRequest
+	23,  // 100: orkstack.v1.RunService.ResolveAwait:input_type -> orkstack.v1.ResolveAwaitRequest
+	37,  // 101: orkstack.v1.RunService.GetArtifactProvenance:input_type -> orkstack.v1.GetArtifactProvenanceRequest
+	40,  // 102: orkstack.v1.RunService.InspectRun:input_type -> orkstack.v1.InspectRunRequest
+	45,  // 103: orkstack.v1.RunService.DiffRuns:input_type -> orkstack.v1.DiffRunsRequest
+	48,  // 104: orkstack.v1.RunService.ExportRunEvidence:input_type -> orkstack.v1.ExportRunEvidenceRequest
+	12,  // 105: orkstack.v1.RunService.ResumeRun:input_type -> orkstack.v1.ResumeRunRequest
+	22,  // 106: orkstack.v1.RunService.SubmitRun:output_type -> orkstack.v1.SubmitRunResponse
+	26,  // 107: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
+	28,  // 108: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
+	51,  // 109: orkstack.v1.RunService.CancelRun:output_type -> orkstack.v1.CancelRunResponse
+	58,  // 110: orkstack.v1.RunService.ForceCancelRun:output_type -> orkstack.v1.ForceCancelRunResponse
+	60,  // 111: orkstack.v1.RunService.GetForceCancel:output_type -> orkstack.v1.GetForceCancelResponse
+	62,  // 112: orkstack.v1.RunService.PauseRun:output_type -> orkstack.v1.PauseRunResponse
+	64,  // 113: orkstack.v1.RunService.UnpauseRun:output_type -> orkstack.v1.UnpauseRunResponse
+	83,  // 114: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
+	67,  // 115: orkstack.v1.RunService.StreamTaskLogs:output_type -> orkstack.v1.TaskLogChunk
+	31,  // 116: orkstack.v1.RunService.ListRunArtifacts:output_type -> orkstack.v1.ListRunArtifactsResponse
+	33,  // 117: orkstack.v1.RunService.ReadArtifact:output_type -> orkstack.v1.ArtifactChunk
+	35,  // 118: orkstack.v1.RunService.ListTaskAttempts:output_type -> orkstack.v1.ListTaskAttemptsResponse
+	24,  // 119: orkstack.v1.RunService.ResolveAwait:output_type -> orkstack.v1.ResolveAwaitResponse
+	39,  // 120: orkstack.v1.RunService.GetArtifactProvenance:output_type -> orkstack.v1.GetArtifactProvenanceResponse
+	44,  // 121: orkstack.v1.RunService.InspectRun:output_type -> orkstack.v1.InspectRunResponse
+	47,  // 122: orkstack.v1.RunService.DiffRuns:output_type -> orkstack.v1.DiffRunsResponse
+	49,  // 123: orkstack.v1.RunService.ExportRunEvidence:output_type -> orkstack.v1.EvidenceChunk
+	13,  // 124: orkstack.v1.RunService.ResumeRun:output_type -> orkstack.v1.ResumeRunResponse
+	106, // [106:125] is the sub-list for method output_type
+	87,  // [87:106] is the sub-list for method input_type
+	87,  // [87:87] is the sub-list for extension type_name
+	87,  // [87:87] is the sub-list for extension extendee
+	0,   // [0:87] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_service_proto_init() }
@@ -5861,16 +7063,16 @@ func file_orkstack_v1_run_service_proto_init() {
 	file_orkstack_v1_run_service_proto_msgTypes[29].OneofWrappers = []any{}
 	file_orkstack_v1_run_service_proto_msgTypes[34].OneofWrappers = []any{}
 	file_orkstack_v1_run_service_proto_msgTypes[36].OneofWrappers = []any{}
-	file_orkstack_v1_run_service_proto_msgTypes[45].OneofWrappers = []any{}
-	file_orkstack_v1_run_service_proto_msgTypes[46].OneofWrappers = []any{}
-	file_orkstack_v1_run_service_proto_msgTypes[48].OneofWrappers = []any{}
+	file_orkstack_v1_run_service_proto_msgTypes[54].OneofWrappers = []any{}
+	file_orkstack_v1_run_service_proto_msgTypes[55].OneofWrappers = []any{}
+	file_orkstack_v1_run_service_proto_msgTypes[57].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_run_service_proto_rawDesc), len(file_orkstack_v1_run_service_proto_rawDesc)),
-			NumEnums:      10,
-			NumMessages:   49,
+			NumEnums:      12,
+			NumMessages:   58,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

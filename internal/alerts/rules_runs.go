@@ -179,6 +179,18 @@ func runRules() []Rule {
 			},
 		},
 		{
+			Name: "ForceCancelUnsignedLeft", Group: g, Component: c, Severity: Warning, For: "0m",
+			Expr:        NEW(`ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left"}`, "15m"),
+			Summary:     "Something claims to be a force cancel that nobody signed.",
+			Description: "A request for a force cancel found another of its run that nobody signed. This deployment signs nothing, so it was left alone, and the request's own runs beside it.",
+			Meaning:     "Two people force-canceled one run at once, or something with a credential of the cluster's namespace started work that claims to be one.",
+			Impact:      "Both run. A genuine one is safe to repeat; anything else can end any run whoever started it could already end on the cluster.",
+			Confirm:     "the engine log names each (\"an execution nobody signed is left alone\"); `orkctl admin audit` shows who asked.",
+			Fix:         "Nothing, if two people asked. Otherwise find out who holds the cluster's credential, and give the engines signing keys and raise `auth.mode`, so that nothing unsigned is taken.",
+			Related:     []string{},
+			Cases:       newCases("ork_runs_force_canceled_total", `ork_cancel_outcome="unsigned_left"`, out()),
+		},
+		{
 			Name: "AdmissionRefusing", Group: g, Component: c, Severity: Info, For: "15m",
 			Expr:        "sum " + by("ork_namespace", "ork_refusal_reason") + ` (rate(ork_runs_refused_total{ork_refusal_reason!="budget_unmeasurable"}[15m])) > 0`,
 			Summary:     "A namespace refuses submissions.",

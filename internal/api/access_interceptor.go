@@ -287,6 +287,9 @@ func (a *AccessControl) decide(ctx context.Context, s *Service, procedure string
 			if shallowErr != nil && errors.As(err, &denied) && denied.Reason == authz.ReasonPermissionDenied {
 				err = shallowErr
 			}
+			if c.named {
+				row.notFound = false
+			}
 			return adm, a.refusal(err, row, msg)
 		}
 		adm.checks = append(adm.checks, resolvedCheck{perm: c.perm, resource: res})

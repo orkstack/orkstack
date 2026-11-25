@@ -114,6 +114,9 @@ type ArchiveSweepPass struct {
 	// Archived, Failed and Expired are what became of the finished runs with
 	// no archive the pass came to.
 	Archived, Failed, Expired int64
+	// Unverified is how many of those archived have an ending that could not
+	// be verified before the cluster deletes them.
+	Unverified int64
 	// Unconfirmed is how many finished runs it could not confirm have an
 	// archive.
 	Unconfirmed int64
@@ -144,7 +147,7 @@ func (o *EngineObserver) RecordArchiveSweep(ctx context.Context, pass ArchiveSwe
 	for _, c := range [...]struct {
 		outcome string
 		count   int64
-	}{{"archived", pass.Archived}, {"failed", pass.Failed}, {"expired", pass.Expired}} {
+	}{{"archived", pass.Archived}, {"failed", pass.Failed}, {"expired", pass.Expired}, {"unverified", pass.Unverified}} {
 		inst.ArchiveSweepRuns.Add(ctx, c.count, metric.WithAttributes(attribute.String(AttrOutcome, c.outcome)))
 	}
 	inst.ArchiveSweepUnconfirmed.Record(ctx, pass.Unconfirmed)

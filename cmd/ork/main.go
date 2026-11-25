@@ -148,6 +148,8 @@ type config struct {
 	gateTunables   engine.GateTunables
 	censusSettings engine.CensusSettings
 	concurrency    engine.ConcurrencySettings
+	// forceCancel is engine.runs.force_cancel_* (forceCancelSettingsFromEnv).
+	forceCancel engine.ForceCancelSettings
 	// definitionByReference is engine.definition_by_reference's effective
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
@@ -225,6 +227,7 @@ func loadConfig() config {
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
 	gateTunables, censusSettings, concurrencySettings, concurrencyErr := concurrencySettingsFromEnv()
+	forceCancel, forceCancelErr := forceCancelSettingsFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
@@ -259,6 +262,7 @@ func loadConfig() config {
 		gateTunables:                  gateTunables,
 		censusSettings:                censusSettings,
 		concurrency:                   concurrencySettings,
+		forceCancel:                   forceCancel,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
 		snapshotOverlays:              snapshotOverlays,
@@ -268,7 +272,7 @@ func loadConfig() config {
 		limitsErr: errors.Join(resumeErr, valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
 			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr,
-			interruptionsErr, poolMetricsErr, concurrencyErr),
+			interruptionsErr, poolMetricsErr, concurrencyErr, forceCancelErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1526,7 +1530,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
-	archive := engine.NewRunArchiver(archiveStore)
+	// What signs and verifies force cancels, and the authentication mode that
+	// says what an unsigned record of one counts as.
+	deployed := newDeployedMode()
+	publishedKeys, err := artifacts.NewPublishedKeysStore(ctx, archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open the published signing keys: %w", err)
+	}
+	forceCancels := forceCancelKeys(issuer, publishedKeys, deployed.Mode)
+	archive := engine.NewRunArchiver(archiveStore).WithForceCancelVerifier(forceCancels, deployed.Mode)
 	logger.Info("run archive ready",
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
 	// Run snapshots are a platform record, filed under metadata/snapshots
@@ -1617,7 +1629,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithOriginIndex(originIndexed).
 		WithRootIndex(rootIndexed).
 		WithPausedIndex(pausedIndexed).
-		WithQueuedIndex(concurrencyIndexed && namespaceIndexed)
+		WithQueuedIndex(concurrencyIndexed && namespaceIndexed).
+		WithForceCancelVerifier(forceCancels, deployed.Mode)
 
 	// The retention policy store and controller: the deployment's maximum run
 	// retention (never a user-facing Temporal setting, AGENTS.md §7) and the
@@ -1785,9 +1798,24 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if wireEventObserver(tcfg) {
 		archiveSweepObserver = sweepObserver{o: observer, now: time.Now}
 	}
-	sweeper := archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, engine.NewHistoryArchiver(reader, archive),
+	forceCancelInstruments, err := telemetry.NewForceCancelInstruments(sinks.Default())
+	if err != nil {
+		return fmt.Errorf("force cancel metrics: %w", err)
+	}
+	// What a force cancel could not record through an outage is written as its
+	// run is archived.
+	forceCancelRecords := engine.NewForceCancelActivities(engine.ForceCancelDeps{Client: temporalClient, ClusterNamespace: cfg.temporalNamespace,
+		Reader: reader, Keys: forceCancels, Mode: deployed.Mode, Audit: auditStore, Settings: cfg.forceCancel, Counter: forceCancelInstruments})
+	historyArchiver := engine.NewHistoryArchiver(reader, archive).WithForceCancelBackfill(forceCancelRecords.Backfill)
+	sweeper := archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, historyArchiver,
 		reader, archiveSweepObserver, logger)
-	go sweeper.Run(ctx)
+	// Not before the deployment's mode is known: an archive is written once,
+	// and a force cancel's unsigned record is judged by it.
+	go func() {
+		if deployed.wait(ctx) {
+			sweeper.Run(ctx)
+		}
+	}()
 	// The artifact GC runs beside retention cleanup, only when it does, and
 	// never in the cleanup worker's own loop: it never delays a retirement
 	// (docs/STORAGE.md, "Reclaiming space").
@@ -2015,6 +2043,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// What the client was dialed with: a cancellation that records who
 		// asked names them on the cluster itself (TemporalStarter.CancelRun).
 		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity)
+	forceCancelDeps := engine.ForceCancelDeps{
+		Counter: forceCancelInstruments,
+		Client:  temporalClient, ClusterNamespace: cfg.temporalNamespace, Starter: starter, Reader: reader,
+		Snapshots: snapshots, Keys: forceCancels, Mode: deployed.Mode, Audit: auditStore, Settings: cfg.forceCancel,
+	}
+	forceCancelSteps := engine.NewForceCancelActivities(forceCancelDeps)
+	engine.RegisterForceCancelActivities(runWorker, forceCancelSteps)
+	engine.RegisterForceCancelPublish(eventWorker, forceCancelSteps)
 	// Every minute, each live Orker whose storage credential is not
 	// confirmed scoped is logged at error (docs/DEPLOY.md, "An Orker's own
 	// storage credential"). It decides nothing.
@@ -2211,6 +2247,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		RunTimeoutHandlerGrace:        cfg.runTimeoutHandlerGrace,
 		RunPauseTimeout:               cfg.runPauseTimeout,
 		RunPauseTimeoutMax:            cfg.runPauseTimeoutMax,
+		ForceCancels:                  engine.NewForceCancelStarter(forceCancelDeps, cfg.forceCancel),
 		RunPauseIndexed:               pausedIndexed,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
@@ -2252,6 +2289,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	deployed.follow(auth.mode)
 	if err := runWorker.Start(); err != nil {
 		return err
 	}

@@ -1006,7 +1006,14 @@ internal never appears on any of those surfaces.
   OrkStack terminates a run only on a force cancel's verified decision: by the
   force-cancel workflow, or, after two failed supersedes or exhausted
   attempts, by the API in-process under the same decision, permission,
-  cascade intent and staleness check.
+  cascade intent and staleness check; never by an activity another process
+  could schedule. A force cancel whose record cannot be checked now, in a
+  deployment that has keys or whose identity mode is above asserted, is an
+  error on every read of the run, never a plain termination, and is not
+  archived while a later read may decide it; one still undecided when the cluster is about to
+  delete the run is archived CANCELED `RUN_FORCE_CANCEL_UNVERIFIED`, naming
+  nobody. The archive body and an evidence bundle carry the signed record, and
+  whoever reads one verifies it before it shows a principal as verified.
 - **Automation document** means one authored YAML file
   (`kind: Automation`) declaring a namespace's settings, schedules, triggers
   and webhooks by name (`docs/AUTOMATION.md`). Its plan
@@ -1038,8 +1045,10 @@ internal never appears on any of those surfaces.
   third check of the admission gate, after hold and `max_running`). It is a
   field of `orkstack.v1.Namespace` (`budget`), unset meaning unbounded.
 - **Concurrency limit** means a bound per namespace and key on runs or tasks.
-  The key is rendered at submit, is at most 128 bytes, and is shared by the
-  namespace's declarations. Strategies: `queue` (default), `refuse`, `skip`,
+  The key is rendered at submit and is shared by the namespace's declarations;
+  an authored key is at most 128 bytes, and an Orkflow that declares none has
+  one OrkStack makes from its namespace and name. Strategies: `queue`
+  (default), `refuse`, `skip`,
   `cancel_oldest`, `replace`. A run or task holds a **slot** of its key while
   it runs, waits **queued** for one, and is **superseded** when a newer one
   replaces it (`cancel_oldest`, `replace`).
@@ -1235,7 +1244,8 @@ of the run can emit. Its force-cancel workflow publishes it with the next
 number after the run's last recorded event, and every reader, the stream, the
 archive and the evidence bundle build the same bytes from the run's last
 recorded state and its termination record with one function, so they still
-agree. Webhooks are delivered for it as for any terminal event. The bus honors
+agree. The event carries no signature of its own: the record does, and the
+event is a pure function of it and the run's last recorded state. Webhooks are delivered for it as for any terminal event. The bus honors
 supplied numbers and assigns one only when none is supplied. Temporal history,
 the in-process log, and archived event JSON must therefore remain identical,
 and clients can resume by sequence from another replica.
@@ -2501,7 +2511,10 @@ Unless an accepted contract explicitly changes one, these are non-negotiable:
   (`docs/STORAGE.md`, "Reclaiming space").
 
 A force cancel does not make an execution disappear: termination keeps its
-history, and its terminal state is read from that history.
+history, and its terminal state is read from that history. A force cancel's
+ending that could not be checked before the cluster deletes the run ends, by
+the archive sweep's last pass, in an explicit archived state, not in the
+exception above.
 
 The first has one stated exception (accepted 2026-11-04): a finished run with no
 archive is lost if object storage stays down until the cluster's delete time for

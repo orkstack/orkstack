@@ -2,6 +2,7 @@ package dsl
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template/parse"
@@ -54,6 +55,10 @@ var concurrencyStrategies = map[string]orkstackv1.ConcurrencyStrategy{
 	"cancel_oldest": orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_CANCEL_OLDEST,
 	"replace":       orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_REPLACE,
 }
+
+// concurrencyStrategyWords are the strategies this release decides, as on_limit
+// writes them; ValidateConcurrency refuses any other.
+var concurrencyStrategyWords = []string{"queue", "refuse", "skip"}
 
 // concurrencyStrategyName is a strategy's DSL name, "" for none.
 func concurrencyStrategyName(s orkstackv1.ConcurrencyStrategy) string {
@@ -149,16 +154,14 @@ func ValidateConcurrency(spec *orkstackv1.ConcurrencySpec) error {
 	case spec.GetMaxQueued() < 0:
 		return fail("concurrency.max_queued is %d; it must be 0 (no bound of its own) or above", spec.GetMaxQueued())
 	}
-	switch spec.GetOnLimit() {
-	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE,
-		orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_REFUSE,
-		orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_SKIP:
-	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED:
+	switch name := concurrencyStrategyName(spec.GetOnLimit()); {
+	case slices.Contains(concurrencyStrategyWords, name):
+	case spec.GetOnLimit() == orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED:
 		return fail("concurrency.on_limit is unset")
 	default:
 		// The closed set is parsed; a strategy whose deciding gate has not
 		// landed is refused, never read as queue (E88 P3, D6).
-		return fail("concurrency.on_limit: %s is not available yet; this release supports queue, refuse and skip", concurrencyStrategyName(spec.GetOnLimit()))
+		return fail("concurrency.on_limit: %s is not available yet; this release supports queue, refuse and skip", name)
 	}
 	key := spec.GetKey()
 	if key == "" {
@@ -267,6 +270,36 @@ func CheckConcurrencyKey(key string) error {
 		if !alnum && !strings.ContainsRune("._:/@+=-", rune(c)) {
 			return invalid("has %q at offset %d; a key holds only letters, digits and . _ : / @ + = -", c, i)
 		}
+	}
+	return nil
+}
+
+// CheckStoredConcurrencyKey is the rule for a key that is read back or acted
+// on rather than authored: an authored key's, or one of OrkStack's own, which
+// an Orkflow or a task that declares no key has (ork:orkflow:<namespace>/<name>,
+// ork:task:<namespace>/<orkflow>:<task>), each part a name. Any other is
+// refused CONCURRENCY_KEY_INVALID.
+func CheckStoredConcurrencyKey(key string) error {
+	own, reserved := strings.CutPrefix(key, concurrencyReservedPrefix)
+	if !reserved {
+		return CheckConcurrencyKey(key)
+	}
+	var names []string
+	if rest, ok := strings.CutPrefix(own, "orkflow:"); ok {
+		names = strings.SplitN(rest, "/", 2)
+	} else if rest, ok := strings.CutPrefix(own, "task:"); ok {
+		if owner, rest, ok := strings.Cut(rest, "/"); ok {
+			if orkflow, id, ok := strings.Cut(rest, ":"); ok {
+				names = []string{owner, orkflow, id}
+			}
+		}
+	}
+	if len(names) < 2 || slices.ContainsFunc(names, func(n string) bool { return checkSlug("name", n) != nil }) {
+		shown := key
+		if len(shown) > 64 {
+			shown = shown[:64] + "…"
+		}
+		return fmt.Errorf("%s: the key %s starts with %s and is not one OrkStack makes", ConcurrencyKeyInvalidCode, strconv.Quote(shown), concurrencyReservedPrefix)
 	}
 	return nil
 }

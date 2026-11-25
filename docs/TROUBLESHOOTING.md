@@ -149,6 +149,26 @@ orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNR
 **Fix.** If the pool is busy, the task starts when a slot frees. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load. If it waits for capacity, the task starts once a running task's container is removed: add Orkers, raise `orker.capacity` where the host has room, or lower the per-task cap (`orker.resources.max_cpu`, `max_memory`), which every poll reserves. Restart a dead Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
 
 
+### A run does not end after `orkctl run cancel`
+
+**Cause.** An ordinary cancel asks the run to end, and the run ends itself: running tasks are stopped with their own cancellation grace, and failure handlers do not start. A run whose engine code fails each time it is run never gets that far, for example on an engine release that cannot replay it.
+
+**Confirm.** `orkctl run get <run-id>` still shows it `RUNNING` well after its tasks' longest `cancellation_grace_period_seconds`, and the engine logs the same error for it again and again.
+
+**Fix.** End it with a force cancel:
+
+```bash
+orkctl run cancel <run-id> --force --reason "stuck after the 0.4.1 roll" --wait
+```
+
+- **It ends only a run that is stuck.** The run is asked to cancel again and watched. One that makes progress is given its grace again, up to `engine.runs.force_cancel_ceiling` (30 minutes by default), so a healthy run ends by its own cancel, `RUN_CANCELED`.
+- **Nothing of a run it ends runs afterwards.** No failure handler starts and no output is produced. Tasks read as of the run's last event, containers stop when their Orker's heartbeat is refused, concurrency slots are released at once, and an open pin's directory is left to its lease. The run ends `CANCELED` `RUN_FORCE_CANCELED`, and its record names who asked and why.
+- **Child runs are only asked to cancel.** `--cascade` force-cancels every open run below too, each with its own grace; `--cascade --dry-run` lists them first. It needs `run.cancel.force` and `run.read` at the namespace ([ACCESS.md](./ACCESS.md)). A run below that has no record in the cluster's index, or whose parent's record is gone, is not found: for a complete sweep, run the cascade on the tree's root.
+- **A child run's own graces do not lengthen the parent's.** A parent that only waits for its child's long cancellation makes no progress of its own: give `--grace` as long as the child needs.
+- **Repeating the command is safe.** It joins one in progress, replaces one past its time, and finishes what one that ended the run left undone, such as the run's last event. A run that two force cancels were given their whole time for and left open is ended directly.
+
+**When a force cancel does nothing.** It ends `FAILED` with a cause ([REASONS.md](./REASONS.md#force-cancel)), and the run is as it was. The usual ones: `keys_unavailable` and `no_signing_key` (this engine cannot read or hold the keys it must sign with), `audit_unwritable` (nothing is signed here and the request could not be recorded), `decision_stale` (the run was resumed since).
+
 ### `orkctl pool list` counts an Orker more than is running, after a restart
 
 **Symptom.** Just after an Orker restarted, `orkctl pool list` counts one Orker too many, and `orkctl orker list` shows an extra row as `unknown (unreachable)`. Within about 90 seconds both go back to the real number by themselves.
@@ -209,7 +229,7 @@ A waiting run has no deadline of its own, because a task's `timeout_seconds` sta
 
 ### A run shows `CANCELED`, not `FAILED`
 
-**Cause.** A run that was canceled ends with a run-level code. `RUN_CANCELED` means the run was canceled, for example with `orkctl run cancel <run-id>`. `RUN_TERMINATED` means the run was terminated from outside the engine: its status is `CANCELED` and its message is the termination reason. The engine reads both from the event that closed the run (`internal/engine/reader.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.3 Engine side").
+**Cause.** A run that was canceled ends with a run-level code. `RUN_CANCELED` means the run was canceled, for example with `orkctl run cancel <run-id>`. `RUN_FORCE_CANCELED` means an operator's force cancel ended a run that did not end on its own; its message names who, and why. `RUN_TERMINATED` means the run was terminated from outside the engine by no force cancel that verifies: its status is `CANCELED` and its message is the termination reason. The engine reads both from the event that closed the run (`internal/engine/reader.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.3 Engine side").
 
 **Confirm.** `orkctl run get <run-id>` shows the run's error code and message. When the `orkctl run cancel` (or any `CancelRun`) that canceled it carried an `Ork-Principal`, it also shows `Canceled by:` with that name, marked asserted and not authenticated. Control-plane writes, including run cancels, are recorded in the audit trail. `orkctl admin audit` lists them. The principal in an audit record is the one a gateway asserted. It is not a verified identity ([AGENTS.md](../AGENTS.md), "7. Orkflow execution model", "Principal"; [DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
 

@@ -1134,15 +1134,16 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 
 // ---------------------------------------------------------------- bodies
 
-// WithoutItems returns a clone of run with every TaskRun.items cleared and
-// everything else kept: the shape of the workflow's own result, a ListRuns
+// WithoutItems returns a clone of run with every TaskRun.items cleared, and
+// the record of a force cancel (showForceCancel), and everything else kept:
+// the shape of the workflow's own result, a ListRuns
 // page and a webhook body. For a run with no fan-out the clone
 // equals the input.
 func WithoutItems(run *orkstackv1.Run) *orkstackv1.Run {
 	if run == nil {
 		return nil
 	}
-	has := false
+	has := run.GetForceCancelRecord() != ""
 	for _, taskRun := range run.GetTaskRuns() {
 		if len(taskRun.GetItems()) > 0 {
 			has = true
@@ -1156,6 +1157,7 @@ func WithoutItems(run *orkstackv1.Run) *orkstackv1.Run {
 	for _, taskRun := range clone.GetTaskRuns() {
 		taskRun.Items = nil
 	}
+	clone.ForceCancelRecord = ""
 	return clone
 }
 

@@ -48,6 +48,10 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `orkctl run list -F queued=true`, `queued_on=KEY` and `holding=KEY`, and the stats' `queued` and `executing` counts, show who waits for and holds a key ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#filtering-lists)).
 - `orkctl concurrency list` and `get` show who holds each concurrency key and who waits, read from the limit itself ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#concurrency-limits)).
 - The observability kit alerts on concurrency limits (a dead census, stuck lines, waits that never start, slots not freed), and new counters record requests, waits, slots taken back and rebuilds ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#concurrency-limits)).
+- `orkctl run cancel --force` ends a run that makes no progress after a cancel; it reads `RUN_FORCE_CANCELED`, names who and why, and needs the new `run.cancel.force` permission ([TROUBLESHOOTING.md](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-run-does-not-end-after-orkctl-run-cancel)).
+- `orkctl run cancel --force --cascade` also force-cancels a run's open child runs, each with its own grace; `--dry-run` lists them, `--stop` stops it ([TROUBLESHOOTING.md](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-run-does-not-end-after-orkctl-run-cancel)).
+- New `engine.runs.force_cancel_*` settings bound how long a force cancel waits and what it reads ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md)).
+- Webhook subscribers: a force-canceled run's `RUN_CANCELED` shows its tasks as of its last event, with no failure-handler events before it ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#events)).
 - Webhooks can subscribe to `RUN_QUEUED` and `TASK_QUEUED` by name; a webhook with no events still receives only a run's start and end ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md)).
 - `orkctl admin restore reconcile` removes, after a restore of Temporal, the runs cleanup had retired that the restore brought back; it needs the new `system.restore` permission ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#backup-and-disaster-recovery)).
 - Prometheus alert rules for the observability kit, each with a runbook, plus runbooks for Temporal outages and for backup and restore ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md)).
@@ -162,6 +166,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- A failure handler that awaits or sleeps while its run carries on is no longer canceled when the run then fails; upgrade with no run in that state ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#joins-and-failure-handlers-join)).
 - The run page reads the evidence of a run whose event stream has a gap, instead of refusing its manifest ([RUN_EVIDENCE.md](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md#a-run-whose-stream-has-a-gap)).
 - An artifact's provenance names the owner of a shared Orkflow whose child run holds it, instead of reading as the namespace's own Orkflow of that name ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#artifact-provenance)).
 - A long run with a skipped fan-out, or a pin with a skipped member and others still to run, no longer stops `RUN_STATE_CORRUPT` when it carries on; run it again ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#fan-out-each)).

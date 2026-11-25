@@ -44,6 +44,9 @@ type check struct {
 	// orElse is the check that admits a request this one refuses: its own
 	// permission, at its own resource (which must be set).
 	orElse *check
+	// named is a check whose refusal says itself in a notFound row: its scope
+	// is what the request names, never what a run id would disclose.
+	named bool
 }
 
 // listRule is how a list row answers a caller who does not hold the
@@ -560,6 +563,15 @@ func unless(name string) func(proto.Message) bool {
 	return func(msg proto.Message) bool { return !boolField(msg, name) }
 }
 
+func not(applies func(proto.Message) bool) func(proto.Message) bool {
+	return func(msg proto.Message) bool { return !applies(msg) }
+}
+
+// reachesBelow reports a force cancel that acts on, or lists, the runs below.
+func reachesBelow(msg proto.Message) bool {
+	return boolField(msg, "cascade") || boolField(msg, "preview") || boolField(msg, "stop")
+}
+
 func when(name string) func(proto.Message) bool {
 	return func(msg proto.Message) bool { return strField(msg, name) != "" }
 }
@@ -720,7 +732,15 @@ var accessRows = map[string]accessRow{
 		{perm: authz.PermRunLogsRead, when: unless("exclude_logs")},
 		{perm: authz.PermRunArtifactsRead, when: unless("exclude_artifacts")},
 	}},
-	orkstackv1connect.RunServiceCancelRunProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunCancel), notFound: true},
+	orkstackv1connect.RunServiceCancelRunProcedure:      {res: runIn("run_id"), checks: perms(authz.PermRunCancel), notFound: true},
+	orkstackv1connect.RunServiceGetForceCancelProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	orkstackv1connect.RunServiceForceCancelRunProcedure: {res: runIn("run_id"), notFound: true, checks: []check{
+		{perm: authz.PermRunCancelForce, when: not(reachesBelow)},
+		{perm: authz.PermRunRead, when: not(reachesBelow)},
+		// The runs below may be of any Orkflow of the namespace.
+		{perm: authz.PermRunCancelForce, res: ptr(inNamespace("namespace")), when: reachesBelow, named: true},
+		{perm: authz.PermRunRead, res: ptr(inNamespace("namespace")), when: reachesBelow, named: true},
+	}},
 	// A shared Orkflow's child run lives in its parent's namespace, so its
 	// pause is authorized there, never in the owner's (design §18.6).
 	orkstackv1connect.RunServicePauseRunProcedure:     {res: runIn("run_id"), checks: perms(authz.PermRunPause), notFound: true},

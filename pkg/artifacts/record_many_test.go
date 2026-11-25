@@ -49,7 +49,8 @@ func TestTasksOnRecord_ListsRangesThenEachUnreachedTask(t *testing.T) {
 			k, _ = RecordKey(RecordComposed, ns, run, id, 2)
 		}
 		if i%3 != 0 { // every third task has nothing on record
-			if err := b.create(ctx, k, "application/json", []byte("{}")); err != nil {
+			// put, not create: 800 synced writes are most of the test's time.
+			if err := b.put(ctx, k, "application/json", []byte("{}")); err != nil {
 				t.Fatal(err)
 			}
 		}

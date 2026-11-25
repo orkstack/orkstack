@@ -173,6 +173,53 @@ func TestIndexCache_ReverifiesAndEvicts(t *testing.T) {
 		}
 	})
 
+	// A load that looks before the fetch in flight has kept its copy, and
+	// asks to share it after it has gone, has missed both.
+	t.Run("a load that missed the fetch in flight reads what it kept", func(t *testing.T) {
+		c := newEachIndexCache(t.TempDir(), 1<<20)
+		body := []byte("shared index")
+		sum := sha256.Sum256(body)
+		key := eachIndexCacheName(testIndexURI, shaHex(body))
+		var calls atomic.Int32
+		if _, ok := c.cached(key, sum[:]); ok {
+			t.Fatal("an empty cache holds a copy")
+		}
+		if _, err := c.load(ctx, testIndexURI, shaHex(body), countingFetch(body, &calls)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.share(ctx, key, sum[:], countingFetch(body, &calls))
+		if err != nil || string(got) != string(body) {
+			t.Fatalf("share = %q, %v; want %q", got, err, body)
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("fetched %d times; want 1: the copy is kept", calls.Load())
+		}
+	})
+
+	// What the flight left behind is checked as any copy is.
+	t.Run("a damaged copy is not read in place of the fetch either", func(t *testing.T) {
+		dir := t.TempDir()
+		c := newEachIndexCache(dir, 1<<20)
+		body := []byte("shared index")
+		sum := sha256.Sum256(body)
+		key := eachIndexCacheName(testIndexURI, shaHex(body))
+		var calls atomic.Int32
+		if _, err := c.load(ctx, testIndexURI, shaHex(body), countingFetch(body, &calls)); err != nil {
+			t.Fatal(err)
+		}
+		path := cachedPath(dir, testIndexURI, shaHex(body))
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("tampered"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.share(ctx, key, sum[:], countingFetch(body, &calls))
+		if err != nil || string(got) != string(body) || calls.Load() != 2 {
+			t.Fatalf("share = %q, %v after %d fetches; want %q, fetched again", got, err, calls.Load(), body)
+		}
+	})
+
 	t.Run("a fetch error is returned as it is", func(t *testing.T) {
 		c := newEachIndexCache(t.TempDir(), 1<<20)
 		outage := errors.New("store down")
