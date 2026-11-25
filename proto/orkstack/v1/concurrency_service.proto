@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/filter.proto";
+import "orkstack/v1/orkflow.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// ConcurrencyService reads a namespace's concurrency limits as they stand:
+// for each key with runs holding or waiting for its slots, who holds them
+// and who waits, read from the limit itself at the moment of the call. It
+// writes nothing (docs/DSL.md, "Concurrency limits").
+service ConcurrencyService {
+  // ListConcurrencyLimits lists the namespace's keys in use: those with runs
+  // holding or waiting, and those just emptied and not yet closed, narrowed
+  // by filters on the key. A limit that does not answer is still listed,
+  // with answering false and why, unless its key is known and a filter
+  // excludes it.
+  rpc ListConcurrencyLimits(ListConcurrencyLimitsRequest) returns (ListConcurrencyLimitsResponse);
+  // GetConcurrencyLimit reads one key. A key nothing holds or waits for is
+  // NOT_FOUND.
+  rpc GetConcurrencyLimit(GetConcurrencyLimitRequest) returns (GetConcurrencyLimitResponse);
+}
+
+message ListConcurrencyLimitsRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.ConcurrencyLimit"
+    fields: [
+      {
+        path: "key"
+        label: "Key"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      }
+    ]
+  };
+  string namespace = 1; // empty = the default namespace
+  // filters narrow the list (docs/UI_CLI_PARITY.md "Filtering lists"); one
+  // key=VALUE reads that one key's limit.
+  repeated FieldFilter filters = 2;
+  reserved 3;
+  // page_size is at most 50; zero is 50.
+  int32 page_size = 4;
+  string page_token = 5;
+}
+
+message ListConcurrencyLimitsResponse {
+  repeated ConcurrencyLimit limits = 1;
+  // next_page_token is empty on the last page. A page narrowed by
+  // filters may hold fewer than page_size keys, or none, and still have
+  // a next: only an empty token ends the list.
+  string next_page_token = 2;
+}
+
+message GetConcurrencyLimitRequest {
+  string namespace = 1; // empty = the default namespace
+  string key = 2;
+}
+
+message GetConcurrencyLimitResponse { ConcurrencyLimit limit = 1; }
+
+// ConcurrencyLimit is one key's slots and line.
+message ConcurrencyLimit {
+  string namespace = 1;
+  // key is the rendered key.
+  string key = 2;
+  // answering is false when the limit could not be read; then
+  // not_answering_reason says why, and nothing below is set.
+  bool answering = 3;
+  string not_answering_reason = 4;
+  // epoch counts the limit's operator resets; it changes only on one.
+  int64 epoch = 5;
+  // holders are the runs and tasks holding a slot, earliest granted first,
+  // and line those waiting, in the order they will be granted; each at most
+  // engine.concurrency.api_holders_shown long. The counts are the totals,
+  // in entries: a run holding its own slot and a task's is two.
+  repeated ConcurrencySlotHolder holders = 6;
+  repeated ConcurrencyLineEntry line = 7;
+  int32 holders_count = 8;
+  int32 queued_count = 9;
+  ConcurrencyRebuild rebuild = 10;
+  // rebuild_failing_since is when the limit's reading of which runs hold it
+  // began failing; set only when rebuild is FAILING.
+  google.protobuf.Timestamp rebuild_failing_since = 11;
+}
+
+// ConcurrencySlotHolder is a run, or one of its tasks, holding a slot.
+message ConcurrencySlotHolder {
+  string run_id = 1;
+  // task_level is a task's slot, not the run's own.
+  bool task_level = 2;
+  google.protobuf.Timestamp granted_at = 3;
+  // stalled is a holder the limit found making no progress: an operator must
+  // end it.
+  bool stalled = 4;
+  ConcurrencyStrategy strategy = 5;
+  // limit is the limit its declaration asked for.
+  int32 limit = 6;
+}
+
+// ConcurrencyLineEntry is a run, or one of its tasks, waiting for a slot.
+message ConcurrencyLineEntry {
+  string run_id = 1;
+  bool task_level = 2;
+  google.protobuf.Timestamp arrived_at = 3;
+  // times_out_at is when its wait ends if it is not granted first.
+  google.protobuf.Timestamp times_out_at = 4;
+  ConcurrencyStrategy strategy = 5;
+  int32 limit = 6;
+}
+
+// ConcurrencyRebuild is whether a limit is reading which runs hold its key,
+// after its record was lost or on its first use.
+enum ConcurrencyRebuild {
+  CONCURRENCY_REBUILD_UNSPECIFIED = 0;
+  // NONE: the limit knows its holders.
+  CONCURRENCY_REBUILD_NONE = 1;
+  // READING: it is reading which runs hold the key.
+  CONCURRENCY_REBUILD_READING = 2;
+  // SETTLING: it has read them, and waits a moment before it grants.
+  CONCURRENCY_REBUILD_SETTLING = 3;
+  // FAILING: the reading has failed for longer than its bound, and it keeps
+  // trying.
+  CONCURRENCY_REBUILD_FAILING = 4;
+}

@@ -26,17 +26,21 @@ function withCounts(m: Manifest, counts: Partial<Manifest['counts']>): Manifest 
 
 test('U1 parseManifest accepts the engine golden and refuses another schema', () => {
 	const m = parseManifest(goldenBytes);
-	expect(m.schema_version).toBe(1);
+	expect(m.schema_version).toBe(3);
 	expect(m.run_id).toBe('ork-20260910-1');
 	expect(m.members.length).toBe(13);
-	const next = new TextEncoder().encode(golden.replace('"schema_version": 1', '"schema_version": 2'));
+	const next = new TextEncoder().encode(golden.replace('"schema_version": 3', '"schema_version": 4'));
 	let refusal = '';
 	try {
 		parseManifest(next);
 	} catch (err) {
 		refusal = String(err);
 	}
-	expect(refusal).toContain('schema_version 2');
+	expect(refusal).toContain('schema_version 4');
+	// A run whose stream has a gap is read like any other.
+	const gapped = JSON.parse(golden);
+	gapped.event_gaps = [{ first: 2, last: 5, reason: 'segment object missing' }];
+	expect(parseManifest(new TextEncoder().encode(JSON.stringify(gapped))).run_id).toBe('ork-20260910-1');
 });
 
 test('U1 evidenceSummary counts, sizes and omits zeros', () => {
@@ -66,6 +70,13 @@ test('U2 absentMembers lists every non-present member with its sentence', () => 
 		{ path: 'orkflow/source.yaml', state: 'rejected', reason: reasonText('definition_digest_mismatch') },
 		{ path: 'tasks/x/commit.json', state: 'reclaimed', reason: 'brand_new_token' }
 	]);
+	expect(reasonText('definition_not_readable')).toBe(
+		"the exporter may not read the shared Orkflow in its owner's namespace; the run's definition digest still attests it"
+	);
+	expect(definitionLine({ ...m, definition: { state: 'withheld', reason: 'definition_not_readable', stored_definition_digest: '' } })).toContain(
+		"source.yaml withheld: you may not read it in its owner's namespace"
+	);
+	expect(evidenceSummary({ ...m, counts: { ...m.counts, withheld: 1 } })).toContain(' · 1 withheld · ');
 	expect(reasonText('object_missing')).toBe(
 		'the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved'
 	);

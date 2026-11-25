@@ -19,7 +19,7 @@ import { downloadFilename, runCommand } from './runDetail';
  */
 export const EVIDENCE_BROWSER_MAX_BYTES = 256 * 1024 * 1024;
 
-export type EvidenceState = 'present' | 'reclaimed' | 'unrecorded' | 'rejected';
+export type EvidenceState = 'present' | 'reclaimed' | 'unrecorded' | 'rejected' | 'withheld';
 
 export interface EvidenceMember {
 	path: string;
@@ -54,6 +54,8 @@ export interface Manifest {
 	schema_version: number;
 	run_id: string;
 	namespace: string;
+	/** Set only for a shared Orkflow's child run: the namespace that owns it. */
+	orkflow_namespace?: string;
 	orkflow_name: string;
 	orkflow_version: string;
 	definition_digest: string;
@@ -67,11 +69,11 @@ export interface Manifest {
 	definition: { state: EvidenceState | string; reason: string; stored_definition_digest: string };
 	tasks: EvidenceTask[];
 	members: EvidenceMember[];
-	counts: { present: number; reclaimed: number; unrecorded: number; rejected: number; bytes_present: number };
+	counts: { present: number; reclaimed: number; unrecorded: number; rejected: number; withheld?: number; bytes_present: number };
 }
 
-/** The only manifest schema this client reads. */
-export const EVIDENCE_SCHEMA_VERSION = 1;
+/** The manifest schema the engine writes: the only one this client reads. */
+export const EVIDENCE_SCHEMA_VERSION = 3;
 
 /** Parses MANIFEST.json bytes; a schema this client does not know is refused. */
 export function parseManifest(bytes: Uint8Array): Manifest {
@@ -90,6 +92,7 @@ export function evidenceSummary(m: Manifest): string {
 	if (m.counts.reclaimed) parts.push(`${m.counts.reclaimed} reclaimed`);
 	if (m.counts.unrecorded) parts.push(`${m.counts.unrecorded} unrecorded`);
 	if (m.counts.rejected) parts.push(`${m.counts.rejected} rejected`);
+	if (m.counts.withheld) parts.push(`${m.counts.withheld} withheld`);
 	parts.push(`${formatBytes(m.counts.bytes_present)} to download`);
 	return parts.join(' · ');
 }
@@ -97,6 +100,8 @@ export function evidenceSummary(m: Manifest): string {
 const REASONS: Record<string, string> = {
 	definition_deleted:
 		"the pinned definition was deleted from the Orkflow store; the run's definition digest still attests it",
+	definition_not_readable:
+		"the exporter may not read the shared Orkflow in its owner's namespace; the run's definition digest still attests it",
 	definition_digest_mismatch:
 		'a document exists at the pinned coordinates but does not hash to the digest this run pinned',
 	commit_missing: 'the commit record was reclaimed by cleanup; its recorded digest is preserved',
@@ -154,6 +159,8 @@ export function definitionLine(m: Manifest): string {
 			return `Definition ${digest} · source.yaml reclaimed: definition deleted`;
 		case 'rejected':
 			return `Definition ${digest} · source.yaml rejected: stored document hashes to ${m.definition.stored_definition_digest}`;
+		case 'withheld':
+			return `Definition ${digest} · source.yaml withheld: you may not read it in its owner's namespace`;
 		default:
 			return `Definition ${digest} · source.yaml ${m.definition.state}`;
 	}

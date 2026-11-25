@@ -740,7 +740,7 @@
       "additionalProperties": false,
       "properties": {
         "events": {
-          "description": "list of event names — absent means every run transition",
+          "description": "list of event names — absent means the run's lifecycle: start, endings and resumption",
           "items": {
             "enum": [
               "RUN_QUEUED",
@@ -757,13 +757,15 @@
               "RUN_UNPAUSED",
               "RUN_SUCCEEDED",
               "RUN_FAILED",
-              "RUN_CANCELED"
+              "RUN_CANCELED",
+              "RUN_RESUMED",
+              "RUN_RESULTS_KEPT"
             ]
           },
           "type": "array"
         },
         "orkflow": {
-          "description": "slug — absent means every Orkflow",
+          "description": "slug: the namespace's own Orkflow, never another's shared one — absent means every Orkflow",
           "maxLength": 200,
           "pattern": "^[a-z][a-z0-9-]*$",
           "type": "string"
@@ -1263,7 +1265,7 @@
           ]
         },
         "over_artifact": {
-          "description": "`<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.",
+          "description": "`<task>/<name>`, an artifact a task in this fan-out's own `needs:` records, or `_inputs/<name>`, an artifact input of this Orkflow. Exactly one of `over` and `over_artifact`.",
           "type": [
             "string",
             "number",

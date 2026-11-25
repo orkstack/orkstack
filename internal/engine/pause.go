@@ -1007,7 +1007,7 @@ func (s *runState) syncPauseIndex(ctx workflow.Context) {
 			value = expires
 		}
 		if err := s.pauseIndexWrite(ctx, "memo", func() error {
-			return workflow.UpsertMemo(ctx, map[string]any{MemoPauseExpiresAt: value})
+			return workflow.UpsertMemo(ctx, plainMemo(ctx, map[string]any{MemoPauseExpiresAt: value}))
 		}); err == nil {
 			idx.expires = &expires
 		}

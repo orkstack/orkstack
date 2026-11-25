@@ -247,28 +247,50 @@ func (c *Capacity) probeUnit(ctx context.Context, i int) (*unitProbe, error) {
 	}
 }
 
-// endProbe releases the probe's unit and, in the same step under the mutex,
-// flips the unit's health: a failing usable unit leaves the usable set at
-// once; a unit outside it returns after recoveryPasses consecutive healthy
-// probes. A task's outcome never reaches here.
+// endProbe is settleProbe and abandonProbe in one step under the mutex.
 func (c *Capacity) endProbe(p *unitProbe, healthy bool) {
 	if p == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	u := c.units
-	if u.owner[p.index] == p {
-		u.owner[p.index] = nil
+	c.settleLocked(p, healthy)
+	c.abandonLocked(p)
+	c.broadcast()
+}
+
+// settleProbe flips the health of the probe's unit by what the probe found,
+// and leaves the unit with the probe until abandonProbe: a failing usable unit
+// leaves the usable set at once; a unit outside it returns after
+// recoveryPasses consecutive healthy probes. A task's outcome never reaches
+// here. A probe that no longer holds its unit changes nothing.
+func (c *Capacity) settleProbe(p *unitProbe, healthy bool) {
+	if p == nil {
+		return
 	}
-	if p.counted {
-		c.reserved.gpu--
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settleLocked(p, healthy)
+	c.broadcast()
+}
+
+// settleLocked is settleProbe with mu held. The probe's count follows its
+// unit's health, because the limit holds a usable unit and no other: it is
+// given back with a unit that leaves, and taken with one that returns.
+func (c *Capacity) settleLocked(p *unitProbe, healthy bool) {
+	u := c.units
+	if u.owner[p.index] != p {
+		return
 	}
 	flipped := false
 	switch {
 	case u.usable[p.index] && !healthy:
 		u.usable[p.index], u.passes[p.index] = false, 0
 		c.limit.gpu--
+		if p.counted {
+			c.reserved.gpu--
+			p.counted = false
+		}
 		flipped = true
 	case !u.usable[p.index] && !healthy:
 		u.passes[p.index] = 0
@@ -277,13 +299,14 @@ func (c *Capacity) endProbe(p *unitProbe, healthy bool) {
 		if u.passes[p.index] >= recoveryPasses {
 			u.usable[p.index], u.passes[p.index] = true, 0
 			c.limit.gpu++
+			c.reserved.gpu++
+			p.counted = true
 			flipped = true
 		}
 	}
 	if flipped && u.onHealth != nil {
 		u.onHealth(u.usableCount(), int(c.ceiling.gpu))
 	}
-	c.broadcast()
 }
 
 // unitHealthReporter is the ledger's onHealth for profile: it holds the
@@ -322,13 +345,19 @@ func (c *Capacity) abandonProbe(p *unitProbe) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.abandonLocked(p)
+	c.broadcast()
+}
+
+// abandonLocked is abandonProbe with mu held.
+func (c *Capacity) abandonLocked(p *unitProbe) {
 	if c.units.owner[p.index] == p {
 		c.units.owner[p.index] = nil
 	}
 	if p.counted {
 		c.reserved.gpu--
+		p.counted = false
 	}
-	c.broadcast()
 }
 
 // unitUsable reports whether unit i is in the usable set.

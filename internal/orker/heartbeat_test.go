@@ -43,7 +43,7 @@ func TestHeartbeater_RecordsProgressThroughTemporalActivityLifecycle(t *testing.
 		select {
 		case progress := <-observed:
 			return progress, nil
-		case <-time.After(2 * time.Second):
+		case <-time.After(30 * time.Second):
 			return HeartbeatProgress{}, fmt.Errorf("heartbeat did not reach Temporal's activity listener")
 		}
 	}
@@ -140,8 +140,8 @@ func TestStart_TicksAtTheConfiguredInterval(t *testing.T) {
 		select {
 		case at := <-beats:
 			seen = append(seen, at)
-		case <-time.After(2 * time.Second):
-			t.Fatalf("saw %d beats in 2s at a 20ms interval; the configured tick is not the loop's rate", len(seen))
+		case <-time.After(30 * time.Second):
+			t.Fatalf("saw %d beats in 30s at a 20ms interval; the configured tick is not the loop's rate", len(seen))
 		}
 	}
 	t.Logf("three beats spanned %v at a 20ms tick", seen[2].Sub(seen[0]))

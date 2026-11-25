@@ -18,7 +18,9 @@ var overArtifactCases = []struct {
 	{name: "no slash", in: "list", refusal: "no \"/\""},
 	{name: "no task", in: "/files.jsonl", refusal: "names no task"},
 	{name: "no name", in: "list/", refusal: "names no artifact"},
-	{name: "inputs refused", in: "_inputs/rows.jsonl", refusal: "run input artifact is not supported"},
+	{name: "an artifact input", in: "_inputs/rows", producer: "_inputs", artifact: "rows"},
+	{name: "inputs, no name", in: "_inputs/", refusal: "names no artifact"},
+	{name: "inputs, a path", in: "_inputs/a/b", refusal: "holds a \"/\""},
 	{name: "reserved prefix", in: "_other/rows.jsonl", refusal: "reserved"},
 	{name: "uppercase task", in: "List/rows.jsonl", refusal: "not a task id"},
 	{name: "task too long", in: strings.Repeat("a", MaxSlug+1) + "/x", refusal: "not a task id"},
@@ -53,7 +55,8 @@ func TestParseOverArtifact(t *testing.T) {
 
 // FuzzParseOverArtifact states the parser's properties: it never panics; an
 // accepted value is exactly producer + "/" + name; the producer is a task id
-// and the name a single valid file name; a refusal names the value.
+// or _inputs, and the name a single valid file name; a refusal names the
+// value.
 func FuzzParseOverArtifact(f *testing.F) {
 	for _, tc := range overArtifactCases {
 		f.Add(tc.in)
@@ -69,8 +72,8 @@ func FuzzParseOverArtifact(f *testing.F) {
 		if producer+"/"+name != in {
 			t.Fatalf("accepted %q as %q + %q, which do not rebuild it", in, producer, name)
 		}
-		if !slugPattern.MatchString(producer) || len(producer) > MaxSlug {
-			t.Fatalf("accepted producer %q, which is not a task id", producer)
+		if producer != InputsProducer && (!slugPattern.MatchString(producer) || len(producer) > MaxSlug) {
+			t.Fatalf("accepted producer %q, which is neither a task id nor %s", producer, InputsProducer)
 		}
 		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") || !utf8.ValidString(name) {
 			t.Fatalf("accepted name %q, which is not one file name", name)

@@ -20,6 +20,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -395,9 +396,9 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 		})
 		// Recorded as a marker: a replay reads it and never calls the activity,
 		// so the array cannot change between replays.
-		if err := workflow.ExecuteLocalActivity(localCtx, ActivityCountEachItems,
+		if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityCountEachItems,
 			ref, source.GetPath(), spec.GetOver(), s.plan.Limits.Proto().GetValuesMaxBytes(),
-		).Get(localCtx, &count); err != nil {
+		), &count); err != nil {
 			failure := categoryOf(err)
 			if reason := failure.reasonCode(); reason != "" {
 				return s.failExpansion(ctx, id, reason, failure.appMessage())
@@ -738,6 +739,10 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 	}
 	if err := s.checkItemInput(id, index, size); err != nil {
 		return nil, err
+	}
+	// Sealed after its bound is checked (payload-encryption.md §3).
+	if payload, err = s.scope.SealPayload(payload); err != nil {
+		return nil, temporal.NewNonRetryableApplicationError(err.Error(), task.CategoryInfrastructureError, err)
 	}
 	if limit := s.historyLimit(); limit != nil {
 		s.noteCommand(runCtx, 1, s.itemInputLimit+s.runContextBound()+limit.Reserve.CommandBytes)
@@ -1119,7 +1124,8 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 	}
 	activityCtx := workflow.WithActivityOptions(base, eventActivityOptions())
 	s.recordEvent(event)
-	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey).
+	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent,
+		payloadcrypt.Seal(s.scope, event), payloadcrypt.Seal(s.scope, snapshotURI), payloadcrypt.PlainIn(s.scope, dedupeKey)).
 		Get(publishCtx, nil); err != nil {
 		s.logPublishFailed(ctx, event, err)
 	}

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
@@ -350,7 +351,8 @@ func TestRunWorkflow_ComposedTaskStartsOneChildRun(t *testing.T) {
 		t.Fatalf("child input = %v", got.input.GetData().AsMap())
 	}
 	wantPlan := cp.Plan
-	wantPlan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_PARENT_RUN", ID: "ork-parent"}
+	wantPlan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_PARENT_RUN", ID: "ork-parent", ParentTaskID: "release",
+		ParentOrkflow: &engine.OrkflowRefPlan{Name: parent.GetName(), Version: parent.GetVersion(), Digest: parent.GetDefinitionDigest()}}
 	gotJSON, _ := stablejson.Marshal(got.plan)
 	wantJSON, _ := stablejson.Marshal(wantPlan)
 	if !bytes.Equal(gotJSON, wantJSON) {
@@ -468,6 +470,25 @@ func TestRunWorkflow_ChildInputRenderFailureStartsNoChild(t *testing.T) {
 	}
 	if len(h.startedChildren()) != 0 {
 		t.Fatal("a child was started")
+	}
+}
+
+// Where a child's outputs were stored, recorded in the run's own history in a
+// form the run cannot read, is never a fault of the store.
+func TestRunWorkflow_AnUnreadableStoreAnswerIsItsOwnReason(t *testing.T) {
+	h := newComposeHarness(t, defaultBehavior)
+	parent, plan, _ := composedFixture(t, composedChildDocument)
+	h.mockChild(func(workflow.Context, childStart) (*orkstackv1.Run, error) {
+		return childOutputs(t, map[string]any{"digest": "sha256:abc", "url": "u"}), nil
+	})
+	h.env.OnActivity(engine.ActivityStoreComposedValues, mock.Anything, mock.Anything).Return(nil,
+		temporal.NewNonRetryableApplicationError("x", task.CategoryContractViolation, nil, &orkstackv1.ActivityFailureDetail{
+			ReasonCode: engine.PayloadUnreadableCode, Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION}))
+	h.run("ork-parent", parent, payload(t, nil), plan)
+	run, _ := h.store.Get("ork-parent")
+	if e := taskRunOfRun(run, "release").GetError(); e.GetCode() != engine.PayloadUnreadableCode ||
+		e.GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION {
+		t.Fatalf("the task ended %v, want %s", e, engine.PayloadUnreadableCode)
 	}
 }
 

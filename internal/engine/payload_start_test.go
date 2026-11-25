@@ -3,9 +3,11 @@ package engine_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
@@ -15,6 +17,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/payloadcrypt"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -49,7 +52,7 @@ func rawHarness(t *testing.T, runID string, keys *payloadcrypt.EngineKeys, memo 
 	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"ok": true})}, nil
 	})
-	dc := payloadcrypt.NewConverter(engine.DataConverter(), keys)
+	dc := payloadcrypt.NewConverter(engine.DataConverter(), keys).WithReaderKeys(treeReader(keys, memo))
 	h.env.SetDataConverter(dc)
 	h.env.SetFailureConverter(payloadcrypt.NewFailureConverter(dc, false))
 	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{payloadcrypt.WorkflowInterceptor(keys)}}))
@@ -58,7 +61,29 @@ func rawHarness(t *testing.T, runID string, keys *payloadcrypt.EngineKeys, memo 
 	if memo != nil {
 		must.OK(t, h.env.SetMemoOnStart(memo))
 	}
+	if field, ok := memo[payloadcrypt.MemoField].(payloadcrypt.KeyMemo); ok {
+		if tree, err := field.Open(keys, ""); err == nil {
+			sealedOrker(h, payloadcrypt.NewScope(tree, payloadcrypt.RunContext(runID)))
+		}
+	}
 	return h
+}
+
+// sealedOrker answers the run's tasks as an Orker with the run tree's key
+// does: it opens the sealed input and seals its result (internal/orker,
+// ExecuteTaskRaw).
+func sealedOrker(h *harness, scope *payloadcrypt.Scope) {
+	h.env.RegisterActivityWithOptions(func(ctx context.Context, raw converter.RawValue) (any, error) {
+		var in *orkstackv1.ExecuteTaskInput
+		if _, err := payloadcrypt.OpenRaw(scope, engine.DataConverter(), raw, &in); err != nil {
+			return nil, err
+		}
+		h.mu.Lock()
+		h.calls = append(h.calls, in)
+		h.mu.Unlock()
+		res := &orkstackv1.ExecuteTaskResult{TaskId: in.GetTaskId(), ValuesJson: valuesJSON(map[string]any{"ok": true})}
+		return payloadcrypt.Seal(scope, res), nil
+	}, activity.RegisterOptions{Name: task.ActivityExecuteTask, DisableAlreadyRegisteredCheck: true})
 }
 
 func rawOptions() workflow.RegisterOptions { return workflow.RegisterOptions{Name: rawRunWorkflow} }
@@ -163,6 +188,53 @@ func TestRunWorkflowRaw_KeylessEnding(t *testing.T) {
 	}
 }
 
+// A keyless run's ending is plaintext, so it quotes nothing of the start it
+// could not read: not one that came in plaintext, nor one that opened and did
+// not decode.
+func TestPlaintext_AKeylessRunsEndingQuotesNothingOfItsStart(t *testing.T) {
+	s := newSealedRun(t, "ork-keyless")
+	wf := compile(t, strings.ReplaceAll(linearDocument, "echo alpha", "echo "+engine.Canary))
+	start := func(scope *payloadcrypt.Scope, args ...any) []any {
+		for i := range args {
+			args[i] = payloadcrypt.Seal(scope, args[i])
+		}
+		return args
+	}
+	input := payload(t, map[string]any{"k": engine.Canary})
+	for name, args := range map[string][]any{
+		"a plaintext start":                start(payloadcrypt.Unsealed(), "ork-keyless", wf, input, defaultPlan()),
+		"a start that opens, not decoding": start(s.scope, "ork-keyless", engine.Canary, input, defaultPlan()),
+		"a plan that is not one":           start(s.scope, "ork-keyless", wf, input, map[string]any{"namespace": []string{engine.Canary}}),
+		"a start sealed for another run":   start(s.scope.For(payloadcrypt.RunContext("ork-sibling")), "ork-keyless", wf, input, defaultPlan()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := rawHarness(t, "ork-keyless", s.keys, runMemo(t, &s))
+			spy := engine.NewPlaintextSpy("ork-keyless", s.keys)
+			spy.PlainLocal = []string{engine.ActivityWriteFailedRunSnapshot}
+			h.env.SetWorkerOptions(spy.Options(s.keys, worker.Options{}))
+			h.env.ExecuteWorkflow(rawRunWorkflow, args...)
+			err := h.env.GetWorkflowError()
+			if err == nil || !strings.Contains(err.Error(), engine.RunStartUnreadableCode) {
+				t.Fatalf("workflow error = %v, want %s", err, engine.RunStartUnreadableCode)
+			}
+			if strings.Contains(err.Error(), engine.Canary) {
+				t.Errorf("the run's failure quotes its start: %v", err)
+			}
+			for _, e := range h.bus.Events("ork-keyless", 0) {
+				if strings.Contains(e.String(), engine.Canary) {
+					t.Errorf("the run's event quotes its start: %v", e)
+				}
+			}
+			if run, _ := h.store.Get("ork-keyless"); strings.Contains(run.String(), engine.Canary) {
+				t.Errorf("the run's snapshot quotes its start: %v", run)
+			}
+			for _, p := range spy.Problems("activity " + engine.ActivityPublishEvent) {
+				t.Error(p)
+			}
+		})
+	}
+}
+
 func withKeyField(m map[string]any, k payloadcrypt.KeyMemo) map[string]any {
 	m[payloadcrypt.MemoField] = k
 	return m
@@ -198,4 +270,17 @@ func scheduleKeyMemo(t *testing.T, s sealedRun) payloadcrypt.KeyMemo {
 	_, memo, err := payloadcrypt.NewSchedule(context.Background(), payloadcrypt.NewStaticDataKeys("pk_t", dk), ek, "default", "ns_default", "ork-keyless")
 	must.OK(t, err)
 	return memo
+}
+
+// treeReader is the event worker's way to a run's key in these tests: the
+// tree key memo's key field carries, for any run of the tree (rule 5's
+// RunKeys does it with a describe of the run).
+func treeReader(keys *payloadcrypt.EngineKeys, memo map[string]any) func(context.Context, payloadcrypt.Context) (*payloadcrypt.Key, error) {
+	return func(context.Context, payloadcrypt.Context) (*payloadcrypt.Key, error) {
+		field, ok := memo[payloadcrypt.MemoField].(payloadcrypt.KeyMemo)
+		if !ok {
+			return nil, errors.New("not a sealed run")
+		}
+		return field.Open(keys, "")
+	}
 }

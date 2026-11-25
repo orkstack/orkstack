@@ -26,7 +26,28 @@ tests:
         severity: warning
       exp_annotations:
         dashboard: /d/orkstack
-        description: Over 20% of namespace "n"'s finished runs failed in the last 15 minutes, out of at least 10. Namespaces exported to this sink only.
+        description: Over 20% of namespace "n"'s finished runs failed in the last 15 minutes, out of at least 10. Each ending of a resumed run counts. Namespaces exported to this sink only.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunfailureratiohigh
+        summary: Over a fifth of a namespace's runs fail.
+- name: 'OrkStackRunFailureRatioHigh: resumes fail again'
+  interval: 1m
+  input_series:
+  - series: ork_runs_total{ork_namespace="n",status="failed",ork_run_resumption="true",ork_deployment="d"}
+    values: 0+1x60
+  - series: ork_runs_total{ork_namespace="n",status="succeeded",ork_deployment="d"}
+    values: 0+1x60
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: OrkStackRunFailureRatioHigh
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_namespace: 'n'
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: Over 20% of namespace "n"'s finished runs failed in the last 15 minutes, out of at least 10. Each ending of a resumed run counts. Namespaces exported to this sink only.
         runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunfailureratiohigh
         summary: Over a fifth of a namespace's runs fail.
 - name: 'OrkStackRunFailureRatioHigh: few runs'
@@ -371,6 +392,482 @@ tests:
   alert_rule_test:
   - eval_time: 5m
     alertname: OrkStackContinuationWriteFailed
+    exp_alerts: []
+- name: 'OrkStackRunHistoryLimit: appears'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_runs_total{status="failed",ork_failure_reason="RUN_HISTORY_LIMIT",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackRunHistoryLimit
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'A run ended `RUN_HISTORY_LIMIT`: its history reached the limit and it could not carry on into a fresh one.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunhistorylimit
+        summary: A run outgrew its history.
+- name: 'OrkStackRunHistoryLimit: steady for 2 days'
+  interval: 10m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x300
+  - series: ork_deployment_runs_total{status="failed",ork_failure_reason="RUN_HISTORY_LIMIT",ork_deployment="d"}
+    values: 5x300
+  alert_rule_test:
+  - eval_time: 48h
+    alertname: OrkStackRunHistoryLimit
+    exp_alerts: []
+- name: 'OrkStackRunHistoryLimit: 10m gap, same value'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_runs_total{status="failed",ork_failure_reason="RUN_HISTORY_LIMIT",ork_deployment="d"}
+    values: 1x400 _x2 1x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackRunHistoryLimit
+    exp_alerts: []
+- name: 'OrkStackRunHistoryLimit: growth during a 20m gap'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_runs_total{status="failed",ork_failure_reason="RUN_HISTORY_LIMIT",ork_deployment="d"}
+    values: 1x400 _x4 2x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackRunHistoryLimit
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'A run ended `RUN_HISTORY_LIMIT`: its history reached the limit and it could not carry on into a fresh one.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunhistorylimit
+        summary: A run outgrew its history.
+- name: 'OrkStackRunHistoryLimit: same Orker under a new instance'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_runs_total{status="failed",ork_failure_reason="RUN_HISTORY_LIMIT",instance="a",ork_deployment="d"}
+    values: 1x400
+  - series: ork_deployment_runs_total{status="failed",ork_failure_reason="RUN_HISTORY_LIMIT",instance="b",ork_deployment="d"}
+    values: _x390 1x10
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackRunHistoryLimit
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'A run ended `RUN_HISTORY_LIMIT`: its history reached the limit and it could not carry on into a fresh one.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunhistorylimit
+        summary: A run outgrew its history.
+- name: 'OrkStackRunHistoryLimit: a new Prometheus meets a counter already above 0'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x20
+  - series: ork_deployment_runs_total{status="failed",ork_failure_reason="RUN_HISTORY_LIMIT",ork_deployment="d"}
+    values: 7x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OrkStackRunHistoryLimit
+    exp_alerts: []
+- name: 'OrkStackRunHistoryLimit: another failure'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_runs_total{status="failed",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackRunHistoryLimit
+    exp_alerts: []
+- name: 'OrkStackPinHostLost: appears'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinHostLost
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_pool: p
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'Pinned tasks of pool "p" failed "PIN_HOST_LOST": the Orker hosting its pin was gone, or the cluster did not hear from it.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinhostlost
+        summary: A pin lost its Orker.
+- name: 'OrkStackPinHostLost: steady for 2 days'
+  interval: 10m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x300
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",ork_deployment="d"}
+    values: 5x300
+  alert_rule_test:
+  - eval_time: 48h
+    alertname: OrkStackPinHostLost
+    exp_alerts: []
+- name: 'OrkStackPinHostLost: 10m gap, same value'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",ork_deployment="d"}
+    values: 1x400 _x2 1x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackPinHostLost
+    exp_alerts: []
+- name: 'OrkStackPinHostLost: growth during a 20m gap'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",ork_deployment="d"}
+    values: 1x400 _x4 2x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackPinHostLost
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_pool: p
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'Pinned tasks of pool "p" failed "PIN_HOST_LOST": the Orker hosting its pin was gone, or the cluster did not hear from it.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinhostlost
+        summary: A pin lost its Orker.
+- name: 'OrkStackPinHostLost: same Orker under a new instance'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",instance="a",ork_deployment="d"}
+    values: 1x400
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",instance="b",ork_deployment="d"}
+    values: _x390 1x10
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinHostLost
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_pool: p
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'Pinned tasks of pool "p" failed "PIN_HOST_LOST": the Orker hosting its pin was gone, or the cluster did not hear from it.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinhostlost
+        summary: A pin lost its Orker.
+- name: 'OrkStackPinHostLost: a new Prometheus meets a counter already above 0'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x20
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",ork_deployment="d"}
+    values: 7x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OrkStackPinHostLost
+    exp_alerts: []
+- name: 'OrkStackPinHostLost: another failure'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_pool="p",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinHostLost
+    exp_alerts: []
+- name: 'OrkStackPinHostLost: the other pin reason'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinHostLost
+    exp_alerts: []
+- name: 'OrkStackPinUnavailable: appears'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinUnavailable
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_pool: p
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'A pinned task of pool "p" failed "PIN_UNAVAILABLE": no pin host of the pool could open its pin in time.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinunavailable
+        summary: A pin found no Orker to open on.
+- name: 'OrkStackPinUnavailable: steady for 2 days'
+  interval: 10m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x300
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",ork_deployment="d"}
+    values: 5x300
+  alert_rule_test:
+  - eval_time: 48h
+    alertname: OrkStackPinUnavailable
+    exp_alerts: []
+- name: 'OrkStackPinUnavailable: 10m gap, same value'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",ork_deployment="d"}
+    values: 1x400 _x2 1x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackPinUnavailable
+    exp_alerts: []
+- name: 'OrkStackPinUnavailable: growth during a 20m gap'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",ork_deployment="d"}
+    values: 1x400 _x4 2x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackPinUnavailable
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_pool: p
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'A pinned task of pool "p" failed "PIN_UNAVAILABLE": no pin host of the pool could open its pin in time.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinunavailable
+        summary: A pin found no Orker to open on.
+- name: 'OrkStackPinUnavailable: same Orker under a new instance'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",instance="a",ork_deployment="d"}
+    values: 1x400
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",instance="b",ork_deployment="d"}
+    values: _x390 1x10
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinUnavailable
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_pool: p
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: 'A pinned task of pool "p" failed "PIN_UNAVAILABLE": no pin host of the pool could open its pin in time.'
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinunavailable
+        summary: A pin found no Orker to open on.
+- name: 'OrkStackPinUnavailable: a new Prometheus meets a counter already above 0'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x20
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_UNAVAILABLE",ork_pool="p",ork_deployment="d"}
+    values: 7x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OrkStackPinUnavailable
+    exp_alerts: []
+- name: 'OrkStackPinUnavailable: another failure'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_pool="p",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinUnavailable
+    exp_alerts: []
+- name: 'OrkStackPinUnavailable: the other pin reason'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_deployment_tasks_total{status="failed",ork_failure_reason="PIN_HOST_LOST",ork_pool="p",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackPinUnavailable
+    exp_alerts: []
+- name: 'OrkStackRunPausedNearTimeout: an hour left'
+  interval: 1m
+  input_series:
+  - series: ork_runs_paused_soonest_expiry_seconds{ork_namespace="n",ork_deployment="d"}
+    values: 3600x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OrkStackRunPausedNearTimeout
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_namespace: 'n'
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A paused run of namespace "n" ends as failed, "RUN_PAUSE_TIMEOUT", within a day unless it is unpaused.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunpausedneartimeout
+        summary: A paused run fails within a day unless unpaused.
+- name: 'OrkStackRunPausedNearTimeout: one replica''s gap is bridged'
+  interval: 1m
+  input_series:
+  - series: ork_runs_paused_soonest_expiry_seconds{ork_namespace="n",ork_deployment="d"}
+    values: 3600x8 _x12
+  alert_rule_test:
+  - eval_time: 14m
+    alertname: OrkStackRunPausedNearTimeout
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_namespace: 'n'
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A paused run of namespace "n" ends as failed, "RUN_PAUSE_TIMEOUT", within a day unless it is unpaused.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunpausedneartimeout
+        summary: A paused run fails within a day unless unpaused.
+- name: 'OrkStackRunPausedNearTimeout: two days left'
+  interval: 1m
+  input_series:
+  - series: ork_runs_paused_soonest_expiry_seconds{ork_namespace="n",ork_deployment="d"}
+    values: 172800x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OrkStackRunPausedNearTimeout
+    exp_alerts: []
+- name: 'OrkStackRunPausedNearTimeout: a day left exactly'
+  interval: 1m
+  input_series:
+  - series: ork_runs_paused_soonest_expiry_seconds{ork_namespace="n",ork_deployment="d"}
+    values: 86400x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OrkStackRunPausedNearTimeout
+    exp_alerts: []
+- name: 'OrkStackRunPausedNearTimeout: falls under a day'
+  interval: 1m
+  input_series:
+  - series: ork_runs_paused_soonest_expiry_seconds{ork_namespace="n",ork_deployment="d"}
+    values: 86700-60x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: OrkStackRunPausedNearTimeout
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_namespace: 'n'
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A paused run of namespace "n" ends as failed, "RUN_PAUSE_TIMEOUT", within a day unless it is unpaused.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunpausedneartimeout
+        summary: A paused run fails within a day unless unpaused.
+- name: 'OrkStackRunPausedNearTimeout: only for a moment'
+  interval: 1m
+  input_series:
+  - series: ork_runs_paused_soonest_expiry_seconds{ork_namespace="n",ork_deployment="d"}
+    values: 172800x7 3600x13
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OrkStackRunPausedNearTimeout
+    exp_alerts: []
+- name: 'OrkStackRunPausedNearTimeout: nothing paused of its own'
+  interval: 1m
+  input_series:
+  - series: ork_runs_paused{ork_namespace="n",ork_deployment="d"}
+    values: 2x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OrkStackRunPausedNearTimeout
+    exp_alerts: []
+- name: 'OrkStackRunPauseTimedOut: one timed out'
+  interval: 1m
+  input_series:
+  - series: ork_runs_pauses_total{ork_namespace="n",ork_pause_cause="self",ork_pause_outcome="timed_out",ork_deployment="d"}
+    values: 0x10 1x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: OrkStackRunPauseTimedOut
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        ork_namespace: 'n'
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A run of namespace "n" was still paused when its pause ended, and failed. Namespaces exported to this sink only.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunpausetimedout
+        summary: A paused run failed because its pause ran out.
+- name: 'OrkStackRunPauseTimedOut: unpaused'
+  interval: 1m
+  input_series:
+  - series: ork_runs_pauses_total{ork_namespace="n",ork_pause_cause="self",ork_pause_outcome="unpaused",ork_deployment="d"}
+    values: 0x10 1x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: OrkStackRunPauseTimedOut
+    exp_alerts: []
+- name: 'OrkStackRunPauseTimedOut: over an hour ago'
+  interval: 1m
+  input_series:
+  - series: ork_runs_pauses_total{ork_namespace="n",ork_pause_cause="self",ork_pause_outcome="timed_out",ork_deployment="d"}
+    values: 0x10 1x90
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: OrkStackRunPauseTimedOut
     exp_alerts: []
 - name: 'OrkStackAdmissionRefusing: held'
   interval: 1m

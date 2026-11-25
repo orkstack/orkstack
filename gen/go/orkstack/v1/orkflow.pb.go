@@ -850,8 +850,9 @@ type EachSpec struct {
 	// source is over, compiled at apply (EachSource).
 	Source *EachSource `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
 	// over_artifact names an artifact of a task in this task's own needs:,
-	// "<task>/<name>", and makes the fan-out run one item per non-empty line
-	// of it (or per batch of lines). Exactly one of over and over_artifact is
+	// "<task>/<name>", or an artifact input of this Orkflow, "_inputs/<name>",
+	// and makes the fan-out run one item per non-empty line of it (or per
+	// batch of lines). Exactly one of over and over_artifact is
 	// set. Part of canonicalOrkflow only when set, so a definition without it
 	// keeps its digest.
 	OverArtifact string `protobuf:"bytes,6,opt,name=over_artifact,json=overArtifact,proto3" json:"over_artifact,omitempty"`

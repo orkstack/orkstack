@@ -386,6 +386,35 @@ func TestNewResult_RecordsTheDeliverysSequence(t *testing.T) {
 	}
 }
 
+// A resume's events carry what they are about, a count of 0 included; every
+// other delivery omits both.
+func TestDelivery_BodyCarriesTheResume(t *testing.T) {
+	resumed := sampleDelivery()
+	resumed.Event, resumed.Status, resumed.ResumeCount = webhooks.EventRunResumed, "RUNNING", 2
+	body, err := resumed.Body()
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if !strings.Contains(string(body), `,"resumeCount":2,`) || strings.Contains(string(body), "resultsKept") {
+		t.Fatalf("RUN_RESUMED body = %s", body)
+	}
+	kept := sampleDelivery()
+	kept.Event, kept.Status, kept.ResultsKept = webhooks.EventRunResultsKept, "RUNNING", &webhooks.ResultsKept{SettledCount: 3, ReadBackSeconds: 1.5}
+	if body, err = kept.Body(); err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if !strings.Contains(string(body), `,"resultsKept":{"keptCount":0,"settledCount":3,"readBackSeconds":1.5},`) || strings.Contains(string(body), "resumeCount") {
+		t.Fatalf("RUN_RESULTS_KEPT body = %s", body)
+	}
+	plain, err := sampleDelivery().Body()
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if strings.Contains(string(plain), "resumeCount") || strings.Contains(string(plain), "resultsKept") {
+		t.Fatalf("a delivery of no resume carries one: %s", plain)
+	}
+}
+
 // A pause's events carry pauseTransition after sequence; every other
 // delivery omits it.
 func TestDelivery_BodyCarriesThePauseTransition(t *testing.T) {

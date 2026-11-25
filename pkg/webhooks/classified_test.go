@@ -34,7 +34,7 @@ func TestWebhooks_EveryEventTypeIsClassified(t *testing.T) {
 			t.Errorf("KnownEvents names %s, which is no proto event type", event)
 		}
 	}
-	want := []Event{"RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED"}
+	want := []Event{"RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "RUN_RESUMED"}
 	if got := RunEvents(); !slices.Equal(got, want) {
 		t.Errorf("RunEvents() = %v, want %v", got, want)
 	}

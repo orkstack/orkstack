@@ -211,8 +211,9 @@ profile is data an operator writes, never code.
 
 - **Only character devices of a compiled class.** A device passes only when it
   is a character device whose driver (by its major number, in `/proc/devices`)
-  and node name are of a class the Orker's build lists. This release lists
-  one, `usb-serial`. Block devices, `/dev/mem` and the like, sockets, FIFOs and
+  and node name are of a class the Orker's build lists. For devices profiles
+  this release lists `usb-serial`; a gpu profile's units are render nodes
+  (`drm-render`) and `/dev/kfd` (`kfd`). Block devices, `/dev/mem` and the like, sockets, FIFOs and
   regular files are refused at boot, whatever the operator wrote. A `path` is
   resolved on the host and must stay under `/dev`; the Orker stats the node it
   leads to and never opens it, since opening a serial device can toggle its
@@ -242,6 +243,93 @@ profile is data an operator writes, never code.
   its pool offers the profile with one structural identity, and every attempt
   is held to that identity, so a run never meets a device its submit did not
   see. The refusals name Orkers, never the identity.
+
+### CDI trust
+
+A GPU unit reaches a task through a CDI spec, a YAML or JSON file that names
+devices. A spec is operator data, and whoever can write one to a directory the
+Orker reads can give a task any device the spec names. The Orker holds specs to
+these rules, checked at boot and at every audit, and again before a container
+is created and before it starts:
+
+- **Only root-writable directories are read.** The Orker reads the directories
+  in `orker.cdi.spec_dirs`, by default `/etc/cdi` and `/var/run/cdi`. Each one,
+  and every directory above it as written and as resolved, must be owned by
+  root and not writable by its group or by others, so a user other than root
+  cannot add, replace or rename a spec. A symlink is accepted only where its
+  chain is root's.
+- **Specs are parsed as Docker parses them.** Every `.yaml` and `.json` file of
+  a spec directory is read with the CDI library Docker uses. A file it refuses,
+  whether for its version, its kind or a repeated device name within a kind,
+  refuses the boot. Only the files that declare the profile's own kind are
+  fingerprinted for drift.
+- **Only device nodes and groups pass.** A unit may name device nodes and
+  `additionalGids`. A hook, an environment variable, a mount, a network device,
+  an IntelRdt setting, or spec-level edits are refused. A hook would run a
+  program on the host, so no AMD or Intel spec may have one.
+- **NVIDIA (experimental): hooks under a compiled grammar.** An `nvidia.com`
+  spec may also carry the hooks, env and mounts NVIDIA's generator writes, and
+  exactly those. Hooks: `createContainer` hooks of `/usr/bin/nvidia-cdi-hook`
+  running `create-symlinks` (relative targets; links strictly below the library
+  directories or in `/dev/dri/by-path`) or `disable-device-node-modification`;
+  `update-ldcache`, `enable-cuda-compat`, `update-application-profile`,
+  `apply-cuda-memory-limits` and every other subcommand are refused. The binary
+  must be root's in root's directories and its SHA-256 a row of the table
+  compiled from NVIDIA's signed repository at or above toolkit 1.19.1; another
+  build disables that profile alone. Env is `NVIDIA_VISIBLE_DEVICES=void` and
+  library directories only. Mounts are read-only, nosuid, nodev regular files
+  under compiled roots, each file and every directory above it root's and not
+  writable by others, plus `/dev/null` at the placeholder path; never a socket,
+  a device or a directory. The engine's default runtime must be runc or crun by
+  name and by binary, and the engine's CDI directories must all be audited.
+- **NVIDIA residual limits.** The Orker hashes the hook binary and never runs
+  it: a swap between the last check and the runtime's exec is open only to root.
+  The engine's runtime binary is not hashed either: it is held to the name of
+  the binary the engine reports (runc or crun), asked again before every
+  container is created, and a binary replaced in place under that name is
+  root's to do.
+  The hook acts inside the container's root through links the image can
+  contain; the emulation test proves that for the listed builds with an image
+  whose library directories are links, and not on NVIDIA hardware. A mount
+  source's content is not hashed, only its identity (resolved path, kind, owner
+  chain), so a root-owned library replaced in place by root is not drift. NVIDIA
+  specs are experimental: the real node set, the driver library mounts and CUDA
+  under the mandatory profile are unproven.
+- **A node is the device itself.** Each node's `hostPath` must be the device,
+  not a link to it. Its type must be `c`, and any `major` or `minor` written must
+  match the host. `uid`, `gid` and `fileMode` are refused, so a spec never
+  changes a node's owner or mode. Its permissions are `r`, `w` or `rw`.
+- **Groups are bounded.** A unit's group must be non-zero, must own one of the
+  unit's own nodes, and must not be named `docker`, `disk`, `kmem`, `shadow`,
+  `sudo` or `wheel`. It must not own the container runtime's socket, a block
+  device, `/dev/mem`, `/dev/kmem`, or a console or terminal device.
+- **Drift is detected and never adopted.** The Orker keeps the bytes of each
+  audited spec and each unit's node: its path, its type, its major and minor
+  numbers and its group. A change to any of them latches a drift until the
+  Orker restarts, and the Orker never adopts a re-read spec. A change to a
+  node's mode, its change time or its ACL is not drift.
+- **The residual window.** A spec is not copied: the Orker keeps no copy of it.
+  Between its last check and the runtime's own read, a spec could change only
+  for someone who can write a trusted directory, which is root.
+
+### What a unit does not guarantee
+
+- **No memory clearing between tasks.** OrkStack does not clear a unit's memory
+  or caches between the tasks that hold it. What one task leaves on a unit is
+  as far as the driver resets it; the Orker does nothing to clear it.
+- **Shared device nodes.** A node that two units name cannot be scoped to one
+  of them. `/dev/kfd` is one such node: every AMD GPU on a host shares it. The
+  boot refuses two units that name one node (`UNITS_OVERLAP`), so an AMD profile
+  holds one unit per host.
+- **Containers the Orker did not start.** A container that OrkStack did not
+  start, and that holds a unit's device, is not detected in this release. The
+  lock keeps two Orkers of one host from binding the same unit, and it does not
+  see a container started outside them.
+- **No compute or power limits.** A unit grants device nodes, not a scheduler.
+  The Orker does not limit or measure the GPU's compute, memory or power use. The
+  usage figure `gpu_seconds` is held units times time held, not measured use.
+- **Health probes run no compute.** A unit's probe asks its driver for a version
+  and runs no kernel. It does not wake a runtime-suspended GPU.
 
 ### Network modes
 
@@ -581,8 +669,17 @@ callback, are their own ([DEPLOY.md](DEPLOY.md), "Ops notes").
 `enforce` does not bound a stolen Orker: its Temporal and storage credentials
 reach the cluster and the bucket without the API. A storage credential limited
 to the Orker's own prefixes at least keeps it from the access document and the
-definitions; each Orker checks its own credential and reports whether it is
-held there, and the engine logs every Orker that is not
+definitions, and from runs' saved state and admission records. Of the run
+contexts (each run tree's origin, its principal and reference among it, and the
+Orkflows it composes) such a credential may get one of any namespace whose key
+it has, and may neither list nor write them. The key is a content address and
+no secret: it ends in the SHA-256 of the object, so whoever holds the whole
+content already can confirm it, and a stolen Orker that can poll any pool is
+handed the key of any run whose task it takes. Results an engine attested
+(`metadata/attested/`) such a credential may read and list, and may write none
+there; it still writes the commits and memos above. Each Orker checks its own
+credential, those writes included, and reports whether it is held there, and
+the engine logs every Orker that is not
 ([DEPLOY.md](DEPLOY.md), "An Orker's own storage credential"). The check is a
 report: the store enforces the policy, an operator configures it.
 
@@ -634,6 +731,14 @@ its pools, secret policy, image policy and retention. An empty
 `allowed_secrets` leaves a namespace's own Orkflows unrestricted but never a
 shared one: a shared Orkflow that names a secret is refused there
 (`FOREIGN_SECRETS_UNBOUNDED`) until the namespace lists what it may read.
+
+Reading a shared child's run is not reading the Orkflow it ran. In `enforce`
+mode its definition is shown only to a caller with `orkflow.read` on it in its
+owner's namespace: an evidence bundle lists it as `withheld`
+([RUN_EVIDENCE.md](RUN_EVIDENCE.md#states)) and a run diff reads no image from
+it, both with the reason `definition_not_readable`, for any other. What the
+run itself recorded (its inputs, values, logs, artifacts and the images its
+attempts ran) is the run's, under the running namespace's permissions.
 
 ### What engines sign for each other
 
@@ -761,7 +866,8 @@ authentication does not cover the cluster's frontend: a frontend that serves
 callers with no credential lets whoever reaches it take any tenant's tasks,
 signal and terminate anything. An Orker whose probe finds one is unfit to
 host services unless the operator accepts it with
-`orker.services.allow_open_cluster`, which is logged at every boot; run the
+`orker.services.allow_open_cluster`, which accepts service ports only, never a
+reachable membership port, and is logged at every boot; run the
 cluster with mutual TLS ([DEPLOY.md](DEPLOY.md#temporal-over-tls)).
 
 ## Webhook secrets and destinations
@@ -808,6 +914,26 @@ and it is stored in plaintext because delivery must replay it
   A run's inputs may contain secrets ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Rules
   both clients follow").
 - A subscription with no scope receives the transitions of every namespace.
+
+## A concurrency key is readable
+
+A concurrency limit's key may be rendered from a run's inputs
+([DSL.md](DSL.md#concurrency-limits-concurrency), "Concurrency limits"). One
+limit serves many runs, so what holds it belongs to none of them, and
+operators read the key to see who holds it. It is a name, and is never treated
+as a secret:
+
+- Whoever can read the deployment's Temporal namespace reads the rendered key,
+  the template as the Orkflow declares it, and the limit's id. The id is an
+  unsalted hash of the namespace and the key, so a key with few possible values
+  can be guessed from the id alone.
+- Whoever holds `run.read` in the namespace reads the key through `orkctl
+  concurrency`, a queued run and a refusal's message.
+- Payload encryption, which is not available yet, will not cover any of them.
+- No metric label or alert carries a rendered key.
+
+An author who renders a secret or personal data into a key discloses it, and
+nothing refuses it.
 
 ## The audit trail
 

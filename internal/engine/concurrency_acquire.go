@@ -23,6 +23,8 @@ import (
 type ConcurrencyPlan struct {
 	// Slots are the gates the run's limits name, each with its rendered key.
 	Slots []ConcurrencySlotPlan `json:"slots"`
+	// Orkflow is the run's Orkflow's name, a metric label only.
+	Orkflow string `json:"orkflow,omitempty"`
 	// Run is the index in Slots of the run-level limit, nil without one.
 	Run *int `json:"run,omitempty"`
 	// SeqBase is the run's incarnation at its gates: 1 for a fresh run
@@ -64,11 +66,17 @@ type ConcurrencySlotPlan struct {
 const (
 	ConcurrencyUnsupportedCode      = "CONCURRENCY_UNSUPPORTED"
 	ConcurrencyCheckUnavailableCode = "CONCURRENCY_CHECK_UNAVAILABLE"
+	// ConcurrencyLimitReachedCode refuses a refuse or skip limit's run at a
+	// full key, before a run id is minted (§6).
+	ConcurrencyLimitReachedCode = "CONCURRENCY_LIMIT_REACHED"
 )
 
-// ConcurrencyStrategyQueue is the queue strategy's name in a slot's plan,
-// the only one this release supports.
-const ConcurrencyStrategyQueue = gateStrategyQueue
+// The strategies' names in a slot's plan, as the gate reads them.
+const (
+	ConcurrencyStrategyQueue  = gateStrategyQueue
+	ConcurrencyStrategyRefuse = gateStrategyRefuse
+	ConcurrencyStrategySkip   = gateStrategySkip
+)
 
 // DefaultRunConcurrencyKey is a run-level limit's key when it declares none
 // (§3.1): ork:orkflow:<owner>/<name>, owner the namespace that owns the
@@ -93,6 +101,8 @@ const ActivityAcquireConcurrency = "AcquireConcurrency"
 // not running, and the request. UpdateID is acq-<D>-<a> (§22.14.1), so a
 // retry of one acquire is one Update.
 type AcquireConcurrencyInput struct {
+	// Orkflow labels the arrival's metric; nothing decides from it.
+	Orkflow    string        `json:"orkflow,omitempty"`
 	GateID     string        `json:"gate_id"`
 	GateQueue  string        `json:"gate_queue"`
 	Start      GateStart     `json:"start"`
@@ -141,11 +151,77 @@ func acquireUpdateID(run string, seqBase int64, taskIx int, n int64, attempt int
 // deadline, which is then an Unavailable result, never an error: the run
 // decides from the result. A protocol refusal is Unsupported at once.
 func (a *GateActivities) AcquireConcurrency(ctx context.Context, in AcquireConcurrencyInput) (AcquireConcurrencyResult, error) {
+	res, err := a.acquireConcurrency(ctx, in)
+	if err == nil {
+		a.observeArrival(ctx, in, res)
+	}
+	return res, err
+}
+
+// ArrivalObserver counts each answered request for a slot (E88 §9.9.2,
+// ork.concurrency.arrivals). limit is the declaration's label
+// (CensusLimitLabel), never the rendered key.
+type ArrivalObserver interface {
+	ObserveArrival(ctx context.Context, namespace, orkflow, limit, level, strategy, outcome string)
+}
+
+// arrivalOutcome is the arrivals metric's outcome for a result, "" for one
+// it does not count (a supersede is counted where it is applied).
+func arrivalOutcome(res AcquireConcurrencyResult) string {
+	switch {
+	case res.Unsupported != "":
+		return "unsupported"
+	case res.Unavailable != "":
+		return "unavailable"
+	}
+	switch res.Answer.Answer {
+	case gateAnswerGranted:
+		return "granted"
+	case gateAnswerQueued:
+		return "queued"
+	case gateAnswerFull, gateAnswerFullBound:
+		return "full"
+	case gateAnswerUnavailable:
+		return "unavailable"
+	case gateAnswerFenced:
+		return "fenced"
+	}
+	return ""
+}
+
+func (a *GateActivities) observeArrival(ctx context.Context, in AcquireConcurrencyInput, res AcquireConcurrencyResult) {
+	outcome := arrivalOutcome(res)
+	// A re-assert asks again for the place it already has: no arrival.
+	if a.arrivals == nil || outcome == "" || !in.Request.ArrivedAt.IsZero() {
+		return
+	}
+	level := "run"
+	if in.Request.TaskIx != gateRunLevel {
+		level = "task"
+	}
+	a.arrivals.ObserveArrival(ctx, in.Start.Namespace, in.Orkflow, CensusLimitLabel(in.Request.Label), level, in.Request.Strategy, outcome)
+}
+
+func (a *GateActivities) acquireConcurrency(ctx context.Context, in AcquireConcurrencyInput) (AcquireConcurrencyResult, error) {
 	backoff := max(in.BackoffMin, 10*time.Millisecond)
 	var last error
-	for {
+	var rebuilding *gateAnswer
+	base := in.UpdateID
+	for ask := 0; ; ask++ {
+		if rebuilding != nil {
+			// The cluster answers an Update id it has answered with the same
+			// answer: each ask after a rebuilding gate's is an id of its own.
+			// The gate keys an entry by run, seq_base and task, so an ask
+			// that was granted before its answer was lost is answered again.
+			in.UpdateID = fmt.Sprintf("%s-r%d", base, ask)
+		}
 		ans, err := a.acquireOnce(ctx, in)
-		if err == nil {
+		if err == nil && ans.Answer == gateAnswerUnavailable {
+			// A refuse or skip arrival the gate cannot answer while it
+			// rebuilds its record (§5.1.6): asked again within the acquire
+			// timeout, so only the final answer counts (§9.9.2).
+			rebuilding, last = &ans, errors.New("the limit is rebuilding its record of running runs")
+		} else if err == nil {
 			return AcquireConcurrencyResult{Answer: ans}, nil
 		}
 		if failure := categoryOf(err); failure.appType() == GateErrUnsupported {
@@ -156,9 +232,11 @@ func (a *GateActivities) AcquireConcurrency(ctx context.Context, in AcquireConcu
 			// kept for the run's message.
 			return AcquireConcurrencyResult{Unavailable: fmt.Sprintf("the limit cannot be asked: %v", err)}, nil
 		}
-		last = err
-		if activity.IsActivity(ctx) {
-			activity.GetLogger(ctx).Warn("a concurrency acquire was not answered; asking again", "gate", in.GateID, "error", err)
+		if err != nil {
+			last = err
+			if activity.IsActivity(ctx) {
+				activity.GetLogger(ctx).Warn("a concurrency acquire was not answered; asking again", "gate", in.GateID, "error", err)
+			}
 		}
 		timer := time.NewTimer(backoff)
 		select {
@@ -169,6 +247,9 @@ func (a *GateActivities) AcquireConcurrency(ctx context.Context, in AcquireConcu
 				// error, so the acquire runs again on the next worker and
 				// the run is never failed for it.
 				return AcquireConcurrencyResult{}, ctx.Err()
+			}
+			if rebuilding != nil {
+				return AcquireConcurrencyResult{Answer: *rebuilding}, nil
 			}
 			return AcquireConcurrencyResult{Unavailable: fmt.Sprintf("the limit did not answer within the acquire timeout: %v", last)}, nil
 		case <-timer.C:
@@ -202,6 +283,9 @@ func (a *GateActivities) acquireOnce(ctx context.Context, in AcquireConcurrencyI
 		}, ConcurrencyGateWorkflowType, start)
 		update.WorkflowID = ""
 		h, err = a.client.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{StartWorkflowOperation: op, UpdateOptions: update})
+		if err == nil {
+			a.observeStart(ctx, start.Namespace, previous)
+		}
 	}
 	if err != nil {
 		return ans, err

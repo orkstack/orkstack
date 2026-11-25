@@ -259,12 +259,19 @@
 		writePageStack(stackKey, []);
 		await goto(href({ cursor: '', page: '' }, { filter: next }), { reset: false });
 	}
-	async function tileFilter(status: string): Promise<void> {
-		await filterTo('status', statusShown === status ? null : status);
+	// A tile toggles its filter, then takes the reader to the count it changed.
+	async function toggleTile(path: string, value: string, shown: boolean): Promise<void> {
+		await filterTo(path, shown ? null : value);
 		await tick();
 		countLine?.scrollIntoView({ block: 'start' });
 		countLine?.focus();
 	}
+	const tileFilter = (status: string) => toggleTile('status', status, statusShown === status);
+	// Queued is no status: a queued run is PENDING (or RUNNING, resumed) and
+	// waits for a concurrency slot, so its tile is the `queued=true` filter
+	// (`orkctl run list --filter queued=true`).
+	const queuedShown = $derived(equalityOf(data.applied, 'queued') === 'true');
+	const queuedTile = () => toggleTile('queued', 'true', queuedShown);
 
 	// ---- Search: a run id opens that run; any other words narrow by Orkflow ----
 	let search = $state('');
@@ -418,6 +425,18 @@
 							data-testid="runs-tile-paused"
 							onclick={() => void tileFilter('PAUSED')}
 							><span class="lbl"><span class="mark-pause inline-flex" aria-hidden="true"></span>Paused</span><b class="num">{Number(day.value?.paused ?? 0n)}</b></button
+						>
+					{/if}
+					{#if (day.value?.queued ?? 0n) > 0n || queuedShown}
+						<!-- Queued is live, and among the running: the runs waiting for a
+						     concurrency slot, shown only where there are some. -->
+						<button
+							type="button"
+							class="tile"
+							aria-pressed={queuedShown}
+							data-testid="runs-tile-queued"
+							onclick={() => void queuedTile()}
+							><span class="lbl"><span class="mark-wait inline-flex" aria-hidden="true"></span>Queued</span><b class="num">{Number(day.value?.queued ?? 0n)}</b></button
 						>
 					{/if}
 				</div>

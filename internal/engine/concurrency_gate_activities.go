@@ -18,21 +18,31 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// GateActivities are the concurrency gate's two local activities (E88
-// §5.1.8): reads of the cluster whose answers the gate's history records,
-// so the gate decides from recorded bytes. Neither writes anything.
+// GateActivities are the concurrency gate's local activities (E88 §5.1.8):
+// reads of the cluster whose answers the gate's history records, so the gate
+// decides from recorded bytes, and the count of what it took back. None writes
+// anything to the cluster.
 type GateActivities struct {
-	client client.Client
+	client   client.Client
+	arrivals ArrivalObserver
+	reports  GateReportObserver
 }
 
 // NewGateActivities returns the gate's activities over c.
 func NewGateActivities(c client.Client) *GateActivities { return &GateActivities{client: c} }
+
+// WithArrivalObserver counts each answered acquire on o; nil counts none.
+func (a *GateActivities) WithArrivalObserver(o ArrivalObserver) *GateActivities {
+	a.arrivals = o
+	return a
+}
 
 // RegisterGateActivities registers them on the engine worker, which runs
 // them as local activities only.
 func RegisterGateActivities(w ActivityRegistrar, a *GateActivities) {
 	w.RegisterActivityWithOptions(a.DescribeConcurrencyEntries, activity.RegisterOptions{Name: ActivityDescribeConcurrencyEntries})
 	w.RegisterActivityWithOptions(a.ListConcurrencyEntries, activity.RegisterOptions{Name: ActivityListConcurrencyEntries})
+	w.RegisterActivityWithOptions(a.ReportConcurrencyGate, activity.RegisterOptions{Name: ActivityReportConcurrencyGate})
 	w.RegisterActivityWithOptions(a.AcquireConcurrency, activity.RegisterOptions{Name: ActivityAcquireConcurrency})
 }
 
@@ -65,6 +75,7 @@ func (a *GateActivities) DescribeConcurrencyEntries(ctx context.Context, in Desc
 		}()
 	}
 	wg.Wait()
+	a.observeChecks(ctx, in, out)
 	return out, nil
 }
 
@@ -129,6 +140,12 @@ func readGateMemo(gateID string, memo *commonpb.Memo) (int64, map[int]bool, erro
 // converter did not write as JSON is passed on as it is, and the gate adopts
 // it.
 func (a *GateActivities) ListConcurrencyEntries(ctx context.Context, in ListConcurrencyEntriesInput) (ListConcurrencyEntriesResult, error) {
+	page, err := a.listEntries(ctx, in)
+	a.observeRebuild(ctx, in, page, err)
+	return page, err
+}
+
+func (a *GateActivities) listEntries(ctx context.Context, in ListConcurrencyEntriesInput) (ListConcurrencyEntriesResult, error) {
 	query := fmt.Sprintf(`WorkflowType = %q AND ExecutionStatus = "Running" AND (%s = %q OR %s = %q)`,
 		RunWorkflowType, task.SearchAttrOrkflowConcurrencyHeld, in.GateID, task.SearchAttrOrkflowConcurrencyQueued, in.GateID)
 	resp, err := a.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{

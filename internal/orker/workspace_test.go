@@ -631,7 +631,7 @@ func TestWorkspace_TaskJSONOmitsAbsentOptionalsAndKeepsRequiredZeroes(t *testing
 				"it instead of discovering it by failing", key)
 		}
 	}
-	// trace is optional and non-ABI: with no TaskContext.Trace at all (the
+	// trace is optional: with no TaskContext.Trace at all (the
 	// TraceContext seam nil, or a deployment that does not trace), task.json
 	// must never carry the key.
 	if _, present := doc["trace"]; present {

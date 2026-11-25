@@ -11,7 +11,7 @@ groups:
       severity: warning
     annotations:
       dashboard: /d/orkstack
-      description: Over 20% of namespace "{{ $labels.ork_namespace }}"'s finished runs failed in the last 15 minutes, out of at least 10. Namespaces exported to this sink only.
+      description: Over 20% of namespace "{{ $labels.ork_namespace }}"'s finished runs failed in the last 15 minutes, out of at least 10. Each ending of a resumed run counts. Namespaces exported to this sink only.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunfailureratiohigh
       summary: Over a fifth of a namespace's runs fail.
   - alert: OrkStackInfrastructureErrors
@@ -55,6 +55,57 @@ groups:
       description: A run that needed to carry on into a fresh history could not write its saved state; it carries on in its current history and tries again.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackcontinuationwritefailed
       summary: A long run could not write its saved state.
+  - alert: OrkStackRunHistoryLimit
+    expr: sum by (ork_deployment) (((ork_deployment_runs_total{ork_failure_reason="RUN_HISTORY_LIMIT"} - last_over_time(ork_deployment_runs_total{ork_failure_reason="RUN_HISTORY_LIMIT"}[1d] offset 15m)) > 0) or ((ork_deployment_runs_total{ork_failure_reason="RUN_HISTORY_LIMIT"} unless last_over_time(ork_deployment_runs_total{ork_failure_reason="RUN_HISTORY_LIMIT"}[1d] offset 15m)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 15m)) > 0))) > 0
+    labels:
+      component: runs
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: 'A run ended `RUN_HISTORY_LIMIT`: its history reached the limit and it could not carry on into a fresh one.'
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunhistorylimit
+      summary: A run outgrew its history.
+  - alert: OrkStackPinHostLost
+    expr: sum by (ork_deployment, ork_pool) (((ork_deployment_tasks_total{ork_failure_reason="PIN_HOST_LOST"} - last_over_time(ork_deployment_tasks_total{ork_failure_reason="PIN_HOST_LOST"}[1d] offset 15m)) > 0) or ((ork_deployment_tasks_total{ork_failure_reason="PIN_HOST_LOST"} unless last_over_time(ork_deployment_tasks_total{ork_failure_reason="PIN_HOST_LOST"}[1d] offset 15m)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 15m)) > 0))) > 0
+    labels:
+      component: runs
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: 'Pinned tasks of pool "{{ $labels.ork_pool }}" failed "PIN_HOST_LOST": the Orker hosting its pin was gone, or the cluster did not hear from it.'
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinhostlost
+      summary: A pin lost its Orker.
+  - alert: OrkStackPinUnavailable
+    expr: sum by (ork_deployment, ork_pool) (((ork_deployment_tasks_total{ork_failure_reason="PIN_UNAVAILABLE"} - last_over_time(ork_deployment_tasks_total{ork_failure_reason="PIN_UNAVAILABLE"}[1d] offset 15m)) > 0) or ((ork_deployment_tasks_total{ork_failure_reason="PIN_UNAVAILABLE"} unless last_over_time(ork_deployment_tasks_total{ork_failure_reason="PIN_UNAVAILABLE"}[1d] offset 15m)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 15m)) > 0))) > 0
+    labels:
+      component: runs
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: 'A pinned task of pool "{{ $labels.ork_pool }}" failed "PIN_UNAVAILABLE": no pin host of the pool could open its pin in time.'
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackpinunavailable
+      summary: A pin found no Orker to open on.
+  - alert: OrkStackRunPausedNearTimeout
+    expr: min by (ork_deployment, ork_namespace) (last_over_time(ork_runs_paused_soonest_expiry_seconds[10m])) < 86400
+    for: 5m
+    labels:
+      component: runs
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: A paused run of namespace "{{ $labels.ork_namespace }}" ends as failed, "RUN_PAUSE_TIMEOUT", within a day unless it is unpaused.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunpausedneartimeout
+      summary: A paused run fails within a day unless unpaused.
+  - alert: OrkStackRunPauseTimedOut
+    expr: sum by (ork_deployment, ork_namespace) (increase(ork_runs_pauses_total{ork_pause_outcome="timed_out"}[1h])) > 0
+    labels:
+      component: runs
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: A run of namespace "{{ $labels.ork_namespace }}" was still paused when its pause ended, and failed. Namespaces exported to this sink only.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunpausetimedout
+      summary: A paused run failed because its pause ran out.
   - alert: OrkStackAdmissionRefusing
     expr: sum by (ork_deployment, ork_namespace, ork_refusal_reason) (rate(ork_runs_refused_total{ork_refusal_reason!="budget_unmeasurable"}[15m])) > 0
     for: 15m

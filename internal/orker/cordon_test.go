@@ -91,7 +91,7 @@ func TestCordon_SetClearAndState(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Wait after Clear = %v", err)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatal("Wait did not wake on Clear")
 		}
 	})
@@ -107,7 +107,7 @@ func TestCordon_SetClearAndState(t *testing.T) {
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Wait after cancel = %v; want context.Canceled", err)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatal("Wait did not return on cancel")
 		}
 	})
@@ -143,7 +143,7 @@ func TestCordonSlotSupplier_BlocksReservationWhileCordoned(t *testing.T) {
 	var permit *worker.SlotPermit
 	select {
 	case permit = <-got:
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		// A deadline for a hang, as the Wait subtests above give: Clear wakes
 		// the waiter through a channel, and how soon a loaded host runs it is
 		// not the cordon's behaviour.

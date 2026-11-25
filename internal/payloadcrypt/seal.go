@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	commonpb "go.temporal.io/api/common/v1"
+	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -56,6 +57,19 @@ func (s *Scope) String() string {
 // Format prints String for every verb.
 func (s *Scope) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(s.String())) }
 
+// SealPayload is p sealed for the scope's own context; for Unsealed() it is p
+// itself. A nil scope, or one that holds no key, is a key that was lost:
+// refused, never written in plaintext.
+func (s *Scope) SealPayload(p *commonpb.Payload) (*commonpb.Payload, error) {
+	if s.unsealed() {
+		return p, nil
+	}
+	if !s.Sealed() {
+		return nil, errors.New("payloadcrypt: a payload sealed under no key: its run's key was lost")
+	}
+	return SealPayload(s.key, s.ctx, p)
+}
+
 // Open decrypts p for the scope's own context.
 func (s *Scope) Open(p *commonpb.Payload) (*commonpb.Payload, error) {
 	if !s.Sealed() {
@@ -86,10 +100,39 @@ func Seal(s *Scope, v any) any {
 	return sealedValue{s: s, v: v}
 }
 
-// Plain is v itself: a value that is never sealed (a memo, a webhook
-// delivery's or an idempotency claim's arguments). Every site that hands the
-// SDK a value says Seal or Plain.
-func Plain(v any) any { return v }
+// plainValue is a value the Converter writes as it is, in a sealed run too.
+type plainValue struct{ v any }
+
+// Plain marks v never to be sealed: a memo field, or what a reader with no
+// run key must read (payload-encryption.md §2). In a sealed run's workflow
+// code every other value is sealed under the run's key by default (the
+// user's decision, round 20, E1, 2026-11-20); in any other run it is written
+// exactly as v. A raw value is carried as it is, so it is returned as it is.
+func Plain(v any) any {
+	switch v.(type) {
+	case converter.RawValue, plainValue:
+		return v
+	}
+	return plainValue{v: v}
+}
+
+// PlainIn is v marked Plain where s is a sealed run's scope, and v itself
+// in any other run, so a run that is not sealed hands the SDK exactly what it
+// always did, whatever converter reads it.
+func PlainIn(s *Scope, v any) any {
+	if !s.Sealed() {
+		return v
+	}
+	return Plain(v)
+}
+
+// Unplain is the value a Plain mark holds, or v itself.
+func Unplain(v any) any {
+	if p, ok := v.(plainValue); ok {
+		return p.v
+	}
+	return v
+}
 
 // plainBinary is a message the Converter writes as binary proto.
 type plainBinary struct{ m proto.Message }

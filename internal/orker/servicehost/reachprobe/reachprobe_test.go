@@ -11,8 +11,10 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/orkstack/orkstack/internal/orker/servicehost"
@@ -36,6 +39,13 @@ func TestParseTarget(t *testing.T) {
 		{in: "1,address,tcp,[fd00:ec2::254]:80", want: Target{Question: 1, Kind: "address", Via: "tcp", Addr: "[fd00:ec2::254]:80"}},
 		{in: "1,address,tcp,metadata.google.internal:80", want: Target{Question: 1, Kind: "address", Via: "tcp", Addr: "metadata.google.internal:80"}},
 		{in: "3,membership,tcp,10.0.0.1:6933", want: Target{Question: 3, Kind: "membership", Via: "tcp", Addr: "10.0.0.1:6933"}},
+		{in: "3,service,tls,10.0.0.1:7233,temporal.internal", want: Target{Question: 3, Kind: "service", Via: "tls", Addr: "10.0.0.1:7233", Name: "temporal.internal"}},
+		{in: "3,service,tls,10.0.0.1:7233,", wantErr: "name"},
+		{in: "3,service,tls,10.0.0.1:7233,a b", wantErr: "name"},
+		{in: "3,service,tls,10.0.0.1:7233,a\x01", wantErr: "name"},
+		{in: "3,service,tls,10.0.0.1:7233,a,b", wantErr: "four fields"},
+		{in: "3,service,tls,10.0.0.1:7233," + strings.Repeat("a", 254), wantErr: "name"},
+		{in: "3,membership,tcp,10.0.0.1:6933,temporal", wantErr: "only a service"},
 		{in: "", wantErr: "four fields"},
 		{in: "3,service,tls", wantErr: "four fields"},
 		{in: "5,address,tcp,1.2.3.4:1", wantErr: "question"},
@@ -169,25 +179,25 @@ func TestAsk_ClassifiesWhatEachTargetDoes(t *testing.T) {
 		want    servicehost.Observation
 		reached bool
 	}{
-		{"an open plaintext frontend serves", Target{3, "service", "plaintext", open},
+		{"an open plaintext frontend serves", Target{3, "service", "plaintext", open, ""},
 			servicehost.Observation{Connected: true, Status: "OK"}, true},
-		{"a frontend that asks for a credential turns the caller away", Target{3, "service", "plaintext", denied},
+		{"a frontend that asks for a credential turns the caller away", Target{3, "service", "plaintext", denied, ""},
 			servicehost.Observation{Connected: true, Status: "Unauthenticated"}, false},
-		{"a TLS-only frontend refuses plaintext but is still reached", Target{3, "service", "plaintext", tlsOpen},
+		{"a TLS-only frontend refuses plaintext but is still reached", Target{3, "service", "plaintext", tlsOpen, ""},
 			servicehost.Observation{Connected: true, Status: "Unavailable"}, true},
-		{"a TLS-only frontend serves a caller with no certificate", Target{3, "service", "tls", tlsOpen},
+		{"a TLS-only frontend serves a caller with no certificate", Target{3, "service", "tls", tlsOpen, ""},
 			servicehost.Observation{Connected: true, TLS: servicehost.TLSOK, Status: "OK"}, true},
-		{"mutual TLS 1.2 turns the caller away at the handshake", Target{3, "service", "tls", mtls12},
+		{"mutual TLS 1.2 turns the caller away at the handshake", Target{3, "service", "tls", mtls12, ""},
 			servicehost.Observation{Connected: true, TLS: servicehost.TLSClientCertRequire}, false},
-		{"mutual TLS 1.3 turns the caller away after the handshake", Target{3, "service", "tls", mtls13},
+		{"mutual TLS 1.3 turns the caller away after the handshake", Target{3, "service", "tls", mtls13, ""},
 			servicehost.Observation{Connected: true, TLS: servicehost.TLSClientCertRequire}, false},
-		{"TLS to a plaintext port fails its handshake", Target{3, "service", "tls", open},
+		{"TLS to a plaintext port fails its handshake", Target{3, "service", "tls", open, ""},
 			servicehost.Observation{Connected: true, TLS: servicehost.TLSFailed}, false},
-		{"a membership port that accepts is reached", Target{3, "membership", "tcp", member},
+		{"a membership port that accepts is reached", Target{3, "membership", "tcp", member, ""},
 			servicehost.Observation{Connected: true}, true},
-		{"a closed port is not", Target{2, "address", "tcp", closed},
+		{"a closed port is not", Target{2, "address", "tcp", closed, ""},
 			servicehost.Observation{}, false},
-		{"a closed service port is not called", Target{3, "service", "tls", closed},
+		{"a closed service port is not called", Target{3, "service", "tls", closed, ""},
 			servicehost.Observation{}, false},
 	}
 	for _, tt := range tests {
@@ -209,16 +219,134 @@ func TestAsk_ClassifiesWhatEachTargetDoes(t *testing.T) {
 	}
 }
 
+// A service port asked at an address under a name is shown that name, as a
+// client that knows it would: a server that judges by the name (SNI, or the
+// call's authority) is asked what it would serve.
+func TestAsk_UnderAName(t *testing.T) {
+	cert := selfSigned(t)
+	bySNI := grpcServer(t, &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+		c := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h2"}, ClientAuth: tls.RequireAnyClientCert}
+		if h.ServerName == "cluster.test" {
+			c.ClientAuth = tls.NoClientCert
+		}
+		return c, nil
+	}}, false)
+	got := Ask(context.Background(), []Target{{3, "service", "tls", bySNI, "cluster.test"}, {3, "service", "tls", bySNI, ""}}, 5*time.Second)
+	if got[0].TLS != servicehost.TLSOK || got[0].Status != "OK" || got[0].Name != "cluster.test" || !got[0].Reached() {
+		t.Errorf("asked under its name: %+v", got[0])
+	}
+	if got[1].TLS != servicehost.TLSClientCertRequire || got[1].Reached() {
+		t.Errorf("asked under no name: %+v", got[1])
+	}
+	var authorities []string
+	var mu sync.Mutex
+	srv := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+		md, _ := metadata.FromIncomingContext(ctx)
+		mu.Lock()
+		authorities = append(authorities, md.Get(":authority")...)
+		mu.Unlock()
+		return h(ctx, req)
+	}))
+	healthpb.RegisterHealthServer(srv, health.NewServer())
+	ln := listen(t)
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(srv.Stop)
+	plain := ln.Addr().String()
+	if got := Ask(context.Background(), []Target{{3, "service", "plaintext", plain, "cluster.test"}}, 5*time.Second); got[0].Status != "OK" {
+		t.Fatalf("plaintext under a name: %+v", got[0])
+	}
+	_, pport, _ := net.SplitHostPort(plain)
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(authorities, []string{"cluster.test:" + pport}) {
+		t.Errorf("the call's authority was %q", authorities)
+	}
+}
+
 // A cluster that asks both ends for a certificate is closed on its port,
 // judged by both legs together, as the Orker judges it.
 func TestAsk_MutualTLSPortIsClosed(t *testing.T) {
 	cert := selfSigned(t)
 	for _, v := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
 		addr := grpcServer(t, &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAnyClientCert, MinVersion: v, MaxVersion: v}, false)
-		obs := Ask(context.Background(), []Target{{3, "service", "plaintext", addr}, {3, "service", "tls", addr},
-			{1, "address", "tcp", closedAddr(t)}, {2, "address", "tcp", closedAddr(t)}, {4, "address", "tcp", closedAddr(t)}}, 3*time.Second)
+		obs := Ask(context.Background(), []Target{{3, "service", "plaintext", addr, ""}, {3, "service", "tls", addr, ""},
+			{1, "address", "tcp", closedAddr(t), ""}, {2, "address", "tcp", closedAddr(t), ""}, {4, "address", "tcp", closedAddr(t), ""}}, 3*time.Second)
 		if f := servicehost.JudgeProbe(obs, 1, 2, 3, 4); !f.Fit {
 			t.Errorf("TLS %x: a mutual-TLS port was judged open: %q (%+v)", v, f.Failures, obs[:2])
+		}
+	}
+}
+
+// A name that does not resolve is told apart from an address that refuses or
+// does not answer: the first was never asked. The name is one no resolver
+// answers (RFC 6761, .invalid).
+func TestAsk_UnresolvedName(t *testing.T) {
+	for _, q := range []int{1, 2, 3} {
+		got := Ask(context.Background(), []Target{{q, "address", "tcp", "ork-probe.invalid:80", ""}, {q, "address", "tcp", closedAddr(t), ""}}, 5*time.Second)
+		if !got[0].Unresolved || got[0].Connected || got[1].Unresolved {
+			t.Errorf("question %d: %+v; want the name unresolved and the closed port not", q, got)
+		}
+	}
+	// A name that leads back to the probe itself, or, for question 1, to an
+	// address a name is not dialled at, gave nothing to ask.
+	_, port, _ := net.SplitHostPort(closedAddr(t))
+	for _, q := range []int{1, 2, 3} {
+		if got := Ask(context.Background(), []Target{{q, "address", "tcp", net.JoinHostPort("localhost", port), ""}}, 5*time.Second); !got[0].Unresolved || got[0].Connected {
+			t.Errorf("question %d, a name that leads to loopback: %+v", q, got[0])
+		}
+	}
+}
+
+// A name's addresses are each asked, so one that answers is found, and one
+// the probe may not ask (its own loopback) is left out.
+func TestAskable(t *testing.T) {
+	ips := func(ss ...string) (out []net.IPAddr) {
+		for _, s := range ss {
+			out = append(out, net.IPAddr{IP: net.ParseIP(s)})
+		}
+		return out
+	}
+	tests := []struct {
+		name     string
+		question int
+		ips      []net.IPAddr
+		listed   map[string]bool
+		want     []string
+	}{
+		{"every address", 3, ips("10.0.0.1", "fd00::1"), nil, []string{"10.0.0.1:80", "[fd00::1]:80"}},
+		{"loopback and unspecified are the probe's own", 2, ips("127.0.0.1", "127.0.1.1", "::1", "0.0.0.0", "::", "10.0.0.1"), nil, []string{"10.0.0.1:80"}},
+		{"nothing left", 2, ips("127.0.0.1"), nil, nil},
+		{"question 1 asks link-local", 1, ips("169.254.169.254", "10.0.0.1"), nil, []string{"169.254.169.254:80"}},
+		{"and what the run lists", 1, ips("10.0.0.1"), map[string]bool{"10.0.0.1": true}, []string{"10.0.0.1:80"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := askable(tt.question, tt.ips, "80", tt.listed); !slices.Equal(got, tt.want) {
+				t.Fatalf("askable = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A name that leads somewhere askable is tried by its name, which a TLS
+// server may need to be shown; question 1's is tried at its addresses; one
+// that leads nowhere askable is tried nowhere.
+func TestNameAddrs(t *testing.T) {
+	ip := func(s string) []net.IPAddr { return []net.IPAddr{{IP: net.ParseIP(s)}} }
+	for _, tt := range []struct {
+		question int
+		ips      []net.IPAddr
+		want     []string
+	}{
+		{2, ip("10.0.0.1"), []string{"name:80"}},
+		{3, ip("10.0.0.1"), []string{"name:80"}},
+		{4, ip("10.0.0.1"), []string{"name:80"}},
+		{3, ip("127.0.0.1"), nil},
+		{1, ip("169.254.169.254"), []string{"169.254.169.254:80"}},
+		{1, ip("10.0.0.1"), nil},
+	} {
+		if got := nameAddrs(Target{Question: tt.question, Kind: "address", Via: "tcp", Addr: "name:80"}, tt.ips, "80", nil); !slices.Equal(got, tt.want) {
+			t.Errorf("question %d at %v: %q; want %q", tt.question, tt.ips, got, tt.want)
 		}
 	}
 }
@@ -239,14 +367,14 @@ func TestAsk_MetadataNameDialledOnlyWhenLinkLocalOrListed(t *testing.T) {
 	}()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	// localhost resolves to loopback, which is no metadata address.
-	byName := Target{1, "address", "tcp", net.JoinHostPort("localhost", port)}
+	byName := Target{1, "address", "tcp", net.JoinHostPort("localhost", port), ""}
 	got := Ask(context.Background(), []Target{byName}, 2*time.Second)
 	if got[0].Connected {
 		t.Fatalf("a name resolving to loopback was dialled: %+v", got[0])
 	}
 	// The same listener named by its literal address, as an operator's
 	// probe address, is dialled.
-	literal := Target{1, "address", "tcp", ln.Addr().String()}
+	literal := Target{1, "address", "tcp", ln.Addr().String(), ""}
 	got = Ask(context.Background(), []Target{literal}, 2*time.Second)
 	if !got[0].Connected {
 		t.Fatalf("a literal address was not dialled: %+v", got[0])
@@ -256,12 +384,6 @@ func TestAsk_MetadataNameDialledOnlyWhenLinkLocalOrListed(t *testing.T) {
 	got = Ask(context.Background(), []Target{literal, byName}, 2*time.Second)
 	if !got[1].Connected {
 		t.Fatalf("a name resolving to a listed address was not dialled: %+v", got[1])
-	}
-	// A name for another question is dialled whatever it resolves to.
-	other := Target{2, "address", "tcp", net.JoinHostPort("localhost", port)}
-	got = Ask(context.Background(), []Target{other}, 2*time.Second)
-	if !got[0].Connected {
-		t.Fatalf("a question-2 name was not dialled: %+v", got[0])
 	}
 }
 

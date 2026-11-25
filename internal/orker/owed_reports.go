@@ -200,7 +200,7 @@ func (r *owedReports) await(ctx context.Context) error {
 		if len(labels) == 0 {
 			return nil
 		}
-		timer := time.NewTimer(time.Until(last))
+		timer := time.NewTimer(last.Sub(r.clock()))
 		select {
 		case <-zero:
 			timer.Stop()

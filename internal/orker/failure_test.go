@@ -31,19 +31,22 @@ var allReasonCodes = []string{
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonCommitStoreUnavailable, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused, ReasonResourceAdmissionMismatch,
 	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped, ReasonReportUndelivered, ReasonHeartbeatLost, ReasonAttemptStoreUnavailable, ReasonRuntimeStateUnknown,
+	ReasonRunContextUnavailable, ReasonRunContextMissing, ReasonRunContextInvalid,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
 	ReasonMetadataEndpointReachable, ReasonMetadataProbeFailed,
 	ReasonValuesContainSecret, ReasonMaskCapacityExceeded,
 	ReasonProfileNotOffered, ReasonProfileChanged, ReasonProfileDrifted, ReasonGPUUnitsUnavailable,
-	ReasonProfileContractNotServed, ReasonProfileDeclarationMismatch,
+	ReasonProfileContractNotServed, ReasonProfileDeclarationMismatch, ReasonGPUCountRequired,
+	ReasonPayloadEncryptionNotConfigured, ReasonPayloadKeyUnavailable, ReasonPayloadUnreadable,
 	eachlines.ReasonLineInvalid, eachlines.ReasonTooManyItems, eachlines.ReasonSourceTooLarge,
 	eachlines.ReasonBatchTooLarge, eachlines.ReasonExpansionFailed,
 	ReasonIdentityNotConfigured, ReasonIdentityNotServed,
 	identity.ReasonUnavailable, identity.ReasonEngineRefused, identity.ReasonAttemptNotHeld,
 	identity.ReasonNotAdmitted, identity.ReasonTaskNotAsAdmitted, identity.ReasonAttemptsExhausted,
 	identity.ReasonAttemptExpired, identity.ReasonRevoked, ReasonIdentitySpecSkew, ReasonIdentityClockSkew, ReasonIdentityRefreshFailed,
+	ReasonCommitEngineUnavailable, ReasonCommitEngineRefused, ReasonUpstreamNotRecorded, ReasonRequiredResultNotRecorded,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake

@@ -132,7 +132,9 @@ it.
 Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
 immutable activity completion and per-attempt records, each run tree's
 immutable run-context object, what its tasks may read about their runs, and
-a fan-out's immutable line indexes. It holds each
+a fan-out's immutable line indexes. The completion records of a run whose
+results the engine records (§4.1) lie under a prefix an Orker's credential
+may read and may not write. It holds each
 event source's document, keyed by its namespace and name, and the immutable
 service specs written under the source's id. It also holds what
 decides access and identity, where only an engine's credential should reach:
@@ -152,9 +154,11 @@ create-only object a slot, never changed; it moves nothing.
 
 Where task identity is on, every Orker's object-storage credential must
 reach only what an Orker writes (artifacts, logs, commits, attempt records,
-memos, probes): no definition, namespace, setting, schedule or event-source
-object (`metadata/schedules/`, `metadata/event-sources/`), nor anything of a
-run's saved state or under `metadata/identity/`. The store enforces that.
+memos, probes) and, to read and never write, the results an engine attested
+and the run contexts: no definition, namespace, setting, schedule or
+event-source object (`metadata/schedules/`, `metadata/event-sources/`), nor
+anything of a run's saved state or under `metadata/identity/`. The store
+enforces that.
 Each Orker tests its own credential at boot and hourly and reports the
 result, and the check never pauses an Orker; by default
 (`identity.unscoped_orkers: refuse`) the engine refuses a submission that
@@ -193,8 +197,9 @@ finished and been archived (`docs/STORAGE.md`, "Reclaiming space"). The GC
 starts in dry-run, never takes a lock, never delays a retirement, keeps between
 passes only a process-local low-water mark, a cursor and the write-once GC
 records, decides that a run is retired only from its current archive body, its
-namespace's retention, its resume record, its empty commit prefix and the
-cluster, never from a sidecar alone, and on the local backend reclaims nothing.
+namespace's retention, its resume record, its empty commit and attested
+prefixes and the cluster, never from a sidecar alone, and on the local backend
+reclaims nothing.
 
 ### 2.3 OCI owns computation
 
@@ -468,13 +473,36 @@ and terminally with `NAMESPACE_NOT_SERVED`, a `ContractViolation` that is
 never retried. The commit stays where it is, durable and undeleted, and its
 result never becomes pending again (§15).
 
+**A run whose results the engine records.** A run that holds a task
+identity, or belongs to a run tree in which one does, does not have its
+Orkers write `commit.json`. An attempt of such a run asks the engine
+before its container starts whether it may commit, so an attempt the
+engine would refuse runs nothing. After step 4 the Orker hands the
+manifest to the engine, which writes it, create-only, where no Orker's
+storage credential can write, and only for an attempt the cluster
+reports as held by the caller, at the pool the run was admitted with for
+that task, dispatched as it was admitted. That write is step 5 and the
+completion boundary, and "a valid `commit.json`" then means one an
+engine wrote: an Orker adopts, takes a memo hit from, and stages a
+container task's results from such records only, and ignores any other
+object. An engine that cannot be asked is treated as object storage that
+cannot be written: the attempt waits for a time fixed when the run was
+submitted, then looks once more for a record the engine may have written
+without being heard, and only if there is none fails
+`InfrastructureError` (`COMMIT_ENGINE_UNAVAILABLE`) and is retried under
+its policy. It never reports success without the record and never writes
+around the engine. A result uploaded and not yet recorded when its Orker
+is lost was not committed: the retry runs the container again.
+
 A cached task's memo is advisory. A hit writes this run's own `commit.json`
 referencing the source commit's content-addressed objects and starts no
 container; every doubt about a memo (unreadable, mismatched, missing object,
 timeout) is a miss that runs the task; the memo step fails an attempt only
 when its own commit write fails. Deleting any memo changes no result.
 Caching is the author's assertion that a task is safe to reuse; OrkStack
-cannot verify it.
+cannot verify it. In a run whose results the engine records, a hit is taken
+only from a result an engine recorded at the same pool; any other memo is a
+miss.
 
 An accepted execution must not disappear, with the one exception §15 states. A
 durably committed activity result must not become pending again. Object-storage
@@ -538,7 +566,7 @@ handle cancellation
 wait for the process
 validate outputs
 upload artifacts
-write the completion manifest
+write the completion manifest, or hand it to the engine (§4.1)
 return a compact ActivityResult
 cleanup
 ```
@@ -630,7 +658,11 @@ A GPU reaches a task only as a counted, exclusive unit of a `gpu` profile,
 through CDI. A CDI spec is operator data read only from directories root
 alone can write, and its owners hold the trust of the host's root; it may
 pass a unit's device nodes and groups only, and a hook, an environment
-variable or a mount in it is refused. The spec bytes and device nodes of a
+variable or a mount in it is refused. The one exception is an `nvidia.com`
+spec (experimental, proven by emulation and not on NVIDIA hardware), admitted
+only under the compiled grammar of the hooks, env and mounts NVIDIA's
+generator writes, and only for a hook binary that is a row of the compiled
+table of toolkit builds. The spec bytes and device nodes of a
 profile the Orker audited stay fixed for its lifetime: any change is detected
 before a container is started, is drift, and is never adopted; only a restart
 audits again. No device grants a capability or `--privileged`, and the
@@ -886,6 +918,11 @@ internal never appears on any of those surfaces.
   status is `PAUSED`. A pause lasts at most its timeout; a run still paused
   then fails `RUN_PAUSE_TIMEOUT`, or keeps its own cause if it was already
   failing.
+- **Engine-recorded result** means the completion record of a task of a
+  run that holds a task identity anywhere in its run tree: written by the
+  engine at the request of the Orker that holds the attempt (§4.1), never
+  by an Orker. User-facing text says a run's results are "recorded by the
+  engine".
 - **Cached task** means a task declaring `cache:` with `enabled: true`. A
   **memo** is one stored pointer from a memo key to a `SUCCEEDED` commit
   (§4.1); a memo step's outcome is a **hit**, **miss** or **bypassed**.
@@ -938,7 +975,9 @@ internal never appears on any of those surfaces.
   and to the audit trail.
 - **Origin** means the immutable record of what started a run: a kind
   (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), the
-  originating object's id, a caller-supplied reference and the principal.
+  originating object's id, a caller-supplied reference and the principal. A
+  child's origin also names its parent task, the parent's and root's Orkflow,
+  and the root's origin.
 - **Root run** means the run at the top of a composed chain, the one that
   started it. A child run's origin names it beside its parent
   (`origin.root_run_id`), copied down at each child start. A top-level run holds
@@ -1053,7 +1092,7 @@ internal never appears on any of those surfaces.
   | store outage | the Orker, after consecutive failed object-storage checks | the Orker, after consecutive good ones | yes |
   | stopping | the Orker, on its first stop signal; from then it accepts no new task, pin or pin creation, and what its open polls still deliver runs in flight | the process's exit | yes, until the process exits |
   | profile drift | the Orker, when a profile no longer matches what it audited, or the GPU host lock directory was replaced | a restart | no |
-  | profile unavailable | the Orker, when a profile's devices or units are absent, or the GPU host lock is held by another process, or fewer usable GPU units than a task may hold | the Orker, after consecutive good checks, or once the lock is held or the units are back | yes |
+  | profile unavailable | the Orker, when a profile's devices or units are absent, or the GPU host lock is held by another process, or fewer usable GPU units than a task may hold, or the container engine starting none of a gpu profile's unit probes, three passes in a row | the Orker, after consecutive good checks, or once the lock is held or the units are back, or once one starts | yes |
   | stuck service | the Orker, when a service container it stopped is not gone a minute after SIGKILL | the Orker, once the container is gone | no |
 
   An event-source instance is the one thing in flight a cordon does not
@@ -1277,7 +1316,9 @@ where the path first diverges (`lean-event-path`, `run-history-guard`,
 `fairness-pin-creation`, `retry-max-interval`, `task-publish-window`,
 `emit-past-cancel`, `interruption-retry`, `schedule-fire-concurrency`,
 `run-pause`, `pause-carry`, `pause-cascade`, `pause-deferred`,
-`pausable-pin-timeout`), so a
+`pausable-pin-timeout`, `run-resume`: asked by a reset run only, and not
+compatibility but a guard for runs of this release, since a run reset by
+hand past R replays a prefix with no marker), so a
 history recorded before the gate replays its `DefaultVersion` branch; the
 AutoUpgrade workflows gate every later change the same way under a prefix of
 their own (`concurrency-gate-*`, `force-cancel-*`), each with its recorded
@@ -1513,6 +1554,30 @@ includes:
   `FAILED` with the original reason; an operator cancel starts none and stops
   running ones; an Orker killed under a running handler retries it per its
   own policy;
+- an engine unreachable when an attempt of a run whose results the engine
+  records has finished its container: inside the wait nothing fails and
+  the result is recorded when an engine answers; past it the attempt
+  fails `COMMIT_ENGINE_UNAVAILABLE`, is retried under its policy, and no
+  result is recorded around the engine; a cancel during the wait ends the
+  attempt cancelled;
+- an Orker killed after its uploads and before the engine recorded the
+  result: the retry runs the container again; killed after the record
+  and before Temporal's completion: the retry adopts it and no container
+  runs;
+- a result or a memo written to the store by anything but an engine, for
+  a task of such a run, before the task runs, between two tasks and
+  under a cached task: never adopted, never hit, never staged;
+- an Orker of another pool asking the engine to record a result for an
+  attempt it took from the cluster: refused and recorded, and nothing is
+  written; a task of such a run completed on the cluster with no record:
+  its dependents fail explicitly, naming it;
+- an engine lost between writing a record and answering: the Orker's
+  repeat is answered with that record, and an attempt that never hears an
+  answer finds the record before it fails; two attempts of one task
+  asking at once: one record;
+- an Orker whose role may not commit at its pool: the run is refused at
+  submit, and an attempt that reaches such an Orker all the same is
+  refused before any container starts;
 - a run continuing as new with tasks still running: no running task is
   cancelled or dispatched twice, the switch happens only after all finish, and
   the stream has no gap or duplicate; a fan-out whose items outlast any fixed
@@ -1616,7 +1681,9 @@ includes:
   whose tasks have long cancellation graces, force-canceled, ends
   `RUN_CANCELED` on its own path and is never terminated; an engine killed
   between the termination and the terminal event still publishes the event
-  once.
+  once;
+- one trace id across a tree, a continuation and a fire; trust setting off → new
+  trace + link.
 
 Scale and soak tests leave the per-merge proof only through
 `scripts/proof-nightly-tests.txt`, and Playwright specs through its spec-side
@@ -1625,7 +1692,8 @@ the merge-gate tests or specs that cover the same behaviour at a smaller size
 or by another route, and the date the user approved it. A test or spec is
 listed only when such coverage exists, and the lists change only with the
 user's approval. Every other test and spec, and every scenario above, except
-as the last bullet states, stays in the merge gate: the run page at the task
+as the last bullet states and except the GPU-host lists
+(`scripts/proof-gpu-tests.txt`, `scripts/proof-gpu-specs.txt`), stays in the merge gate: the run page at the task
 ceiling is proven there by `ui/e2e/run-page-reduced-ceiling.spec.ts`, its
 measurement at a ceiling lowered to 1,000, and at the 4,000-task default by
 the nightly tier. A full proof records each listed test, and each test of a
@@ -1635,7 +1703,8 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
-The tests `scripts/proof-gpu-tests.txt` lists need the GPU host it names: a
+The tests `scripts/proof-gpu-tests.txt` lists, and the Playwright specs of its
+twin `scripts/proof-gpu-specs.txt`, need the GPU host it names: a
 proof without `ORK_PROOF_GPU_HOST=1` records them as `host-deferred`; a proof of
 the **GPU-host tier** (a full proof, or the GPU gate alone, `make proof-gpu`,
 run on that host with the flag) runs them; and a change to a path the list
@@ -1693,7 +1762,13 @@ with no inputs, ending where `examples/README.md` says. Those examples reach
 `httpbin.org` and `github.com`, so no proof runs that job and `release.yml` does
 not require it: the merge gate runs them against stand-ins
 (`TestIntegration_ExamplesRunWithNoInputs`), and a failure of the job is a
-regression on `main` unless its log shows one of those services was down.
+regression on `main` unless its log shows one of those services was down. It
+holds the table of NVIDIA's `nvidia-cdi-hook` builds an Orker accepts
+(`internal/orker/cdi_hook_table.go`) to NVIDIA's signed package repository
+as a job of its own too, `cdi-hook-table`
+(`go run ./internal/orker/cmd/gencdihooks -check`), because it reads that
+repository over the network: a toolkit release at or above the floor that the
+table lacks, or a row that no longer derives, fails that run.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) is a
 regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or
@@ -1709,7 +1784,7 @@ lanes nor its vulnerability scan (`vuln`, `vuln-js` and `vuln-images`), so a
 release is not tagged while either is red, and `release.yml` checks it: before
 it asks for the approval, it refuses a commit whose latest completed nightly on
 `main` did not pass (its proof, each of the scan's three jobs,
-`release-notes` and `quickstart`), or that no nightly measured, waiting a bounded time for one
+`release-notes`, `cdi-hook-table` and `quickstart`), or that no nightly measured, waiting a bounded time for one
 still running. (`make
 release-tag`, which publishes nothing, leaves it a rule.) A nightly's verdict
 is its `proof.json`,
@@ -1739,7 +1814,8 @@ cannot be queued is dropped; telemetry can never fail a task or a run.
 Operational endpoints (`/healthz`, `/readyz`, `/metrics`, `/debug/pprof/`)
 live on `ORK_ADMIN_ADDR`, never the API port. Workflow code never imports
 OpenTelemetry — instrumentation is a side effect, and `RunWorkflow` must stay
-a pure function of its history (§2). Activity authors need no observability
+a pure function of its history (§2). Children continue the parent's trace from
+plan-pinned context. Activity authors need no observability
 SDK; activity logs remain stdout/stderr.
 
 The shipped observability kit ingests metrics only by OTLP push and scrapes
@@ -2109,8 +2185,8 @@ duration. A listed test without an outcome fails the gate. In the full tier,
 test the nightly list names, or a test of a spec file the nightly spec list
 names, and in every other tier it fails the gate.
 `host-deferred` is legal in the full, nightly and pre-release tiers only for
-an entry both the base's and the tree's `scripts/proof-gpu-tests.txt` carry;
-in the GPU-host tier it fails the gate. With `ORK_PROOF_GPU_HOST=1` a missing
+an entry both the base's and the tree's `scripts/proof-gpu-tests.txt`
+(or `proof-gpu-specs.txt`) carry; in the GPU-host tier it fails the gate. With `ORK_PROOF_GPU_HOST=1` a missing
 GPU device, spec or lock group exits 77, never `host-deferred`, and
 `proof.json` records whether the GPU gate ran. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
@@ -2237,6 +2313,7 @@ internal/payloadcrypt/ Payload encryption: the sealed envelope, a run's key in i
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
+internal/runspan/      A run span's id and a child run's trace context, as string work with no OpenTelemetry
 internal/runstatus/    The one classifier of a run's status, live or terminal, every reader asks
 internal/stablejson/   The JSON bytes OrkStack hashes, stores or hands a container, written with encoding/json/v2
 internal/typeid/       The time-ordered ids a run id and a minted Orkflow version are made of
@@ -2339,7 +2416,7 @@ Do not build:
 - a plugin marketplace;
 - a code plugin or extension point; profile kinds (`devices`, `gpu`) are a compiled-in closed set
   (§6) and a profile is operator data, so a new kind is a change to this file
-  and a release;
+  and a release; the NVIDIA hook grammar is a closed set too, never an extension point;
 - a business-process forms platform;
 - hundreds of SaaS connectors;
 - a custom scripting language;

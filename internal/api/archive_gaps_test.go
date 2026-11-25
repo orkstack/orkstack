@@ -90,7 +90,7 @@ func TestReplayArchivedEvents_SendsEventsBeforeTheGapThenFails(t *testing.T) {
 	}
 }
 
-func TestEvidenceExport_GappedArchiveIsSchemaTwoWithEventGaps(t *testing.T) {
+func TestEvidenceExport_GappedArchiveNamesItsEventGaps(t *testing.T) {
 	f := newEvidenceFixture(t)
 	run := &orkstackv1.Run{Id: "ork-ev-gap", OrkflowName: "evidence", OrkflowVersion: "0.1.0",
 		OrkflowDefinitionDigest: f.digest, Status: orkstackv1.Status_STATUS_SUCCEEDED,
@@ -106,9 +106,9 @@ func TestEvidenceExport_GappedArchiveIsSchemaTwoWithEventGaps(t *testing.T) {
 	must.OK(t, err)
 	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-gap"})
 	m := r.manifest
-	if m.SchemaVersion != evidence.SchemaVersionEventGaps || len(m.EventGaps) != 1 ||
+	if m.SchemaVersion != 3 || len(m.EventGaps) != 1 ||
 		m.EventGaps[0] != (evidence.EventGap{First: 2, Last: 8, Reason: "segment object missing"}) {
-		t.Fatalf("manifest schema %d gaps %+v, want 2 with 2–8", m.SchemaVersion, m.EventGaps)
+		t.Fatalf("manifest schema %d gaps %+v, want 3 with 2–8", m.SchemaVersion, m.EventGaps)
 	}
 	if run := memberAt(t, m, "run.jsonl"); run.State != evidence.StatePresent {
 		t.Fatalf("run.jsonl = %+v, want present", run)
@@ -122,12 +122,12 @@ func TestEvidenceExport_GappedArchiveIsSchemaTwoWithEventGaps(t *testing.T) {
 	}
 }
 
-func TestEvidenceExport_UngappedArchiveStaysSchemaOne(t *testing.T) {
+func TestEvidenceExport_UngappedArchiveNamesNoGap(t *testing.T) {
 	f := newEvidenceFixture(t)
 	f.succeeded("ork-ev-whole")
 	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-whole"})
-	if r.manifest.SchemaVersion != evidence.SchemaVersion || r.manifest.EventGaps != nil {
-		t.Fatalf("schema %d gaps %+v, want 1 and none", r.manifest.SchemaVersion, r.manifest.EventGaps)
+	if r.manifest.SchemaVersion != 3 || r.manifest.EventGaps != nil {
+		t.Fatalf("schema %d gaps %+v, want 3 and none", r.manifest.SchemaVersion, r.manifest.EventGaps)
 	}
 	document, err := r.manifest.MarshalJSON()
 	must.OK(t, err)

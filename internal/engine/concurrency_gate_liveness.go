@@ -86,6 +86,8 @@ type gatePassOutcome struct {
 	Marked   int
 	Stalled  int
 	Errors   int
+	// Reclaimed counts the released entries by limit and why.
+	Reclaimed map[gateReclaimKey]int
 }
 
 // applyFindings applies one pass's findings (§5.1.5, §20 CR-H2): a run gone,
@@ -99,15 +101,19 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 	for _, f := range findings {
 		byRun[f.Run] = f
 	}
-	var out gatePassOutcome
+	out := gatePassOutcome{Reclaimed: map[gateReclaimKey]int{}}
 	confirmed := 0
 	type ref struct {
 		run     string
 		seqBase int64
 		taskIx  int
 		n       int64
+		why     gateReclaimKey
 	}
 	var drop []ref
+	take := func(e *gateEntry, outcome string) {
+		drop = append(drop, ref{e.Run, e.SeqBase, e.TaskIx, e.N, gateReclaimKey{gateLabel(g, e.LabelIx), outcome}})
+	}
 	visit := func(e *gateEntry, held bool) {
 		f, ok := byRun[e.Run]
 		if !ok {
@@ -117,8 +123,14 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 		case f.Err != "":
 			out.Errors++
 			return
-		case f.NotFound || !f.Open, f.MemoSeq > e.SeqBase:
-			drop = append(drop, ref{e.Run, e.SeqBase, e.TaskIx, e.N})
+		case f.NotFound:
+			take(e, gateReclaimNotFound)
+			return
+		case !f.Open:
+			take(e, gateReclaimClosed)
+			return
+		case f.MemoSeq > e.SeqBase:
+			take(e, gateReclaimStale)
 			return
 		}
 		e.Stalled = held && !f.StuckSince.IsZero() && now.Sub(f.StuckSince) >= g.Tunables.StalledAfter
@@ -134,7 +146,7 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 		if !e.MissingSince.IsZero() {
 			if confirmed < g.Tunables.TaskConfirmBatch {
 				confirmed++
-				drop = append(drop, ref{e.Run, e.SeqBase, e.TaskIx, e.N})
+				take(e, gateReclaimMissingSlot)
 			}
 			return
 		}
@@ -156,6 +168,7 @@ func (g *gateState) applyFindings(findings []gateRunFinding, now time.Time) gate
 	for _, r := range drop {
 		if g.release(r.run, r.seqBase, r.taskIx, r.n, now) {
 			out.Released++
+			out.Reclaimed[r.why]++
 		}
 	}
 	g.LastPassAt = now

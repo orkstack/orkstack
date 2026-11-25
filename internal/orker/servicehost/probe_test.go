@@ -67,6 +67,9 @@ func TestParseProbeAnswer(t *testing.T) {
 		"bad via":               `{"q":1,"target":"a","kind":"address","via":"udp","connected":false}`,
 		"control in text":       "{\"q\":1,\"target\":\"a\\u001b\",\"kind\":\"address\",\"via\":\"tcp\",\"connected\":false}",
 		"answered, unconnected": `{"q":3,"target":"a","kind":"service","via":"plaintext","connected":false,"status":"OK"}`,
+		"a name on an address":  `{"q":2,"target":"a:1","kind":"address","via":"tcp","connected":false,"name":"n"}`,
+		"a long name":           `{"q":3,"target":"a:1","kind":"service","via":"tls","connected":false,"name":"` + strings.Repeat("a", 254) + `"}`,
+		"connected, unresolved": `{"q":2,"target":"a:1","kind":"address","via":"tcp","connected":true,"unresolved":true}`,
 		"not JSON":              `q=1`,
 	} {
 		if _, err := ParseProbeAnswer([]byte(line)); err == nil {
@@ -131,5 +134,33 @@ func TestJudgeProbe_APortIsJudgedByBothLegs(t *testing.T) {
 	lone := Observation{Question: QuestionCluster, Target: "172.18.0.1:7234", Kind: TargetService, Via: ViaPlaintext, Connected: true, Status: "Unavailable"}
 	if f := JudgeProbe(append([]Observation{lone}, others...), QuestionMetadata, QuestionLoopback, QuestionCluster, QuestionCanary); f.Fit {
 		t.Error("an unanswered plaintext leg on a port with no certificate demand was judged closed")
+	}
+}
+
+// A port is asked under several names, and each TLS leg is judged by itself:
+// one that demands a certificate under one name is open if it serves under
+// another. A plaintext leg nobody answered is the same TLS port refusing
+// plaintext, whichever name the demand was seen under.
+func TestJudgeProbe_APortUnderSeveralNames(t *testing.T) {
+	leg := func(via, name, tls, status string) Observation {
+		return Observation{Question: 3, Target: "10.0.0.1:7233", Kind: TargetService, Via: via, Connected: true, TLS: tls, Status: status, Name: name}
+	}
+	demand := leg(ViaTLS, "temporal", TLSClientCertRequire, "")
+	for _, tt := range []struct {
+		name string
+		obs  []Observation
+		fit  bool
+	}{
+		{"an ingress that knows one name", []Observation{demand, leg(ViaTLS, "", TLSFailed, ""),
+			leg(ViaPlaintext, "temporal", "", "Unavailable"), leg(ViaPlaintext, "", "", "Unavailable")}, true},
+		{"a default that serves anyone", []Observation{demand, leg(ViaTLS, "", TLSOK, "OK")}, false},
+		{"a plaintext answer under no name", []Observation{demand, leg(ViaPlaintext, "", "", "OK")}, false},
+		{"no certificate demanded at all", []Observation{leg(ViaTLS, "temporal", TLSFailed, ""), leg(ViaPlaintext, "", "", "Unavailable")}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if f := JudgeProbe(tt.obs, 3); f.Fit != tt.fit {
+				t.Fatalf("%+v; want fit %v", f, tt.fit)
+			}
+		})
 	}
 }

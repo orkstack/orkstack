@@ -27,9 +27,12 @@ import (
 // daemon that is slow to start a container does), timeoutruns (its content N:
 // the first N `run` invocations answer at once with the daemon's own deadline
 // error, as a daemon whose containerd cannot start the shim does), runother (a
-// refusal that is neither a bind nor a deadline), runexit (the container ran
-// and exited 3), runfailsrc (a refusal that quotes the bind source path),
-// inspecthang (`image inspect` hangs for 30 s), rmfailall (every `rm` is
+// refusal that is neither a bind nor a deadline), rununreachable (the CLI found
+// no daemon), runsays (what the container writes first on its stdout), runexit
+// (the container ran and exited 3), runfailsrc (a refusal that quotes the bind source path),
+// inspecthang (`image inspect` hangs for 30 s), inspectunreachable (no daemon
+// answers an `image inspect`), imagesunreachable (no daemon
+// answers an inspect or a pull of an image), rmfailall (every `rm` is
 // refused), noise (every command first writes a line of its own on stderr, as
 // the podman-docker shim does) and killnotrunning (`kill` answers that the
 // container is not running). For the Podman dialects: podmanengine
@@ -85,18 +88,22 @@ func newCountingDocker(t *testing.T) *countingDocker {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 S=` + shellQuote(dir) + `
+hang() { echo >> "$S/hangs"; exec sleep 30; }
 echo "$*" >> "$S/calls"
 if [ -p "$S/live" ]; then echo "$*" > "$S/live"; fi
 if [ -e "$S/noise" ]; then echo "Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg." >&2; fi
 case "$1" in
   image)
-    if [ -e "$S/inspecthang" ]; then exec sleep 30; fi
+    if [ -e "$S/inspecthang" ]; then hang; fi
+    if [ -e "$S/inspectunreachable" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
+    if [ -e "$S/imagesunreachable" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1; fi
     if [ -e "$S/present" ]; then
       echo '{"Id":"sha256:abc","Os":"linux","Architecture":"amd64"}'
       exit 0
     fi
     echo "Error: No such image" >&2; exit 1 ;;
   pull)
+    if [ -e "$S/imagesunreachable" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1; fi
     if [ -e "$S/pullfail" ]; then echo "pull access denied" >&2; exit 1; fi
     touch "$S/present"; exit 0 ;;
   inspect)
@@ -114,7 +121,7 @@ case "$1" in
     esac ;;
   create)
     if [ -e "$S/createfail" ]; then echo "Error response from daemon: the create was refused" >&2; exit 125; fi
-    if [ -e "$S/createhang" ]; then exec sleep 30; fi
+    if [ -e "$S/createhang" ]; then hang; fi
     echo cid-0123 ;;
   kill)
     if [ -e "$S/killnotrunning" ]; then echo "Error response from daemon: container $4 is not running" >&2; exit 1; fi
@@ -159,21 +166,24 @@ case "$1" in
     exit 0 ;;
   version)
     if [ -e "$S/daemongone" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
-    if [ -e "$S/versionhang" ]; then exec sleep 30; fi
+    if [ -e "$S/versionhang" ]; then hang; fi
     if [ -e "$S/versionfail" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
     case "$3" in
       *Components*) if [ -e "$S/podmanengine" ]; then echo '[{"Name":"Podman Engine","Version":"5.8.8"}]'; else echo '[{"Name":"Engine","Version":"27.0.1"}]'; fi ;;
       *) echo 27.0.1 ;;
     esac ;;
   info)
-    if [ -e "$S/infohang" ]; then exec sleep 30; fi
+    if [ -e "$S/infohang" ]; then hang; fi
     if [ -e "$S/infofail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
     case "$3" in
       *Host.Security.Rootless*) if [ -e "$S/rootless" ]; then cat "$S/rootless"; else echo false; fi ;;
       *DockerRootDir*|*Store.GraphRoot*)
         if [ -e "$S/enginerootfail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
-        if [ -e "$S/engineroothang" ]; then exec sleep 30; fi
+        if [ -e "$S/engineroothang" ]; then hang; fi
         if [ -e "$S/engineroot" ]; then cat "$S/engineroot"; else echo /var/lib/docker; fi ;;
+      *CDISpecDirs*) if [ -e "$S/cdidirsfail" ]; then echo "Error: template parsing error" >&2; exit 64; fi; if [ -e "$S/cdidirsnull" ]; then echo null; elif [ -e "$S/cdidirs" ]; then cat "$S/cdidirs"; else echo '["/etc/cdi","/var/run/cdi"]'; fi ;;
+      *OCIRuntime*) if [ -e "$S/defaultruntime" ]; then cat "$S/defaultruntime"; else echo '{"name":"crun","path":"/usr/bin/crun"}'; fi ;;
+      *DefaultRuntime*) if [ -e "$S/defaultruntime" ]; then cat "$S/defaultruntime"; else echo '{"name":"runc","runtimes":{"runc":{"path":"runc"}}}'; fi ;;
       *) echo "[name=seccomp,profile=builtin]" ;;
     esac ;;
   run)
@@ -184,7 +194,7 @@ case "$1" in
         if [ -e "$S/metaout" ]; then cat "$S/metaout"; else echo '@@done'; fi
         exit 0 ;;
       *ork.task=sigprobe*)
-        if [ -e "$S/sigrunslow" ]; then exec sleep 30; fi
+        if [ -e "$S/sigrunslow" ]; then hang; fi
         if [ -e "$S/sigruntimeout" ]; then
           echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
         fi
@@ -213,6 +223,8 @@ case "$1" in
     touch "$S/runstarted"
     if [ -e "$S/runfail" ]; then echo "docker: Error response from daemon: bind source path does not exist" >&2; exit 125; fi
     if [ -e "$S/runother" ]; then echo "docker: Error response from daemon: no space left on device" >&2; exit 125; fi
+    if [ -e "$S/rununreachable" ]; then echo "docker: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 125; fi
+    if [ -e "$S/runsays" ]; then cat "$S/runsays"; echo; fi
     if [ -e "$S/runexit" ]; then exit 3; fi
     if [ -e "$S/runfailsrc" ]; then
       src=""
@@ -222,7 +234,7 @@ case "$1" in
     if [ -e "$S/timeoutruns" ] && [ "$n" -le "$(cat "$S/timeoutruns")" ]; then
       echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
     fi
-    if [ -e "$S/slowruns" ] && [ "$n" -le "$(cat "$S/slowruns")" ]; then exec sleep 30; fi
+    if [ -e "$S/slowruns" ] && [ "$n" -le "$(cat "$S/slowruns")" ]; then hang; fi
     in=""; out=""; last=""
     for a in "$@"; do
       case "$a" in
@@ -248,6 +260,14 @@ esac
 	fake := &countingDocker{t: t, dir: dir, bin: bin}
 	fake.set("facts", GoodBootProbeFacts(SecurityPolicyFromEnv()))
 	return fake
+}
+
+// slow makes runtime's calls to the stand-in end where the stand-in holds them
+// (inspecthang, slowruns and the like), as a budget that ran out ends them, and
+// nowhere else.
+func (c *countingDocker) slow(runtime *DockerRuntime) *DockerRuntime {
+	ExpireOnHang(runtime, filepath.Join(c.dir, "hangs"))
+	return runtime
 }
 
 func (c *countingDocker) set(flag, content string) {

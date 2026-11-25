@@ -17,7 +17,8 @@ declare module 'bun' {
 }
 
 declare module 'bun:test' {
-	export function test(name: string, fn: () => void | Promise<void>): void;
+	// The third argument is the test's own timeout in milliseconds.
+	export function test(name: string, fn: () => void | Promise<void>, timeoutMs?: number): void;
 	// A second argument is the message a failure prints (which shape, which
 	// edge), as Bun's own expect takes.
 	export function expect<T>(value: T, message?: string): {

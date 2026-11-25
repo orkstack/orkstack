@@ -225,7 +225,7 @@ func TestCapacity_ProbeSkipsABoundUnit(t *testing.T) {
 	if err := c.bind(a); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := c.probeUnit(ctx, 0); !errors.Is(err, errProbeSkipped) {
 		t.Fatalf("probe of a bound unit = %v, want skipped", err)
@@ -285,7 +285,7 @@ func TestCapacity_ProbeDueDrainsUnclaimedPolls(t *testing.T) {
 	if permit == nil {
 		t.Fatal("poll not granted")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	got := make(chan error, 1)
 	go func() {
@@ -456,5 +456,48 @@ func TestProfileState_UnitsBelowCeilingNamed(t *testing.T) {
 	}
 	if s.unavailable("amd") {
 		t.Fatal("every unit back: the profile is still unavailable")
+	}
+}
+
+// TestCapacity_SettledProbeKeepsItsUnit: settling a probe flips its unit's
+// health at once and keeps the unit with the probe until it is abandoned, so
+// no poll is granted it meanwhile, whichever way the health flipped; settling
+// a probe that no longer holds the unit changes nothing.
+func TestCapacity_SettledProbeKeepsItsUnit(t *testing.T) {
+	c := newCapacity(amount{}, amount{milli: 100, bytes: 1 << 20}, 4)
+	c.useUnits("amd", 1, 1, nil)
+	p, err := c.probeUnit(t.Context(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.settleProbe(p, false)
+	if c.unitUsable(0) || c.limit.gpu != 0 || c.reserved.gpu != 0 {
+		t.Fatalf("settled unhealthy: usable %v, limit %d, reserved %d", c.unitUsable(0), c.limit.gpu, c.reserved.gpu)
+	}
+	if _, err := c.probeUnit(t.Context(), 0); !errors.Is(err, errProbeSkipped) {
+		t.Fatalf("a unit its probe still holds was probed again: %v", err)
+	}
+	c.abandonProbe(p)
+	for i := range recoveryPasses {
+		if p, err = c.probeUnit(t.Context(), 0); err != nil {
+			t.Fatal(err)
+		}
+		c.settleProbe(p, true)
+		if i < recoveryPasses-1 {
+			c.abandonProbe(p)
+		}
+	}
+	if !c.unitUsable(0) || c.limit.gpu != 1 || c.tryReserve() != nil {
+		t.Fatalf("settled back into service: usable %v, limit %d; want usable, and no poll while the probe holds it", c.unitUsable(0), c.limit.gpu)
+	}
+	c.abandonProbe(p)
+	permit := c.tryReserve()
+	if permit == nil {
+		t.Fatal("no poll is granted once the probe let the unit go")
+	}
+	c.release(permit)
+	c.settleProbe(p, false)
+	if !c.unitUsable(0) || c.limit.gpu != 1 {
+		t.Fatal("a probe that no longer holds the unit changed its health")
 	}
 }

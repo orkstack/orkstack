@@ -165,19 +165,44 @@ func TestVerify_FailsByName(t *testing.T) {
 			}
 			t.Logf("%s: %+v", tc.name, report.Failures)
 			accounted := len(report.Verified) + len(report.Reclaimed) + len(report.Unrecorded) +
-				len(report.Rejected) + len(report.Failures)
+				len(report.Rejected) + len(report.Withheld) + len(report.Failures)
 			if accounted != len(f.manifest.Members) {
 				t.Errorf("%d of %d manifest members accounted for", accounted, len(f.manifest.Members))
 			}
 		})
 	}
 
-	t.Run("schema version 2", func(t *testing.T) {
+	// What the exporter might not read is a finding, as reclaimed bytes are.
+	t.Run("withheld", func(t *testing.T) {
+		f := newFixture()
+		f.manifest.Members = append([]Member(nil), f.manifest.Members...)
+		var path string
+		for i, member := range f.manifest.Members {
+			if member.Kind == KindSource {
+				path = member.Path
+				f.manifest.Members[i] = Member{Path: path, Kind: KindSource, Origin: member.Origin,
+					State: StateWithheld, Reason: ReasonDefinitionNotReadable}
+			}
+		}
+		var entries []tarEntry
+		for _, e := range fixtureEntries(t, f) {
+			if e.name != path {
+				entries = append(entries, e)
+			}
+		}
+		report, err := Verify(bytes.NewReader(buildTar(t, entries)))
+		must.OKf(t, err, "Verify")
+		if !report.OK() || len(report.Withheld) != 1 || report.Withheld[0].Path != path || CountMembers(f.manifest.Members).Withheld != 1 {
+			t.Fatalf("withheld = %+v, failures = %+v", report.Withheld, report.Failures)
+		}
+	})
+
+	t.Run("a later schema version", func(t *testing.T) {
 		entries := fixtureEntries(t, f)
-		entries[0].body = bytes.Replace(entries[0].body, []byte(`"schema_version": 1`), []byte(`"schema_version": 2`), 1)
+		entries[0].body = bytes.Replace(entries[0].body, []byte(`"schema_version": 3`), []byte(`"schema_version": 4`), 1)
 		_, err := Verify(bytes.NewReader(buildTar(t, entries)))
-		if err == nil || !strings.Contains(err.Error(), "schema_version 2") {
-			t.Fatalf("Verify = %v, want an error naming schema_version 2", err)
+		if err == nil || !strings.Contains(err.Error(), "schema_version 4") {
+			t.Fatalf("Verify = %v, want an error naming schema_version 4", err)
 		}
 	})
 }

@@ -199,8 +199,8 @@ namespaces").
 | Key | Value | Absent means |
 | --- | --- | --- |
 | `url` | absolute `http(s)` URL, **required** | — |
-| `events` | list of event names | every run transition |
-| `orkflow` | slug | every Orkflow |
+| `events` | list of event names | the run's lifecycle: start, endings and resumption |
+| `orkflow` | slug: the namespace's own Orkflow, never another's shared one | every Orkflow |
 | `task` | slug; needs a `TASK_*` event | every task |
 | `secret_env` | environment-variable name | a generated signing secret, disclosed once |
 
@@ -350,7 +350,7 @@ an unpinned version as `current` (unquoted); lists as `[a, b]`; maps as
 absent; input as compact JSON with sorted keys in a plan (an export writes
 input as a YAML mapping, keys sorted, quoting any string a YAML reader could
 read as something else); events in lifecycle order,
-`[]` meaning every run transition.
+`[]` meaning the run's lifecycle.
 
 ### The digest
 

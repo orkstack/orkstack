@@ -58,16 +58,21 @@ func (f *fakeContainer) Remove(context.Context) error {
 	return f.removeErr
 }
 
-var quick = StopTimes{Grace: 50 * time.Millisecond, Stuck: 50 * time.Millisecond}
+// A bound the container is meant to overrun is short; one it must beat is only
+// there to end a hang.
+const (
+	overrun = 50 * time.Millisecond
+	hang    = 30 * time.Second
+)
 
 func TestStop_NoticeThenSequence(t *testing.T) {
 	polite := newFake(syscall.SIGTERM)
-	res, err := Stop(context.Background(), polite, quick)
+	res, err := Stop(context.Background(), polite, StopTimes{Grace: hang, Stuck: hang})
 	if err != nil || res.Killed || !polite.removed || len(polite.signals) != 1 {
 		t.Fatalf("a container that exits on SIGTERM: %+v, %v, signals %v", res, err, polite.signals)
 	}
 	stubborn := newFake(syscall.SIGKILL)
-	res, err = Stop(context.Background(), stubborn, quick)
+	res, err = Stop(context.Background(), stubborn, StopTimes{Grace: overrun, Stuck: hang})
 	if err != nil || !res.Killed || !stubborn.removed || len(stubborn.signals) != 2 || stubborn.signals[1] != syscall.SIGKILL {
 		t.Fatalf("a container that ignores SIGTERM: %+v, %v, signals %v", res, err, stubborn.signals)
 	}
@@ -75,12 +80,12 @@ func TestStop_NoticeThenSequence(t *testing.T) {
 
 func TestStop_StuckIsReported(t *testing.T) {
 	unkillable := newFake()
-	if _, err := Stop(context.Background(), unkillable, quick); !errors.Is(err, ErrStopStuck) {
+	if _, err := Stop(context.Background(), unkillable, StopTimes{Grace: overrun, Stuck: overrun}); !errors.Is(err, ErrStopStuck) {
 		t.Fatalf("a container that never exits: %v", err)
 	}
 	unremovable := newFake(syscall.SIGTERM)
 	unremovable.removeErr = errors.New("device busy")
-	if _, err := Stop(context.Background(), unremovable, quick); !errors.Is(err, ErrStopStuck) {
+	if _, err := Stop(context.Background(), unremovable, StopTimes{Grace: hang, Stuck: hang}); !errors.Is(err, ErrStopStuck) {
 		t.Fatalf("a container that cannot be removed: %v", err)
 	}
 }
@@ -98,7 +103,7 @@ func TestStop_ACancelledStopStillKills(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	f := newFake(syscall.SIGKILL)
-	res, err := Stop(ctx, f, quick)
+	res, err := Stop(ctx, f, StopTimes{Grace: hang, Stuck: hang})
 	if err != nil || !res.Killed || !res.CallerGaveUp || !f.removed {
 		t.Fatalf("a cancelled stop: %+v, %v, removed %v", res, err, f.removed)
 	}
@@ -114,7 +119,7 @@ func (f failingSignal) Signal(context.Context, syscall.Signal) error {
 func TestStop_AFailedSIGTERMStillRemoves(t *testing.T) {
 	f := newFake()
 	f.once.Do(func() { close(f.exited) })
-	if res, err := Stop(context.Background(), failingSignal{f}, quick); err != nil || !f.removed || res.TermErr == nil {
+	if res, err := Stop(context.Background(), failingSignal{f}, StopTimes{Grace: hang, Stuck: hang}); err != nil || !f.removed || res.TermErr == nil {
 		t.Fatalf("a container that already exited: %v, removed %v", err, f.removed)
 	}
 }

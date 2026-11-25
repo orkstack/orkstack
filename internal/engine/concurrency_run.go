@@ -8,9 +8,11 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -49,8 +51,10 @@ type concRunState struct {
 	attempted []string
 	// held is the run-level slot the run holds, nil before a grant.
 	held *heldSlot
-	// queued is the run's place in line while it waits, for its snapshot.
-	queued *orkstackv1.ConcurrencyQueued
+	// queued is the run's place in line while it waits, for its snapshot;
+	// waitStarted is when that wait began, on the run's clock.
+	queued      *orkstackv1.ConcurrencyQueued
+	waitStarted time.Time
 	// attempt numbers the acquires the run sends, for their update ids.
 	attempt int
 	// seqWritten: orkflow_conc_seq is in the memo.
@@ -138,14 +142,14 @@ func (s *runState) sendAcquire(ctx workflow.Context, slot *ConcurrencySlotPlan, 
 		RetryPolicy:            &temporal.RetryPolicy{InitialInterval: c.plan.AcquireBackoffMin, MaximumInterval: c.plan.AcquireBackoffMax},
 	})
 	in := AcquireConcurrencyInput{
-		GateID: slot.GateID, GateQueue: c.plan.GateQueue, Request: req,
+		Orkflow: c.plan.Orkflow, GateID: slot.GateID, GateQueue: c.plan.GateQueue, Request: req,
 		UpdateID:   acquireUpdateID(req.Run, req.SeqBase, req.TaskIx, req.N, c.attempt),
 		BackoffMin: c.plan.AcquireBackoffMin, BackoffMax: c.plan.AcquireBackoffMax,
 		Start: GateStart{GateID: slot.GateID, Namespace: c.plan.Namespace, Incarnation: c.plan.Incarnation,
 			Key: slot.Key, Tunables: c.plan.Gate},
 	}
 	var res AcquireConcurrencyResult
-	err := workflow.ExecuteLocalActivity(lctx, ActivityAcquireConcurrency, in).Get(lctx, &res)
+	err := getLocal(lctx, runScope(ctx), workflow.ExecuteLocalActivity(lctx, ActivityAcquireConcurrency, in), &res)
 	if err == nil {
 		return res, nil
 	}
@@ -195,6 +199,7 @@ func concEnding(res AcquireConcurrencyResult, slot *ConcurrencySlotPlan) error {
 func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire, ans gateAnswer,
 	cause orkstackv1.ConcurrencyQueueCause, abort workflow.Future) error {
 	c := s.conc
+	c.waitStarted = workflow.Now(ctx)
 	c.queued = &orkstackv1.ConcurrencyQueued{
 		Key: slot.Key, Limit: int32(slot.Limit), Strategy: concStrategyProto(req.Strategy),
 		PositionAtArrival: int32(ans.Position), Position: int32(ans.Position), PositionKnown: true,
@@ -336,6 +341,7 @@ var errWaitAborted = errors.New("the wait for the concurrency slot was ended")
 
 // grantRunSlot takes the granted slot: its records move from queued to held.
 func (s *runState) grantRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan, ans gateAnswer) error {
+	s.noteWaitEnd(ctx, orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_STARTED)
 	s.conc.queued = nil
 	return s.recordRunSlot(ctx, slot, ans, true)
 }
@@ -359,7 +365,7 @@ func (s *runState) recordRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan
 	if !c.seqWritten {
 		memo[gateMemoSeqKey] = c.plan.SeqBase
 	}
-	if err := workflow.UpsertMemo(ctx, memo); err != nil {
+	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, memo)); err != nil {
 		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the run could not record its slot on key %s: %v", slot.Key, err))
 	}
 	c.seqWritten = true
@@ -406,7 +412,7 @@ func (s *runState) restoreConcRecords(ctx workflow.Context) error {
 		gateMemoKey(c.held.gate, gateRunLevel): c.heldMemoEntry(slot),
 		gateMemoSeqKey:                         c.plan.SeqBase,
 	}
-	if err := workflow.UpsertMemo(ctx, memo); err != nil {
+	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, memo)); err != nil {
 		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the run could not record its carried slot: %v", err))
 	}
 	c.seqWritten = true
@@ -432,13 +438,14 @@ func releaseSlots(ctx workflow.Context, c *concRunState) {
 	if c == nil || len(c.attempted) == 0 {
 		return
 	}
-	runID := c.runID
+	runID, scope := c.runID, runScope(ctx)
 	dctx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
 	futures := make([]workflow.Future, 0, len(c.attempted))
 	for _, gate := range c.attempted {
 		futures = append(futures, workflow.SignalExternalWorkflow(dctx, gate, "", GateSignalReleaseAll,
-			GateReleaseAll{Run: runID, Below: c.plan.SeqBase + 1}))
+			// The gate is no run and holds no key: ids and a sequence only.
+			payloadcrypt.PlainIn(scope, GateReleaseAll{Run: runID, Below: c.plan.SeqBase + 1})))
 	}
 	for i, f := range futures {
 		if err := f.Get(dctx, nil); err != nil && !categoryOf(err).unknownRun {
@@ -548,13 +555,79 @@ func (s *runState) failInLine(ctx workflow.Context, cancelRun workflow.CancelFun
 	// It no longer waits: its record and index stop saying so. A failed
 	// upsert is logged, never put in place of the run's own reason.
 	if c := s.conc; c != nil && c.queued != nil {
+		s.noteWaitEnd(ctx, waitOutcomeOf(ctx, cause))
 		c.queued = nil
 		if err := s.syncConcAttributes(ctx); err != nil {
 			workflow.GetLogger(ctx).Warn("a run that left the line could not update its index", "run_id", s.runID, "error", err)
 		}
 	}
 	s.dropHandlersOutsideLimit()
+	// It never started: a schedule's fire tells this ending from one a run
+	// that ran ended with (fireOutcome). A supersede ends it canceled.
+	if code := concCauseCode(cause); code != "" && code != RunSupersededCode {
+		read := categoryOf(cause)
+		cause = temporal.NewNonRetryableApplicationError(read.appMessage(), code, nil, ConcurrencyRunNotStarted{NotStarted: true})
+	}
 	return s.fail(ctx, cancelRun, inFlight, "", cause)
+}
+
+// noteWaitEnd records how the run's wait in line ended, for the next event
+// it emits (Event.wait_end): the one that ends the wait. Nothing when the run
+// is not waiting.
+func (s *runState) noteWaitEnd(ctx workflow.Context, outcome orkstackv1.ConcurrencyWaitOutcome) {
+	c := s.conc
+	if c == nil || c.queued == nil {
+		return
+	}
+	slot := c.plan.runSlot()
+	if slot == nil {
+		return
+	}
+	s.eventWaitEnd = &orkstackv1.ConcurrencyWaitEnd{
+		Outcome: outcome, Waited: durationpb.New(max(workflow.Now(ctx).Sub(c.waitStarted), 0)),
+		Strategy: c.queued.GetStrategy(), LimitLabel: CensusLimitLabel(slot.Label),
+	}
+}
+
+// takeEventWaitEnd hands the noted wait end to the event being built, once:
+// never to a task's log line, which an ending emits before its terminal
+// event.
+func (s *runState) takeEventWaitEnd(eventType orkstackv1.EventType) *orkstackv1.ConcurrencyWaitEnd {
+	if eventType == orkstackv1.EventType_EVENT_TYPE_TASK_LOG {
+		return nil
+	}
+	w := s.eventWaitEnd
+	s.eventWaitEnd = nil
+	return w
+}
+
+// waitOutcomeOf is how an ending cut a wait short: the limit's own reason,
+// or canceled for any other (the run's cancel, its own failure).
+func waitOutcomeOf(ctx workflow.Context, cause error) orkstackv1.ConcurrencyWaitOutcome {
+	if ctx.Err() != nil {
+		return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_CANCELED
+	}
+	switch concCauseCode(cause) {
+	case RunQueueTimeoutCode:
+		return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_TIMED_OUT
+	case RunConcurrencyFullCode:
+		return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_FULL
+	case RunConcurrencyUnavailableCode:
+		return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_UNAVAILABLE
+	case RunConcurrencyUnsupportedCode:
+		return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_UNSUPPORTED
+	case RunConcurrencyFencedCode:
+		return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_FENCED
+	case RunSupersededCode:
+		return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_SUPERSEDED
+	}
+	return orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_CANCELED
+}
+
+// ConcurrencyRunNotStarted is the detail of a run-level concurrency ending
+// a run met before it started: in line for its slot, or refused it.
+type ConcurrencyRunNotStarted struct {
+	NotStarted bool `json:"not_started"`
 }
 
 // dropHandlersOutsideLimit ends a run without its failure handlers: it holds

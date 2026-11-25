@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	commonpb "go.temporal.io/api/common/v1"
 	failurepb "go.temporal.io/api/failure/v1"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
@@ -200,6 +201,44 @@ func TestFailureConverter_WrappedSealedFailure(t *testing.T) {
 	opened, err := OpenFailure(scope, fc, fc.FailureToError(again))
 	if err != nil || !strings.Contains(opened.Error(), canary) {
 		t.Fatalf("opened = %v, %v", opened, err)
+	}
+}
+
+// A failure handed on still sealed, as a fire hands on its run's, is written as
+// it was: its reason kept, and no word of what wraps it. One that is not
+// sealed whole is withheld, whoever wrote it.
+func TestFailureConverter_HandsOnASealedFailure(t *testing.T) {
+	scope := NewScope(testKey(t, 4), RunContext("ork-1"))
+	fc := newFC(true)
+	written := fc.ErrorToFailure(WithKey(temporal.NewNonRetryableApplicationError(canary, "T", errors.New(canary), canary), scope, "RUN_QUEUE_TIMEOUT"))
+	again := fc.ErrorToFailure(fmt.Errorf("run %s failed: %w", canary, fc.FailureToError(written)))
+	if strings.Contains(again.String(), canary) || again.GetMessage() != "RUN_QUEUE_TIMEOUT" {
+		t.Fatalf("handed on as %v, want it sealed under its reason", again)
+	}
+	opened, err := OpenFailure(scope, fc, fc.FailureToError(again))
+	if err != nil || !strings.Contains(opened.Error(), canary) {
+		t.Fatalf("opened = %v, %v", opened, err)
+	}
+	for name, spoil := range map[string]func(f *failurepb.Failure){
+		"a message that is no reason": func(f *failurepb.Failure) { f.Message = "a b " + canary },
+		"a stack":                     func(f *failurepb.Failure) { f.StackTrace = canary },
+		"a cause in plaintext":        func(f *failurepb.Failure) { f.Cause.Message, f.Cause.EncodedAttributes = canary, nil },
+		"a detail in plaintext": func(f *failurepb.Failure) {
+			f.GetApplicationFailureInfo().Details = &commonpb.Payloads{Payloads: []*commonpb.Payload{{Data: []byte(canary)}}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := proto.Clone(written).(*failurepb.Failure)
+			spoil(f)
+			read := fc.FailureToError(f)
+			var sf *SealedFailure
+			if !errors.As(read, &sf) {
+				t.Fatalf("read as %T, not a sealed failure", read)
+			}
+			if out := fc.ErrorToFailure(read); strings.Contains(out.String(), canary) {
+				t.Fatalf("written as %v", out)
+			}
+		})
 	}
 }
 

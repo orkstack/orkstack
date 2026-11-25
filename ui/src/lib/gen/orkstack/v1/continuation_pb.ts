@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/continuation.proto.
  */
 export const file_orkstack_v1_continuation: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QikgYKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QSKwoGcmVzdW1lGAsgASgLMhsub3Jrc3RhY2sudjEuUnVuUmVzdW1lQ2FycnkSJAoFcGF1c2UYDCABKAsyFS5vcmtzdGFjay52MS5SdW5QYXVzZRIpCgpsYXN0X3BhdXNlGA0gASgLMhUub3Jrc3RhY2sudjEuUnVuUGF1c2USNQoQcGF1c2VkX2J5X3BhcmVudBgOIAEoCzIbLm9ya3N0YWNrLnYxLkluaGVyaXRlZFBhdXNlEhgKEGxhc3RfY2FzY2FkZV9zZXEYDyABKAMSNQoLY29uY3VycmVuY3kYECABKAsyIC5vcmtzdGFjay52MS5SdW5Db25jdXJyZW5jeUNhcnJ5EjwKF2RlZmVycmVkX3BhdXNlX3JlcXVlc3RzGBEgAygLMhsub3Jrc3RhY2sudjEuUnVuUGF1c2VTaWduYWwaNwoVVmVyc2lvbkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEitAEKEVJ1bkNoZWNrcG9pbnRQYXJ0EiAKBmhlYWRlchgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAiADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIvCgtsb3NzX2V2ZW50cxgEIAEoCzIaLm9ya3N0YWNrLnYxLlJ1bkxvc3NFdmVudHMiiAEKD1J1bkV2ZW50U2VnbWVudBIOCgZydW5faWQYASABKAkSEgoKZ2VuZXJhdGlvbhgCIAEoAxIWCg5maXJzdF9zZXF1ZW5jZRgDIAEoAxIVCg1sYXN0X3NlcXVlbmNlGAQgASgDEiIKBmV2ZW50cxgFIAMoCzISLm9ya3N0YWNrLnYxLkV2ZW50IqsBChJSdW5TbmFwc2hvdE92ZXJsYXkSEAoIYmFzZV91cmkYASABKAkSIAoGaGVhZGVyGAIgASgLMhAub3Jrc3RhY2sudjEuUnVuEicKCXRhc2tfcnVucxgDIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SIwoFaXRlbXMYBCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEhMKC2Jhc2Vfc2hhMjU2GAUgASgJInkKE1J1bkNvbmN1cnJlbmN5Q2FycnkSEQoJYXR0ZW1wdGVkGAEgAygJEiMKBGhlbGQYAiADKAsyFS5vcmtzdGFjay52MS5IZWxkU2xvdBIqCghvcmRpbmFscxgDIAMoCzIYLm9ya3N0YWNrLnYxLlNsb3RPcmRpbmFsIigKCEhlbGRTbG90Eg8KB2dhdGVfaWQYASABKAkSCwoDc2VxGAIgASgDIjoKC1Nsb3RPcmRpbmFsEg8KB2dhdGVfaWQYASABKAkSDwoHdGFza19peBgCIAEoBRIJCgFuGAMgASgDIkgKDVJ1bkxvc3NFdmVudHMSDQoFY291bnQYASABKAUSKAoEb3BlbhgCIAMoCzIaLm9ya3N0YWNrLnYxLk9wZW5Mb3NzRXZlbnQiTwoNT3Blbkxvc3NFdmVudBIQCghvcmtlcl9pZBgBIAEoCRIsCghmaXJzdF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiEAoOUnVuUmVzdW1lQ2Fycnki0QIKC1Jlc3VtZUJsb2NrEhAKCHNlcV9iYXNlGAEgASgEEg0KBXNjb3BlGAIgASgEEisKBXJlcnVuGAMgAygLMhwub3Jrc3RhY2sudjEuUmVzdW1lVW5pdFJhbmdlEjgKDGRpc3Bvc2l0aW9ucxgEIAMoCzIiLm9ya3N0YWNrLnYxLlJlc3VtZVVuaXREaXNwb3NpdGlvbhIpCgZhY3Rpb24YBSABKA4yGS5vcmtzdGFjay52MS5SZXN1bWVBY3Rpb24SFAoMZnJvbV90YXNrX2lkGAYgASgJEi0KCHJlYWRiYWNrGAcgASgLMhsub3Jrc3RhY2sudjEuUmVzdW1lUmVhZGJhY2sSFgoOcmVzdW1lc19iZWZvcmUYCCABKAUSGQoRcHJldmlvdXNfc2VxX2Jhc2UYCSABKAQSFwoPcmVvcGVuZWRfYXdhaXRzGAogAygJIkUKD1Jlc3VtZVVuaXRSYW5nZRIPCgd0YXNrX2lkGAEgASgJEhIKCmZpcnN0X2l0ZW0YAiABKAUSDQoFY291bnQYAyABKAUi8gEKFVJlc3VtZVVuaXREaXNwb3NpdGlvbhIPCgd0YXNrX2lkGAEgASgJEgwKBGl0ZW0YAiABKAUSMwoLZGlzcG9zaXRpb24YAyABKA4yHi5vcmtzdGFjay52MS5SZXN1bWVEaXNwb3NpdGlvbhIsCgp2YWx1ZXNfcmVmGAQgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoHd2FrZV9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASFAoMcmVzdWx0X2Vwb2NoGAYgASgDEhQKDGVuY29kZWRfc2l6ZRgHIAEoAyLQAgoOUmVzdW1lUmVhZGJhY2sSKwoIZGVhZGxpbmUYASABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SDgoGYnVkZ2V0GAIgASgDEhMKC21heF9lbnRyaWVzGAMgASgFEhMKC2NvbmN1cnJlbmN5GAQgASgFEi4KC2dldF90aW1lb3V0GAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhEKCWdldF90cmllcxgGIAEoBRIvCgxjYWxsX3RpbWVvdXQYByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SMAoNcmV0cnlfaW5pdGlhbBgIIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIZChFyZXRyeV9jb2VmZmljaWVudBgJIAEoARIWCg5jYWxsc19wZXJfdGFzaxgKIAEoBSLfAwoQUmVzdW1lUGxhblJlY29yZBIOCgZmb3JtYXQYASABKAUSEQoJbmFtZXNwYWNlGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRINCgVzY29wZRgEIAEoBBIJCgFuGAUgASgFEh0KFWJhc2VfZXhlY3V0aW9uX3J1bl9pZBgGIAEoCRIcChRyX3NjaGVkdWxlZF9ldmVudF9pZBgHIAEoAxIaChJyX3N0YXJ0ZWRfZXZlbnRfaWQYCCABKAMSHgoWYmFzZV90ZXJtaW5hbF9zZXF1ZW5jZRgJIAEoAxImCgJhdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKZXhwaXJlc19hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASJwoFYmxvY2sYDCABKAsyGC5vcmtzdGFjay52MS5SZXN1bWVCbG9jaxIRCglwcmluY2lwYWwYDSABKAkSGgoScHJpbmNpcGFsX3ZlcmlmaWVkGA4gASgIEg4KBnJlYXNvbhgPIAEoCRIZChFzdXBlcnNlZGVkX3JlYXNvbhgQIAEoCRIWCg5wcmV2aW91c19zY29wZRgRIAEoBBISCgpyZXF1ZXN0X2lkGBIgASgJQq0BCg9jb20ub3Jrc3RhY2sudjFCEUNvbnRpbnVhdGlvblByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_run]);
+  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QikgYKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QSKwoGcmVzdW1lGAsgASgLMhsub3Jrc3RhY2sudjEuUnVuUmVzdW1lQ2FycnkSJAoFcGF1c2UYDCABKAsyFS5vcmtzdGFjay52MS5SdW5QYXVzZRIpCgpsYXN0X3BhdXNlGA0gASgLMhUub3Jrc3RhY2sudjEuUnVuUGF1c2USNQoQcGF1c2VkX2J5X3BhcmVudBgOIAEoCzIbLm9ya3N0YWNrLnYxLkluaGVyaXRlZFBhdXNlEhgKEGxhc3RfY2FzY2FkZV9zZXEYDyABKAMSNQoLY29uY3VycmVuY3kYECABKAsyIC5vcmtzdGFjay52MS5SdW5Db25jdXJyZW5jeUNhcnJ5EjwKF2RlZmVycmVkX3BhdXNlX3JlcXVlc3RzGBEgAygLMhsub3Jrc3RhY2sudjEuUnVuUGF1c2VTaWduYWwaNwoVVmVyc2lvbkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEitAEKEVJ1bkNoZWNrcG9pbnRQYXJ0EiAKBmhlYWRlchgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAiADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIvCgtsb3NzX2V2ZW50cxgEIAEoCzIaLm9ya3N0YWNrLnYxLlJ1bkxvc3NFdmVudHMiiAEKD1J1bkV2ZW50U2VnbWVudBIOCgZydW5faWQYASABKAkSEgoKZ2VuZXJhdGlvbhgCIAEoAxIWCg5maXJzdF9zZXF1ZW5jZRgDIAEoAxIVCg1sYXN0X3NlcXVlbmNlGAQgASgDEiIKBmV2ZW50cxgFIAMoCzISLm9ya3N0YWNrLnYxLkV2ZW50IqsBChJSdW5TbmFwc2hvdE92ZXJsYXkSEAoIYmFzZV91cmkYASABKAkSIAoGaGVhZGVyGAIgASgLMhAub3Jrc3RhY2sudjEuUnVuEicKCXRhc2tfcnVucxgDIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SIwoFaXRlbXMYBCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEhMKC2Jhc2Vfc2hhMjU2GAUgASgJInkKE1J1bkNvbmN1cnJlbmN5Q2FycnkSEQoJYXR0ZW1wdGVkGAEgAygJEiMKBGhlbGQYAiADKAsyFS5vcmtzdGFjay52MS5IZWxkU2xvdBIqCghvcmRpbmFscxgDIAMoCzIYLm9ya3N0YWNrLnYxLlNsb3RPcmRpbmFsIigKCEhlbGRTbG90Eg8KB2dhdGVfaWQYASABKAkSCwoDc2VxGAIgASgDIjoKC1Nsb3RPcmRpbmFsEg8KB2dhdGVfaWQYASABKAkSDwoHdGFza19peBgCIAEoBRIJCgFuGAMgASgDIkgKDVJ1bkxvc3NFdmVudHMSDQoFY291bnQYASABKAUSKAoEb3BlbhgCIAMoCzIaLm9ya3N0YWNrLnYxLk9wZW5Mb3NzRXZlbnQiTwoNT3Blbkxvc3NFdmVudBIQCghvcmtlcl9pZBgBIAEoCRIsCghmaXJzdF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiTwoOUnVuUmVzdW1lQ2FycnkSEAoIc2VxX2Jhc2UYASABKAQSFQoNcmVzdW1lZF9hZnRlchgCIAEoAxIUCgxyZXN1bWVfY291bnQYAyABKAUimgIKC1Jlc3VtZUJsb2NrEhAKCHNlcV9iYXNlGAEgASgEEg0KBXNjb3BlGAIgASgEEikKBmFjdGlvbhgFIAEoDjIZLm9ya3N0YWNrLnYxLlJlc3VtZUFjdGlvbhIUCgxmcm9tX3Rhc2tfaWQYBiABKAkSLQoIcmVhZGJhY2sYByABKAsyGy5vcmtzdGFjay52MS5SZXN1bWVSZWFkYmFjaxIWCg5yZXN1bWVzX2JlZm9yZRgIIAEoBRIZChFwcmV2aW91c19zZXFfYmFzZRgJIAEoBBIXCg9yZW9wZW5lZF9hd2FpdHMYCiADKAkSDQoFdW5pdHMYCyABKAxKBAgDEARKBAgEEAVSBXJlcnVuUgxkaXNwb3NpdGlvbnMi/AEKC1Jlc3VtZVVuaXRzEjAKCGZhbl9vdXRzGAEgAygLMh4ub3Jrc3RhY2sudjEuUmVzdW1lRmFuT3V0SXRlbXMSEwoLcnVuX2xlbmd0aHMYAiADKAUSOAoQcnVuX2Rpc3Bvc2l0aW9ucxgDIAMoDjIeLm9ya3N0YWNrLnYxLlJlc3VtZURpc3Bvc2l0aW9uEhIKCnJ1bl9lcG9jaHMYBCADKAUSDgoGZXBvY2hzGAUgAygEEhUKDWVuY29kZWRfc2l6ZXMYBiADKAMSMQoIcmVjb3JkZWQYByADKAsyHy5vcmtzdGFjay52MS5SZXN1bWVSZWNvcmRlZFVuaXQiNQoRUmVzdW1lRmFuT3V0SXRlbXMSDAoEdGFzaxgBIAEoBRISCgppdGVtX2NvdW50GAIgASgFIm8KElJlc3VtZVJlY29yZGVkVW5pdBIsCgp2YWx1ZXNfcmVmGAEgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoHd2FrZV9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAi0AIKDlJlc3VtZVJlYWRiYWNrEisKCGRlYWRsaW5lGAEgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEg4KBmJ1ZGdldBgCIAEoAxITCgttYXhfZW50cmllcxgDIAEoBRITCgtjb25jdXJyZW5jeRgEIAEoBRIuCgtnZXRfdGltZW91dBgFIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIRCglnZXRfdHJpZXMYBiABKAUSLwoMY2FsbF90aW1lb3V0GAcgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEjAKDXJldHJ5X2luaXRpYWwYCCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SGQoRcmV0cnlfY29lZmZpY2llbnQYCSABKAESFgoOY2FsbHNfcGVyX3Rhc2sYCiABKAUi9AMKEFJlc3VtZVBsYW5SZWNvcmQSDgoGZm9ybWF0GAEgASgFEhEKCW5hbWVzcGFjZRgCIAEoCRIOCgZydW5faWQYAyABKAkSDQoFc2NvcGUYBCABKAQSCQoBbhgFIAEoBRIdChViYXNlX2V4ZWN1dGlvbl9ydW5faWQYBiABKAkSHAoUcl9zY2hlZHVsZWRfZXZlbnRfaWQYByABKAMSGgoScl9zdGFydGVkX2V2ZW50X2lkGAggASgDEh4KFmJhc2VfdGVybWluYWxfc2VxdWVuY2UYCSABKAMSJgoCYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEicKBWJsb2NrGAwgASgLMhgub3Jrc3RhY2sudjEuUmVzdW1lQmxvY2sSEQoJcHJpbmNpcGFsGA0gASgJEhoKEnByaW5jaXBhbF92ZXJpZmllZBgOIAEoCBIOCgZyZWFzb24YDyABKAkSGQoRc3VwZXJzZWRlZF9yZWFzb24YECABKAkSFgoOcHJldmlvdXNfc2NvcGUYESABKAQSEgoKcmVxdWVzdF9pZBgSIAEoCRITCgtwbGFuX2RpZ2VzdBgTIAEoCUKtAQoPY29tLm9ya3N0YWNrLnYxQhFDb250aW51YXRpb25Qcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_run]);
 
 /**
  * ContinuationPart is one gzip member of a checkpoint object: the unit a
@@ -595,12 +595,31 @@ export const OpenLossEventSchema: GenMessage<OpenLossEvent> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_continuation, 11);
 
 /**
- * RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
- * batch).
+ * RunResumeCarry is a resumed run's resume, carried across a continuation.
  *
  * @generated from message orkstack.v1.RunResumeCarry
  */
 export type RunResumeCarry = Message<"orkstack.v1.RunResumeCarry"> & {
+  /**
+   * seq_base is the resume's RUN_RESUMED sequence.
+   *
+   * @generated from field: uint64 seq_base = 1;
+   */
+  seqBase: bigint;
+
+  /**
+   * resumed_after is the sequence of the ending the resume set aside.
+   *
+   * @generated from field: int64 resumed_after = 2;
+   */
+  resumedAfter: bigint;
+
+  /**
+   * resume_count is how many resumes of the run got going.
+   *
+   * @generated from field: int32 resume_count = 3;
+   */
+  resumeCount: number;
 };
 
 /**
@@ -633,20 +652,6 @@ export type ResumeBlock = Message<"orkstack.v1.ResumeBlock"> & {
   scope: bigint;
 
   /**
-   * rerun is S, the units run again, as ranges in task order.
-   *
-   * @generated from field: repeated orkstack.v1.ResumeUnitRange rerun = 3;
-   */
-  rerun: ResumeUnitRange[];
-
-  /**
-   * dispositions is every unit's disposition outside S.
-   *
-   * @generated from field: repeated orkstack.v1.ResumeUnitDisposition dispositions = 4;
-   */
-  dispositions: ResumeUnitDisposition[];
-
-  /**
    * @generated from field: orkstack.v1.ResumeAction action = 5;
    */
   action: ResumeAction;
@@ -677,6 +682,15 @@ export type ResumeBlock = Message<"orkstack.v1.ResumeBlock"> & {
    * @generated from field: repeated string reopened_awaits = 10;
    */
   reopenedAwaits: string[];
+
+  /**
+   * units is the deterministic encoding of a ResumeUnits: every unit of the
+   * run's current part, once. Bytes, so the plan's record and the reset run's
+   * history hold it as base64, whatever JSON makes of a number.
+   *
+   * @generated from field: bytes units = 11;
+   */
+  units: Uint8Array;
 };
 
 /**
@@ -687,93 +701,124 @@ export const ResumeBlockSchema: GenMessage<ResumeBlock> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_continuation, 13);
 
 /**
- * ResumeUnitRange is count consecutive items of a task from first_item, or
- * the task itself when first_item is -1.
+ * ResumeUnits is a resume plan's units, packed (engine.DecodeResumeUnits is
+ * its one reader). A unit is a task, or an item of a fan-out. Units are in
+ * this order: each task in definition order, its own unit first, then its
+ * items from 0.
  *
- * @generated from message orkstack.v1.ResumeUnitRange
+ * @generated from message orkstack.v1.ResumeUnits
  */
-export type ResumeUnitRange = Message<"orkstack.v1.ResumeUnitRange"> & {
+export type ResumeUnits = Message<"orkstack.v1.ResumeUnits"> & {
   /**
-   * @generated from field: string task_id = 1;
+   * fan_outs are the fan-outs the base had expanded, in definition order.
+   *
+   * @generated from field: repeated orkstack.v1.ResumeFanOutItems fan_outs = 1;
    */
-  taskId: string;
+  fanOuts: ResumeFanOutItems[];
 
   /**
-   * @generated from field: int32 first_item = 2;
+   * One entry of each of the next three per run of consecutive units treated
+   * alike; the lengths add up to every unit.
+   *
+   * @generated from field: repeated int32 run_lengths = 2;
    */
-  firstItem: number;
+  runLengths: number[];
 
   /**
-   * @generated from field: int32 count = 3;
+   * @generated from field: repeated orkstack.v1.ResumeDisposition run_dispositions = 3;
    */
-  count: number;
+  runDispositions: ResumeDisposition[];
+
+  /**
+   * run_epochs is 0 for no scope, else one more than an index into epochs.
+   *
+   * @generated from field: repeated int32 run_epochs = 4;
+   */
+  runEpochs: number[];
+
+  /**
+   * epochs are the scopes kept results lie under, ascending.
+   *
+   * @generated from field: repeated uint64 epochs = 5;
+   */
+  epochs: bigint[];
+
+  /**
+   * encoded_sizes is, for each unit read back, in unit order, its entry's
+   * encoded size, as ResumeRun measured it.
+   *
+   * @generated from field: repeated int64 encoded_sizes = 6;
+   */
+  encodedSizes: bigint[];
+
+  /**
+   * recorded is, for each SETTLE or SLEEP_UNTIL unit, in unit order, its record.
+   *
+   * @generated from field: repeated orkstack.v1.ResumeRecordedUnit recorded = 7;
+   */
+  recorded: ResumeRecordedUnit[];
 };
 
 /**
- * Describes the message orkstack.v1.ResumeUnitRange.
- * Use `create(ResumeUnitRangeSchema)` to create a new message.
+ * Describes the message orkstack.v1.ResumeUnits.
+ * Use `create(ResumeUnitsSchema)` to create a new message.
  */
-export const ResumeUnitRangeSchema: GenMessage<ResumeUnitRange> = /*@__PURE__*/
+export const ResumeUnitsSchema: GenMessage<ResumeUnits> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_continuation, 14);
 
 /**
- * ResumeUnitDisposition is one unit outside S.
+ * ResumeFanOutItems is how many items a fan-out's base had.
  *
- * @generated from message orkstack.v1.ResumeUnitDisposition
+ * @generated from message orkstack.v1.ResumeFanOutItems
  */
-export type ResumeUnitDisposition = Message<"orkstack.v1.ResumeUnitDisposition"> & {
+export type ResumeFanOutItems = Message<"orkstack.v1.ResumeFanOutItems"> & {
   /**
-   * @generated from field: string task_id = 1;
-   */
-  taskId: string;
-
-  /**
-   * item is the item's index, or -1 for the task itself.
+   * task is the fan-out's index in the definition.
    *
-   * @generated from field: int32 item = 2;
+   * @generated from field: int32 task = 1;
    */
-  item: number;
+  task: number;
 
   /**
-   * @generated from field: orkstack.v1.ResumeDisposition disposition = 3;
+   * @generated from field: int32 item_count = 2;
    */
-  disposition: ResumeDisposition;
+  itemCount: number;
+};
 
+/**
+ * Describes the message orkstack.v1.ResumeFanOutItems.
+ * Use `create(ResumeFanOutItemsSchema)` to create a new message.
+ */
+export const ResumeFanOutItemsSchema: GenMessage<ResumeFanOutItems> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 15);
+
+/**
+ * ResumeRecordedUnit is what a SETTLE or SLEEP_UNTIL unit is kept from.
+ *
+ * @generated from message orkstack.v1.ResumeRecordedUnit
+ */
+export type ResumeRecordedUnit = Message<"orkstack.v1.ResumeRecordedUnit"> & {
   /**
-   * values_ref is a SETTLE unit's recorded values.
+   * values_ref is a SETTLE unit's recorded values, when it has any.
    *
-   * @generated from field: orkstack.v1.ArtifactRef values_ref = 4;
+   * @generated from field: orkstack.v1.ArtifactRef values_ref = 1;
    */
   valuesRef?: ArtifactRef | undefined;
 
   /**
    * wake_at is a SLEEP_UNTIL unit's recorded wake-up time.
    *
-   * @generated from field: google.protobuf.Timestamp wake_at = 5;
+   * @generated from field: google.protobuf.Timestamp wake_at = 2;
    */
   wakeAt?: Timestamp | undefined;
-
-  /**
-   * result_epoch is the scope a kept result's commit lives under.
-   *
-   * @generated from field: int64 result_epoch = 6;
-   */
-  resultEpoch: bigint;
-
-  /**
-   * encoded_size is a read-back entry's encoded result, as ResumeRun measured it.
-   *
-   * @generated from field: int64 encoded_size = 7;
-   */
-  encodedSize: bigint;
 };
 
 /**
- * Describes the message orkstack.v1.ResumeUnitDisposition.
- * Use `create(ResumeUnitDispositionSchema)` to create a new message.
+ * Describes the message orkstack.v1.ResumeRecordedUnit.
+ * Use `create(ResumeRecordedUnitSchema)` to create a new message.
  */
-export const ResumeUnitDispositionSchema: GenMessage<ResumeUnitDisposition> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_continuation, 15);
+export const ResumeRecordedUnitSchema: GenMessage<ResumeRecordedUnit> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 16);
 
 /**
  * ResumeReadback is the read-back's pinned bounds (E85 §4.1).
@@ -837,12 +882,12 @@ export type ResumeReadback = Message<"orkstack.v1.ResumeReadback"> & {
  * Use `create(ResumeReadbackSchema)` to create a new message.
  */
 export const ResumeReadbackSchema: GenMessage<ResumeReadback> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_continuation, 16);
+  messageDesc(file_orkstack_v1_continuation, 17);
 
 /**
  * ResumePlanRecord is one resume plan's immutable record (E85 §11, §30.3,
  * engine-internal), written create-only before the reset at
- * metadata/run-resumes/{namespace}/{encoded-run-id}/{scope:020}.{n:03}.resume.json.
+ * metadata/snapshots/{namespace}/{run-id}/resume-plans/{scope:020}.{n:03}.json.
  * The reset's reason names it by the SHA-256 of its stored bytes.
  *
  * @generated from message orkstack.v1.ResumePlanRecord
@@ -941,6 +986,14 @@ export type ResumePlanRecord = Message<"orkstack.v1.ResumePlanRecord"> & {
    * @generated from field: string request_id = 18;
    */
   requestId: string;
+
+  /**
+   * plan_digest is the digest a preview shows and a confirm names the plan by:
+   * what the resume does with each unit, with no time and no caller in it.
+   *
+   * @generated from field: string plan_digest = 19;
+   */
+  planDigest: string;
 };
 
 /**
@@ -948,5 +1001,5 @@ export type ResumePlanRecord = Message<"orkstack.v1.ResumePlanRecord"> & {
  * Use `create(ResumePlanRecordSchema)` to create a new message.
  */
 export const ResumePlanRecordSchema: GenMessage<ResumePlanRecord> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_continuation, 17);
+  messageDesc(file_orkstack_v1_continuation, 18);
 

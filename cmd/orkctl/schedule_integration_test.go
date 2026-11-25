@@ -233,6 +233,8 @@ type scheduleJSON struct {
 			ActualAt         string `json:"actualAt"`
 			RunID            string `json:"runId"`
 			Refusal          string `json:"refusal"`
+			SkipCode         string `json:"skipCode"`
+			SkipMessage      string `json:"skipMessage"`
 			DetailsAvailable bool   `json:"detailsAvailable"`
 		} `json:"recentFires"`
 		FiresTaken          int64  `json:"firesTaken,string"`
@@ -942,7 +944,7 @@ func TestIntegration_ScheduleFireRefusedWithoutLiveOrkerAndRecorded(t *testing.T
 		t.Fatalf("refusal = %q (run %q), want the submit refusal naming pool gpu", refusal, refused.Schedule.RecentFires[0].RunID)
 	}
 	human := s.cli(t, s.a, exitOK, "schedule", "get", "nightly")
-	if !strings.Contains(human, "REFUSAL") || !strings.Contains(human, refusal) {
+	if !strings.Contains(human, "NOTE") || !strings.Contains(human, refusal) {
 		t.Fatalf("schedule get does not show the refusal:\n%s", human)
 	}
 	t.Logf("EVIDENCE schedule_get_refusal=%q", refusal)

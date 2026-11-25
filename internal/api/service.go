@@ -81,6 +81,20 @@ type Config struct {
 	// substitutes the in-memory store, never a fallback for a configured one.
 	Orkflows engine.OrkflowStore
 	Starter  RunStarter
+	// Resume is what ResumeRun asks of the cluster; nil serves no resume.
+	Resume engine.ResumeCluster
+	// ResumeSettings are engine.resume.*; an unset value is its default.
+	ResumeSettings ResumeSettings
+	// ResumeObserver counts requests to resume runs; nil counts nothing.
+	ResumeObserver ResumeObserver
+	// ResumeRecords holds resume plan records; nil serves no resume.
+	ResumeRecords ResumeRecords
+	// ResumeClaims hold a plan's reset for one request at a time; nil serves
+	// no resume.
+	ResumeClaims ResumeClaims
+	// ResumeSnapshots answers the highest sequence stored for a run; nil
+	// serves no resume.
+	ResumeSnapshots ResumeSnapshots
 
 	// Reader is the system of record for live runs. `ork` wires
 	// engine.TemporalRunReader, and every read then leaves the process. Nil
@@ -281,6 +295,9 @@ type Config struct {
 	// schedule fires and the schedule API's requests. Nil counts nothing.
 	TriggerMetrics  *telemetry.TriggerMetrics
 	ScheduleMetrics *telemetry.ScheduleMetrics
+	// ConcurrencyMetrics counts a concurrency limit's submit refusals as
+	// arrivals (ork.concurrency.arrivals); nil counts none.
+	ConcurrencyMetrics *telemetry.ConcurrencyMetrics
 
 	// UsageCacheTTL is how long one whole usage measurement is reused, by
 	// GetUsage and by the admission gate alike. Used verbatim: zero or
@@ -446,7 +463,7 @@ type Config struct {
 	DefinitionByReference bool
 	DefinitionObjects     DefinitionObjectWriter
 	// RunContexts is where each run tree's run-context object is written
-	// (run_context.go): the run snapshot store. Unset, a run's tasks are
+	// (run_context.go): the run-context store. Unset, a run's tasks are
 	// given no run context.
 	RunContexts RunContextWriter
 
@@ -668,8 +685,9 @@ type Service struct {
 	observer   engine.EventObserver
 	admissions engine.AdmissionObserver
 	// triggerMetrics and scheduleMetrics are Config's; nil counts nothing.
-	triggerMetrics  *telemetry.TriggerMetrics
-	scheduleMetrics *telemetry.ScheduleMetrics
+	triggerMetrics     *telemetry.TriggerMetrics
+	scheduleMetrics    *telemetry.ScheduleMetrics
+	concurrencyMetrics *telemetry.ConcurrencyMetrics
 	// usage measures a namespace's reserved consumption for GetUsage and for
 	// an enforced budget's admission check — one measurement both share
 	// (usage.go). It is a measuring component, not a map of answers: its
@@ -715,6 +733,15 @@ type Service struct {
 	concurrency       engine.ConcurrencySettings
 	gateTunables      engine.GateTunables
 	concurrencyReader engine.ConcurrencyAdmissionReader
+	// resumeSettings are engine.resume.*.
+	resumeSettings ResumeSettings
+	// resumes is whether this engine resumes runs (Config.Resume).
+	resumes         bool
+	resumeRecords   ResumeRecords
+	resumeClaims    ResumeClaims
+	resumeObserver  ResumeObserver
+	resumeGate      resumeGate
+	resumeSnapshots ResumeSnapshots
 	// queuedWarn spaces GetRun's warnings that a queued run's gate could
 	// not be read (applyLiveQueued): a run page polls GetRun.
 	queuedWarn warnLimiter
@@ -752,8 +779,10 @@ type Service struct {
 	transferBudget  int32
 	floorThroughput int64
 	logger          *slog.Logger
-	now             func() time.Time
-	newRunID        func() string
+	// doorFaults bounds what the unauthenticated doors log (doorFault).
+	doorFaults authn.LogBound
+	now        func() time.Time
+	newRunID   func() string
 
 	// starts stands in for the cluster's first-start read when no reader
 	// is wired (a unit test); retentionRead caches the cluster's reported
@@ -810,6 +839,7 @@ func NewService(cfg Config) *Service {
 		identityAdmissions:       cfg.IdentityAdmissions,
 		triggerMetrics:           cfg.TriggerMetrics,
 		scheduleMetrics:          cfg.ScheduleMetrics,
+		concurrencyMetrics:       cfg.ConcurrencyMetrics,
 		artifacts:                cfg.Artifacts,
 		limits:                   cfg.Limits,
 		eachMaxItems:             eachMaxItemsOf(cfg.EachMaxItems),
@@ -861,6 +891,12 @@ func NewService(cfg Config) *Service {
 		concurrency:              concurrencySettingsOf(cfg.Concurrency),
 		gateTunables:             gateTunablesOf(cfg.GateTunables),
 		concurrencyReader:        cfg.ConcurrencyReader,
+		resumeSettings:           resumeSettingsOf(cfg.ResumeSettings),
+		resumes:                  cfg.Resume != nil,
+		resumeRecords:            cfg.ResumeRecords,
+		resumeClaims:             cfg.ResumeClaims,
+		resumeObserver:           cfg.ResumeObserver,
+		resumeSnapshots:          cfg.ResumeSnapshots,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -870,6 +906,7 @@ func NewService(cfg Config) *Service {
 			Reader:  cfg.Reader,
 			Starter: cfg.Starter,
 			Pools:   cfg.Pools,
+			Resume:  cfg.Resume,
 		})
 	}
 	if svc.logger == nil {
@@ -1825,6 +1862,31 @@ func (s *Service) SubmitRun(
 	return s.submitFrom(ctx, req.Msg, origin)
 }
 
+// withoutTraceparent is run without the trace context it was started in, for
+// an answer to a caller who may not read the run: the span and the sampling
+// decision are the submitter's request's. The trace id stays, as the run's
+// own. The run handed in is not changed.
+func withoutTraceparent(run *orkstackv1.Run) *orkstackv1.Run {
+	if run.GetTraceparent() == "" {
+		return run
+	}
+	run = proto.Clone(run).(*orkstackv1.Run)
+	run.Traceparent = ""
+	return run
+}
+
+// withoutTraceparents is withoutTraceparent of each run.
+func withoutTraceparents(runs []*orkstackv1.Run) []*orkstackv1.Run {
+	if runs == nil {
+		return nil
+	}
+	out := make([]*orkstackv1.Run, len(runs))
+	for i, run := range runs {
+		out[i] = withoutTraceparent(run)
+	}
+	return out
+}
+
 // submitFrom is SubmitRun with the origin already decided AND already
 // validated by the door that decided it. It is the seam the trigger door
 // (TRIGGER) and, later, schedules (SCHEDULE) start runs through: an origin's
@@ -1856,6 +1918,9 @@ func (s *Service) submitFrom(
 	if err != nil {
 		return nil, callerGaveUp(ctx, err)
 	}
+	// Submitting is not reading, through whichever door: a key's holder may
+	// be answered another caller's run.
+	resp.Msg.Run = withoutTraceparent(resp.Msg.GetRun())
 	return resp, nil
 }
 
@@ -2034,6 +2099,8 @@ func (s *Service) prepare(
 	// door that accepted the submission is the only thing that knows it, and
 	// workflow code may not ask.
 	plan.Origin = engine.OriginFromProto(origin)
+	// So does the trace it was accepted in: a request's, or a fire's.
+	plan.Trace = engine.NewTraceContext(telemetry.RunTrace(ctx))
 	// The run input and the definition each travel as one payload of the
 	// workflow start; refuse either over AGENTS.md §2.2's bound before
 	// anything is minted.
@@ -2964,6 +3031,9 @@ func (s *Service) GetRun(
 	SetRunTiming(run, time.Now())
 	s.applyCensusPendingReasons(ctx, run)
 	s.applyLiveQueued(ctx, run)
+	if s.resumes && s.resumeRecords != nil {
+		run.ResumeHint = engine.ResumeHintOf(run)
+	}
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
@@ -3352,7 +3422,7 @@ func (s *Service) CancelRun(
 	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), request); err != nil {
 		return nil, connect.NewError(cancelErrorCode(ctx, err), err)
 	}
-	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: run}), nil
+	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: withoutTraceparent(run)}), nil
 }
 
 // cancelErrorCode is the code a refused cancellation answers with: a cluster

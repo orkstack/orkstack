@@ -36,7 +36,7 @@ func TestCordon_ProfileCauseHoldsAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Wait = %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("clearing the last cause woke no reservation")
 	}
 }

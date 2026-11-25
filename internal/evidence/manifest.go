@@ -18,18 +18,20 @@ import (
 	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
-// SchemaVersion is the manifest schema every bundle whose run's archive
-// records no gap is written with.
-const SchemaVersion = 1
+// SchemaVersion is the manifest schema every bundle is written with. Its
+// event_gaps names every range of the run's event stream its archive does not
+// hold — events lost from object storage before it was archived, or numbers
+// it never published — and is absent when there is none. A tool older than it
+// refuses the bundle with its own message instead of verifying it while
+// ignoring a key or a state it does not know; a newer bundle is refused here.
+const SchemaVersion = 3
 
-// SchemaVersionEventGaps is the schema of a bundle whose run's archive
-// records gaps in its event stream — events lost from object storage before
-// it was archived, or numbers it never published: the same members, plus
-// event_gaps naming every range. It is a new version, not an additive key,
-// so a tool older than it refuses the bundle with its own message instead of
-// verifying it silently. These are the two versions this build reads; a
-// newer bundle is not verified by an older tool.
-const SchemaVersionEventGaps = 2
+// The schemas earlier engines wrote, which this build reads: one for a bundle
+// with no event gap, one for a bundle that names some.
+const (
+	SchemaVersionNoGaps    = 1
+	SchemaVersionEventGaps = 2
+)
 
 // ManifestPath is the name of a bundle's first member.
 const ManifestPath = "MANIFEST.json"
@@ -66,6 +68,9 @@ const (
 	// StateRejected: an object exists at the coordinates but is not what the
 	// run pinned (today only the definition).
 	StateRejected State = "rejected"
+	// StateWithheld: the caller who exported the bundle may not read the
+	// object (today only another namespace's shared definition).
+	StateWithheld State = "withheld"
 )
 
 // The reason tokens, complete. A client prints the token's sentence
@@ -73,6 +78,7 @@ const (
 const (
 	ReasonDefinitionDeleted        = "definition_deleted"
 	ReasonDefinitionDigestMismatch = "definition_digest_mismatch"
+	ReasonDefinitionNotReadable    = "definition_not_readable"
 	ReasonObjectMissing            = "object_missing"
 	ReasonCommitMissing            = "commit_missing"
 	ReasonAttemptRecordMissing     = "attempt_record_missing"
@@ -82,6 +88,7 @@ const (
 var reasonSentences = map[string]string{
 	ReasonDefinitionDeleted:        "the pinned definition was deleted from the orkflow store; the run's definition digest still attests it",
 	ReasonDefinitionDigestMismatch: "a document exists at the pinned coordinates but does not hash to the digest this run pinned",
+	ReasonDefinitionNotReadable:    "the exporter may not read the shared Orkflow in its owner's namespace; the run's definition digest still attests it",
 	ReasonCommitMissing:            "the commit record was reclaimed by cleanup; its recorded digest is preserved",
 	ReasonObjectMissing:            "the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved",
 	ReasonAttemptRecordMissing:     "no record: the orker died before filing one, or it was reclaimed",
@@ -102,9 +109,12 @@ func ReasonText(token string) string {
 // read the bundle without the engine. Its JSON is the wire form; the Go type
 // exists so the writer and the verifier cannot disagree about a key.
 type Manifest struct {
-	SchemaVersion    int         `json:"schema_version"`
-	RunID            string      `json:"run_id"`
-	Namespace        string      `json:"namespace"`
+	SchemaVersion int    `json:"schema_version"`
+	RunID         string `json:"run_id"`
+	Namespace     string `json:"namespace"`
+	// OrkflowNamespace is set only for a shared Orkflow's child run: the
+	// namespace that owns the Orkflow. Namespace is the one the run ran in.
+	OrkflowNamespace string      `json:"orkflow_namespace,omitempty"`
 	OrkflowName      string      `json:"orkflow_name"`
 	OrkflowVersion   string      `json:"orkflow_version"`
 	DefinitionDigest string      `json:"definition_digest"`
@@ -119,7 +129,7 @@ type Manifest struct {
 	Tasks            []TaskEntry `json:"tasks"`
 	Members          []Member    `json:"members"`
 	Counts           Counts      `json:"counts"`
-	// EventGaps is set, and only set, on a schema_version 2 bundle: every
+	// EventGaps is set only when the run's archive records a gap: every
 	// range of the run's event stream its archive does not hold — lost from
 	// object storage before the run was archived, or never published. The
 	// archive body (run.jsonl) records the same ranges as gap lines.
@@ -155,7 +165,7 @@ type Scope struct {
 	Logs      bool   `json:"logs"`
 	Artifacts bool   `json:"artifacts"`
 	// Item is set when the request narrowed task_id to one item of a
-	// fan-out. Additive: schema_version stays 1.
+	// fan-out.
 	Item *int32 `json:"item,omitzero"`
 }
 
@@ -205,11 +215,19 @@ type Member struct {
 	Origin    string `json:"origin"`
 	SizeBytes int64  `json:"size_bytes"`
 	// SHA256 is lowercase hex of the bytes as read (present), or the recorded
-	// digest (reclaimed). Empty only for kind "source" when reclaimed or
-	// rejected, and for "unrecorded".
+	// digest (reclaimed). Empty only for kind "source" when reclaimed,
+	// rejected or withheld, and for "unrecorded".
 	SHA256 string `json:"sha256"`
 	State  State  `json:"state"`
 	Reason string `json:"reason,omitempty"`
+	// SourceRunID, SourceTaskID and SourceName name the run, task and
+	// artifact that recorded an artifact passed between the runs of a tree:
+	// one a child received (task_id "_inputs") or a composed task got back
+	// from its child. Audit data from the recorded reference; empty for every
+	// other member.
+	SourceRunID  string `json:"source_run_id,omitempty"`
+	SourceTaskID string `json:"source_task_id,omitempty"`
+	SourceName   string `json:"source_name,omitempty"`
 }
 
 // Counts tallies the members by state.
@@ -218,6 +236,7 @@ type Counts struct {
 	Reclaimed    int   `json:"reclaimed"`
 	Unrecorded   int   `json:"unrecorded"`
 	Rejected     int   `json:"rejected"`
+	Withheld     int   `json:"withheld,omitzero"`
 	BytesPresent int64 `json:"bytes_present"`
 }
 
@@ -235,6 +254,8 @@ func CountMembers(members []Member) Counts {
 			c.Unrecorded++
 		case StateRejected:
 			c.Rejected++
+		case StateWithheld:
+			c.Withheld++
 		}
 	}
 	return c
@@ -261,8 +282,8 @@ func (m Manifest) MarshalJSON() ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// ParseManifest decodes a MANIFEST.json document. It reads schema_version 1
-// and 2: version 2 requires a non-empty event_gaps, and version 1 forbids
+// ParseManifest decodes a MANIFEST.json document. It reads schema_version 1,
+// 2 and 3: version 2 requires a non-empty event_gaps, and version 1 forbids
 // one. Any other version is refused: a newer bundle is not read by an older
 // tool.
 func ParseManifest(document []byte) (*Manifest, error) {
@@ -275,9 +296,9 @@ func ParseManifest(document []byte) (*Manifest, error) {
 	if probe.SchemaVersion == nil {
 		return nil, fmt.Errorf("evidence: MANIFEST.json has no schema_version")
 	}
-	if *probe.SchemaVersion != SchemaVersion && *probe.SchemaVersion != SchemaVersionEventGaps {
-		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d is not supported by this tool (it reads %d and %d)",
-			*probe.SchemaVersion, SchemaVersion, SchemaVersionEventGaps)
+	if *probe.SchemaVersion < SchemaVersionNoGaps || *probe.SchemaVersion > SchemaVersion {
+		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d is not supported by this tool (it reads %d to %d)",
+			*probe.SchemaVersion, SchemaVersionNoGaps, SchemaVersion)
 	}
 	var m manifestJSON
 	if err := json.Unmarshal(document, &m); err != nil {
@@ -287,9 +308,9 @@ func ParseManifest(document []byte) (*Manifest, error) {
 	switch {
 	case manifest.SchemaVersion == SchemaVersionEventGaps && len(manifest.EventGaps) == 0:
 		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d names no event_gaps", SchemaVersionEventGaps)
-	case manifest.SchemaVersion == SchemaVersion && len(manifest.EventGaps) > 0:
-		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d carries event_gaps, which only schema_version %d may",
-			SchemaVersion, SchemaVersionEventGaps)
+	case manifest.SchemaVersion == SchemaVersionNoGaps && len(manifest.EventGaps) > 0:
+		return nil, fmt.Errorf("evidence: MANIFEST.json schema_version %d carries event_gaps, which only schema_version %d and later may",
+			SchemaVersionNoGaps, SchemaVersionEventGaps)
 	}
 	for _, gap := range manifest.EventGaps {
 		if gap.First < 1 || gap.Last < gap.First {

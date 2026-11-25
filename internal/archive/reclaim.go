@@ -1015,12 +1015,12 @@ func (r *Reclaimer) verifyRetired(ctx context.Context, pass *passState, runID st
 //  3. its namespace's current retention has elapsed since that finish;
 //  4. the cluster holds no execution of it;
 //  5. no resume record of it is newer than that body;
-//  6. its commit prefix lists empty.
+//  6. its commit prefix and its attested prefix list empty.
 //
 // Anything unreadable is retUnverified. A run with an execution is retLive;
 // one with a body that is not yet past its retention, or not yet retired, is
 // retRetained; one with neither a body, a sidecar nor an execution is
-// retNeverSeen. A commit under a retired run's prefix is retLateCommit:
+// retNeverSeen. A commit or an engine's record of a retired run is retLateCommit:
 // nothing it produced is ever deleted.
 func (r *Reclaimer) verify(ctx context.Context, pass *passState, runID string) retirement {
 	unverified := func(check string, err error) retirement {
@@ -1089,17 +1089,24 @@ func (r *Reclaimer) verify(ctx context.Context, pass *passState, runID string) r
 	return retirement{state: retRetired, retiredAt: retiredAt, namespace: body.Namespace, archived: true}
 }
 
-// commitsEmpty lists a run's commit prefix (check 6).
+// commitsEmpty lists a run's commit prefix and its attested prefix (check 6):
+// what an engine recorded for a run's tasks is handed to a memo hit as a
+// commit is. A listing that fails answers neither way.
 func (r *Reclaimer) commitsEmpty(ctx context.Context, namespace, runID string) (bool, error) {
-	prefix, err := artifacts.RunCommitPrefix(namespace, runID)
-	if err != nil {
-		return false, err
+	for _, render := range []func(namespace, runID string) (string, error){artifacts.RunCommitPrefix, artifacts.AttestedRunPrefix} {
+		prefix, err := render(namespace, runID)
+		if err != nil {
+			return false, err
+		}
+		commits, _, err := r.store.ListUnder(ctx, prefix, 1)
+		if err != nil {
+			return false, err
+		}
+		if len(commits) > 0 {
+			return false, nil
+		}
 	}
-	commits, _, err := r.store.ListUnder(ctx, prefix, 1)
-	if err != nil {
-		return false, err
-	}
-	return len(commits) == 0, nil
+	return true, nil
 }
 
 // candidate is one object a due run's GC examines.
@@ -1312,7 +1319,7 @@ func (r *Reclaimer) examineObject(ctx context.Context, pass *passState, runID, r
 			pass.samples.add(runID, c, OutcomeWouldDelete, ReasonUnreferenced, time.Time{})
 			return classDone
 		}
-		// (e) the markers again, then the producer's commit prefix again,
+		// (e) the markers again, then the producer's two commit prefixes again,
 		// then the delete.
 		again, err := r.store.ListObjectReferences(ctx, c.id)
 		if errors.Is(err, artifacts.ErrTooManyReferences) {

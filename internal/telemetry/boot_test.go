@@ -117,7 +117,8 @@ func TestClientOptions_CarriesTheConnectionsSecurity(t *testing.T) {
 //  1. a Temporal client is dialed only in cmd/ork/main.go and
 //     cmd/orker/main.go, once each;
 //  2. the options each dials with are a variable assigned only from
-//     telemetry.ClientOptions in that file;
+//     telemetry.ClientOptions in that file, or from engine.ClientOptions of
+//     that variable itself, which keeps what it was given;
 //  3. no client.Options literal is written outside ClientOptions, and nothing
 //     outside it names DisableWorkerEnvironmentInfo, so no caller can switch
 //     the reporting back on.
@@ -209,8 +210,9 @@ func isSelector(expr ast.Expr, pkg, name string) bool {
 }
 
 // onlyFromClientOptions reports whether file assigns the variable name at
-// least once and only ever from a telemetry.ClientOptions call, and never
-// declares it with var.
+// least once from a telemetry.ClientOptions call, and otherwise only ever
+// engine.ClientOptions(name, ...) to name itself, and never declares it with
+// var.
 func onlyFromClientOptions(file *ast.File, name string) bool {
 	assigned, other := false, false
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -219,9 +221,11 @@ func onlyFromClientOptions(file *ast.File, name string) bool {
 			for _, lhs := range n.Lhs {
 				if id, ok := lhs.(*ast.Ident); ok && id.Name == name {
 					call, ok := n.Rhs[0].(*ast.CallExpr)
-					if len(n.Rhs) == 1 && ok && isSelector(call.Fun, "telemetry", "ClientOptions") {
+					switch {
+					case len(n.Rhs) == 1 && ok && isSelector(call.Fun, "telemetry", "ClientOptions"):
 						assigned = true
-					} else {
+					case len(n.Lhs) == 1 && len(n.Rhs) == 1 && n.Tok == token.ASSIGN && ok && rewraps(call, name):
+					default:
 						other = true
 					}
 				}
@@ -236,6 +240,39 @@ func onlyFromClientOptions(file *ast.File, name string) bool {
 		return true
 	})
 	return assigned && !other
+}
+
+// rewraps reports whether call is engine.ClientOptions of the variable name.
+func rewraps(call *ast.CallExpr, name string) bool {
+	if !isSelector(call.Fun, "engine", "ClientOptions") || len(call.Args) == 0 {
+		return false
+	}
+	arg, ok := call.Args[0].(*ast.Ident)
+	return ok && arg.Name == name
+}
+
+// Only engine.ClientOptions of the variable itself may follow what
+// telemetry.ClientOptions built.
+func TestOnlyFromClientOptions(t *testing.T) {
+	const built = "o, err := telemetry.ClientOptions()\n"
+	for body, want := range map[string]bool{
+		built: true,
+		built + "o = engine.ClientOptions(o, nil)":                        true,
+		"o := engine.ClientOptions(client.Options{}, nil)":                false,
+		built + "o = engine.ClientOptions(client.Options{}, nil)":         false,
+		built + "o = engine.ClientOptions(other, nil)":                    false,
+		built + "o := engine.ClientOptions(o, nil)":                       false,
+		built + "o = engine.Other(o, nil)":                                false,
+		built + "o = client.Options{}":                                    false,
+		"o = engine.ClientOptions(o, nil)":                                false,
+		"var o client.Options\n" + "o, err = telemetry.ClientOptions()\n": false,
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), "x.go", "package x\nfunc f() {\n"+body+"\n}", parser.SkipObjectResolution)
+		must.OKf(t, err, "parse %q", body)
+		if got := onlyFromClientOptions(file, "o"); got != want {
+			t.Errorf("%q = %v, want %v", body, got, want)
+		}
+	}
 }
 
 // TestLogBootSkipsWhenDisabled confirms LogBoot logs nothing at all for a

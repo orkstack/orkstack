@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/dockerport"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/s3scope"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // The same policy on a real store (docs/DEPLOY.md, "An Orker's own storage
@@ -42,29 +46,24 @@ func seaweedImage(t *testing.T) string {
 }
 
 // seaweedIdentities is the store's identity file: an administrator, which
-// the engine signs with, and the documented Orker policy in SeaweedFS's
-// actions. SeaweedFS's Write covers put and delete together, so the Orker's
+// the engine signs with, and the documented Orker policy (s3scope.OrkerPolicy,
+// which a test holds to docs/DEPLOY.md) in SeaweedFS's actions. SeaweedFS's Write covers put and delete together, so the Orker's
 // writes are granted as Write; what the check asks is outside every prefix
 // granted.
 func seaweedIdentities(bucket string) []byte {
 	var orker []string
-	for _, rule := range []struct {
-		prefix  string
-		actions []string
-	}{
-		{"orkflows", []string{"Read", "Write", "List"}},
-		{"manifests", []string{"Read", "Write", "List"}},
-		{"metadata/commits", []string{"Read", "Write", "List"}},
-		{"metadata/attested", []string{"Read", "List"}},
-		{"metadata/memo", []string{"Read", "Write", "List"}},
-		{"metadata/logs", []string{"Write"}},
-		{"metadata/attempts", []string{"Write", "List"}},
-		{"metadata/probes", []string{"Read", "Write", "List"}},
-		{"metadata/receipts", []string{"Write"}},
-		{"metadata/staging/event-sources", []string{"Write"}},
-	} {
-		for _, a := range rule.actions {
-			orker = append(orker, fmt.Sprintf("%s:%s/%s/*", a, bucket, rule.prefix))
+	for _, rule := range s3scope.OrkerPolicy() {
+		for _, action := range []struct {
+			name  string
+			verbs []s3scope.Verb
+		}{
+			{"Read", []s3scope.Verb{s3scope.Get, s3scope.Head}},
+			{"Write", []s3scope.Verb{s3scope.Put, s3scope.Delete}},
+			{"List", []s3scope.Verb{s3scope.List}},
+		} {
+			if slices.ContainsFunc(action.verbs, func(v s3scope.Verb) bool { return slices.Contains(rule.Verbs, v) }) {
+				orker = append(orker, fmt.Sprintf("%s:%s/%s*", action.name, bucket, rule.Prefix))
+			}
 		}
 	}
 	doc := map[string]any{"identities": []map[string]any{
@@ -182,7 +181,19 @@ func TestIntegration_TheDocumentedOrkerPolicyHoldsOnSeaweedFS(t *testing.T) {
 			t.Fatalf("run %d (%s) on SeaweedFS ended %v: %v\n%s", i, run.GetId(), run.GetStatus(), run.GetError(), s.log.String())
 		}
 	}
-	t.Logf("EVIDENCE documented Orker policy on SeaweedFS %s: store_scope=%v; two runs of every kind of task succeeded",
-		seaweedImage(t), scope.GetStoreScope())
+	// What this store says of a run context that is not there, to a credential
+	// that may get but not list: missing or refused, never invalid and never
+	// an answer the Orker cannot read.
+	contexts, err := artifacts.NewRunContextStore(ctx, artifacts.Config{Backend: artifacts.BackendS3,
+		S3Endpoint: endpoint, S3Region: "us-east-1", S3Bucket: bucket, S3PathStyle: true,
+		S3AccessKey: "scope-orker", S3SecretKey: "scope-orker-secret"})
+	must.OK(t, err)
+	_, missing := contexts.ReadRunContext(ctx, "default", "ork-no-such-run", strings.Repeat("1", 64))
+	if !errors.Is(missing, artifacts.ErrRunContextMissing) && !errors.Is(missing, artifacts.ErrRunContextRefused) {
+		t.Fatalf("a run context that is not there reads %v, want missing or refused", missing)
+	}
+	fmt.Fprintf(&s.log, "a run context that is not there, read with the Orker's credential: %v\n", missing)
+	t.Logf("EVIDENCE documented Orker policy on SeaweedFS %s: store_scope=%v; two runs of every kind of task succeeded; a missing run context reads %q",
+		seaweedImage(t), scope.GetStoreScope(), missing)
 	proof.Write(t, "orkctl", "store-scope-seaweedfs", []byte(s.log.String()))
 }

@@ -12,11 +12,6 @@ import (
 	"github.com/orkstack/orkstack/internal/eachlines"
 )
 
-// inputsProducer is the producer E87 gives a run's input artifacts. A fan-out
-// over one is refused in this release; the refusal says so, because the
-// `_inputs` branch lifts it once E87 lands.
-const inputsProducer = "_inputs"
-
 // batchSliceSentence names the file a batched item reads its lines from, for
 // the refusals of `as:` and of an .each key in a batched fan-out.
 const batchSliceSentence = "/orkstack/input/each/lines.jsonl (format: jsonl) or " +
@@ -25,11 +20,12 @@ const batchSliceSentence = "/orkstack/input/each/lines.jsonl (format: jsonl) or 
 // ParseOverArtifact splits `each.over_artifact` into its producer and its
 // artifact name, by the grammar of the artifact "<producer>/<name>" helper:
 // split on the first "/", both halves non-empty. The producer is a task id
-// (the slug rule; a "_"-prefixed producer is reserved, E87 §15, and "_inputs"
-// is refused in this release). The name follows the output-artifact name rule
+// (the slug rule) or InputsProducer, for an artifact input of the Orkflow; any
+// other "_"-prefixed producer is reserved. The name follows the output-artifact name rule
 // — an Orker writes it as one directory entry of /orkstack/output/artifacts —
 // so it is valid UTF-8 and holds no "/" and no NUL, and is not "." or "..".
-// Whether the producer is a task the fan-out needs is validateEach's question.
+// Whether the producer is a task the fan-out needs, or the name an artifact
+// input the Orkflow declares, is validateEach's question.
 // Pure.
 func ParseOverArtifact(s string) (producer, name string, err error) {
 	refuse := func(why string) error {
@@ -49,11 +45,9 @@ func ParseOverArtifact(s string) (producer, name string, err error) {
 		return "", "", refuse("it names no task before the \"/\"")
 	case name == "":
 		return "", "", refuse("it names no artifact after the \"/\"")
-	case producer == inputsProducer:
-		return "", "", refuse("a fan-out over a run input artifact is not supported in this release")
-	case strings.HasPrefix(producer, "_"):
-		return "", "", refuse(fmt.Sprintf("%q is reserved; the producer is a task id", producer))
-	case !slugPattern.MatchString(producer) || len(producer) > MaxSlug:
+	case producer != InputsProducer && strings.HasPrefix(producer, "_"):
+		return "", "", refuse(fmt.Sprintf("%q is reserved; the producer is a task id or %s", producer, InputsProducer))
+	case producer != InputsProducer && !slugPattern.MatchString(producer) || len(producer) > MaxSlug:
 		return "", "", refuse(fmt.Sprintf("%q is not a task id (%s, at most %d bytes)",
 			producer, slugPattern, MaxSlug))
 	case strings.Contains(name, "/"):
@@ -95,10 +89,13 @@ func IsEachLines(spec *orkstackv1.EachSpec) bool {
 // compiled message: exactly one of over and over_artifact; the source is
 // compiled from over_artifact; a format; a batch of 0 or 2 … MaxEachBatch, and
 // with one, the default item name; the producer a task in the fan-out's own
-// needs that writes artifacts (not a fan-out, an awaited, sleeping or
-// composed task); and no template of the fan-out reads the source, which is
-// never staged.
-func validateEachLines(task *orkstackv1.Task, taskIndex int, byID map[string]*orkstackv1.Task) error {
+// needs that records artifacts (not a fan-out, an awaited or a sleeping task;
+// a composed task records what its child returns, which internal/api holds to
+// the child's outputs), or _inputs, naming an artifact input of this Orkflow;
+// and no template of the fan-out reads the source, which is never staged.
+func validateEachLines(task *orkstackv1.Task, taskIndex int, byID map[string]*orkstackv1.Task,
+	artifactInputs map[string]struct{},
+) error {
 	spec := task.GetEach()
 	id := task.GetId()
 	at := func(field string) string { return fmt.Sprintf("tasks[%d].%s", taskIndex, field) }
@@ -135,6 +132,20 @@ func validateEachLines(task *orkstackv1.Task, taskIndex int, byID map[string]*or
 			"task %q: each.as is refused with batch: %d — a batch has no single value; read %s",
 			id, b, batchSliceSentence))
 	}
+	if producer == InputsProducer {
+		if _, ok := artifactInputs[name]; !ok {
+			return validationError(at("each.over_artifact"), fmt.Errorf(
+				"task %q: each.over_artifact %q names no artifact input of this Orkflow (declared: %s)",
+				id, spec.GetOverArtifact(), declaredList(artifactInputs)))
+		}
+		// input_artifacts is what the with: names literally (rule 55).
+		if slices.Contains(task.GetInputArtifacts(), name) {
+			return validationError(at("with"), fmt.Errorf(
+				"task %q: its with: reads artifact %q, the fan-out's own source — the source is never staged; "+
+					"each item receives its own line (.each.%s) or batch", id, spec.GetOverArtifact(), spec.GetAs()))
+		}
+		return nil
+	}
 	upstream, exists := byID[producer]
 	if !exists {
 		return validationError(at("each.over_artifact"), fmt.Errorf(
@@ -155,10 +166,6 @@ func validateEachLines(task *orkstackv1.Task, taskIndex int, byID map[string]*or
 			"task %q: each.over_artifact: %q is an awaited task and produces no artifacts", id, producer))
 	case upstream.GetSleep() != nil:
 		return validationError(at("each.over_artifact"), sleepReadRefusal(id, "each.over_artifact", producer))
-	case IsComposedTask(upstream):
-		return validationError(at("each.over_artifact"), fmt.Errorf(
-			"task %q: each.over_artifact: %q is a composed task; a fan-out over a child run's artifact is "+
-				"not supported in this release", id, producer))
 	}
 	reads, err := taskReadsIn("with", task.GetWith().AsMap())
 	if err != nil {

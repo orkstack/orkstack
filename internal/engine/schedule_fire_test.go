@@ -23,6 +23,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 
@@ -433,6 +434,249 @@ func mustTime(t *testing.T, raw string) time.Time {
 		t.Fatal(err)
 	}
 	return at
+}
+
+// firePreparationWith is firePreparation whose plan holds a run-level
+// concurrency slot of strategy on key db:prod.
+func firePreparationWith(t testing.TB, runID, strategy string) *orkstackv1.ScheduledRunPreparation {
+	prep := firePreparation(t, runID)
+	plan := firePlan()
+	run := 0
+	plan.Concurrency = &engine.ConcurrencyPlan{Run: &run, Slots: []engine.ConcurrencySlotPlan{{
+		GateID: "g", Key: "db:prod", Label: "db:{{ .inputs.env }}", Limit: 1, Strategy: strategy, QueueTimeoutSeconds: 60}}}
+	raw, err := stablejson.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prep.Plan = raw
+	return prep
+}
+
+// TestScheduleFireWorkflow_AConcurrencyRefusalCompletesTheFire: a preparation
+// that started no run because of a concurrency limit (a skip limit's full
+// key, a full line) completes the fire with the record's code and text, so
+// the schedule does not pause; it asks once and starts no child.
+func TestScheduleFireWorkflow_AConcurrencyRefusalCompletesTheFire(t *testing.T) {
+	for _, tc := range []engine.FireNotStarted{
+		{Code: engine.FireSkippedConcurrencyCode, Message: "key db:prod was full; this fire started no run"},
+		{Code: engine.FireNotStartedConcurrencyCode, Message: "this fire started no run: CONCURRENCY_QUEUE_FULL (cause=max_queued): the line is full"},
+	} {
+		t.Run(tc.Code, func(t *testing.T) {
+			h := newFireHarness(t)
+			h.scheduled(t, nightly)
+			calls := 0
+			h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+				calls++
+				return nil, engine.NewFireNotStarted(tc)
+			})
+			h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+				return nil
+			})
+			h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+			must.OKf(t, h.env.GetWorkflowError(), "a fire a limit kept from starting failed")
+			if calls != 1 || len(h.capture.childOpts) != 0 {
+				t.Fatalf("calls %d, children %d; want 1, 0", calls, len(h.capture.childOpts))
+			}
+			if got := h.capture.memoString(engine.MemoScheduleFireSkipCode); got != tc.Code {
+				t.Fatalf("memo skip code = %q, want %q", got, tc.Code)
+			}
+			if got := h.capture.memoString(engine.MemoScheduleFireSkipMessage); got != tc.Message {
+				t.Fatalf("memo skip message = %q, want %q", got, tc.Message)
+			}
+			if got := h.capture.memoString(engine.MemoScheduleFireRefusal); got != "" {
+				t.Fatalf("memo refusal = %q, want none", got)
+			}
+		})
+	}
+}
+
+// TestScheduleFireWorkflow_AnUnavailableCheckAsksAgainThenCompletes: a
+// concurrency check that cannot be made is asked again for the window its
+// preparation names; a check that answers in it starts the run, and one
+// that never does completes the fire FIRE_CONCURRENCY_UNAVAILABLE.
+func TestScheduleFireWorkflow_AnUnavailableCheckAsksAgainThenCompletes(t *testing.T) {
+	unavailable := engine.FireNotStarted{Code: engine.FireConcurrencyUnavailableCode,
+		Message: "CONCURRENCY_CHECK_UNAVAILABLE (scope=key): the line for key db:prod could not be read", RetryFor: 5 * time.Minute}
+	t.Run("answers in the window", func(t *testing.T) {
+		h := newFireHarness(t)
+		h.scheduled(t, nightly)
+		calls := 0
+		h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+			calls++
+			if calls < 3 {
+				return nil, engine.NewFireNotStarted(unavailable)
+			}
+			return firePreparation(t, "ork-5"), nil
+		})
+		h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+			return nil
+		})
+		h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+		must.OKf(t, h.env.GetWorkflowError(), "fire")
+		if calls != 3 || len(h.capture.childOpts) != 1 {
+			t.Fatalf("calls %d, children %d; want 3, 1", calls, len(h.capture.childOpts))
+		}
+		if got := h.capture.memoString(engine.MemoScheduleFireSkipCode); got != "" {
+			t.Fatalf("memo skip code = %q on a fire that started its run", got)
+		}
+	})
+	t.Run("never answers", func(t *testing.T) {
+		h := newFireHarness(t)
+		h.scheduled(t, nightly)
+		calls := 0
+		var first, last time.Time
+		h.prepare(func(ctx context.Context, _ *orkstackv1.ScheduleRecord, _ time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+			calls++
+			now := activity.GetInfo(ctx).StartedTime
+			if first.IsZero() {
+				first = now
+			}
+			last = now
+			return nil, engine.NewFireNotStarted(unavailable)
+		})
+		h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+			return nil
+		})
+		h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+		must.OKf(t, h.env.GetWorkflowError(), "a fire whose limit never answered failed")
+		if calls < 3 || len(h.capture.childOpts) != 0 {
+			t.Fatalf("calls %d, children %d; want several, 0", calls, len(h.capture.childOpts))
+		}
+		if span := last.Sub(first); span > unavailable.RetryFor {
+			t.Fatalf("asked for %s, beyond the %s window", span, unavailable.RetryFor)
+		}
+		if got := h.capture.memoString(engine.MemoScheduleFireSkipCode); got != engine.FireConcurrencyUnavailableCode {
+			t.Fatalf("memo skip code = %q, want %s", got, engine.FireConcurrencyUnavailableCode)
+		}
+		msg := h.capture.memoString(engine.MemoScheduleFireSkipMessage)
+		for _, want := range []string{"concurrency could not be checked for 5m0s", "could not be read", "this fire started no run"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("memo skip message = %q, want it to name %q", msg, want)
+			}
+		}
+	})
+}
+
+// TestScheduleFireWorkflow_ConcurrencyEndingsOfTheRun: a run a limit ended
+// before it started maps to the fire's outcome: a skip limit's full key is
+// a skipped fire, a refuse limit's a refused one, and a queued run that
+// never started (its queue timed out, its line full, its limit not
+// answering) completes the fire not started. Any other failure stays the
+// run's own.
+func TestScheduleFireWorkflow_ConcurrencyEndingsOfTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		name, strategy, code, msg string
+		wantSkip, wantRefused     string
+	}{
+		{name: "skip, key full", strategy: engine.ConcurrencyStrategySkip, code: engine.RunConcurrencyLimitCode,
+			msg: "key db:prod already has its limit of 1 runs", wantSkip: engine.FireSkippedConcurrencyCode},
+		{name: "refuse, key full", strategy: engine.ConcurrencyStrategyRefuse, code: engine.RunConcurrencyLimitCode,
+			msg: "key db:prod already has its limit of 1 runs", wantRefused: "key db:prod already has its limit"},
+		{name: "queue timed out", strategy: engine.ConcurrencyStrategyQueue, code: engine.RunQueueTimeoutCode,
+			msg: "waited 1m0s for key db:prod's slot without starting", wantSkip: engine.FireNotStartedConcurrencyCode},
+		{name: "line full", strategy: engine.ConcurrencyStrategyQueue, code: engine.RunConcurrencyFullCode,
+			msg: "the line for key db:prod is full", wantSkip: engine.FireNotStartedConcurrencyCode},
+		{name: "limit not answering", strategy: engine.ConcurrencyStrategyQueue, code: engine.RunConcurrencyUnavailableCode,
+			msg: "the limit on key db:prod did not answer", wantSkip: engine.FireNotStartedConcurrencyCode},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFireHarness(t)
+			h.scheduled(t, nightly)
+			h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+				return firePreparationWith(t, "ork-6", tc.strategy), nil
+			})
+			h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+				return temporal.NewNonRetryableApplicationError(tc.msg, tc.code, nil, engine.ConcurrencyRunNotStarted{NotStarted: true})
+			})
+			h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+			err := h.env.GetWorkflowError()
+			if tc.wantRefused != "" {
+				assertRefused(t, err, tc.wantRefused)
+				return
+			}
+			must.OKf(t, err, "a fire whose run a limit kept from starting failed")
+			if got := h.capture.memoString(engine.MemoScheduleFireSkipCode); got != tc.wantSkip {
+				t.Fatalf("memo skip code = %q, want %q", got, tc.wantSkip)
+			}
+			if got := h.capture.memoString(engine.MemoScheduleFireSkipMessage); !strings.Contains(got, tc.msg) {
+				t.Fatalf("memo skip message = %q, want it to carry %q", got, tc.msg)
+			}
+			if got := h.capture.memoString(engine.MemoScheduledRunID); got != "ork-6" {
+				t.Fatalf("memo run id = %q, want ork-6", got)
+			}
+		})
+	}
+	// A run that ran and then lost its slot (after a pause) fails its fire
+	// with its own reason, though the code is a limit's.
+	h := newFireHarness(t)
+	h.scheduled(t, nightly)
+	h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+		return firePreparationWith(t, "ork-9", engine.ConcurrencyStrategyQueue), nil
+	})
+	h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+		return temporal.NewNonRetryableApplicationError("the limit on key db:prod did not answer", engine.RunConcurrencyUnavailableCode, nil)
+	})
+	h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+	if err := h.env.GetWorkflowError(); err == nil || !strings.Contains(err.Error(), "did not answer") {
+		t.Fatalf("fire error = %v, want the run's own failure", err)
+	}
+	if got := h.capture.memoString(engine.MemoScheduleFireSkipCode); got != "" {
+		t.Fatalf("memo skip code = %q for a run that ran", got)
+	}
+
+	h = newFireHarness(t)
+	h.scheduled(t, nightly)
+	h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+		return firePreparationWith(t, "ork-7", engine.ConcurrencyStrategySkip), nil
+	})
+	h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+		return temporal.NewApplicationError("task sync failed", "ActivityFailed")
+	})
+	h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+	if err := h.env.GetWorkflowError(); err == nil || !strings.Contains(err.Error(), "task sync failed") {
+		t.Fatalf("fire error = %v, want the run's own failure", err)
+	}
+}
+
+// TestScheduleFireWorkflow_ASealedRunALimitKeptFromStarting: the fire's own
+// child start, so the failure comes wrapped as the cluster hands it over.
+func TestScheduleFireWorkflow_ASealedRunALimitKeptFromStarting(t *testing.T) {
+	s := newSealedRun(t, "ork-6")
+	for _, started := range []bool{false, true} {
+		t.Run(fmt.Sprintf("started %v", started), func(t *testing.T) {
+			h := newFireHarness(t)
+			fc := payloadcrypt.NewFailureConverter(payloadcrypt.NewConverter(engine.DataConverter(), s.keys), true)
+			h.env.SetFailureConverter(fc)
+			h.scheduled(t, nightly)
+			h.prepare(func(context.Context, *orkstackv1.ScheduleRecord, time.Time) (*orkstackv1.ScheduledRunPreparation, error) {
+				return firePreparationWith(t, "ork-6", engine.ConcurrencyStrategyQueue), nil
+			})
+			h.child(func(workflow.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
+				reason := engine.RunQueueTimeoutCode
+				if !started {
+					reason += "_NOT_STARTED"
+				}
+				return payloadcrypt.WithKey(temporal.NewNonRetryableApplicationError("waited for "+engine.Canary, engine.RunQueueTimeoutCode, nil,
+					engine.ConcurrencyRunNotStarted{NotStarted: !started}), s.scope, reason)
+			})
+			h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
+			err := h.env.GetWorkflowError()
+			skip := h.capture.memoString(engine.MemoScheduleFireSkipCode)
+			if started && (err == nil || skip != "") {
+				t.Fatalf("a run that ran: fire error %v, skip code %q; want its own failure", err, skip)
+			}
+			if !started && (err != nil || skip != engine.FireNotStartedConcurrencyCode) {
+				t.Fatalf("a run that never started: fire error %v, skip code %q", err, skip)
+			}
+			if msg := h.capture.memoString(engine.MemoScheduleFireSkipMessage); strings.Contains(msg, engine.Canary) {
+				t.Fatalf("the fire's memo quotes its run: %q", msg)
+			}
+			var sealed *payloadcrypt.SealedFailure
+			if started && !errors.As(err, &sealed) {
+				t.Fatalf("the run's failure reached the fire as %v, not sealed: this test proves nothing", err)
+			}
+		})
+	}
 }
 
 // TestScheduleFireWorkflow_StartsARunWithAConcurrencyLimit: a fire decodes a

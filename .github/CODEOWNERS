@@ -17,3 +17,10 @@
 /internal/testsupport/proof/ @danlsgiga
 /Makefile @danlsgiga
 /ui/playwright.config.ts @danlsgiga
+
+# The table of NVIDIA's CDI hook builds an Orker trusts behind an nvidia.com
+# hook, and the generator that derives it from NVIDIA's signed repository
+# (design E91 §4.10): a row, the floor or the pinned key changes only with a
+# code-owner review.
+/internal/orker/cdi_hook_table.go @danlsgiga
+/internal/orker/cmd/gencdihooks/ @danlsgiga

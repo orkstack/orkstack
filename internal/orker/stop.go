@@ -458,6 +458,7 @@ func (d *OCIDispatcher) report(
 	if pause == nil {
 		pause = sleepCtx
 	}
+	result, err = sealReport(ctx, result, err)
 	landed, last := reportSync(ctx, complete, result, err, handBackReportDeadline, pause)
 	switch {
 	case !landed:

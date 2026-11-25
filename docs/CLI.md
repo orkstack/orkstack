@@ -1673,6 +1673,77 @@ Inherited flags:
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
+## `orkctl concurrency`
+
+Read the namespace's concurrency limits: who holds each key and who waits
+
+A concurrency limit (concurrency: in an Orkflow) bounds how many runs hold one
+key at once. These commands read each key's limit as it stands: the runs
+holding its slots and the runs waiting in line, in the order they start.
+
+A key is readable by anyone who may read the namespace's runs, and is stored
+unencrypted: never render a secret or personal data into one.
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl concurrency get`
+
+Show one key's holders and line
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl concurrency list`
+
+List the keys with runs holding or waiting
+
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD   OPERATORS       VALUES
+  key     = != =a,b ~ ^   text
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+Flags:
+
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
 ## `orkctl event-source`
 
 Create, inspect and evaluate event sources
@@ -3369,9 +3440,9 @@ Inherited flags:
 Check an evidence bundle's members against its MANIFEST.json
 
 Verify hashes every member of a bundle and compares it with MANIFEST.json. It
-needs no server, no credentials and writes nothing to disk. Reclaimed and
-unrecorded members are findings, not failures; any member whose bytes do not
-match is named and the command exits 1.
+needs no server, no credentials and writes nothing to disk. Reclaimed,
+unrecorded and withheld members are findings, not failures; any member whose
+bytes do not match is named and the command exits 1.
 
 --against-store additionally asks the engine for the live manifest of the same
 run and scope and compares the two member by member.
@@ -4748,17 +4819,23 @@ Inherited flags:
 Create and inspect run-event callbacks
 
 A webhook receives a signed POST when a run or one of its tasks changes
-state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
-RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,
-TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED. A pause's
-events: RUN_PAUSED, RUN_UNPAUSED.
+state.
 
-Omitting --event means every run transition; task events and a pause's
-events are opt-in by name. Task events are best-effort hints with a short retry budget: a
+The run's lifecycle, what omitting --event means:
+  RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED, RUN_CANCELED, RUN_RESUMED
+Run events opt-in by name:
+  RUN_QUEUED, RUN_PAUSED, RUN_UNPAUSED, RUN_RESULTS_KEPT
+Task events, opt-in by name:
+  TASK_QUEUED, TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING, TASK_RESOLVED,
+  TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED
+
+Task events are best-effort hints with a short retry budget: a
 subscriber that must not miss one reconciles with GetRun.
 
 A subscription is deployment-wide unless it names a scope: a namespace
-(-n), an orkflow (--orkflow) and a task (--task), each an exact match.
+(-n), an orkflow (--orkflow) and a task (--task), each an exact match. An
+orkflow is the run's own namespace's: another namespace's shared orkflow of
+that name is never one.
 
 What each delivery did is recorded; `deliveries` lists the records, `delivery`
 shows one, `redeliver` sends one again by hand.
@@ -4782,12 +4859,14 @@ Inherited flags:
 Create a webhook: a callback URL for run events
 
 Create a webhook that calls a URL. Repeat --event to select transitions;
-omitting it subscribes to every run transition. Task events are opt-in
-and are best-effort hints: reconcile with GetRun if one must not be missed.
+omitting it subscribes to a run's start, its endings and RUN_RESUMED. Every
+other event is opt-in; task events are best-effort hints: reconcile with
+GetRun if one must not be missed.
 
 Scope defaults to every namespace; only an explicit -n narrows it.
-ORK_NAMESPACE and the saved default do not apply here. --orkflow and
---task narrow further; each is an exact match, empty means every, and
+ORK_NAMESPACE and the saved default do not apply here. --orkflow (the
+run's own namespace's, never another's shared one) and --task narrow
+further; each is an exact match, empty means every, and
 --task needs at least one TASK_* event.
 
 --name gives the subscription a handle, unique in its namespace scope,
@@ -4798,9 +4877,9 @@ an HMAC-SHA256 of the request body in the X-Ork-Signature header.
 
 Flags:
 
-- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED | RUN_RESUMED | RUN_RESULTS_KEPT
 - `--name STRING` — handle an automation document addresses this subscription by (needs -n)
-- `--orkflow STRING` — narrow to runs of this orkflow (exact name; empty means every orkflow)
+- `--orkflow STRING` — narrow to runs of this orkflow of the run's own namespace (exact name; empty means every orkflow)
 - `--secret STRING` — signing secret to use instead of a generated one
 - `-t, --task STRING` — narrow task events to this task (exact id; needs a TASK_* --event)
 
@@ -4862,7 +4941,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   run_id       = != =a,b       text
   webhook_id   = != =a,b       text
-  event        = != =a,b       RUN_QUEUED RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_QUEUED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED
+  event        = != =a,b       RUN_QUEUED RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_QUEUED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED RUN_RESUMED RUN_RESULTS_KEPT
   delivered    =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
@@ -4978,18 +5057,18 @@ id and signing secret never change, so a receiver keeps verifying and the
 subscription's delivery history stays continuous.
 
 Only the flags given change anything: --event replaces the event list,
---clear-events empties it (every run transition), an explicit -n sets the
+--clear-events empties it (the run's lifecycle), an explicit -n sets the
 namespace scope and --deployment-wide clears it, --orkflow "" and
 --task "" clear those, --name "" makes the subscription unnamed. A
 name needs a namespace scope. Rotating a secret is delete then create.
 
 Flags:
 
-- `--clear-events` — empty the event list: every run transition
+- `--clear-events` — empty the event list: the run's lifecycle
 - `--deployment-wide` — clear the namespace scope
-- `--event STRINGARRAY` — replace the event list (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — replace the event list (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED | RUN_RESUMED | RUN_RESULTS_KEPT
 - `--name STRING` — new handle ("" makes the subscription unnamed; needs a namespace scope)
-- `--orkflow STRING` — narrow to runs of this orkflow ("" clears it)
+- `--orkflow STRING` — narrow to runs of this orkflow of the run's own namespace ("" clears it)
 - `-t, --task STRING` — narrow task events to this task ("" clears it)
 - `--url STRING` — new callback URL
 

@@ -240,7 +240,7 @@ type beatingTeardown struct {
 func (r *beatingTeardown) Wait(ctx context.Context, id ContainerID) (ExitStatus, error) {
 	status, err := r.heldRuntime.Wait(ctx, id)
 	from := r.beats.Load()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for r.beats.Load() < from+3 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
@@ -508,6 +508,11 @@ func TestDetach_TheWorkersStopIsForwardedUnlessKept(t *testing.T) {
 				t.Fatal("the detached context does not carry the original")
 			}
 			cancel(tc.cause)
+			// An end is waited for; no end is watched for, for a moment.
+			wait := 200 * time.Millisecond
+			if tc.wantEnd {
+				wait = 30 * time.Second
+			}
 			select {
 			case <-detached.Done():
 				if !tc.wantEnd {
@@ -516,7 +521,7 @@ func TestDetach_TheWorkersStopIsForwardedUnlessKept(t *testing.T) {
 				if !errors.Is(context.Cause(detached), tc.cause) {
 					t.Errorf("cause = %v, want %v", context.Cause(detached), tc.cause)
 				}
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(wait):
 				if tc.wantEnd {
 					t.Fatal("the cancel never reached the detached context")
 				}

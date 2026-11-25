@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -106,6 +107,13 @@ func requireEngineDial(t *testing.T, got client.Options, identity string, cfg co
 	if got.FailureConverter != engine.FailureConverter() {
 		t.Fatalf("client.Options.FailureConverter = %v, want engine.FailureConverter()", got.FailureConverter)
 	}
+	// Every worker of this client runs with the payload interceptor
+	// (engine.ClientOptions).
+	if n := len(got.Interceptors); n == 0 {
+		t.Fatal("client.Options carries no payload interceptor")
+	} else if _, ok := got.Interceptors[n-1].(interceptor.WorkerInterceptor); !ok {
+		t.Fatalf("client.Options' last interceptor is %T, which no worker runs", got.Interceptors[n-1])
+	}
 }
 
 // TestBootTelemetryZeroConfig holds the non-negotiable invariant: with no
@@ -136,8 +144,9 @@ func TestBootTelemetryZeroConfig(t *testing.T) {
 	if got.MetricsHandler != nil {
 		t.Fatalf("client.Options.MetricsHandler = %v, want nil", got.MetricsHandler)
 	}
-	if len(got.Interceptors) != 0 {
-		t.Fatalf("client.Options.Interceptors = %v, want none", got.Interceptors)
+	// The payload interceptor alone (requireEngineDial), none of telemetry's.
+	if len(got.Interceptors) != 1 {
+		t.Fatalf("client.Options.Interceptors = %v, want the payload interceptor alone", got.Interceptors)
 	}
 
 	// The API handler is the zero-config invariant's other half: with
@@ -188,8 +197,8 @@ func TestConnectTemporal_DialsWithTheTelemetryItWasGiven(t *testing.T) {
 	if got.MetricsHandler == nil {
 		t.Fatal("client.Options.MetricsHandler = nil with OTEL_METRICS_EXPORTER=otlp, want the Temporal client's metrics")
 	}
-	if len(got.Interceptors) == 0 {
-		t.Fatal("client.Options.Interceptors = none with OTEL_TRACES_EXPORTER=otlp, want the tracing interceptor")
+	if len(got.Interceptors) != 2 {
+		t.Fatalf("client.Options.Interceptors = %v with OTEL_TRACES_EXPORTER=otlp, want the tracing interceptor and the payload one", got.Interceptors)
 	}
 }
 

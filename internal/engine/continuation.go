@@ -138,8 +138,8 @@ func (s *runState) endUnrestorable(
 		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
 	})
 	var snapshotURI string
-	if err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteFailedRunSnapshot,
-		namespace, s.runID, base, s.snapshot(), sequence).Get(localCtx, &snapshotURI); err != nil {
+	if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityWriteFailedRunSnapshot,
+		namespace, s.runID, base, s.snapshot(), sequence), &snapshotURI); err != nil {
 		// Object storage is down: the event is not published, and the reader
 		// synthesizes the run's end from the execution's own close, mapped to
 		// the same code (closedExecution).
@@ -156,8 +156,9 @@ func (s *runState) endUnrestorable(
 			Timestamp: timestamppb.New(workflow.Now(ectx)),
 		}
 		activityCtx := workflow.WithActivityOptions(ectx, eventActivityOptions())
-		if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI,
-			fmt.Sprintf("%s#%d", s.runID, sequence)).Get(ectx, nil); err != nil {
+		if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent,
+			payloadcrypt.Seal(s.scope, event), payloadcrypt.Seal(s.scope, snapshotURI),
+			payloadcrypt.PlainIn(s.scope, fmt.Sprintf("%s#%d", s.runID, sequence))).Get(ectx, nil); err != nil {
 			workflow.GetLogger(ctx).Error("publish event failed",
 				"run_id", s.runID, "event", eventType.String(), "error", err)
 		}
@@ -574,8 +575,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		Events:        s.genEvents,
 	}
 	var segmentObj *orkstackv1.ContinuationObject
-	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteEventSegment, segment, namespace, obs).
-		Get(writeCtx, &segmentObj); err != nil {
+	if err := s.getLocal(writeCtx, workflow.ExecuteLocalActivity(writeCtx, ActivityWriteEventSegment, segment, namespace, obs), &segmentObj); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -587,8 +587,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	// the writes must never encode the live rows fail() would then change.
 	run := proto.Clone(s.snapshot()).(*orkstackv1.Run)
 	var switchSnapshot *orkstackv1.ContinuationObject
-	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteSwitchSnapshot, run, namespace, s.generation, obs).
-		Get(writeCtx, &switchSnapshot); err != nil {
+	if err := s.getLocal(writeCtx, workflow.ExecuteLocalActivity(writeCtx, ActivityWriteSwitchSnapshot, run, namespace, s.generation, obs), &switchSnapshot); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -598,8 +597,8 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	// history (AGENTS.md §2.2).
 	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
-	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.chainAdmission()).Get(writeCtx, &checkpoint); err != nil {
+	if err := s.getLocal(writeCtx, workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
+		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.chainAdmission()), &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -657,9 +656,9 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	// a chain by it (MemoCreatedAt). Non-blocking, after the carry's check,
 	// so a refused carry never leaves a stray memo upsert.
 	if s.generation == 0 {
-		if err := workflow.UpsertMemo(ctx, map[string]any{
+		if err := workflow.UpsertMemo(ctx, plainMemo(ctx, map[string]any{
 			MemoCreatedAt: s.createdAt.AsTime().UTC().Format(time.RFC3339Nano),
-		}); err != nil {
+		})); err != nil {
 			s.setNoSwitch(ctx, inFlight, "its creation time could not be recorded")
 			return nil, "", nil
 		}
@@ -895,7 +894,12 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.createdAt": fieldRestored, "runState.startedAt": fieldRestored, "runState.status": fieldRestored,
 	"runState.eventSeq": fieldRestored, "runState.leanDecided": fieldRestored, "runState.lean": fieldRestored,
 	"runState.versions": fieldRestored, "runState.generation": fieldRestored, "runState.segments": fieldRestored,
-	"runState.heldFanOuts": fieldRestored, "runState.wfArg": fieldRestored, "runState.inputArg": fieldRestored,
+	// A resumed run's resume crosses in the carry (RunResumeCarry).
+	"runState.resume": fieldRestored,
+	// Set and taken by one event's emit, never across a switch.
+	"runState.eventResumed": fieldEphemeral, "runState.eventResultsKept": fieldEphemeral,
+	"runState.resumeAdopting": fieldEphemeral,
+	"runState.heldFanOuts":    fieldRestored, "runState.wfArg": fieldRestored, "runState.inputArg": fieldRestored,
 	"runState.genFirstSeq": fieldRestored,
 	"eachState.expanded":   fieldRestored, "eachState.count": fieldRestored, "eachState.next": fieldRestored,
 	"eachState.settled": fieldRestored, "eachState.limit": fieldRestored, "eachState.stride": fieldRestored,
@@ -916,7 +920,7 @@ var runStateFieldClass = map[string]fieldClass{
 	// listed holds only in-flight units, and nothing is in flight at a
 	// switch; the rest are set only while a run ends or an event is built.
 	"runState.listed": fieldEphemeral, "runState.ending": fieldEphemeral, "runState.failingRun": fieldEphemeral,
-	"runState.failingPhase": fieldEphemeral, "runState.eventInterruption": fieldEphemeral,
+	"runState.failingPhase": fieldEphemeral, "runState.eventInterruption": fieldEphemeral, "runState.eventWaitEnd": fieldEphemeral,
 	"runState.runError": fieldEphemeral, "runState.finished": fieldEphemeral, "runState.output": fieldEphemeral, "runState.outputArtifacts": fieldEphemeral,
 	"runState.pendingItemPublishes": fieldEphemeral, "runState.publishCtx": fieldEphemeral,
 	"runState.dispatchTaskLength": fieldEphemeral, "runState.dispatchTaskBytes": fieldEphemeral,

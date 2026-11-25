@@ -18,8 +18,9 @@ const IdentitySpecVersion uint32 = 1
 
 // IdentitySpecMembers are version 1's eleven members of a task's spec
 // digest, in the order the task's digest hashes them. devices, the device
-// profiles the task names, is the eleventh (the user's decision A1 of
-// 2026-11-20): appended after the ten, so their order is unchanged.
+// profiles the task names and the contract it needs of each, is the
+// eleventh (the user's decisions A1 of 2026-11-20 and D3 of 2026-11-24):
+// appended after the ten, so their order is unchanged.
 var IdentitySpecMembers = [11]string{
 	"image", "command", "env", "with", "secrets", "network", "run_as_orker_user", "identities", "credentials", "grants",
 	"devices",
@@ -40,9 +41,19 @@ type IdentitySpec struct {
 	RunAsOrkerUser bool
 	Identities     []*orkstackv1.IdentityRef
 	Credentials    []*orkstackv1.CredentialRef
-	// Devices are the device profiles the task names, in its order: the
-	// definition's names, and the names of the profiles the input carries.
-	Devices []string
+	// Devices are the device profiles the task names, in its order, with
+	// the contract it needs of each.
+	Devices []IdentityDevice
+}
+
+// IdentityDevice is a device profile as version 1 hashes it: its name, and
+// the label of the contract the task needs of it, empty when it needs none.
+// What the run pinned of the profile (its definition, the label's
+// definitions, the pool's contracts) is the profile check's, not the
+// digest's.
+type IdentityDevice struct {
+	Name     string `json:"name"`
+	Contract string `json:"contract"`
 }
 
 // IdentitySpecOfInput is the projection of the input an Orker received.
@@ -51,7 +62,7 @@ func IdentitySpecOfInput(in *orkstackv1.ExecuteTaskInput) IdentitySpec {
 		ImagePinned: in.GetImage().GetPinned(), Command: in.GetCommand(), Env: in.GetEnv(), With: in.GetWith(),
 		Secrets: in.GetSecrets(), Network: in.GetNetwork(), RunAsOrkerUser: in.GetRunAsOrkerUser(),
 		Identities: in.GetIdentity().GetIdentities(), Credentials: in.GetIdentity().GetCredentials(),
-		Devices: profileNames(in.GetDevices()),
+		Devices: inputDevices(in.GetDevices()),
 	}
 }
 
@@ -62,7 +73,7 @@ func IdentitySpecOfTask(t *orkstackv1.Task) IdentitySpec {
 	return IdentitySpec{
 		ImagePinned: t.GetImage().GetPinned(), Command: t.GetCommand(), Env: t.GetEnv(), With: t.GetWith(),
 		Secrets: t.GetSecrets(), Network: t.GetNetwork(), RunAsOrkerUser: t.GetRunAsOrkerUser(),
-		Identities: t.GetIdentities(), Credentials: t.GetCredentials(), Devices: t.GetDevices(),
+		Identities: t.GetIdentities(), Credentials: t.GetCredentials(), Devices: taskDevices(t),
 	}
 }
 
@@ -147,7 +158,7 @@ func identitySpecV1(s IdentitySpec) ([11]any, error) {
 	}
 	devices := s.Devices
 	if devices == nil {
-		devices = []string{}
+		devices = []IdentityDevice{}
 	}
 	return [11]any{
 		map[string]string{"pinned": s.ImagePinned}, command, env, with, secrets, network, s.RunAsOrkerUser,
@@ -164,14 +175,32 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-// profileNames is the names of the profiles an input carries, in order.
-func profileNames(refs []*orkstackv1.ProfileRef) []string {
-	if len(refs) == 0 {
-		return nil
+// taskDevices is the profiles a definition's task names, each with the
+// contract the definition says it needs.
+func taskDevices(t *orkstackv1.Task) []IdentityDevice {
+	out := make([]IdentityDevice, 0, len(t.GetDevices()))
+	for _, name := range t.GetDevices() {
+		out = append(out, IdentityDevice{Name: name, Contract: t.GetDeviceContracts()[name]})
 	}
-	out := make([]string, 0, len(refs))
+	return out
+}
+
+// inputDevices is the profiles an input carries: a declared one carries the
+// one contract its task needs (RunPlan.addContracts). A declared profile
+// with any other number of contracts is none an interpreter builds, and is
+// hashed as no label can be spelled, so it matches no admitted task.
+func inputDevices(refs []*orkstackv1.ProfileRef) []IdentityDevice {
+	out := make([]IdentityDevice, 0, len(refs))
 	for _, r := range refs {
-		out = append(out, r.GetName())
+		d := IdentityDevice{Name: r.GetName()}
+		if contracts := r.GetContracts(); r.GetDeclared() {
+			if len(contracts) == 1 && contracts[0].GetLabel() != "" {
+				d.Contract = contracts[0].GetLabel()
+			} else {
+				d.Contract = fmt.Sprintf("(%d contracts)", len(contracts))
+			}
+		}
+		out = append(out, d)
 	}
 	return out
 }

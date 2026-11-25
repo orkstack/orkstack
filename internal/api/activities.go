@@ -85,6 +85,9 @@ func (s *Service) DescribeOrker(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable, err)
 	}
+	// What an Orker runs is for the engine's own checks: a caller who may read
+	// Orkers learns no run of a namespace it cannot read.
+	result.Running, result.RunningTruncated = nil, false
 	return connect.NewResponse(&orkstackv1.DescribeOrkerResponse{Orker: result}), nil
 }
 

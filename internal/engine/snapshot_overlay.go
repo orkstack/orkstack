@@ -88,7 +88,10 @@ func DeclaredRows(wf *orkstackv1.Orkflow) int64 {
 // read depend on it, and none may depend on overlay support.
 func (s *runState) overlayPolicyFor(ctx workflow.Context, eventType orkstackv1.EventType) (OverlayPolicy, bool) {
 	policy := s.plan.SnapshotOverlay
-	if !policy.valid() || isTerminalRunEventType(eventType) || s.declaredRows <= policy.MinRows {
+	// A resumed run's RUN_RESUMED and RUN_RESULTS_KEPT are always full: each
+	// is where a reader first finds the resumed run's rows (E85 §5.3).
+	if !policy.valid() || isTerminalRunEventType(eventType) || s.declaredRows <= policy.MinRows ||
+		eventType == orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED || eventType == orkstackv1.EventType_EVENT_TYPE_RUN_RESULTS_KEPT {
 		return OverlayPolicy{}, false
 	}
 	return *policy, s.version(ctx, SnapshotOverlayChange, 1) >= 1
@@ -128,8 +131,8 @@ func (s *runState) writeEventSnapshot(ctx workflow.Context, eventType orkstackv1
 	loan := lendRows(snapshot)
 	if overlay {
 		var written SnapshotWritten
-		err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshotOrOverlay,
-			snapshot, int64(s.eventSeq), s.snapBase, policy).Get(localCtx, &written)
+		err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshotOrOverlay,
+			snapshot, int64(s.eventSeq), s.snapBase, policy), &written)
 		loan.takeBack()
 		if err != nil {
 			return "", err
@@ -138,8 +141,7 @@ func (s *runState) writeEventSnapshot(ctx workflow.Context, eventType orkstackv1
 		return written.URI, nil
 	}
 	var uri string
-	err := workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshot, snapshot, int64(s.eventSeq)).
-		Get(localCtx, &uri)
+	err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityWriteSnapshot, snapshot, int64(s.eventSeq)), &uri)
 	loan.takeBack()
 	if err != nil {
 		return "", err

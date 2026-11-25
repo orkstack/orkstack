@@ -184,6 +184,19 @@ func RunWorkflow(
 	plan RunPlan,
 	carry *orkstackv1.RunContinuation,
 ) (*orkstackv1.Run, error) {
+	return runWorkflowReleasing(ctx, liveDeps, runID, wf, input, plan, carry)
+}
+
+// runWorkflowReleasing is RunWorkflow over deps, which only tests replace.
+func runWorkflowReleasing(
+	ctx workflow.Context,
+	deps workflowDeps,
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	plan RunPlan,
+	carry *orkstackv1.RunContinuation,
+) (*orkstackv1.Run, error) {
 	// The central release (E88 §5.2.5): once the run's body has returned,
 	// a run that asked a gate releases at it on a context its own cancel
 	// does not reach — on every exit but a continue-as-new, which carries
@@ -192,7 +205,7 @@ func RunWorkflow(
 	// coroutine that is going away: such a run keeps its slot, and its
 	// gate's check pass frees it.
 	var conc *concRunState
-	run, err := runWorkflow(ctx, runID, wf, input, plan, carry, &conc)
+	run, err := runWorkflow(ctx, deps, runID, wf, input, plan, carry, &conc)
 	if conc != nil && !workflow.IsContinueAsNewError(err) {
 		releaseSlots(ctx, conc)
 	}
@@ -204,6 +217,7 @@ func RunWorkflow(
 // after it.
 func runWorkflow(
 	ctx workflow.Context,
+	deps workflowDeps,
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
@@ -298,6 +312,33 @@ func runWorkflow(
 		if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, "",
 			orkstackv1.Status_STATUS_RUNNING, "run started"); err != nil {
 			return nil, err
+		}
+		// R of a generation-0 run (E85 §30.2): the first code point after
+		// RUN_STARTED's publish, which a reset to this run's R re-executes and
+		// no copied prefix runs. Nothing happens here unless the run is a
+		// reset run.
+		holder, err := loadResumeAtR(ctx, deps, wf.GetNamespace(), runID, plan, true, state.createdAt.AsTime())
+		if err != nil {
+			return state.endResumeUnrunnable(ctx, err)
+		}
+		state.resume = holder
+		if holder != nil {
+			if err := state.adoptResume(ctx, deps); err != nil {
+				var unrunnable *resumeLoadFailure
+				var unread *readBackFailure
+				switch {
+				case errors.As(err, &unrunnable):
+					return state.endResumeUnrunnable(ctx, err)
+				case errors.As(err, &unread):
+					return state.fail(ctx, cancelRun, inFlight, unread.task, unread.cause)
+				default:
+					return state.fail(ctx, cancelRun, inFlight, "", err)
+				}
+			}
+			// A resumed run keeps one history to its end until a resume can
+			// be carried across one (E85 PR4d); past its limit it ends
+			// RUN_HISTORY_LIMIT, explicitly.
+			state.setNoSwitch(ctx, inFlight, "a resumed run keeps its history to its end")
 		}
 		// A child that received artifacts claims them for itself before its
 		// first dispatch (composed_artifacts.go); a claim that cannot be
@@ -912,6 +953,9 @@ type runState struct {
 	failingRun        bool
 	failingPhase      bool
 	eventInterruption *orkstackv1.TaskInterruption
+	// eventWaitEnd is how a wait in line ended, for the next event
+	// (noteWaitEnd).
+	eventWaitEnd *orkstackv1.ConcurrencyWaitEnd
 
 	// eaches is one entry per fan-out task, keyed by task id, built once in
 	// newRunState; iteration is over order, never the map. eachShare is the
@@ -1040,6 +1084,15 @@ type runState struct {
 	// runTimeout is the run's own time limit (runtimeout.go); nil when the
 	// definition declares no `timeout:`.
 	runTimeout *runTimeout
+	// resume is the plan a reset run carries out (E85), nil for every other run.
+	resume *resumeHolder
+	// eventResumed and eventResultsKept are set for the one RUN_RESUMED and
+	// RUN_RESULTS_KEPT event that carries each, and taken by it.
+	eventResumed     *orkstackv1.RunResumed
+	eventResultsKept *orkstackv1.RunResultsKept
+	// resumeAdopting is set while a reset run carries out its plan, before
+	// its main loop: a failure then starts no failure handler (E85 §4.3).
+	resumeAdopting bool
 
 	// conc is the run's concurrency state (concurrency_run.go); nil when its
 	// plan declares no run-level limit.
@@ -1211,19 +1264,22 @@ func buildRunState(
 	mergedInput := ApplyInputDefaults(wf, input)
 	state := &runState{
 		lossEvents: &orkstackv1.RunLossEvents{},
-		runID:      runID,
-		wf:         wf,
-		plan:       plan,
-		input:      mergedInput,
-		inputs:     payloadMap(mergedInput),
-		tasks:      map[string]*orkstackv1.Task{},
-		taskRuns:   map[string]*orkstackv1.TaskRun{},
-		results:    map[string]*orkstackv1.ExecuteTaskResult{},
-		outputs:    map[string]map[string]any{},
-		endTasks:   map[string]struct{}{},
-		status:     orkstackv1.Status_STATUS_PENDING,
-		pins:       map[string]*pinState{},
-		awaits:     map[string]*awaitState{},
+		// The pure builder holds no workflow context: newRunState, its one
+		// caller in production, sets the run's own key from its memo.
+		scope:    payloadcrypt.Unsealed(),
+		runID:    runID,
+		wf:       wf,
+		plan:     plan,
+		input:    mergedInput,
+		inputs:   payloadMap(mergedInput),
+		tasks:    map[string]*orkstackv1.Task{},
+		taskRuns: map[string]*orkstackv1.TaskRun{},
+		results:  map[string]*orkstackv1.ExecuteTaskResult{},
+		outputs:  map[string]map[string]any{},
+		endTasks: map[string]struct{}{},
+		status:   orkstackv1.Status_STATUS_PENDING,
+		pins:     map[string]*pinState{},
+		awaits:   map[string]*awaitState{},
 		// Generation 0 publishes from the run's first event; a carried
 		// generation from the one after its carry's (restore).
 		genFirstSeq: 1,
@@ -2162,7 +2218,8 @@ func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 				// that succeeded; failed names those with no commit.
 				refs = append(refs, &orkstackv1.UpstreamRef{
 					TaskId: need,
-					Each:   &orkstackv1.EachUpstream{Count: e.count, CommitRoot: s.plan.CommitRoot, Failed: s.itemsNotSucceeded(need)},
+					Each: &orkstackv1.EachUpstream{Count: e.count, CommitRoot: s.plan.CommitRoot,
+						Epochs: itemEpochRuns(s.taskRuns[need].GetItems()), Failed: s.itemsNotSucceeded(need)},
 				})
 			}
 			continue
@@ -2380,6 +2437,12 @@ func (s *runState) taskDispatch(t *orkstackv1.Task, id, pool string, pinContext 
 	}
 	if err := task.CheckSize(id, userSize, limit); err != nil {
 		return dispatchInput{}, temporal.NewNonRetryableApplicationError(err.Error(), task.CategoryContractViolation, err)
+	}
+	// Sealed after the bound is checked, which is measured before
+	// encryption (payload-encryption.md §3); for a run that is not sealed it
+	// is the payload itself.
+	if payload, err = s.scope.SealPayload(payload); err != nil {
+		return dispatchInput{}, temporal.NewNonRetryableApplicationError(err.Error(), task.CategoryInfrastructureError, err)
 	}
 	return dispatchInput{payload: payload, size: size}, nil
 }
@@ -2839,6 +2902,11 @@ func (s *runState) cancelInFlight(
 		if kept(id) {
 			continue
 		}
+		// A kept row a resume had not read back yet is written at the
+		// ending, silently (endNotReadBack, E85 §4.4), never canceled here.
+		if s.taskRuns[id].GetReadingBack() {
+			continue
+		}
 		switch s.taskRuns[id].GetStatus() {
 		case orkstackv1.Status_STATUS_PENDING:
 			// A task an interruption put back fails with its reason when
@@ -3108,6 +3176,9 @@ func (s *runState) fail(
 	// handlers, if any, ask for it again in the failing phase (join.go,
 	// failingRegain).
 	if s.concSlotGivenBack() {
+		if s.concWaiting() {
+			s.noteWaitEnd(ctx, waitOutcomeOf(ctx, cause))
+		}
 		s.leaveRequeue(ctx)
 	}
 	// The history guard's failure belongs to the run, never to the task or
@@ -3124,8 +3195,14 @@ func (s *runState) fail(
 	}
 	// A definition with a failure handler takes its own failure path
 	// (join.go, F1–F13); every other run takes this body, unchanged.
-	if s.hasHandlers {
+	// A resumed run that fails while it reads its kept results back has run
+	// nothing again, and starts nothing either (E85 §4.3): no failure handler.
+	if s.hasHandlers && !s.resumeAdopting {
 		return s.failWithHandlers(ctx, cancelRun, inFlight, taskID, cause)
+	}
+	if s.hasHandlers {
+		workflow.GetLogger(ctx).Info("a resumed run failed before anything ran again; its failure handlers do not start",
+			"run_id", s.runID, "task_id", taskID)
 	}
 	if s.runTimeout != nil && runTimeoutCauseCode(cause) == RunTimedOutCode && ctx.Err() == nil {
 		return s.failTimedOut(ctx, cancelRun, inFlight, cause)
@@ -3198,6 +3275,8 @@ func (s *runState) fail(
 	// A resolution that reached history after its await closed is recorded,
 	// never dropped. No-op for a run with no await.
 	s.drainResolutions(eventCtx)
+	// A resumed run's rows not read back yet (E85 §4.4); no-op otherwise.
+	s.endNotReadBack(eventCtx)
 
 	if err := s.emit(eventCtx, eventType, taskID, s.status, s.runError.GetMessage()); err != nil {
 		// The run is already failing for a recorded reason. That cause — a
@@ -3393,6 +3472,9 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		DispatchHold:   s.dispatchHoldProto(),
 		Queued:         s.concQueuedProto(),
 	}
+	// The trace the run belongs to; empty when its submission was not traced
+	// (the plan is replay-pinned).
+	run.TraceId, run.Traceparent = s.plan.Trace.ids()
 	for _, id := range s.order {
 		row := s.taskRuns[id]
 		settleDispatchHeld(row, s.eaches[id] != nil)
@@ -3505,6 +3587,11 @@ func (s *runState) emitTaskEvent(
 		Timestamp: timestamppb.New(workflow.Now(ctx)),
 		// Set only on an interruption's notice (emitInterruption).
 		Interruption: s.takeEventInterruption(),
+		// Set only on the event that ends a wait in line (noteWaitEnd).
+		WaitEnd: s.takeEventWaitEnd(eventType),
+		// Set only on a resumed run's RUN_RESUMED and RUN_RESULTS_KEPT.
+		Resumed:     s.takeEventResumed(),
+		ResultsKept: s.takeEventResultsKept(),
 	}
 	s.setPauseFields(ctx, event)
 	dedupeKey := fmt.Sprintf("%s#%d", s.runID, s.eventSeq)
@@ -3531,7 +3618,8 @@ func (s *runState) emitTaskEvent(
 	}
 	activityCtx := workflow.WithActivityOptions(publishCtx, eventActivityOptions())
 	s.recordEvent(event)
-	future := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey)
+	future := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent,
+		payloadcrypt.Seal(s.scope, event), payloadcrypt.Seal(s.scope, snapshotURI), payloadcrypt.PlainIn(s.scope, dedupeKey))
 	if err := future.Get(publishCtx, nil); err != nil {
 		// Projection is observability, not orchestration: a failed publish is
 		// logged and the run continues.

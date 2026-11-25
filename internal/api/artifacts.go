@@ -10,7 +10,10 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -29,8 +32,8 @@ func (s *Service) ListRunArtifacts(ctx context.Context, req *connect.Request[ork
 	if err != nil {
 		return nil, err
 	}
-	if req.Msg.GetTaskId() != "" && !hasTask(run, req.Msg.GetTaskId()) {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("task %q not found in run %q", req.Msg.GetTaskId(), run.GetId()))
+	if err := checkArtifactTask(run, req.Msg.GetTaskId()); err != nil {
+		return nil, err
 	}
 	if _, err := itemRunOf(run, req.Msg.GetTaskId(), req.Msg.Item); err != nil {
 		return nil, err
@@ -53,7 +56,10 @@ func (s *Service) ReadArtifact(ctx context.Context, req *connect.Request[orkstac
 	// The item selector: required for a fan-out (two items may record the
 	// same name), refused for any other task. Resolution is still against the
 	// recorded references, never a caller URI.
-	if hasTask(run, req.Msg.GetTaskId()) {
+	if err := checkReceived(run); err != nil {
+		return err
+	}
+	if hasTask(run, req.Msg.GetTaskId()) || req.Msg.GetTaskId() == dsl.InputsProducer {
 		if _, err := itemRunOf(run, req.Msg.GetTaskId(), req.Msg.Item); err != nil {
 			return err
 		}
@@ -122,6 +128,36 @@ func (s *Service) ReadArtifact(ctx context.Context, req *connect.Request[orkstac
 	}()})
 }
 
+// checkArtifactTask refuses an artifact read scoped to a task run does not
+// hold. The reserved task _inputs is one exactly when run received artifacts
+// (docs/DSL.md, "Passing artifacts to a child run"); "" is every task.
+func checkArtifactTask(run *orkstackv1.Run, id string) error {
+	if err := checkReceived(run); err != nil {
+		return err
+	}
+	switch {
+	case id == "" || hasTask(run, id):
+		return nil
+	case id == dsl.InputsProducer && len(run.GetInputArtifacts()) > 0:
+		return nil
+	case id == dsl.InputsProducer:
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q received no artifacts", run.GetId()))
+	}
+	return connect.NewError(connect.CodeNotFound, fmt.Errorf("task %q not found in run %q", id, run.GetId()))
+}
+
+// checkReceived refuses a record that names a received artifact and holds no
+// reference to it: the engine always records one, so the record is damaged.
+func checkReceived(run *orkstackv1.Run) error {
+	for _, received := range run.GetInputArtifacts() {
+		if received.GetArtifact() == nil {
+			return connect.NewError(connect.CodeDataLoss, fmt.Errorf(
+				"run %q records artifact input %q with no reference to its object", run.GetId(), received.GetName()))
+		}
+	}
+	return nil
+}
+
 func hasTask(run *orkstackv1.Run, id string) bool {
 	for _, task := range run.GetTaskRuns() {
 		if task.GetTaskId() == id {
@@ -151,6 +187,20 @@ func runArtifacts(run *orkstackv1.Run, taskID string, item *int32) []*orkstackv1
 			continue
 		}
 		result = append(result, rowArtifacts(task)...)
+	}
+	// What a child run received, under the reserved producer _inputs: no
+	// task row holds them, the run does (docs/DSL.md, "Passing artifacts to
+	// a child run"). Listed and read like any task's outputs.
+	if (taskID == "" || taskID == dsl.InputsProducer) && item == nil {
+		for _, received := range run.GetInputArtifacts() {
+			if received.GetArtifact() == nil {
+				continue // a damaged record; checkReceived refuses it where it is the answer
+			}
+			ref := proto.Clone(received.GetArtifact()).(*orkstackv1.ArtifactRef)
+			ref.Name = received.GetName()
+			result = append(result, &orkstackv1.RunArtifact{TaskId: dsl.InputsProducer,
+				Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Artifact: ref})
+		}
 	}
 	return result
 }

@@ -181,6 +181,10 @@ type Options struct {
 	// fails such an index EACH_EXPANSION_FAILED and such an item
 	// EACH_ITEM_UNAVAILABLE; cmd/orker always builds one.
 	EachIndexes *artifacts.EachIndexStore
+	// RunContexts is where a task's run-context object is read from. Nil
+	// fails a task whose input carries a run context RUN_CONTEXT_UNAVAILABLE;
+	// cmd/orker always builds one.
+	RunContexts RunContextReader
 }
 
 // Activities implements the engine<->Orker activity seam.
@@ -188,6 +192,9 @@ type Options struct {
 // It wraps one OCIDispatcher: any OCI image is an activity, and there is
 // exactly one implementation that runs one (§6.1).
 type Activities struct {
+	// taskKeys is the source of the run keys a sealed task needs
+	// (payload.go); nil runs no sealed task.
+	taskKeys   TaskKeys
 	dispatcher *OCIDispatcher
 	// gpuWait is the GPU host lock Boot found held (gpu_boot.go); nil when it
 	// took it, or offers no gpu profile.
@@ -247,6 +254,8 @@ type Activities struct {
 	// profiles is what this Orker offers and the profile causes that hold
 	// its cordon (profile_state.go).
 	profiles *profileState
+	// unitEngine is what the gpu unit probes know of the engine (gpu_boot.go).
+	unitEngine unitEngine
 	// scope is the storage scope watch (scope_watch.go), nil until
 	// WatchStoreScope starts one: DescribeOrker then leaves its fields unset.
 	scope atomic.Pointer[ScopeWatch]
@@ -334,6 +343,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Namespaces:          opts.Namespaces,
 			CommitRoot:          strings.TrimSuffix(opts.CommitRoot, "/"),
 			EachIndexes:         eachIndexReaderOf(opts.EachIndexes),
+			RunContexts:         opts.RunContexts,
 			Policy:              policy,
 			WorkRoot:            workRoot,
 			OrkerID:             orkerID,
@@ -376,6 +386,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	// The gpu profile's units, all usable until a probe says otherwise
 	// (capacity_units.go); their health holds the profile's unit reasons.
 	if p, ok := gpuProfileOf(opts.Profiles); ok && a.capacity != nil {
+		warnGPUCeiling(opts.Logger, p.Name, int(policy.MaxGPU), len(p.GPU.Units))
 		a.capacity.useUnits(p.Name, len(p.GPU.Units), int(policy.MaxGPU), unitHealthReporter(a.profiles, p.Name, time.Now))
 	}
 	// A profile cause holds this Orker's cordon (profile_state.go).
@@ -667,6 +678,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 	a.profiles.report(result)
 	result.Pins = a.describePins()
 	result.OpenPins = int32(len(result.Pins))
+	result.Running, result.RunningTruncated = a.dispatcher.describeRunning(a.capacity)
 	if a.dispatcher.Runtime != nil {
 		info, err := a.dispatcher.Runtime.Describe(ctx)
 		if err != nil {
@@ -857,10 +869,12 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 	// What each container ran, read before they go, so the attempts of the
 	// ones removed are released (resume/design.md §26.7).
 	var own []OwnContainer
+	unlisted := false
 	if lister, ok := a.dispatcher.Runtime.(ownContainerLister); ok && a.dispatcher.Claims != nil {
 		listed, err := lister.OwnContainers(ctx, a.dispatcher.OrkerID)
 		if err != nil {
 			a.dispatcher.logger().Warn("own containers could not be listed; their attempts are not released", "error", err)
+			unlisted = true
 		}
 		own = listed
 	}
@@ -882,6 +896,7 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 		// capacity starts with it reserved, until a later reap removes it.
 		// Either way it is tried again while this Orker runs, not left for its
 		// next boot.
+		a.keepReaped(own, unlisted, partial.Containers)
 		for _, id := range partial.Containers {
 			if a.capacity != nil {
 				a.capacity.seed(id)
@@ -892,6 +907,24 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 		return nil
 	default:
 		return fmt.Errorf("reap orphaned containers: %w", err)
+	}
+}
+
+// keepReaped lists, as still running, the attempts of the containers a reap
+// left; one that cannot be named makes every list of this process incomplete.
+func (a *Activities) keepReaped(own []OwnContainer, unlisted bool, stayed []ContainerID) {
+	byID := make(map[ContainerID]OwnContainer, len(own))
+	for _, c := range own {
+		byID[ContainerID(c.ID)] = c
+	}
+	for _, id := range stayed {
+		c, listed := byID[id]
+		if ref, ok := reapedAttempt(c); ok {
+			a.dispatcher.attempts.orphan(ref, id)
+		} else if unlisted || !listed || c.RunID+c.TaskID+c.Item+c.Attempt != "" {
+			// A container with no attempt's label, such as a probe's, ran none.
+			a.dispatcher.attempts.incomplete()
+		}
 	}
 }
 
@@ -1010,6 +1043,85 @@ type engineStater interface {
 	EngineState(ctx context.Context) ([]OwnPath, error)
 }
 
+// defaultRuntimeAsker is the runtime capability Boot, the periodic audit and
+// the gate ask which OCI runtime the engine runs containers with by default,
+// and where its binary is.
+type defaultRuntimeAsker interface {
+	DefaultRuntime(ctx context.Context) (runtimeFacts, error)
+}
+
+// cdiSpecDirsAsker is the runtime capability Boot asks which directories the
+// engine reads CDI specs from.
+type cdiSpecDirsAsker interface {
+	CDISpecDirs(ctx context.Context) (dirs []string, reported bool, err error)
+}
+
+// The ORKER_PROFILE_INVALID details of the runtime checks.
+const (
+	// DetailDefaultRuntimeRefused: the engine's default runtime is not runc or
+	// crun (by name or by binary), or cannot be asked.
+	DetailDefaultRuntimeRefused = "DEFAULT_RUNTIME_REFUSED"
+	// DetailCDISpecDirsMismatch: the engine reads CDI specs from a directory
+	// orker.cdi.spec_dirs does not hold, so a spec the audit never read
+	// could be resolved.
+	DetailCDISpecDirsMismatch = "CDI_SPEC_DIRS_MISMATCH"
+)
+
+// auditDefaultRuntime refuses, for an Orker with any profile, an engine whose
+// default OCI runtime is not runc or crun (design §4.10 item 2): the hooks and
+// devices a profile passes run under it. An engine that cannot say is refused
+// too, and so is a runtime that cannot be asked at all: the check fails closed.
+// An Orker with no profile asks nothing. It returns what it found, which the
+// periodic audit and the gate compare with.
+func auditDefaultRuntime(ctx context.Context, profiles *profileState, runtime any) (runtimeFacts, error) {
+	if profiles == nil || len(profiles.declared.List) == 0 {
+		return runtimeFacts{}, nil
+	}
+	asker, ok := runtime.(defaultRuntimeAsker)
+	if !ok {
+		return runtimeFacts{}, fmt.Errorf("%s: %s: this container runtime cannot say which OCI runtime it uses by default, "+
+			"so a profile's hooks and devices could not be held to runc or crun", ReasonProfileInvalid, DetailDefaultRuntimeRefused)
+	}
+	facts, err := asker.DefaultRuntime(ctx)
+	if err == nil {
+		err = checkDefaultRuntime(facts)
+	}
+	if err != nil {
+		return runtimeFacts{}, fmt.Errorf("%s: %s: %w", ReasonProfileInvalid, DetailDefaultRuntimeRefused, err)
+	}
+	return facts, nil
+}
+
+// auditCDISpecDirs refuses a gpu profile whose engine reads CDI specs from a
+// directory orker.cdi.spec_dirs does not hold: a spec there would resolve
+// though the audit never read it. An engine that cannot report its
+// directories is held to its documented defaults, and that is said once.
+func (a *Activities) auditCDISpecDirs(ctx context.Context) error {
+	if _, ok := gpuProfileOf(a.profiles.declared); !ok {
+		return nil
+	}
+	asker, ok := a.dispatcher.Runtime.(cdiSpecDirsAsker)
+	if !ok {
+		return fmt.Errorf("%s: %s: this container runtime cannot say which directories it reads CDI specs from", ReasonProfileInvalid, DetailCDISpecDirsMismatch)
+	}
+	engine, reported, err := asker.CDISpecDirs(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: %s: %w", ReasonProfileInvalid, DetailCDISpecDirsMismatch, err)
+	}
+	if !reported {
+		a.dispatcher.logger().Warn("the container engine does not report the directories it reads CDI specs from; "+
+			"holding it to its documented defaults", "directories", engine)
+	}
+	ours := a.dispatcher.Policy.CDISpecDirs
+	for _, dir := range engine {
+		if !slices.Contains(ours, filepath.Clean(dir)) {
+			return fmt.Errorf("%s: %s: the container engine reads CDI specs from %s, which orker.cdi.spec_dirs (%s) does not hold; "+
+				"add it, so every spec the engine can resolve is one the audit reads", ReasonProfileInvalid, DetailCDISpecDirsMismatch, dir, strings.Join(ours, ", "))
+		}
+	}
+	return nil
+}
+
 // ownEngineState adds the directories the engine keeps its state in to the
 // Orker's own paths. Whatever the engine could not say — nothing at all, or
 // something beside what it named — leaves the default paths in force and is
@@ -1108,6 +1220,16 @@ func (a *Activities) Boot(ctx context.Context) error {
 	a.profiles.useCDI(a.dispatcher.Policy.CDISpecDirs, runtimeSocketPath())
 	if err := a.profiles.bootAuditProfiles(); err != nil {
 		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
+	}
+	facts, err := auditDefaultRuntime(ctx, a.profiles, a.dispatcher.Runtime)
+	if err != nil {
+		return err
+	}
+	if err := a.auditCDISpecDirs(ctx); err != nil {
+		return err
+	}
+	if asker, ok := a.dispatcher.Runtime.(defaultRuntimeAsker); ok && len(a.profiles.declared.List) > 0 {
+		a.profiles.useRuntime(asker, facts)
 	}
 	// An id is what names this Orker's control channel (task.QueueForOrker),
 	// so an id that cannot name one refuses boot here, naming the variable,
@@ -1462,4 +1584,20 @@ func claimerOf(store artifacts.AttemptStore) artifacts.AttemptClaimer {
 		return claimer
 	}
 	return nil
+}
+
+// warnGPUCeiling logs, once at boot, a max_gpu above half the gpu profile's
+// units: one unit out of service then leaves fewer usable units than the cap,
+// and the Orker polls for no task until it returns (docs/DEPLOY.md, "Running a
+// GPU Orker"). A host of one unit never warns: one task holding its only
+// GPU is inherent there, not a misconfiguration. It decides nothing. A nil logger is slog.Default.
+func warnGPUCeiling(logger *slog.Logger, profile string, maxGPU, units int) {
+	if units < 2 || maxGPU == 0 || 2*maxGPU <= units {
+		return
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Warn("max_gpu is more than half the gpu profile's units: one unit out of service stops this Orker's gpu work until it returns",
+		"profile", profile, "max_gpu", maxGPU, "units", units, "setting", MaxGPUVar)
 }

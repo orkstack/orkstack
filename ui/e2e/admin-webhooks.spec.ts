@@ -204,11 +204,28 @@ test('registers a scoped task-event webhook and the row states its scope', async
 		await expect(page.getByTestId(`webhook-event-${name}`)).toBeVisible();
 	}
 	await expect(page.getByTestId('webhook-event-TASK_LOG')).toHaveCount(0);
-	// A pause's two events are opt-in run events, offered beside the run
-	// transitions.
-	for (const name of ['RUN_PAUSED', 'RUN_UNPAUSED']) {
+	// RUN_RESUMED is one of the run's lifecycle; a pause's two events and a
+	// resume's kept results are opt-in, offered beside it.
+	for (const name of ['RUN_RESUMED', 'RUN_PAUSED', 'RUN_UNPAUSED', 'RUN_RESULTS_KEPT']) {
 		await expect(page.getByTestId('webhook-run-events').getByTestId(`webhook-event-${name}`)).toBeVisible();
 	}
+
+	// The field says whose Orkflow a name means, under it, so the three scope
+	// fields stay level, and no page is widened on a phone.
+	const scopeHint = page.locator('#webhook-orkflow-hint');
+	await expect(scopeHint).toHaveText("the namespace's own, never another's shared one");
+	await expect(page.getByTestId('webhook-orkflow')).toHaveAttribute('aria-describedby', 'webhook-orkflow-hint');
+	await scopeHint.scrollIntoViewIfNeeded();
+	const tops = await Promise.all(['namespace', 'orkflow', 'task'].map(async (f) => (await page.getByTestId(`webhook-${f}`).boundingBox())!.y));
+	expect(new Set(tops).size, `the scope fields are level: ${tops}`).toBe(1);
+	await page.screenshot({ path: out('webhooks-scope-hint.png') });
+	const desktop = page.viewportSize()!;
+	await page.setViewportSize({ width: 360, height: 800 });
+	await expect(scopeHint).toBeVisible();
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll at 360 px').toBe(true);
+	await scopeHint.scrollIntoViewIfNeeded();
+	await page.screenshot({ path: out('webhooks-scope-hint-phone.png') });
+	await page.setViewportSize(desktop);
 
 	await page.getByTestId('webhook-url').fill(`${receiverURL}/scoped`);
 	await page.getByTestId('webhook-namespace').fill('default');

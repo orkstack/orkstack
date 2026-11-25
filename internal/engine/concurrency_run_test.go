@@ -16,6 +16,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -60,6 +61,7 @@ func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concR
 	h := &concRunHarness{t: t, env: generousDeadlock(suite.NewTestWorkflowEnvironment()), answers: answers}
 	h.env.SetTestTimeout(30 * time.Second)
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
+	h.env.RegisterWorkflowWithOptions(RunWorkflowRaw, workflow.RegisterOptions{Name: "raw"})
 	h.env.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		h.mu.Lock()
 		h.ran++
@@ -93,7 +95,7 @@ func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concR
 		func(_, _, _, _ string, arg any) error {
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			h.releases = append(h.releases, arg.(GateReleaseAll))
+			h.releases = append(h.releases, payloadcrypt.Unplain(arg).(GateReleaseAll))
 			return nil
 		})
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: concRunID})
@@ -384,6 +386,11 @@ func TestConcurrencyRun_AnEndingInLineStartsNoHandler(t *testing.T) {
 				if err := h.env.GetWorkflowError(); !errors.As(err, &app) || app.Type() != tc.code {
 					t.Fatalf("the run ended %v, want %s", err, tc.code)
 				}
+				// It says it never started, for a schedule's fire to read.
+				var detail ConcurrencyRunNotStarted
+				if err := app.Details(&detail); err != nil || !detail.NotStarted {
+					t.Fatalf("the run's ending carries %+v (%v), want it marked not started", detail, err)
+				}
 			}
 			if got := h.last.GetStatus(); got != wantStatus {
 				t.Fatalf("the run ended %s, want %s", got, wantStatus)
@@ -485,5 +492,57 @@ func TestSetRebuilding_MarksThePlaceUnknownUntilTheLimitHasReadItsHolders(t *tes
 	setRebuilding(q, false)
 	if q.GetNoteCode() != "LINE_FULL" {
 		t.Fatalf("another note was cleared: %v", q)
+	}
+}
+
+// waitEnds are the events of h that end a wait in line, each with its end.
+func (h *concRunHarness) waitEnds() map[orkstackv1.EventType]*orkstackv1.ConcurrencyWaitEnd {
+	out := map[orkstackv1.EventType]*orkstackv1.ConcurrencyWaitEnd{}
+	for _, e := range h.events {
+		if e.GetWaitEnd() != nil {
+			out[e.GetType()] = e.GetWaitEnd()
+		}
+	}
+	return out
+}
+
+// TestConcurrencyRun_TheEventThatEndsAWaitSaysHow: a queued run's
+// RUN_STARTED carries how its wait ended (started) and how long it took; a
+// run that times out in line carries timed_out on its terminal event, and
+// one that is canceled, canceled; a run granted at once carries none.
+func TestConcurrencyRun_TheEventThatEndsAWaitSaysHow(t *testing.T) {
+	label := CensusLimitLabel(concPlan().Concurrency.Slots[0].Label)
+	h := newConcRunHarness(t, queued(2, 1))
+	h.env.RegisterDelayedCallback(func() {
+		h.env.SignalWorkflow(ConcurrencyGrantSignal, ConcurrencyGrant{Gate: "ork-conc-test", Run: concRunID, TaskIx: gateRunLevel, SeqBase: 1, Seq: 2})
+	}, 30*time.Second)
+	h.run(concPlan())
+	ends := h.waitEnds()
+	started := ends[orkstackv1.EventType_EVENT_TYPE_RUN_STARTED]
+	if len(ends) != 1 || started.GetOutcome() != orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_STARTED ||
+		started.GetWaited().AsDuration() < 30*time.Second || started.GetLimitLabel() != label || started.GetTaskLevel() ||
+		started.GetStrategy() != orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE {
+		t.Fatalf("wait ends %v; want one, on RUN_STARTED: started after 30s, labelled %s", ends, label)
+	}
+
+	plan := concPlan()
+	plan.Concurrency.Slots[0].QueueTimeoutSeconds = 30
+	timeout := newConcRunHarness(t, queued(2, 1))
+	timeout.run(plan)
+	if end := timeout.waitEnds()[orkstackv1.EventType_EVENT_TYPE_RUN_FAILED]; end.GetOutcome() != orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_TIMED_OUT {
+		t.Fatalf("a run timed out in line: wait ends %v; want timed_out on RUN_FAILED", timeout.waitEnds())
+	}
+
+	canceled := newConcRunHarness(t, queued(2, 1))
+	canceled.env.RegisterDelayedCallback(canceled.env.CancelWorkflow, 10*time.Second)
+	canceled.run(concPlan())
+	if end := canceled.waitEnds()[orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED]; end.GetOutcome() != orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_CANCELED {
+		t.Fatalf("a run canceled in line: wait ends %v; want canceled on RUN_CANCELED", canceled.waitEnds())
+	}
+
+	granted := newConcRunHarness(t, AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerGranted, Seq: 1}})
+	granted.run(concPlan())
+	if ends := granted.waitEnds(); len(ends) != 0 {
+		t.Fatalf("a run granted at once carries wait ends %v; want none", ends)
 	}
 }

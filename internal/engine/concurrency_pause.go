@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 )
 
 // A paused run and its run-level slot (concurrency design §22.5, §22.14.3,
@@ -84,8 +85,9 @@ func (s *runState) giveBackRunSlot(ctx workflow.Context) error {
 func (s *runState) releaseRunEntry(ctx workflow.Context, gate string) error {
 	c := s.conc
 	f := workflow.SignalExternalWorkflow(ctx, gate, "", GateSignalRelease,
-		GateRelease{Run: s.runID, SeqBase: c.plan.SeqBase, TaskIx: gateRunLevel, N: c.ordinal})
-	if err := workflow.UpsertMemo(ctx, map[string]any{gateMemoKey(gate, gateRunLevel): nil}); err != nil {
+		// The gate is no run and holds no key: ids and indices only.
+		payloadcrypt.PlainIn(runScope(ctx), GateRelease{Run: s.runID, SeqBase: c.plan.SeqBase, TaskIx: gateRunLevel, N: c.ordinal}))
+	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, map[string]any{gateMemoKey(gate, gateRunLevel): nil})); err != nil {
 		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the run could not drop its slot's record: %v", err))
 	}
 	if err := s.syncConcAttributes(ctx); err != nil {
@@ -141,6 +143,7 @@ func (s *runState) takeReacquireAnswer(ctx workflow.Context, req gateAcquire, re
 	}
 	switch res.Answer.Answer {
 	case gateAnswerGranted:
+		s.noteWaitEnd(ctx, orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_STARTED)
 		s.endRequeue()
 		c.givenBack = false
 		return s.grantRunSlot(ctx, slot, res.Answer)
@@ -187,6 +190,7 @@ func (s *runState) waitAgain(ctx workflow.Context, slot *ConcurrencySlotPlan, re
 		c.requeue = w
 		dctx, cancel := workflow.WithCancel(ctx)
 		w.deadline, w.cancelDeadline = workflow.NewTimer(dctx, max(req.WaitUntil.Sub(workflow.Now(ctx)), time.Millisecond)), cancel
+		c.waitStarted = workflow.Now(ctx)
 		c.queued = &orkstackv1.ConcurrencyQueued{
 			Key: slot.Key, Limit: int32(slot.Limit), Strategy: concStrategyProto(gateStrategyQueue),
 			QueuedSince: timestamppb.New(workflow.Now(ctx)), TimesOutAt: timestamppb.New(req.WaitUntil),
@@ -284,7 +288,7 @@ func (s *runState) leaveRequeue(ctx workflow.Context) {
 	}
 	s.endRequeue()
 	gate := s.conc.plan.runSlot().GateID
-	if err := workflow.UpsertMemo(ctx, map[string]any{gateMemoKey(gate, gateRunLevel): nil}); err != nil {
+	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, map[string]any{gateMemoKey(gate, gateRunLevel): nil})); err != nil {
 		workflow.GetLogger(ctx).Warn("a run that left its re-queue could not drop its slot's record", "run_id", s.runID, "error", err)
 	}
 	if err := s.syncConcAttributes(ctx); err != nil {
@@ -356,6 +360,7 @@ func (s *runState) takeConcWait(ctx workflow.Context, woke concWaitCase) error {
 	switch woke {
 	case concWaitGrant:
 		ans := w.ans
+		s.noteWaitEnd(ctx, orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_STARTED)
 		s.endRequeue()
 		c.givenBack = false
 		return s.grantRunSlot(ctx, slot, ans)
@@ -445,7 +450,7 @@ func (s *runState) failingRegain(ctx workflow.Context) string {
 		}
 		ending = s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING, hard)
 		if errors.Is(ending, errWaitAborted) {
-			s.leaveRegainLine(ctx, slot)
+			s.leaveRegainLine(ctx, slot, orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_CANCELED)
 			s.runTimeout.hardTaken = true
 			s.takeHardEnd()
 			return ""
@@ -462,7 +467,7 @@ func (s *runState) failingRegain(ctx workflow.Context) string {
 		c.givenBack, c.queued = false, nil
 		return ""
 	case ctx.Err() != nil:
-		s.leaveRegainLine(ctx, slot)
+		s.leaveRegainLine(ctx, slot, orkstackv1.ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_CANCELED)
 		return "" // canceled while it waited: the caller's context ends the run
 	case ending != nil:
 		return s.regainStop(ctx, slot, timeout, ending)
@@ -480,7 +485,7 @@ func (s *runState) failingRegain(ctx workflow.Context) string {
 // regained, said with the limit's own reason. The run leaves the line, and
 // its records stop saying it waits.
 func (s *runState) regainStop(ctx workflow.Context, slot *ConcurrencySlotPlan, timeout time.Duration, ending error) string {
-	s.leaveRegainLine(ctx, slot)
+	s.leaveRegainLine(ctx, slot, waitOutcomeOf(ctx, ending))
 	failure := concFailure(ending)
 	if failure.GetCode() == RunQueueTimeoutCode {
 		return fmt.Sprintf("failure handlers did not run: the concurrency slot on key %s was not regained within %s (%s)",
@@ -493,11 +498,12 @@ func (s *runState) regainStop(ctx workflow.Context, slot *ConcurrencySlotPlan, t
 // leaveRegainLine drops a failing run's wait for its slot: the snapshot,
 // memo entry and index stop saying it waits. Best effort: a failed write is
 // logged.
-func (s *runState) leaveRegainLine(ctx workflow.Context, slot *ConcurrencySlotPlan) {
+func (s *runState) leaveRegainLine(ctx workflow.Context, slot *ConcurrencySlotPlan, outcome orkstackv1.ConcurrencyWaitOutcome) {
 	c := s.conc
 	if c.queued != nil {
+		s.noteWaitEnd(ctx, outcome)
 		c.queued = nil
-		if err := workflow.UpsertMemo(ctx, map[string]any{gateMemoKey(slot.GateID, gateRunLevel): nil}); err != nil {
+		if err := workflow.UpsertMemo(ctx, plainMemo(ctx, map[string]any{gateMemoKey(slot.GateID, gateRunLevel): nil})); err != nil {
 			workflow.GetLogger(ctx).Warn("a failing run that left the line could not drop its slot's record", "run_id", s.runID, "error", err)
 		}
 		if err := s.syncConcAttributes(ctx); err != nil {

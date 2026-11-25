@@ -17,6 +17,19 @@ tests:
     exp_samples:
     - labels: ork:runs_failure_ratio:rate15m{ork_deployment="d",ork_namespace="n"}
       value: 0.25
+- name: 'ork:runs_failure_ratio:rate15m: a resumed run''s second ending counts'
+  interval: 1m
+  input_series:
+  - series: ork_runs_total{ork_namespace="n",status="failed",ork_deployment="d"}
+    values: 0+1x30
+  - series: ork_runs_total{ork_namespace="n",status="succeeded",ork_run_resumption="true",ork_deployment="d"}
+    values: 0+1x30
+  promql_expr_test:
+  - expr: ork:runs_failure_ratio:rate15m
+    eval_time: 20m
+    exp_samples:
+    - labels: ork:runs_failure_ratio:rate15m{ork_deployment="d",ork_namespace="n"}
+      value: 0.5
 - name: 'ork:runs_failure_ratio:rate15m: none failed'
   interval: 1m
   input_series:

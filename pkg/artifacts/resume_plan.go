@@ -7,6 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/stablejson"
@@ -22,7 +25,7 @@ const (
 	// ResumePlanFormat is the record format this build writes and reads.
 	ResumePlanFormat = 1
 	// maxResumePlanBytes bounds a stored plan record: its block is at most
-	// 64 KiB (RESUME_TOO_LARGE), and the rest is small.
+	// 96 KiB of units (RESUME_TOO_LARGE), and the rest is small.
 	maxResumePlanBytes = 256 << 10
 )
 
@@ -136,4 +139,42 @@ func (s *RecordStore) ReadResumePlan(ctx context.Context, namespace, runID strin
 		return invalidRead[*orkstackv1.ResumePlanRecord]("resume plan", "is over %d bytes", maxResumePlanBytes), "", nil
 	}
 	return DecodeResumePlan(raw, namespace, runID, scope, n), ResumePlanDigest(raw), nil
+}
+
+// ResumePlanRef names one resume plan's record of a run.
+type ResumePlanRef struct {
+	Scope uint64
+	N     int
+}
+
+// resumePlanLeaf matches a plan record's leaf, {scope:020}.{n:03}.json.
+var resumePlanLeaf = regexp.MustCompile(`^([0-9]{20})\.([0-9]{3})\.json$`)
+
+// ListResumePlans lists a run's plan records, by scope then number: what its
+// resumes asked for, whether or not their resets ran. A store that does not
+// answer is *RecordStoreUnanswered.
+func (s *RecordStore) ListResumePlans(ctx context.Context, namespace, runID string) ([]ResumePlanRef, error) {
+	prefix, err := RunSnapshotPrefix(namespace, runID)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidRecordKey, err)
+	}
+	prefix += "resume-plans/"
+	var out []ResumePlanRef
+	err = listObjects(ctx, s.b, blobListInput{Prefix: prefix}, func(object blobObject) (bool, error) {
+		m := resumePlanLeaf.FindStringSubmatch(strings.TrimPrefix(object.Key, prefix))
+		if m == nil {
+			return false, nil
+		}
+		scope, err := strconv.ParseUint(m[1], 10, 64)
+		if err != nil {
+			return false, nil // twenty digits no scope has
+		}
+		n, _ := strconv.Atoi(m[2])
+		out = append(out, ResumePlanRef{Scope: scope, N: n})
+		return false, nil
+	})
+	if err != nil {
+		return nil, unansweredIn(ctx, err)
+	}
+	return out, nil
 }

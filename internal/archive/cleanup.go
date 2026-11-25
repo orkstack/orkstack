@@ -4,8 +4,9 @@
 // disappear on its own, then reclaims that run's OrkStack-owned storage.
 //
 // Cleanup deliberately removes only metadata/logs/{run-id}/,
-// metadata/attempts/{run-id}/, metadata/commits/{namespace}/{run-id}/ and
-// metadata/snapshots/{namespace}/{run-id}/. The snapshot prefix matters as
+// metadata/attempts/{run-id}/, and {namespace}/{run-id}/ under
+// metadata/commits/, metadata/attested/, metadata/snapshots/ and
+// metadata/run-context/. The snapshot prefix matters as
 // much as the others: every lifecycle emit externalizes one run snapshot,
 // and once the execution's history is gone, nothing else can ever reach
 // them — reads for a retired run fall through to the archive body, never to

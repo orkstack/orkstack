@@ -75,6 +75,11 @@ engine:
     events: 8192  # ork
     bytes: 8388608  # 8 MiB; ork
     restore_timeout: 1h  # ork
+  resume:
+    confirm_timeout: 30s  # ork
+    visibility_lag_floor: 15s  # ork
+    max_seq_gap: 4096  # ork
+    confirm_per_run: 6  # ork
   definition_by_reference: true  # ork
   snapshot_overlays: true  # ork
   run_max_in_flight: 500  # ork
@@ -139,6 +144,7 @@ engine:
     requeue_backoff_factor: 2  # ork
     requeue_interval_max: 15m  # ork
     retry_after: 1m  # ork
+    fire_unavailable_retry: 5m  # ork
     event_holders_shown: 5  # ork
     api_holders_shown: 10  # ork
   compose_max_depth: 4  # ork
@@ -276,6 +282,7 @@ telemetry:
   pprof_enabled: false
   high_cardinality: false
   orkflow_label: true  # ork
+  trust_inbound_trace: false  # ork
   object_labels: false  # ork
   metric_cardinality_limit: 2000
   census_requests_per_minute: 60  # ork

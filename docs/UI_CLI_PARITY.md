@@ -172,7 +172,8 @@ filter form renders it. The matcher is written once, in
 
 Lists that take filters: `ListNamespaces`, `ListOrkflows`, `ListWebhooks`,
 `ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`,
-`ListReleases`, `ListDeliveries`, `ListAuditRecords` and `ListRuns`. Child listings of one parent
+`ListReleases`, `ListDeliveries`, `ListAuditRecords`, `ListConcurrencyLimits` and
+`ListRuns`. Child listings of one parent
 (`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`, `ListIssuedTokens`), the
 `ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
 
@@ -518,6 +519,14 @@ is the `Ork-Principal` assertion, recorded and never authenticated. A run
 recorded before origins existed has kind `UNSPECIFIED`, renders `unrecorded`
 (never `submit`) and matches no origin filter.
 
+A `PARENT_RUN` origin also holds `parent_task_id`, the composed task that
+started the run, and `parent_orkflow`, `root_orkflow` (name, version, digest,
+and the owner's namespace for another namespace's shared Orkflow) and
+`root_origin`, what started the root. `root_origin` holds no lineage of its own,
+and the engine fills in a root only when it knows it. `GetRun`, an archived run
+and a webhook body's `run` carry these; a `ListRuns` row of a live run does not.
+So a child run's webhook names its root's principal, reference and description.
+
 A `PARENT_RUN` origin also holds `root_run_id`: the run at the top of the
 child's composed chain, so in A → B → C both B and C name A, and C names B as
 its parent. It is empty on every other kind, so a re-run of a child, a new
@@ -538,11 +547,12 @@ under the same fail-rather-than-subset rule as every list.
 
 CLI: `run submit --origin-ref`, `run again --origin-ref`, `run list --filter
 origin.kind=KIND [--filter origin.id=ID]`, an `ORIGIN` column (`-` when
-unrecorded), and `Origin:`, `Root run:`, `Reference:` and `Principal:` lines on
+unrecorded), and `Origin:`, `Parent task:`, `Root run:`, `Reference:` and `Principal:` lines on
 `run get`, the root's whenever one is recorded; `--json` carries it as
 `origin.rootRunId`, and `run list --filter origin.root_run_id=ID` lists the chain.
 UI: the run header's origin line — kind chip, the id linked to the source run
-or the Triggers/Schedules tab, **Root run** and a link to it when it is not the
+or the Triggers/Schedules tab, the composing task and its Orkflow, what started
+the root, **Root run** and a link to it when it is not the
 parent the line already links, the description, the reference linked only when
 it is an http(s) URL, and `by …` tagged asserted, with a not-authenticated
 title, or verified when the engine authenticated the submit; the
@@ -936,7 +946,8 @@ reads `task scheduled on pool <pool>, pin <name>` for a pinned task.
 resolve in the request's namespace (another namespace's run is NotFound, never
 compared); equal or empty ids and an unknown field name are `InvalidArgument`
 (the last lists the valid fields). Runs of different Orkflows are compared and
-flagged (`same_orkflow=false`), never refused. A store error fails the call;
+flagged (`same_orkflow=false`), never refused; so are a shared Orkflow's child
+run and a run of the namespace's own Orkflow of that name. A store error fails the call;
 it never degrades to "unavailable" evidence.
 
 **Fields, in canonical order:** `definition`, `input` (run-level); `presence`,
@@ -976,11 +987,16 @@ committing attempt, for an adopted commit). When that record is gone, the
 newest record with `commit_adopted` and outcome SUCCEEDED answers instead: an
 adopting retry files its record under its own number, carrying the committing
 attempt's image from `commit.json`. A failed or canceled record is never used.
-A definition whose digest differs from the run's pinned digest cannot answer.
+A definition is read in the namespace that owns it. One whose digest differs
+from the run's pinned digest cannot answer, nor can another namespace's that
+the caller may not read (`orkflow.read`); the run's own attempt records still
+answer. While the access document cannot be read and configuration's bindings do
+not grant it, the call fails `Unavailable`.
 
 | token | sentence |
 | --- | --- |
 | `definition_unavailable` | the pinned definition is no longer stored |
+| `definition_not_readable` | this caller may not read the shared Orkflow in its owner's namespace |
 | `definition_digest_mismatch` | the stored definition does not hash to the digest this run pinned |
 | `task_not_in_definition` | the pinned definition has no task of this id |
 | `no_attempt_store` | this engine has no task attempt store configured |
@@ -1033,8 +1049,9 @@ addressed exactly as a download is (optionally with `expect_sha256`; a
 mismatch with the recorded digest is `FailedPrecondition` naming both). It
 answers the recorded reference, `bytes_present`, this run's own reference
 state (`HELD`, `RELEASED` with `released_at`, or `ABSENT`), every archived
-run of the namespace that recorded the same object, `references_unreadable`
-and `computed_at`.
+run of the namespace that recorded the same object (with the owner of its
+Orkflow, for a shared Orkflow's child run), `references_unreadable` and
+`computed_at`.
 
 Three absences are never conflated: bytes gone, reference released by
 cleanup, and no evidence either way. References are ordered by
@@ -1192,6 +1209,19 @@ banner naming the outstanding handlers beside a Running pill; a pending
 task's panel names the needs it waits for, or, once they have all finished,
 that it is waiting to start.
 
+### Concurrency limits
+
+`orkctl concurrency list [-F key=K | -F key^P]` lists the namespace's keys
+with runs holding or waiting, each with how many hold and wait and whether its
+limit is reading which runs hold it; `orkctl concurrency get KEY` shows one
+key's holders (earliest granted first, a stalled one marked) and its line in
+the order it starts, with when each wait times out. Both read the limit itself
+at the moment they are asked (`ConcurrencyService`), show at most
+`engine.concurrency.api_holders_shown` holders and waiting runs with the
+totals beside them, list a limit that does not answer as not answering, and
+need `run.read`. `--json` emits the messages unchanged. The UI's Concurrency
+page is the same read.
+
 ## Webhooks
 
 ### Webhook administration
@@ -1206,11 +1236,12 @@ deletion, and a notification lookup failure never fails a run. The legacy
 plain-JSON `/v1/webhooks` routes are compatibility adapters over the same
 service; clients use the generated types.
 
-- **Events.** The four run transitions (`RUN_STARTED`, `RUN_SUCCEEDED`,
-  `RUN_FAILED`, `RUN_CANCELED`) and six task events (`TASK_SCHEDULED`,
+- **Events.** The run's lifecycle (`RUN_STARTED`, `RUN_SUCCEEDED`,
+  `RUN_FAILED`, `RUN_CANCELED`, `RUN_RESUMED`), the opt-in run events
+  (`RUN_QUEUED`, `RUN_PAUSED`, `RUN_UNPAUSED`, `RUN_RESULTS_KEPT`) and six task events (`TASK_SCHEDULED`,
   `TASK_STARTED`, `TASK_AWAITING`, `TASK_RESOLVED`, `TASK_SUCCEEDED`,
-  `TASK_FAILED`); `TASK_LOG` is refused. Empty selects every run transition
-  and no task event: task events are opt-in by name.
+  `TASK_FAILED`); `TASK_LOG` is refused. Empty selects the run's lifecycle
+  and nothing else: every other event is opt-in by name.
 - **Secrets.** URLs must be HTTP(S). The signing secret (supplied, or
   generated) is disclosed once, in the create response; `List` and `Get`
   never carry it. Delivery reads the registry through the one read that does
@@ -1273,7 +1304,8 @@ says so rather than implying the namespace switcher filters it.
 A subscription may name `namespace`, `orkflow_name` and `task_id`: three
 exact-match strings, each empty meaning every, each validated as a slug and
 never sanitized. A run with no namespace is in `default`, so a subscription
-scoped to `default` matches it. `task_id` is consulted only for task events (a
+scoped to `default` matches it. `orkflow_name` is the run's own namespace's
+Orkflow: a child run of another namespace's shared one never matches it. `task_id` is consulted only for task events (a
 `RUN_*` event passes it), and registration refuses a `task_id` when no
 `TASK_*` event is named. A scope names coordinates, not objects: nothing checks
 that the namespace, Orkflow or task exists, so a subscription may precede the
@@ -1607,6 +1639,7 @@ both, in [STATS.md](STATS.md).
 | --- | --- |
 | Cancellation | `run cancel --reason`; the UI's cancel action takes an optional reason, disables duplicate requests and shows "cancellation requested" until the authoritative status changes; the reason survives and the terminal state comes from the server. A run the request canceled records who asked, `canceled_by`: the `Ork-Principal` asserted on it, never authenticated, or, where the engine authenticates, the verified principal (`canceled_by_verified`). `run get` prints it as `Canceled by:` with the asserted or `(verified)` caption and `run list` as `CANCELED by … (asserted)` or `(verified)`; the UI shows it on the run and under the runs list's Canceled pill, tagged asserted or verified the same way. |
 | Pausing a run | `run pause [--reason] [--timeout] [--wait] [--dry-run]` and `run unpause [--reason] [--wait]`; `PauseRun` and `UnpauseRun` refuse a request the run cannot take with a reason (`RUN_ALREADY_PAUSED`, `RUN_PAUSE_INHERITED`, …, [REASONS.md](REASONS.md#pausing-a-run)), and answer with the request's id and the run's last event sequence, so `--wait` decides by the event carrying that id. `run get` prints `Paused:` (who, verified or asserted, when, why, until when, how many tasks still run), a `Not paused:` line for each child run the pause did not reach (`run pause --wait` prints them as warnings), and, once a pause ends, `Last pause:`; `run list` shows `PAUSED` and `--filter status=PAUSED` selects paused runs where the cluster indexes them. The run page offers Pause run (a reason, Ends after from the deployment's default to 31 days, and the warnings a dry run returns, before its confirm) and Unpause run, shows the Paused card while it lasts (with the child runs it did not reach) and Last pause once the run ends; Runs has a Paused tile and filter, and the sidebar says how many are paused. `orkctl stats` prints a paused row and `release status` how many of a release's runs are paused. |
+| Waiting for a concurrency slot | `orkflow get` prints `Concurrency:` (the limit, its key, how long the rest wait in line and how many may); `run get` prints `Queued:` (why it waits, the limit, its place in line, the runs it waits behind, since and until when, and the limit's note); `run list --filter queued=true`, `queued_on=KEY` and `holding=KEY` select the runs waiting for or holding a key; `orkctl stats` prints a queued row among the running. The Orkflow page shows the same Concurrency sentence; the run page shows the Queued card in the same words, the runs it waits behind as links; Runs has a Queued tile that is the `queued=true` filter, and the dashboard's Running count says how many are queued. |
 | Version-safe submission | The version picker marks current; links from a definition or a run keep the pinned version, so an old version is submitted even after current moves. Idempotency key and empty-pool override (`--allow-empty-pool`) are explicit, advanced inputs; a repeated key deduplicates per the server contract. |
 | Inputs and results | Run inputs/outputs, task values and metadata with copy and JSON export (`run get --json`); empty values are distinct from unavailable values. |
 | Typed inputs | String/number/boolean controls with required/default hints; object and array use JSON editors, with a JSON alternative for the whole input. Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce; unknown user-supplied keys are kept; unknown or complex declarations keep the JSON editor. The submitted JSON equals `run submit --input`'s. |

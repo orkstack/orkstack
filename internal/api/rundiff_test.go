@@ -202,7 +202,12 @@ func (f *diffFixture) mustDiff(t *testing.T, from, to string, only ...string) *o
 // define stores one pinned definition: every named task runs image.
 func (f *diffFixture) define(t *testing.T, name, version, digest string, images map[string]string) {
 	t.Helper()
-	wf := &orkstackv1.Orkflow{Name: name, Version: version, DefinitionDigest: digest, SourceYaml: name + "@" + version}
+	f.defineIn(t, "", name, version, digest, images)
+}
+
+func (f *diffFixture) defineIn(t *testing.T, namespace, name, version, digest string, images map[string]string) {
+	t.Helper()
+	wf := &orkstackv1.Orkflow{Namespace: namespace, Name: name, Version: version, DefinitionDigest: digest, SourceYaml: name + "@" + version}
 	for _, id := range slices.Sorted(mapKeys(images)) {
 		wf.Tasks = append(wf.Tasks, &orkstackv1.Task{Id: id, Image: &orkstackv1.ImageRef{Pinned: images[id]}})
 	}
@@ -613,6 +618,26 @@ func TestDiffRuns_ImageComesFromTheDefinitionThenTheAttemptThenIsUnavailable(t *
 		res = f.mustDiff(t, from.GetId(), to.GetId(), "image")
 		requireRows(t, res, "work image "+diffImageP+" | "+diffImageQ)
 	})
+}
+
+// A shared Orkflow's child run pinned its owner's document, and is of another
+// Orkflow than the running namespace's own one of the same name.
+func TestDiffRuns_SharedChildIsItsOwnersOrkflow(t *testing.T) {
+	own := diffRun("ork-own", func(r *orkstackv1.Run) { r.Namespace = "bravo" }, diffTask("work"))
+	child := diffRun("ork-child", func(r *orkstackv1.Run) {
+		r.Namespace, r.OrkflowNamespace, r.OrkflowDefinitionDigest = "bravo", "alpha", diffDigestB
+	}, diffTask("work"))
+	f := newDiffFixture(t, []*orkstackv1.Run{own, child})
+	f.defineIn(t, "bravo", "nightly-etl", "1.2.0", diffDigestA, map[string]string{"work": diffImageP})
+	f.defineIn(t, "alpha", "nightly-etl", "1.2.0", diffDigestB, map[string]string{"work": diffImageQ})
+	res, err := f.diff(own.GetId(), child.GetId(), "bravo", "definition", "image")
+	must.OK(t, err)
+	requireRows(t, res,
+		"(run) definition nightly-etl@1.2.0 "+diffDigestA+" | alpha/nightly-etl@1.2.0 "+diffDigestB,
+		"work image "+diffImageP+" | "+diffImageQ)
+	if res.GetSameOrkflow() {
+		t.Fatal("same_orkflow = true for two namespaces' Orkflows of one name")
+	}
 }
 
 func TestDiffRuns_PlatformDigestFromTheOutcomeAttemptRecord(t *testing.T) {

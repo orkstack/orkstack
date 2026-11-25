@@ -98,7 +98,7 @@ func fuzzPlanInput(data []byte) ResumePlanInput {
 		if g.n(8) == 0 {
 			row.ReadingBack = true
 			row.Status = sCanc
-			row.Error = &orkstackv1.Error{Code: notReadBackReason}
+			row.Error = &orkstackv1.Error{Code: ReasonResumeNotReadBack}
 		}
 		if t.Each != nil {
 			for k := range g.n(4) {
@@ -189,7 +189,7 @@ func referenceRerunSet(in ResumePlanInput, plan *ResumePlan) map[ResumeUnit]bool
 			r := row(u)
 			switch {
 			case in.Evidence.Kept[u] == KeptGone && (r.Status == sOK || r.ReadingBack ||
-				r.GetError().GetCode() == notReadBackReason || in.Class == ResumeBaseForceCanceled):
+				r.GetError().GetCode() == ReasonResumeNotReadBack || in.Class == ResumeBaseForceCanceled):
 				ref[u] = true
 			case r.Status != sOK && r.Status != sSkip:
 				ref[u] = true
@@ -253,7 +253,8 @@ func referenceRerunSet(in ResumePlanInput, plan *ResumePlan) map[ResumeUnit]bool
 // outside S as in the base, keeps nothing that needs an S member, puts no
 // composed task in S, adopts only verified results, and reruns every member
 // of a pin open at a force cancel. A consistent input never yields an
-// internal error, and planning twice gives the same plan.
+// internal error, planning twice gives the same plan, and what history alone
+// refuses no evidence makes plannable.
 func FuzzResumePlan(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte{5, 1, 1, 0, 0, 1, 2, 3})
@@ -262,6 +263,15 @@ func FuzzResumePlan(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		in := fuzzPlanInput(data)
 		plan, err := PlanResume(in)
+		if early := RefuseResumeFromHistory(in); early != nil {
+			var r *ResumeRefusal
+			if !errors.As(early, &r) {
+				t.Fatalf("RefuseResumeFromHistory on a consistent input: %v", early)
+			}
+			if err == nil {
+				t.Fatalf("refused from history (%v), but PlanResume planned it", early)
+			}
+		}
 		if err != nil {
 			var r *ResumeRefusal
 			if !errors.As(err, &r) {

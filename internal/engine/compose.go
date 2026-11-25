@@ -398,9 +398,10 @@ func (s *runState) failComposed(ctx workflow.Context, id, code string, category 
 // none, so its child starts are byte-identical, and a grandchild inherits
 // through its parent's copy. Never on the nested plan the parent carries:
 // that would cost every composed task its bytes inside the 256 KiB plan.
-func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
+func (s *runState) childStartPlan(taskID string, planned *ChildRunPlan) RunPlan {
 	childPlan := planned.Plan
-	childPlan.Origin = &RunOrigin{Kind: RunOriginKindParentRun, ID: s.runID, RootRunID: s.childRootRunID()}
+	childPlan.Origin = s.newChildOrigin(taskID)
+	childPlan.Trace = s.plan.Trace.forChild(s.runID)
 	childPlan.RecordRootRun = s.plan.RecordRootRun
 	childPlan.RootRunIndexed = s.plan.RootRunIndexed
 	childPlan.History = s.plan.History
@@ -421,6 +422,39 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	childPlan.RunContextSHA256 = s.plan.RunContextSHA256
 	childPlan.RunContextMaxBytes = s.plan.RunContextMaxBytes
 	return childPlan
+}
+
+// ChildOriginMaxBytes bounds the encoded origin a child's start carries: its
+// fields are each bounded at the request, and JSON writes a byte as at most
+// six, so it never reaches it (TestNewChildOrigin_FitsItsReserve). The submit reserves it inside the run
+// tree's plan bound; it decides nothing at a start.
+const ChildOriginMaxBytes = 8192
+
+// newChildOrigin is the origin of a child run task starts: this run and that
+// task as its parent, this run's Orkflow, and the root's id, Orkflow and whole
+// origin, which a run of the chain copies from its own origin and the root
+// from itself. It is the only builder of a PARENT_RUN origin. The child has
+// no principal or reference of its own: the root's is read from root_origin.
+// Pure: every input is on the replay-pinned plan and definition.
+func (s *runState) newChildOrigin(taskID string) *RunOrigin {
+	parent := &OrkflowRefPlan{Namespace: s.sharedOwner, Name: s.wf.GetName(), Version: s.wf.GetVersion(),
+		Digest: s.wf.GetDefinitionDigest()}
+	child := &RunOrigin{Kind: RunOriginKindParentRun, ID: s.runID, RootRunID: s.childRootRunID(),
+		ParentTaskID: taskID, ParentOrkflow: parent}
+	switch own := s.plan.Origin; {
+	case child.RootRunID == "":
+		// A run that records no root: nothing is guessed for it.
+	case own != nil && own.RootRunID != "":
+		if own.RootOrkflow != nil {
+			root := *own.RootOrkflow
+			child.RootOrkflow = &root
+		}
+		child.RootOrigin = own.RootOrigin.withoutLineage()
+	default:
+		root := *parent
+		child.RootOrkflow, child.RootOrigin = &root, own.withoutLineage()
+	}
+	return child
 }
 
 // childRootRunID is the root of the chain a child of this run belongs to:
@@ -482,7 +516,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 		rendered = req.Templates
 	} else {
 		localCtx := composeLocalContext(ctx)
-		if err := workflow.ExecuteLocalActivity(localCtx, ActivityRenderComposedValues, req).Get(localCtx, &rendered); err != nil {
+		if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityRenderComposedValues, req), &rendered); err != nil {
 			code, category, message := renderFailure(renderPrefixChildInput, err)
 			return nil, s.failComposed(ctx, id, code, category,
 				fmt.Sprintf("task %q: the child run's input could not be rendered: %s", id, message), "")
@@ -501,7 +535,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	if err != nil {
 		return nil, err
 	}
-	childPlan := s.childStartPlan(c.plan)
+	childPlan := s.childStartPlan(id, c.plan)
 	childPlan.InputArtifacts = received
 
 	// 5. Start it, and wait for the start to be confirmed.
@@ -510,7 +544,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	// the child's own start, and the same on every replay. The memo is not
 	// part of what a replay compares, so a recorded child start replays as
 	// it was (docs/STORAGE.md, "Reclaiming space").
-	options.Memo = RunStartMemoAt(c.wf, childPlan, workflow.Now(ctx))
+	options.Memo = plainMemo(ctx, RunStartMemoAt(c.wf, childPlan, workflow.Now(ctx)))
 	// A child of a sealed tree carries the tree's key field as it is, and is
 	// started sealed for its own id (payload-encryption.md §4.1 rule 1).
 	if field, ok := workflow.GetInfo(ctx).Memo.GetFields()[payloadcrypt.MemoField]; ok {
@@ -620,12 +654,18 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 	}
 	localCtx := composeLocalContext(ctx)
 	var ref *orkstackv1.ArtifactRef
-	if err := workflow.ExecuteLocalActivity(localCtx, ActivityStoreComposedValues, ComposeStoreRequest{
+	if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityStoreComposedValues, ComposeStoreRequest{
 		Orkflow: s.wf.GetName(),
 		RunID:   s.runID,
 		TaskID:  id,
 		Values:  raw,
-	}).Get(localCtx, &ref); err != nil || ref == nil {
+	}), &ref); err != nil || ref == nil {
+		if unreadableLocal(err) {
+			return s.failComposed(ctx, id, PayloadUnreadableCode,
+				orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
+				fmt.Sprintf("child run %s succeeded, but where its outputs were stored as task %q's values could not be read from this run's history",
+					c.plan.RunID, id), "")
+		}
 		if err == nil {
 			err = errors.New("the store returned no reference")
 		}
@@ -809,7 +849,7 @@ func (s *runState) renderOutputs(ctx workflow.Context) (*orkstackv1.Payload, *or
 	}
 	localCtx := composeLocalContext(ctx)
 	var rendered stablejson.RawJSON
-	if err := workflow.ExecuteLocalActivity(localCtx, ActivityRenderComposedValues, req).Get(localCtx, &rendered); err != nil {
+	if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityRenderComposedValues, req), &rendered); err != nil {
 		code, category, message := renderFailure(renderPrefixOutputs, err)
 		return nil, fail(code, category, message)
 	}
@@ -883,8 +923,9 @@ func compactRunResult(run *orkstackv1.Run) *orkstackv1.Run {
 }
 
 // compactChildResult is what a child run returns: only the coordinates, the
-// status, the output and the origin — what the parent reads, bounded by
-// values_max_bytes, rather than every task row. Nothing else reads a workflow
+// status, the output and the origin's kind and ids — what the parent reads,
+// bounded by values_max_bytes, rather than every task row. It is recorded in
+// the parent's history for every composed task, so it carries no lineage. Nothing else reads a workflow
 // result: the reader rebuilds a run from its events and snapshots.
 func compactChildResult(run *orkstackv1.Run) *orkstackv1.Run {
 	return &orkstackv1.Run{
@@ -895,9 +936,19 @@ func compactChildResult(run *orkstackv1.Run) *orkstackv1.Run {
 		OrkflowDefinitionDigest: run.GetOrkflowDefinitionDigest(),
 		Status:                  run.GetStatus(),
 		Output:                  run.GetOutput(),
-		Origin:                  run.GetOrigin(),
+		Origin:                  withoutLineage(run.GetOrigin()),
 		OutputArtifacts:         run.GetOutputArtifacts(),
 	}
+}
+
+// withoutLineage is origin without the lineage a child's holds, copied.
+func withoutLineage(origin *orkstackv1.RunOrigin) *orkstackv1.RunOrigin {
+	if origin == nil {
+		return nil
+	}
+	bare := proto.Clone(origin).(*orkstackv1.RunOrigin)
+	bare.ParentTaskId, bare.ParentOrkflow, bare.RootOrkflow, bare.RootOrigin = "", nil, nil, nil
+	return bare
 }
 
 // ---------------------------------------------------------------- activities

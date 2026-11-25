@@ -211,22 +211,26 @@ message OpenLossEvent {
   google.protobuf.Timestamp first_at = 2;
 }
 
-// RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
-// batch).
-message RunResumeCarry {}
+// RunResumeCarry is a resumed run's resume, carried across a continuation.
+message RunResumeCarry {
+  // seq_base is the resume's RUN_RESUMED sequence.
+  uint64 seq_base = 1;
+  // resumed_after is the sequence of the ending the resume set aside.
+  int64 resumed_after = 2;
+  // resume_count is how many resumes of the run got going.
+  int32 resume_count = 3;
+}
 
 // ResumeBlock is one resume's plan as the reset run executes it (E85 §4.1,
 // engine-internal): written into the resume's record before the reset and
 // loaded at R (LoadResumePlan). It is the pin: nothing of it is re-read.
 message ResumeBlock {
+  reserved 3, 4;
+  reserved "rerun", "dispositions";
   // seq_base is the sequence RUN_RESUMED takes; the rerun commits under it.
   uint64 seq_base = 1;
   // scope is the first seq_base of the resume's scope (§28.22 E85-16).
   uint64 scope = 2;
-  // rerun is S, the units run again, as ranges in task order.
-  repeated ResumeUnitRange rerun = 3;
-  // dispositions is every unit's disposition outside S.
-  repeated ResumeUnitDisposition dispositions = 4;
   ResumeAction action = 5;
   string from_task_id = 6;
   ResumeReadback readback = 7;
@@ -234,30 +238,47 @@ message ResumeBlock {
   int32 resumes_before = 8;
   uint64 previous_seq_base = 9;
   repeated string reopened_awaits = 10;
+  // units is the deterministic encoding of a ResumeUnits: every unit of the
+  // run's current part, once. Bytes, so the plan's record and the reset run's
+  // history hold it as base64, whatever JSON makes of a number.
+  bytes units = 11;
 }
 
-// ResumeUnitRange is count consecutive items of a task from first_item, or
-// the task itself when first_item is -1.
-message ResumeUnitRange {
-  string task_id = 1;
-  int32 first_item = 2;
-  int32 count = 3;
+// ResumeUnits is a resume plan's units, packed (engine.DecodeResumeUnits is
+// its one reader). A unit is a task, or an item of a fan-out. Units are in
+// this order: each task in definition order, its own unit first, then its
+// items from 0.
+message ResumeUnits {
+  // fan_outs are the fan-outs the base had expanded, in definition order.
+  repeated ResumeFanOutItems fan_outs = 1;
+  // One entry of each of the next three per run of consecutive units treated
+  // alike; the lengths add up to every unit.
+  repeated int32 run_lengths = 2;
+  repeated ResumeDisposition run_dispositions = 3;
+  // run_epochs is 0 for no scope, else one more than an index into epochs.
+  repeated int32 run_epochs = 4;
+  // epochs are the scopes kept results lie under, ascending.
+  repeated uint64 epochs = 5;
+  // encoded_sizes is, for each unit read back, in unit order, its entry's
+  // encoded size, as ResumeRun measured it.
+  repeated int64 encoded_sizes = 6;
+  // recorded is, for each SETTLE or SLEEP_UNTIL unit, in unit order, its record.
+  repeated ResumeRecordedUnit recorded = 7;
 }
 
-// ResumeUnitDisposition is one unit outside S.
-message ResumeUnitDisposition {
-  string task_id = 1;
-  // item is the item's index, or -1 for the task itself.
-  int32 item = 2;
-  ResumeDisposition disposition = 3;
-  // values_ref is a SETTLE unit's recorded values.
-  ArtifactRef values_ref = 4;
+// ResumeFanOutItems is how many items a fan-out's base had.
+message ResumeFanOutItems {
+  // task is the fan-out's index in the definition.
+  int32 task = 1;
+  int32 item_count = 2;
+}
+
+// ResumeRecordedUnit is what a SETTLE or SLEEP_UNTIL unit is kept from.
+message ResumeRecordedUnit {
+  // values_ref is a SETTLE unit's recorded values, when it has any.
+  ArtifactRef values_ref = 1;
   // wake_at is a SLEEP_UNTIL unit's recorded wake-up time.
-  google.protobuf.Timestamp wake_at = 5;
-  // result_epoch is the scope a kept result's commit lives under.
-  int64 result_epoch = 6;
-  // encoded_size is a read-back entry's encoded result, as ResumeRun measured it.
-  int64 encoded_size = 7;
+  google.protobuf.Timestamp wake_at = 2;
 }
 
 // ResumeReadback is the read-back's pinned bounds (E85 §4.1).
@@ -276,7 +297,7 @@ message ResumeReadback {
 
 // ResumePlanRecord is one resume plan's immutable record (E85 §11, §30.3,
 // engine-internal), written create-only before the reset at
-// metadata/run-resumes/{namespace}/{encoded-run-id}/{scope:020}.{n:03}.resume.json.
+// metadata/snapshots/{namespace}/{run-id}/resume-plans/{scope:020}.{n:03}.json.
 // The reset's reason names it by the SHA-256 of its stored bytes.
 message ResumePlanRecord {
   int32 format = 1;
@@ -299,4 +320,7 @@ message ResumePlanRecord {
   string superseded_reason = 16;
   uint64 previous_scope = 17;
   string request_id = 18;
+  // plan_digest is the digest a preview shows and a confirm names the plan by:
+  // what the resume does with each unit, with no time and no caller in it.
+  string plan_digest = 19;
 }

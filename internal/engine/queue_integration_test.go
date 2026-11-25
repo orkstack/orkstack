@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -52,12 +53,12 @@ func routingNamespace() string {
 
 // dialRoutingCluster provisions that namespace and returns a client bound to
 // it, skipping cleanly when no cluster is there.
-func dialRoutingCluster(t *testing.T, ctx context.Context, address, namespace string) client.Client {
+func dialRoutingCluster(t *testing.T, ctx context.Context, address, namespace string, interceptors ...interceptor.ClientInterceptor) client.Client {
 	t.Helper()
-	bootstrap, err := client.DialContext(ctx, client.Options{
+	bootstrap, err := client.DialContext(ctx, engine.ClientOptions(client.Options{
 		HostPort:  address,
 		Namespace: client.DefaultNamespace,
-	})
+	}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -72,7 +73,7 @@ func dialRoutingCluster(t *testing.T, ctx context.Context, address, namespace st
 	// failed.
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace, Interceptors: interceptors}, nil))
 		if err == nil {
 			if _, probe := c.DescribeTaskQueue(ctx, privateOrkerQueue(), 0); probe == nil {
 				t.Cleanup(c.Close)

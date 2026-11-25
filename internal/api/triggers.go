@@ -17,6 +17,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -83,7 +84,10 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	}
 	record, found, err := svc.Triggers().Get(r.Context(), id)
 	if err != nil {
-		writeTriggerError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		// The caller has shown no token yet: what the store answered is the
+		// log's.
+		svc.doorFault(r.Context(), "the trigger door could not read its trigger", "trigger", id, "error", err)
+		writeTriggerError(w, http.StatusInternalServerError, "storage_error", "the trigger could not be read; try again")
 		return
 	}
 	if !found {
@@ -150,7 +154,21 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 		if status == http.StatusTooManyRequests {
 			w.Header().Set("Retry-After", strconv.FormatInt(retryAfterSeconds(svc.concurrency.RetryAfter), 10))
 		}
-		message := err.Error()
+		// Whether the cluster took the start is not known: only a key makes
+		// sending it again safe.
+		words := "the engine could not say now whether the run was started; "
+		if refusedBeforeStart[reasonCodeAt.FindString(connectMessage(err))] {
+			words = "this request started no run; send it again"
+		} else if r.Header.Get(IdempotencyKeyHeader) != "" {
+			words += "send the request again with the same Idempotency-Key"
+		} else {
+			words += "the run may have been started all the same: look for it before you send the request again, since it has no Idempotency-Key"
+		}
+		message := svc.doorMessage(r.Context(), status, err, err.Error(), words, "trigger", record.ID)
+		if status == http.StatusNotFound {
+			// The API's own words list what is there, for an operator.
+			message = "the trigger's Orkflow, its pinned version or its namespace no longer exists"
+		}
 		if reason, ok := starterRefusal(err); ok {
 			// The bearer of a trigger's token is told the reason, never
 			// who bound the trigger, by which binding, or what the
@@ -168,12 +186,20 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	//    in the short-enum dialect every other JSON surface uses (json.go).
 	encoded, err := MarshalJSON(response.Msg)
 	if err != nil {
-		writeTriggerError(w, http.StatusInternalServerError, "internal", err.Error())
+		status := http.StatusInternalServerError
+		writeTriggerError(w, status, "internal", svc.doorMessage(r.Context(), status, err, "",
+			fmt.Sprintf("the run was started as %s; the answer could not be encoded", response.Msg.GetRun().GetId()), "trigger", record.ID))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write(append(encoded, '\n'))
+}
+
+// refusedBeforeStart are the reason codes of a 5xx whose refusal came before
+// a run id was minted: nothing was started (docs/REASONS.md).
+var refusedBeforeStart = map[string]bool{
+	engine.ConcurrencyUnsupportedCode: true, engine.ConcurrencyCheckUnavailableCode: true,
 }
 
 // triggerInput reads the request body as the run's input.

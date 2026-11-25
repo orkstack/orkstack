@@ -28,6 +28,10 @@ const (
 	ScheduleFireStarted     = "started"
 	ScheduleFireRefused     = "refused"
 	ScheduleFireUnavailable = "unavailable"
+	// A concurrency limit kept the fire from starting a run (E88 §7.2):
+	// a skip limit's full key, or a full line.
+	ScheduleFireSkipped    = "skipped"
+	ScheduleFireNotStarted = "not_started"
 )
 
 // The schedule API's actions, a closed set.
@@ -42,8 +46,9 @@ const (
 )
 
 var (
-	scheduleFireOutcomes = []string{ScheduleFireStarted, ScheduleFireRefused, ScheduleFireUnavailable}
-	scheduleActions      = []string{ScheduleActionCreate, ScheduleActionUpdate, ScheduleActionDelete,
+	scheduleFireOutcomes = []string{ScheduleFireStarted, ScheduleFireRefused, ScheduleFireUnavailable,
+		ScheduleFireSkipped, ScheduleFireNotStarted}
+	scheduleActions = []string{ScheduleActionCreate, ScheduleActionUpdate, ScheduleActionDelete,
 		ScheduleActionPause, ScheduleActionResume, ScheduleActionFire, ScheduleActionBackfill}
 	// scheduleRefusalReasons are the refusals a fire's preparation names:
 	// the Connect codes submit refuses with, and internal for a preparation

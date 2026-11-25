@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/s3scope"
 )
 
 func int32p(v int32) *int32 { return &v }
@@ -93,27 +95,94 @@ func TestRunContextObject_EncodeRefusesAnInconsistentTree(t *testing.T) {
 	}
 }
 
-func TestRunContextKey_IsUnderTheRootsSnapshotPrefix(t *testing.T) {
+func TestRunContextKey_IsUnderAPrefixOfItsOwn(t *testing.T) {
 	sha := strings.Repeat("b", 64)
 	key, err := RunContextKey("", "ork-root", sha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prefix, err := RunSnapshotPrefix("default", "ork-root")
-	if err != nil {
-		t.Fatal(err)
+	if want := "metadata/run-context/default/ork-root/" + sha + ".json"; key != want {
+		t.Fatalf("key = %q, want %q", key, want)
 	}
-	if key != prefix+"run-context-"+sha+".json" {
-		t.Fatalf("key = %q", key)
+	// Never beside a run's saved state and its admission, which an Orker's
+	// credential must not reach.
+	if strings.HasPrefix(key, SnapshotPrefix+"/") {
+		t.Fatalf("key %q is under the snapshots", key)
 	}
 	if _, err := RunContextKey("default", "ork-root", "BAD"); err == nil {
 		t.Fatal("a key for a non-SHA name")
 	}
 }
 
+// TestRunContextStore_UnderTheDocumentedOrkerPolicy: an Orker's credential
+// reads the object its task names and nothing more: it lists nothing and
+// writes nothing, and a missing object, which the store then refuses as it
+// refuses a forbidden one, is never read as missing.
+func TestRunContextStore_UnderTheDocumentedOrkerPolicy(t *testing.T) {
+	ctx := context.Background()
+	f := newScopeFixture(t, s3scope.OrkerPolicy())
+	engine := &RunContextStore{blobBase{&s3Blobs{client: f.double.fastClient(t), bucket: f.double.bucket}}}
+	orker := &RunContextStore{blobBase{&s3Blobs{client: f.client, bucket: f.double.bucket}}}
+	raw, sha, err := EncodeRunContextObject(sampleRunContextObject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.WriteRunContext(ctx, "default", "ork-root", raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orker.ReadRunContext(ctx, "default", "ork-root", sha); err != nil {
+		t.Fatalf("the Orker's own task's run context: %v", err)
+	}
+	_, err = orker.ReadRunContext(ctx, "default", "ork-root", strings.Repeat("1", 64))
+	if !errors.Is(err, ErrRunContextRefused) || errors.Is(err, ErrRunContextMissing) {
+		t.Fatalf("a missing object behind a get-only credential: %v, want ErrRunContextRefused", err)
+	}
+	if err := orker.WriteRunContext(ctx, "default", "ork-other", raw); err == nil {
+		t.Fatal("the Orker's credential wrote a run context")
+	}
+	for _, r := range f.proxy.Requests() {
+		if r.Verb == s3scope.List {
+			t.Fatalf("reading a run context listed %q", r.Key)
+		}
+	}
+}
+
+// TestRetireRunArtifacts_ReclaimsTheRunContext: a retired root's run-context
+// object goes with it, and another root's stays.
+func TestRetireRunArtifacts_ReclaimsTheRunContext(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := NewLocalRunContextStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := NewLocalRunArchive(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, sha, err := EncodeRunContextObject(sampleRunContextObject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{"ork-retired", "ork-kept"} {
+		if err := store.WriteRunContext(ctx, "default", root, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := archive.DeleteRunArtifacts(ctx, "default", "ork-retired"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadRunContext(ctx, "default", "ork-retired", sha); !errors.Is(err, ErrRunContextMissing) {
+		t.Fatalf("the retired root's run context: %v, want ErrRunContextMissing", err)
+	}
+	if _, err := store.ReadRunContext(ctx, "default", "ork-kept", sha); err != nil {
+		t.Fatalf("another root's run context: %v", err)
+	}
+}
+
 func TestRunContextStore_WriteIsCreateOnlyAndReadVerifies(t *testing.T) {
 	root := t.TempDir()
-	store, err := NewLocalRunSnapshotStore(root)
+	store, err := NewLocalRunContextStore(root)
 	if err != nil {
 		t.Fatal(err)
 	}

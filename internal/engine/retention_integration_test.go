@@ -46,7 +46,7 @@ func TestIntegration_SetNamespaceRetentionReachesTheRealCluster(t *testing.T) {
 	// shared with the reader under test — is what makes the later check
 	// prove the write left this process, rather than proving only that the
 	// reader can echo its own last write back to itself.
-	independent, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+	independent, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 	must.OKf(t, err, "dial independent verification client")
 	t.Cleanup(independent.Close)
 

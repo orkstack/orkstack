@@ -272,6 +272,9 @@ type TemporalRunReader struct {
 	// (task.EnsureRunPausedSearchAttribute), so a list row can say PAUSED and
 	// status=PAUSED is a question the cluster answers.
 	pausedIndexed bool
+	// queuedIndexed reports that the cluster indexes concurrency limits'
+	// attributes (OrkflowRunQueued among them).
+	queuedIndexed bool
 	// originIndexed reports that this cluster has the OrkflowOriginKind and
 	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes),
 	// so an origin filter is a predicate the cluster applies. It is a separate
@@ -503,6 +506,14 @@ func (r *TemporalRunReader) WithRootIndex(indexed bool) *TemporalRunReader {
 // with an empty list.
 func (r *TemporalRunReader) WithPausedIndex(indexed bool) *TemporalRunReader {
 	r.pausedIndexed = indexed
+	return r
+}
+
+// WithQueuedIndex records whether the cluster indexes the runs queued on
+// concurrency limits (OrkflowRunQueued); off, a release's queued runs are
+// not counted.
+func (r *TemporalRunReader) WithQueuedIndex(indexed bool) *TemporalRunReader {
+	r.queuedIndexed = indexed
 	return r
 }
 
@@ -2065,7 +2076,19 @@ func closedExecution(
 // type is a code the run itself owns, rather than the cause's category.
 func isRunLevelFailureType(failureType string) bool {
 	return failureType == RunHistoryLimitCode || isRunStateCode(failureType) || isRunDefinitionCode(failureType) ||
-		isRunTimeoutCode(failureType)
+		isRunTimeoutCode(failureType) || isResumeEndingCode(failureType)
+}
+
+// isResumeEndingCode reports a reset run's own ending at R (E85): a plan
+// that could not be read, run, or held to its concurrency limit. A reset run
+// that cannot read its reset ends with no terminal event (R4-2), so its
+// reason reaches a reader only through the closed execution.
+func isResumeEndingCode(failureType string) bool {
+	switch failureType {
+	case ReasonResumePlanInvalid, ReasonResumePlanUnreadable, RunConcurrencyUnsupportedCode:
+		return true
+	}
+	return false
 }
 
 // runLevelFailureCategory is the category of a run-level failure code.
@@ -2079,6 +2102,8 @@ func runLevelFailureCategory(failureType string) orkstackv1.FailureCategory {
 	switch failureType {
 	case RunTimedOutCode, RunPauseTimeoutCode:
 		return orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
+	case ReasonResumePlanInvalid, RunConcurrencyUnsupportedCode:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
 	case RunDefinitionUnsupportedCode, RunTimeoutStateInvalidCode:
 		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
 	}

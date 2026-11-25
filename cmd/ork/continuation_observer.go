@@ -19,6 +19,14 @@ func (c continuationObserver) ObserveContinuationWrite(ctx context.Context, o en
 	c.o.RecordContinuationWrite(ctx, o.Namespace, o.Kind, o.Outcome, o.StateBytes, o.Seconds, o.HoldSeconds)
 }
 
+func (c continuationObserver) ObserveResumeAnomaly(ctx context.Context, namespace, kind string) {
+	c.o.RecordResumeAnomaly(ctx, namespace, kind)
+}
+
+func (c continuationObserver) ObserveReadBackCall(ctx context.Context, namespace string, attempts int) {
+	c.o.RecordReadBackCall(ctx, namespace, attempts)
+}
+
 func (c continuationObserver) ObserveContinuationRestore(ctx context.Context, o engine.ContinuationRestoreObservation) {
 	c.o.RecordContinuationRestore(ctx, o.Namespace, o.Outcome, o.Attempt, o.Final, o.Seconds)
 }

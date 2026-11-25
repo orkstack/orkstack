@@ -150,13 +150,15 @@ func ValidateConcurrency(spec *orkstackv1.ConcurrencySpec) error {
 		return fail("concurrency.max_queued is %d; it must be 0 (no bound of its own) or above", spec.GetMaxQueued())
 	}
 	switch spec.GetOnLimit() {
-	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE:
+	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE,
+		orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_REFUSE,
+		orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_SKIP:
 	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED:
 		return fail("concurrency.on_limit is unset")
 	default:
 		// The closed set is parsed; a strategy whose deciding gate has not
 		// landed is refused, never read as queue (E88 P3, D6).
-		return fail("concurrency.on_limit: %s is not available yet; this release supports queue", concurrencyStrategyName(spec.GetOnLimit()))
+		return fail("concurrency.on_limit: %s is not available yet; this release supports queue, refuse and skip", concurrencyStrategyName(spec.GetOnLimit()))
 	}
 	key := spec.GetKey()
 	if key == "" {

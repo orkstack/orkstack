@@ -107,7 +107,14 @@ type uiLedger struct {
 	Pass     int       `json:"pass"`
 	// Deferred counts the listed tests of spec files the UI plan defers to
 	// the nightly tier: recorded with outcome "deferred", never run.
-	Deferred          int           `json:"deferred,omitzero"`
+	Deferred int `json:"deferred,omitzero"`
+	// HostDeferred counts the listed tests of the GPU specs the plan leaves
+	// to the GPU host (gpuspecs.go): recorded "host-deferred", never run. The
+	// remaining fields are the GPU spec gate's own ledger's (gpu-specs).
+	HostDeferred      int           `json:"host_deferred,omitzero"`
+	ListSHA256        string        `json:"list_sha256,omitempty"`
+	GPUHost           bool          `json:"gpu_host,omitzero"`
+	GPUGateRan        bool          `json:"gpu_gate_ran,omitzero"`
 	GuardRetries      int           `json:"network_change_retries"`
 	GuardRetryCeiling int           `json:"network_change_retry_ceiling"`
 	Files             []uiFileEntry `json:"files,omitempty"`
@@ -210,6 +217,13 @@ func buildUILedger(list, report pwReport, guardRetries, ceiling int) uiLedger {
 // listed tests ran nowhere and are recorded as deferred with the row; one
 // that has an outcome all the same is a problem.
 func buildUILedgerDeferring(list, report pwReport, guardRetries, ceiling int, deferred map[string]string) uiLedger {
+	return buildUILedgerPlanned(list, report, guardRetries, ceiling, deferred, nil)
+}
+
+// buildUILedgerPlanned is buildUILedgerDeferring for a plan that also leaves
+// GPU specs to the GPU host (hostDeferred: file -> its GPU spec list row):
+// their listed tests ran nowhere and are recorded host-deferred.
+func buildUILedgerPlanned(list, report pwReport, guardRetries, ceiling int, deferred, hostDeferred map[string]string) uiLedger {
 	l := uiLedger{Suite: "ui-e2e", Problems: []string{}, GuardRetries: guardRetries, GuardRetryCeiling: ceiling}
 	listedKeys, listed := flattenPW(list)
 	_, got := flattenPW(report)
@@ -219,6 +233,17 @@ func buildUILedgerDeferring(list, report pwReport, guardRetries, ceiling int, de
 	}
 	for _, k := range listedKeys {
 		e, ok := got[k]
+		if row, d := hostDeferred[listed[k].File]; d {
+			if ok && e.Outcome != outcomeNone {
+				l.Problems = append(l.Problems, k+" ran, and the UI plan leaves its spec file to the GPU host")
+				l.Tests = append(l.Tests, e)
+				continue
+			}
+			le := listed[k]
+			l.HostDeferred++
+			l.Tests = append(l.Tests, uiEntry{File: le.File, Title: le.Title, Project: le.Project, Outcome: outcomeHostDeferred, Detail: row})
+			continue
+		}
 		if row, d := deferred[listed[k].File]; d {
 			if ok && e.Outcome != outcomeNone {
 				l.Problems = append(l.Problems, k+" ran, and the UI plan defers its spec file to the nightly tier")
@@ -372,7 +397,7 @@ func cmdUILedger(args []string) int {
 	out := fs.String("out", "", "the proof directory")
 	shard := fs.Int("shard", 1, "which shard of the UI plan this run is, recorded in files[].shard")
 	fs.String("part", "local", "the part this ledger belongs to")
-	planFile := fs.String("plan", "", "the UI plan: its deferred spec files' tests are recorded as deferred")
+	planFile := fs.String("plan", "", "the UI plan: its deferred spec files' tests are recorded as deferred, and its GPU specs' as host-deferred")
 	if err := fs.Parse(args); err != nil || *listFile == "" || len(reportFiles) == 0 || *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE [-report FILE]... -log FILE -out DIR")
 		return 2
@@ -402,7 +427,7 @@ func cmdUILedger(args []string) int {
 			return 1
 		}
 	}
-	var deferred map[string]string
+	var deferred, hostDeferred map[string]string
 	if *planFile != "" {
 		var p uiPlan
 		if err := readJSON(*planFile, &p); err != nil {
@@ -413,8 +438,12 @@ func cmdUILedger(args []string) int {
 		for _, d := range p.Deferred {
 			deferred[d.File] = d.Entry
 		}
+		hostDeferred = map[string]string{}
+		for _, d := range p.HostDeferred {
+			hostDeferred[d.File] = d.Entry
+		}
 	}
-	l := buildUILedgerDeferring(list, report, retries, ceiling, deferred)
+	l := buildUILedgerPlanned(list, report, retries, ceiling, deferred, hostDeferred)
 	for i := range l.Files {
 		l.Files[i].Shard = *shard
 	}
@@ -425,8 +454,8 @@ func cmdUILedger(args []string) int {
 		fmt.Println(err)
 		return 1
 	}
-	fmt.Printf("ui-e2e ledger: %d listed, %d pass, %d deferred, network-change guard repeated %d navigations (ceiling %d)\n",
-		l.Listed, l.Pass, l.Deferred, l.GuardRetries, l.GuardRetryCeiling)
+	fmt.Printf("ui-e2e ledger: %d listed, %d pass, %d deferred, %d host-deferred, network-change guard repeated %d navigations (ceiling %d)\n",
+		l.Listed, l.Pass, l.Deferred, l.HostDeferred, l.GuardRetries, l.GuardRetryCeiling)
 	for _, p := range l.Problems {
 		fmt.Println("  -", p)
 	}

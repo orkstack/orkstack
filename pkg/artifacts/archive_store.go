@@ -323,8 +323,14 @@ func (a *BlobRunArchive) RetireRunArtifacts(ctx context.Context, namespace, runI
 	if err != nil {
 		return CleanupResult{}, err
 	}
-	// The five prefixes are independent: delete them concurrently.
-	prefixes := []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix, attestedPrefix}
+	// The run context of the tree this run is the root of: a child has none
+	// of its own, and ends before its root.
+	runContextPrefix, err := RunContextRunPrefix(namespace, runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	// The six prefixes are independent: delete them concurrently.
+	prefixes := []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix, attestedPrefix, runContextPrefix}
 	results := make([]CleanupResult, len(prefixes))
 	errs := make([]error, len(prefixes))
 	var wg sync.WaitGroup

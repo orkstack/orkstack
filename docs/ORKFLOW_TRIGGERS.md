@@ -192,11 +192,22 @@ Every failure is `{"error":{"code":"…","message":"…"}}`:
 | Trigger store unreadable | 500 | `storage_error` |
 | Body not one JSON object, or over 1 MiB; malformed or over-long `Ork-Origin-Reference`; the stored definition names a secret source its namespace does not allow | 400 | `invalid_argument` |
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
-| A resolved pool has no live Orker; the namespace is held, at `max_running`, or over (or unable to measure) an enforced budget; the image policy refuses the definition's image; a composed child can no longer be planned; the cluster does not index concurrency limits (`CONCURRENCY_UNSUPPORTED`, `cause=index`) | 412 | `failed_precondition` |
+| A resolved pool has no live Orker; the namespace is held, at `max_running`, or over (or unable to measure) an enforced budget; the image policy refuses the definition's image; a composed child can no longer be planned; the cluster does not index concurrency limits (`CONCURRENCY_UNSUPPORTED`, `cause=index`); the run's `refuse` or `skip` limit's key is full (`CONCURRENCY_LIMIT_REACHED`) | 412 | `failed_precondition` |
 | `Idempotency-Key` already used for another submission (another Orkflow, version or body) | 409 | `already_exists` |
 | The run's concurrency limit's line or keys are full (`CONCURRENCY_QUEUE_FULL`, `CONCURRENCY_KEYS_EXHAUSTED`), or the namespace is at `max_running` with runs queued on concurrency limits; the answer carries `Retry-After` (`engine.concurrency.retry_after`, 60 s) | 429 | `resource_exhausted` |
-| Object storage or Temporal unavailable, or Temporal rate-limiting, at submit; an engine process runs a release without concurrency limits, or a limit's checks could not be read (`CONCURRENCY_UNSUPPORTED` with `cause=fleet` only, `CONCURRENCY_CHECK_UNAVAILABLE`); or the client left before the answer | 503 | `unavailable` |
+| Object storage or Temporal unavailable, or Temporal rate-limiting, at submit; an engine process runs a release without concurrency limits, or a limit's checks could not be read (`CONCURRENCY_UNSUPPORTED` when a rollout is its only cause, `CONCURRENCY_CHECK_UNAVAILABLE`); or the client left before the answer | 503 | `unavailable` |
 | Anything else | 500 | `internal` |
+
+A `5xx` answer's message says what to do, after the reason code it has
+(`CONCURRENCY_CHECK_UNAVAILABLE: …`), and never why: the cause, which names
+this deployment's hosts, buckets and paths, is the engine's log
+(`a door could not serve its sender`, with the trigger's id). A `cause=` or
+`scope=` that [REASONS.md](REASONS.md) gives with such a code is in the API's
+answer, not in this one. `CONCURRENCY_UNSUPPORTED` and `CONCURRENCY_CHECK_UNAVAILABLE` started
+no run for that request: send it again. After any other, the
+run may have been started all the same: send the request again only under its
+`Idempotency-Key`, and without one look for the run first. A `404` after the
+token's check names nothing but the trigger's own Orkflow.
 
 Rows from `400` down are `SubmitRun`'s own Connect codes carried through; the
 adapter adds no classification of its own beyond telling a concurrency limit's

@@ -16,6 +16,12 @@ import (
 // taskIdentityAvailable is whether this build runs task identity. Until the
 // engine admits runs that hold one, a task that declares an identity is
 // refused, so no definition is stored that a run could not honour.
+//
+// It stays false until a run that holds one is safe end to end: the
+// Orker trusting only engine-recorded results (P14r, landed with it) is
+// not enough while an awaited or a composed upstream of such a run fails
+// closed for want of its own record (workload-identity §3.6). It is flipped
+// by the change that lands P13d, P13e and P14v together, never earlier.
 var taskIdentityAvailable = false
 
 // MaxIdentitiesPerTask is how many identities one task may declare.

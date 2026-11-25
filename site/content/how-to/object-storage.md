@@ -52,11 +52,12 @@ The local development stack uses SeaweedFS, with path style turned on.
 | `metadata/runs/`, `metadata/index/` | The archive of finished runs |
 | `metadata/audit/` | The control-plane audit trail |
 | `metadata/memo/` | Cached-task memos |
+| `metadata/run-context/` | What a run's tasks may read about the run |
 | `metadata/settings/`, `metadata/namespaces/`, `metadata/orkflows/` | Deployment settings, namespaces and definitions |
 
 Artifact bytes are under `orkflows/`, not under `metadata/orkflows/`. The second prefix holds the Orkflow definitions, and it must never expire.
 
-Expiry rules for the prefixes that are safe to shorten are on the [Retention](/docs/operate/retention/) page. Do not expire the settings, namespace, definition, snapshot or commit prefixes.
+Expiry rules for the prefixes that are safe to shorten are on the [Retention](/docs/operate/retention/) page. Do not expire the settings, namespace, definition, snapshot, run-context or commit prefixes.
 
 ## Credentials
 

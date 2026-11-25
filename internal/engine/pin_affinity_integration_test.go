@@ -1364,11 +1364,11 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	if frontend == "" {
 		frontend = temporalAddress()
 	}
-	orkerClient, err := client.DialContext(ctx, client.Options{
+	orkerClient, err := client.DialContext(ctx, engine.ClientOptions(client.Options{
 		HostPort:  frontend,
 		Namespace: cfg.temporalNamespace,
 		Identity:  cfg.id,
-	})
+	}, nil))
 	if err != nil {
 		infraAbsent(t, "orker %s cannot dial temporal: %v", cfg.id, err)
 	}

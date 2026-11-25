@@ -74,6 +74,35 @@ func TestBindUnits_NoneAskedNothingBound(t *testing.T) {
 	a.Done()
 }
 
+// TestBindUnits_NeverFewerThanAsked: an admission that reserved another count
+// than the task asks for (an input its reader could not read) fails the attempt
+// before any container, never running it with no unit or with another task's.
+func TestBindUnits_NeverFewerThanAsked(t *testing.T) {
+	for name, reserved := range map[string]amount{
+		"none":  {milli: 100, bytes: 1 << 20},
+		"fewer": gpuReq(1),
+		"more":  gpuReq(3),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, c, _ := unitDispatcher(t, 3)
+			a, done := pollTask(t, c, reserved)
+			defer done()
+			b, failure := d.bindUnits(context.Background(), gpuTask(2), a)
+			if failure == nil || failure.Reason != ReasonGPUUnitsUnavailable || len(b.cdi) != 0 {
+				t.Fatalf("bindUnits = %+v, %v; want %s and nothing bound", b, failure, ReasonGPUUnitsUnavailable)
+			}
+			a.Done()
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for i, owner := range c.units.owner {
+				if owner != nil {
+					t.Errorf("unit %d is still held after the refused attempt ended", i)
+				}
+			}
+		})
+	}
+}
+
 // TestBindUnits_RefusedWithoutAGPUProfileOrLedger: an Orker that offers no
 // gpu profile, and a local run with no ledger, bind nothing.
 func TestBindUnits_RefusedWithoutAGPUProfileOrLedger(t *testing.T) {

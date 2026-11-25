@@ -8,6 +8,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authz"
+	"github.com/orkstack/orkstack/internal/runspan"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -329,7 +330,7 @@ type RunPlan struct {
 
 	// RunContextSHA256 names the run tree's run-context object (the run's
 	// origin, Orkflow and composed lineage, written once at submit under the
-	// root run's prefix), so every task's input carries a run context that
+	// root run's id), so every task's input carries a run context that
 	// references it (ExecuteTaskInput.run_context). Set at submit on the
 	// top-level plan and copied into each child's start plan by
 	// childStartPlan, as RunContextMaxBytes is. Empty means the run's tasks
@@ -343,12 +344,54 @@ type RunPlan struct {
 	// input that may take it past the 256 KiB payload bound (AGENTS.md §2.2):
 	// DefaultRunContextMaxBytes, pinned per run.
 	RunContextMaxBytes int64 `json:"run_context_max_bytes,omitzero"`
+	// Trace is the W3C trace context the run belongs to, captured once where
+	// its submission was accepted and derived for each child from its
+	// parent's (childStartPlan). It decides nothing; workflow code never
+	// traces. Nil for a run whose submission was not traced. omitzero.
+	Trace *TraceContext `json:"trace,omitzero"`
 	// Identity is set at submit on the plan of every run of a tree that is
 	// admitted (docs/TASK_IDENTITY.md, "The admission record"), and nil on
 	// every other plan, so their plans encode exactly as before. It is
 	// derived from the same value as the run's admission record, so the two
 	// cannot disagree. omitzero.
 	Identity *IdentityPlan `json:"identity,omitzero"`
+}
+
+// TraceContext is a run's place in a trace, as W3C header values.
+type TraceContext struct {
+	Traceparent string `json:"traceparent"`
+	Tracestate  string `json:"tracestate,omitzero"`
+}
+
+// forChild is the context a child of run parentRunID is started with: the
+// same trace, under the parent's run span. Nil when c names no trace. Pure.
+func (c *TraceContext) forChild(parentRunID string) *TraceContext {
+	if c == nil {
+		return nil
+	}
+	return NewTraceContext(runspan.ChildTraceparent(c.Traceparent, parentRunID), c.Tracestate)
+}
+
+// NewTraceContext is the trace context a run's plan pins, or nil when
+// traceparent is not a W3C version 00 one: a malformed context is dropped
+// whole, never stored.
+func NewTraceContext(traceparent, tracestate string) *TraceContext {
+	if _, ok := runspan.Parse(traceparent); !ok {
+		return nil
+	}
+	return &TraceContext{Traceparent: traceparent, Tracestate: tracestate}
+}
+
+// ids are the trace c names and the traceparent it was built from, or empty.
+func (c *TraceContext) ids() (traceID, traceparent string) {
+	if c == nil {
+		return "", ""
+	}
+	parsed, ok := runspan.Parse(c.Traceparent)
+	if !ok {
+		return "", ""
+	}
+	return parsed.TraceID, c.Traceparent
 }
 
 // IdentityPlan is what a run's plan carries of its admission.
@@ -623,6 +666,38 @@ type RunOrigin struct {
 	// so a plan recorded before them encodes and decodes unchanged.
 	PrincipalVerified bool   `json:"principal_verified,omitzero"`
 	AuthMethod        string `json:"auth_method,omitempty"`
+	// A child run's lineage (newChildOrigin): the task that composed it, the
+	// Orkflow that task is part of, and its root's Orkflow and whole origin.
+	// Set only on a PARENT_RUN origin; RootOrigin holds no lineage of its
+	// own, so an origin nests one level.
+	ParentTaskID  string          `json:"parent_task_id,omitempty"`
+	ParentOrkflow *OrkflowRefPlan `json:"parent_orkflow,omitzero"`
+	RootOrkflow   *OrkflowRefPlan `json:"root_orkflow,omitzero"`
+	RootOrigin    *RunOrigin      `json:"root_origin,omitzero"`
+}
+
+// OrkflowRefPlan is orkstackv1.OrkflowRef on the plan; Namespace is set only
+// for an Orkflow another namespace owns.
+type OrkflowRefPlan struct {
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Digest    string `json:"digest"`
+}
+
+// Proto is the OrkflowRef the plan holds. Nil-safe.
+func (r *OrkflowRefPlan) Proto() *orkstackv1.OrkflowRef {
+	if r == nil {
+		return nil
+	}
+	return &orkstackv1.OrkflowRef{Namespace: r.Namespace, Name: r.Name, Version: r.Version, DefinitionDigest: r.Digest}
+}
+
+func orkflowRefPlanOf(r *orkstackv1.OrkflowRef) *OrkflowRefPlan {
+	if r == nil {
+		return nil
+	}
+	return &OrkflowRefPlan{Namespace: r.GetNamespace(), Name: r.GetName(), Version: r.GetVersion(), Digest: r.GetDefinitionDigest()}
 }
 
 // Proto renders the origin as the wire message the snapshot carries.
@@ -648,7 +723,23 @@ func (o *RunOrigin) Proto() *orkstackv1.RunOrigin {
 
 		PrincipalVerified: o.PrincipalVerified,
 		AuthMethod:        o.AuthMethod,
+
+		ParentTaskId:  o.ParentTaskID,
+		ParentOrkflow: o.ParentOrkflow.Proto(),
+		RootOrkflow:   o.RootOrkflow.Proto(),
+		RootOrigin:    o.RootOrigin.withoutLineage().Proto(),
 	}
+}
+
+// withoutLineage is a copy of o with no lineage of its own: what a child
+// holds as its root's origin. Nil-safe.
+func (o *RunOrigin) withoutLineage() *RunOrigin {
+	if o == nil {
+		return nil
+	}
+	c := *o
+	c.RootRunID, c.ParentTaskID, c.ParentOrkflow, c.RootOrkflow, c.RootOrigin = "", "", nil, nil, nil
+	return &c
 }
 
 // OriginFromProto is Proto's inverse, used by the API to build the plan
@@ -667,6 +758,11 @@ func OriginFromProto(o *orkstackv1.RunOrigin) *RunOrigin {
 
 		PrincipalVerified: o.GetPrincipalVerified(),
 		AuthMethod:        o.GetAuthMethod(),
+
+		ParentTaskID:  o.GetParentTaskId(),
+		ParentOrkflow: orkflowRefPlanOf(o.GetParentOrkflow()),
+		RootOrkflow:   orkflowRefPlanOf(o.GetRootOrkflow()),
+		RootOrigin:    OriginFromProto(o.GetRootOrigin()).withoutLineage(),
 	}
 }
 

@@ -31,13 +31,14 @@ evidence").
 ```text
 MANIFEST.json                              first member, always
 run.jsonl                                  the archive body, verbatim (metadata/runs/{run-id}.jsonl)
-orkflow/source.yaml                        Orkflow.source_yaml of the pinned version, verbatim bytes
+orkflow/source.yaml                        Orkflow.source_yaml of the pinned version, verbatim bytes (a shared Orkflow's: its owner's)
 tasks/{task-id}/commit.json                ActivityCommit, the stored bytes (SUCCEEDED tasks only)
 tasks/{task-id}/values.json                the committed values.json
 tasks/{task-id}/artifacts/{member-name}    each output artifact (SUCCEEDED and FAILED tasks)
 tasks/{task-id}/attempts/{n}.json          the TaskAttempt record, the stored bytes
 tasks/{task-id}/attempts/{n}/stdout.log    that attempt's uploaded streams
 tasks/{task-id}/attempts/{n}/stderr.log
+tasks/_inputs/artifacts/{member-name}      each artifact a child run received (after every task)
 ```
 
 Members appear in exactly this order: the run's members, then tasks in the
@@ -54,12 +55,18 @@ Each item's members use the per-task layout above under
 `artifacts/{member-name}`, `attempts/{n}.json`, `attempts/{n}/stdout.log`,
 `attempts/{n}/stderr.log`), items ascending, and every such member entry
 carries `"item": i`; `scope` carries `item` when the export was narrowed to
-one. These keys are additive, so `schema_version` stays `1` and `verify`
-reads bundles with and without items.
+one. `verify` reads bundles with and without items.
 A fan-out over an artifact's lines (`each.over_artifact`) exports the same way:
 one entry per item, and a batch is one item. Its line index is a record of the
 run, not a member; its source is the producing task's own `artifact` member,
 and a batch's slice file is an input the Orker staged, never exported.
+
+A child run's received artifacts (`docs/DSL.md` "Passing artifacts to a child
+run") follow every task, as `artifact` members with `task_id` `_inputs` under
+`tasks/_inputs/artifacts/`; there is no `tasks[]` entry for `_inputs`. A
+composed task's artifacts are the ones its child returned, listed like any
+task's. Both carry `source_run_id`, `source_task_id` and `source_name`. A scope of one task
+carries that task's members only; `_inputs` is the scope of the received ones.
 
 A `SKIPPED` task has no members and one `tasks[]` entry. A `FAILED` or
 `CANCELED` task has no `commit.json` and no `values.json`, and has artifact
@@ -93,7 +100,7 @@ digest, keeps the `sha256:` prefix the run recorded.
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "run_id": "ork-…",
   "namespace": "payments",
   "orkflow_name": "payments-reconcile",
@@ -124,6 +131,10 @@ digest, keeps the `sha256:` prefix the run recorded.
 }
 ```
 
+Two keys appear only where they say something: `orkflow_namespace`, beside
+`orkflow_name`, is the namespace that owns a shared Orkflow whose child run
+this is, and `counts.withheld` counts the withheld members.
+
 `MANIFEST.json` is not listed in `members`: it cannot carry its own digest.
 Each member has:
 
@@ -136,17 +147,28 @@ Each member has:
 | `origin` | the object the bytes came from: the recorded URI for an artifact, values, log or commit; the store key for the archive body and an attempt record; the version document key plus `#source_yaml` for the definition. A location, never a credential |
 | `size_bytes`, `sha256` | of the bytes as read (`present`) or as recorded (`reclaimed`) |
 | `state`, `reason` | below |
+| `source_run_id`, `source_task_id`, `source_name` | for an artifact passed between the runs of a tree: the run, task and artifact name that recorded it. Audit data |
 
 `scope` records what was asked: `task_id` narrows the per-task members to one
 task (the run's own members are always included), `logs: false` drops every
-`stdout.log`/`stderr.log`, `artifacts: false` drops the output artifacts.
+`stdout.log`/`stderr.log`, `artifacts: false` drops the output artifacts and the received ones.
 `values.json`, `commit.json` and attempt records are never excluded.
 
-A change a version-1 reader could misread bumps `schema_version` (additive
-keys, like the fan-out `item`, do not); `verify` refuses a version it does not
-know rather than guessing.
+### Versions
 
-### Version 2: a run whose stream has a gap
+Every bundle is written with `schema_version: 3`. `verify` also reads the two
+earlier ones, and refuses any other rather than guessing: a tool older than a
+bundle's version refuses it with its own `schema_version` message, instead of
+verifying it while ignoring what it does not know. A change an older reader
+could misread bumps the version.
+
+| Version | Written by | `event_gaps` |
+|---|---|---|
+| 1 | an engine before 0.4.0, for a run whose archive records no gap | refused |
+| 2 | an engine before 0.4.0, for a run whose archive records one | required, not empty |
+| 3 | every bundle since: it may carry `event_gaps`, the `withheld` state, `orkflow_namespace` and an artifact's `source_*` keys | when the archive records one |
+
+### A run whose stream has a gap
 
 A run that carries on into a fresh history reads the events of its earlier
 histories from immutable event segments in object storage. When one of them
@@ -158,8 +180,7 @@ are recorded as never published, with the reason `the run's history holds no
 event under these numbers` (`docs/DEPLOY.md` §6). A run whose definition could
 not be used and whose `RUN_CREATED` was refused is one: its stream starts at its
 terminal event, at 2, and 1 is recorded.
-The bundle of such a run is written with `schema_version: 2` and one more
-key:
+The bundle of such a run has one more key:
 
 ```json
   "event_gaps": [
@@ -170,14 +191,9 @@ key:
 `orkctl` names each gap for its cause: events "lost from object storage before
 it was archived", or "never published".
 
-Every member is exactly what version 1 would list — `run.jsonl` is still the
+Every member is exactly what it would be without one — `run.jsonl` is still the
 archive body verbatim, gap lines included, and still `present` — so the
-bundle is exactly what the archive holds. A version-2 manifest must carry a
-non-empty `event_gaps`, and a version-1 manifest must not carry one. It is a
-new version rather than an additive key on purpose: a tool older than it
-refuses the bundle with its own `schema_version` message, instead of
-verifying it while ignoring the gap. Every bundle of a run whose archive
-records no gap stays version 1.
+bundle is exactly what the archive holds.
 
 ## States
 
@@ -187,6 +203,7 @@ records no gap stays version 1.
 | `reclaimed` | the store answered NotFound for an object the run recorded: the cleanup worker (commits, attempt-linked logs), a bucket lifecycle rule or `DeleteUnreferencedObjects` (artifact objects), or `DeleteOrkflow` (the definition) | the **recorded** digest, preserved; empty for `source` | no |
 | `unrecorded` | an attempt number between 1 and the highest known attempt for which the attempt store holds no record — the Orker died before filing one, or it was reclaimed | empty | no |
 | `rejected` | an object exists at the coordinates but is not what the run pinned: today only the definition, when the stored document does not hash to the run's definition digest | empty; `definition.stored_definition_digest` carries the document's | no |
+| `withheld` | the exporter may not read the object: today only the definition of a shared Orkflow's child run, when the caller lacks `orkflow.read` on it in its owner's namespace. While the access document cannot be read and configuration's bindings do not grant it, the export fails `Unavailable` instead | empty | no |
 
 Absence is a member, not a gap: nothing the run recorded is omitted silently.
 A store that cannot answer is not absence: the export fails `Unavailable`
@@ -206,6 +223,7 @@ are two members.
 | token | sentence |
 |---|---|
 | `definition_deleted` | the pinned definition was deleted from the orkflow store; the run's definition digest still attests it |
+| `definition_not_readable` | the exporter may not read the shared Orkflow in its owner's namespace; the run's definition digest still attests it |
 | `definition_digest_mismatch` | a document exists at the pinned coordinates but does not hash to the digest this run pinned |
 | `commit_missing` | the commit record was reclaimed by cleanup; its recorded digest is preserved |
 | `object_missing` | the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved |
@@ -239,10 +257,15 @@ a workload artifact named `commit.json` collides with nothing.
    its end and once object storage answers (`docs/DEPLOY.md` §1, "The archive
    sweep"), and its export can be retried then.
 3. Every member is resolved from the **archived** run snapshot, never from a
-   coordinate the caller supplied.
-4. The definition is read by the run's name and version and attested by
-   recomputing its definition digest; a document that does not hash to the
-   pinned digest is `rejected`.
+   coordinate the caller supplied. An export is a read of the run:
+   `run.evidence.export` gives its whole archived record, its trace context
+   (`traceparent`) included, with no `run.read` asked.
+4. The definition is read by the run's name and version, in the namespace that
+   owns it (a shared Orkflow's child run pinned its owner's document), and
+   attested by recomputing its definition digest; a document that does not hash
+   to the pinned digest is `rejected`. Another namespace's document is read
+   only for a caller with `orkflow.read` there, and is `withheld` from any
+   other ([ACCESS.md](ACCESS.md)).
 5. A commit is read only at the `CommitRef.uri` the snapshot recorded, and its
    bytes must hash to `CommitRef.sha256` (carried through, never recomputed by
    re-marshalling); otherwise the export is `DataLoss`.
@@ -276,17 +299,19 @@ string. Its rules:
    order`, and verification continues.
 6. An absolute name, a `..` segment or a NUL is `unsafe path`; a non-regular
    entry is `not a regular file`.
-7. A `schema_version` other than 1 or 2 is refused, and so is a version 2
+7. A `schema_version` other than 1, 2 or 3 is refused, and so is a version 2
    without `event_gaps` or a version 1 with them.
 8. The manifest must agree with itself: a member whose `state` is not one of
-   `present`, `reclaimed`, `unrecorded` or `rejected` is `unknown state`, and
+   `present`, `reclaimed`, `unrecorded`, `rejected` or `withheld` is `unknown
+   state`, and
    a `path` listed a second time is `listed twice in manifest`. The engine
    never writes either; the rule exists so that every listed member is
    accounted for exactly once, as verified, a finding, or a failure.
 
-Reclaimed, unrecorded and rejected members are findings, not failures: the
-command exits 0 and lists them with their reasons. So is each event gap of a
-version-2 bundle, printed as a notice:
+Reclaimed, unrecorded, rejected and withheld members are findings, not
+failures: the command exits 0 and lists each under its own state with its
+reason, and never among the verified. So is each event gap of a
+bundle, printed as a notice:
 
 ```text
   event gaps      events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)
@@ -314,8 +339,9 @@ FAILED: 1 member does not match MANIFEST.json
 ```
 
 `--json` prints the report as one document — the manifest embedded, then the
-`verified`, `reclaimed`, `unrecorded`, `rejected` and `failures` lists, and
-`event_gaps` for a version-2 bundle.
+`verified`, `reclaimed`, `unrecorded`, `rejected` and `failures` lists,
+`withheld` when a member is, and
+`event_gaps` for a bundle that names some.
 
 ## verify --against-store
 
@@ -331,7 +357,9 @@ immutable, so only states may move:
 - a file `present` that is live `reclaimed` with the same recorded digest is
   the finding `reclaimed since export` (exit 0: the bytes were true when
   exported and the digest still agrees); a file `reclaimed` that is live
-  `present` is `restored since export`.
+  `present` is `restored since export`;
+- a member `withheld` in one and not the other is the finding `readable to only
+  one of the exporter and this caller` (exit 0: nothing moved in the store).
 
 It prints the offline report, then a `store:` block (`every member agrees with
 the store`, or the findings and failures), and exits 1 on any failure in

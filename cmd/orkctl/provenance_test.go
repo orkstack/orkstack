@@ -96,6 +96,17 @@ func TestRunArtifactProvenance_GoldenHeld(t *testing.T) {
 	}
 }
 
+// A shared Orkflow's child run is listed under its owner's Orkflow.
+func TestRunArtifactProvenance_NamesASharedOrkflowsOwner(t *testing.T) {
+	var out bytes.Buffer
+	must.OK(t, renderArtifactProvenance(&out, &orkstackv1.GetArtifactProvenanceResponse{References: []*orkstackv1.ArtifactReference{
+		{RunId: "ork-1", OrkflowName: "build", OrkflowNamespace: "platform"}, {RunId: "ork-2", OrkflowName: "build"}}},
+		&orkstackv1.GetArtifactProvenanceRequest{}))
+	if !strings.Contains(out.String(), "ork-1          platform/build") || strings.Contains(out.String(), "ork-2          platform/") {
+		t.Fatalf("references:\n%s", out.String())
+	}
+}
+
 func TestRunArtifactProvenance_GoldenReleased(t *testing.T) {
 	p := newProvenanceCLI(t)
 	p.seedRun(t, "ork-1-a1", true)

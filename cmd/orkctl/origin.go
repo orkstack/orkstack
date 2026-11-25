@@ -99,8 +99,22 @@ func writeOriginLines(table io.Writer, origin *orkstackv1.RunOrigin) {
 		summary += " (" + description + ")"
 	}
 	fmt.Fprintf(table, "Origin:\t%s\n", terminalSafe(summary))
+	if task := origin.GetParentTaskId(); task != "" {
+		parent := "task " + task
+		if ork := origin.GetParentOrkflow(); ork.GetName() != "" {
+			parent += " of " + originOrkflow(ork)
+		}
+		fmt.Fprintf(table, "Parent task:\t%s\n", terminalSafe(parent))
+	}
 	if root := origin.GetRootRunId(); root != "" {
-		fmt.Fprintf(table, "Root run:\t%s\n", terminalSafe(root))
+		line := root
+		if ork := origin.GetRootOrkflow(); ork.GetName() != "" {
+			line += " of " + originOrkflow(ork)
+		}
+		if summary := originSummary(origin.GetRootOrigin()); summary != "" {
+			line += ", started by " + summary
+		}
+		fmt.Fprintf(table, "Root run:\t%s\n", terminalSafe(line))
 	}
 	if reference := origin.GetReference(); reference != "" {
 		fmt.Fprintf(table, "Reference:\t%s\n", terminalSafe(reference))
@@ -108,4 +122,14 @@ func writeOriginLines(table io.Writer, origin *orkstackv1.RunOrigin) {
 	if principal := origin.GetPrincipal(); principal != "" {
 		fmt.Fprintf(table, "Principal:\t%s  %s\n", assertedName(principal), originPrincipalCaption(origin))
 	}
+}
+
+// originOrkflow is an origin's Orkflow reference as orkctl writes one:
+// name@version, or namespace/name@version for another namespace's.
+func originOrkflow(ref *orkstackv1.OrkflowRef) string {
+	label := ref.GetName() + "@" + ref.GetVersion()
+	if ns := ref.GetNamespace(); ns != "" {
+		label = ns + "/" + label
+	}
+	return label
 }

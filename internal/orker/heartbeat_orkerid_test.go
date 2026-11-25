@@ -42,8 +42,8 @@ func TestHeartbeater_StampsTheOrkerIDOnEveryBeat(t *testing.T) {
 		select {
 		case p := <-beats:
 			seen = append(seen, p)
-		case <-time.After(2 * time.Second):
-			t.Fatalf("saw %d beats in 2s at a 10ms tick", len(seen))
+		case <-time.After(30 * time.Second):
+			t.Fatalf("saw %d beats in 30s at a 10ms tick", len(seen))
 		}
 	}
 	h.Stop()

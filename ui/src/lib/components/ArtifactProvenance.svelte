@@ -13,6 +13,7 @@
 	import { runClient } from '#lib/clients/runs.ts';
 	import { ArtifactKind, type GetArtifactProvenanceResponse } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import { withNamespace } from '#lib/namespace.ts';
+	import { ownedLabel } from '#lib/sharing.ts';
 	import {
 		BYTES_MISSING,
 		BYTES_PRESENT,
@@ -148,7 +149,7 @@
 										class="stamp border-rule-strong text-ink-secondary">this run</span
 									>
 								{/if}
-								<span class="text-ink-secondary">{ref.orkflowName}@<VersionText version={ref.orkflowVersion} /></span>
+								<span class="text-ink-secondary">{ownedLabel(ref.orkflowNamespace, ref.orkflowName)}@<VersionText version={ref.orkflowVersion} /></span>
 								<span class="font-mono text-ink-secondary">{ref.taskId}</span>
 								<span class="text-ink-muted">{refKind(ref.kind)}</span>
 								<StatusPill status={ref.runStatus} />

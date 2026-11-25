@@ -398,7 +398,7 @@ func TestRegisterEngineWorkflows_SurvivesAVersionedWorker(t *testing.T) {
 	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
 	t.Setenv(task.EnvBuildID, "v2")
 
-	c, err := client.NewLazyClient(client.Options{HostPort: "127.0.0.1:1"})
+	c, err := client.NewLazyClient(engine.ClientOptions(client.Options{HostPort: "127.0.0.1:1"}, nil))
 	must.OKf(t, err, "NewLazyClient")
 	defer c.Close()
 

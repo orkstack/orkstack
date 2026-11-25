@@ -1,4 +1,4 @@
-permissions: 57
+permissions: 58
 
 access.bind [namespace] roles=admin,namespace-admin
 access.read [deployment] roles=admin,auditor
@@ -44,6 +44,7 @@ run.logs.read [orkflow] roles=admin,developer,namespace-admin,operator
 run.pause [orkflow] roles=admin,developer,namespace-admin,operator
 run.read [orkflow] roles=admin,auditor,developer,namespace-admin,operator,viewer
 run.resume [orkflow] roles=admin,developer,namespace-admin,operator
+run.resume.accept_gap [orkflow] roles=admin
 run.submit [orkflow] roles=admin,developer,namespace-admin,operator
 schedule.operate [orkflow] roles=admin,developer,namespace-admin,operator
 schedule.read [orkflow] roles=admin,auditor,developer,namespace-admin,operator,viewer
@@ -58,7 +59,7 @@ webhook.read [namespace] roles=admin,auditor,developer,namespace-admin,operator,
 webhook.redeliver [namespace] roles=admin,developer,namespace-admin,operator
 webhook.write [namespace] roles=admin,namespace-admin
 
-admin (53): access.bind access.read access.write audit.read automation.plan cache.purge catalog.read concurrency.reset eventsource.logs.read eventsource.operate eventsource.read eventsource.write identity.keys.retire identity.read image-policy.update namespace.create namespace.delete namespace.policy.update namespace.read namespace.update orker.cordon orker.read orkflow.delete orkflow.promote orkflow.read orkflow.validate orkflow.write payload.keys.manage release.operate retention.update run.artifacts.read run.await.resolve run.cancel run.cancel.bulk run.cancel.force run.evidence.export run.history.decode run.logs.read run.pause run.read run.resume run.submit schedule.operate schedule.read schedule.write stats.read system.read system.restore trigger.read trigger.write webhook.read webhook.redeliver webhook.write
+admin (54): access.bind access.read access.write audit.read automation.plan cache.purge catalog.read concurrency.reset eventsource.logs.read eventsource.operate eventsource.read eventsource.write identity.keys.retire identity.read image-policy.update namespace.create namespace.delete namespace.policy.update namespace.read namespace.update orker.cordon orker.read orkflow.delete orkflow.promote orkflow.read orkflow.validate orkflow.write payload.keys.manage release.operate retention.update run.artifacts.read run.await.resolve run.cancel run.cancel.bulk run.cancel.force run.evidence.export run.history.decode run.logs.read run.pause run.read run.resume run.resume.accept_gap run.submit schedule.operate schedule.read schedule.write stats.read system.read system.restore trigger.read trigger.write webhook.read webhook.redeliver webhook.write
 auditor (15): access.read audit.read catalog.read eventsource.read identity.read namespace.read orker.read orkflow.read run.evidence.export run.read schedule.read stats.read system.read trigger.read webhook.read
 developer (30): automation.plan cache.purge eventsource.logs.read eventsource.operate eventsource.read eventsource.write namespace.read orker.read orkflow.promote orkflow.read orkflow.validate orkflow.write run.artifacts.read run.await.resolve run.cancel run.evidence.export run.logs.read run.pause run.read run.resume run.submit schedule.operate schedule.read schedule.write stats.read system.read trigger.read trigger.write webhook.read webhook.redeliver
 namespace-admin (39): access.bind audit.read automation.plan cache.purge concurrency.reset eventsource.logs.read eventsource.operate eventsource.read eventsource.write namespace.read namespace.update orker.read orkflow.delete orkflow.promote orkflow.read orkflow.validate orkflow.write payload.keys.manage run.artifacts.read run.await.resolve run.cancel run.cancel.bulk run.cancel.force run.evidence.export run.logs.read run.pause run.read run.resume run.submit schedule.operate schedule.read schedule.write stats.read system.read trigger.read trigger.write webhook.read webhook.redeliver webhook.write

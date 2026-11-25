@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"maps"
 
 	"github.com/orkstack/orkstack/internal/engine"
@@ -30,4 +31,31 @@ func (s censusSink) RecordConcurrencyCensus(snap engine.CensusSnapshot) {
 		c.Rebuilding = append(c.Rebuilding, telemetry.ConcurrencyRebuilding{Namespace: key[0], State: key[1], Gates: gates})
 	}
 	s.gauges.Record(c)
+}
+
+// arrivalObserver hands the gates' answered acquires to the arrivals
+// metric (E88 §9.9.2).
+type arrivalObserver struct{ m *telemetry.ConcurrencyMetrics }
+
+func (o arrivalObserver) ObserveArrival(ctx context.Context, namespace, orkflow, limit, level, strategy, outcome string) {
+	o.m.Arrival(ctx, telemetry.ConcurrencyArrival{Namespace: namespace, Orkflow: orkflow, Limit: limit, Level: level,
+		Strategy: strategy, Outcome: outcome})
+}
+
+// gateReportObserver hands what the gates report to their metrics (E88
+// §9.9.2).
+type gateReportObserver struct{ m *telemetry.ConcurrencyMetrics }
+
+func (o gateReportObserver) ObserveGateReport(ctx context.Context, r engine.ConcurrencyGateReport) {
+	out := telemetry.ConcurrencyGateReport{Namespace: r.Namespace, Started: r.Started}
+	for _, c := range r.Reclaimed {
+		out.Reclaimed = append(out.Reclaimed, telemetry.ConcurrencyReclaim{Limit: c.Limit, Outcome: c.Outcome, Entries: c.Entries})
+	}
+	for _, c := range r.VerifyErrors {
+		out.VerifyErrors = append(out.VerifyErrors, telemetry.ConcurrencyVerifyErrors{Limit: c.Limit, Calls: c.Calls})
+	}
+	for _, c := range r.Rebuilt {
+		out.Rebuilt = append(out.Rebuilt, telemetry.ConcurrencyRebuild{Outcome: c.Outcome, Times: c.Times})
+	}
+	o.m.Report(ctx, out)
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -39,16 +38,13 @@ func TestIntegration_ASealedRunThatFailsReadsBackFailed(t *testing.T) {
 	must.OK(t, err)
 	scope := payloadcrypt.NewScope(tree, payloadcrypt.RunContext(runID))
 
-	// The starting engine: its own converters over the engines' key.
-	dc := engine.NewDataConverter(keys)
-	sealing, err := client.NewClientFromExisting(plain, client.Options{
-		Namespace: runIDNamespace(), DataConverter: dc, FailureConverter: payloadcrypt.NewFailureConverter(dc, false),
-	})
+	// The starting engine, dialed as cmd/ork dials with the engines' key.
+	sealing, err := client.NewClientFromExisting(plain, engine.ClientOptions(client.Options{Namespace: runIDNamespace()}, keys))
 	must.OK(t, err)
 	t.Cleanup(sealing.Close)
 	queue := runIDQueue()
 	w := worker.New(sealing, queue, worker.Options{
-		Interceptors: append([]interceptor.WorkerInterceptor{payloadcrypt.WorkflowInterceptor(keys)}, engine.RunWorkerInterceptors()...),
+		Interceptors: engine.RunWorkerInterceptors(),
 	})
 	engine.RegisterWorkflows(w)
 	must.OK(t, w.Start())

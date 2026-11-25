@@ -133,7 +133,9 @@ type Signins struct {
 	// OnEvent is told of every sign-in event; it writes the audit record.
 	OnEvent func(ctx context.Context, e SigninEvent)
 	Logger  *slog.Logger
-	Now     func() time.Time
+
+	lines LogBound // what callers with no sign-in can make it log
+	Now   func() time.Time
 
 	initOnce  sync.Once
 	providers providers
@@ -333,6 +335,39 @@ func secureCookie(name, value string, maxAge int) *http.Cookie {
 		SameSite: http.SameSiteLaxMode, MaxAge: maxAge}
 }
 
+// maxCookieBytes is the most a browser must keep of one cookie, its name,
+// value and attributes together (RFC 6265 §6.1); over it, a browser may drop
+// the cookie without a word.
+const maxCookieBytes = 4096
+
+// loginCookie seals a sign-in in progress into a cookie a browser keeps. A
+// return path can pass its own bound and still make the cookie too big (a
+// query is kept as written, and a quote in it doubles when it is encoded):
+// the path is then dropped, so the sign-in lands on "/" rather than failing.
+func (s *Signins) loginCookie(ls loginState) (*http.Cookie, error) {
+	c, err := s.sealLogin(ls)
+	if err != nil || len(c.String()) <= maxCookieBytes {
+		return c, err
+	}
+	if ls.Return != "/" {
+		ls.Return = "/"
+		return s.loginCookie(ls)
+	}
+	return nil, fmt.Errorf("the login cookie is %d bytes without a return path; a browser keeps at most %d", len(c.String()), maxCookieBytes)
+}
+
+func (s *Signins) sealLogin(ls loginState) (*http.Cookie, error) {
+	plain, err := json.Marshal(ls)
+	if err != nil {
+		return nil, fmt.Errorf("encode: %w", err)
+	}
+	sealed, err := s.Sealer.Seal(PurposeLogin, "", plain)
+	if err != nil {
+		return nil, fmt.Errorf("seal: %w", err)
+	}
+	return secureCookie(LoginCookie, string(sealed), int(loginLifetime/time.Second)), nil
+}
+
 func noStore(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -341,7 +376,10 @@ func noStore(w http.ResponseWriter) {
 // signinFailed sends the browser to the sign-in page with a short reason,
 // never the detail, which goes to the log.
 func (s *Signins) signinFailed(w http.ResponseWriter, r *http.Request, issuer, reason string, err error) {
-	s.logger().Warn("sign-in refused", "issuer", issuer, "reason", reason, "error", err)
+	s.lines.Do("refused "+reason, func(dropped int) {
+		s.logger().Warn("sign-in refused", "issuer", LogText(issuer, LogTextMax), "reason", reason,
+			"error", logError(err), "more_not_logged", dropped)
+	})
 	http.SetCookie(w, secureCookie(LoginCookie, "", -1))
 	noStore(w)
 	http.Redirect(w, r, "/signin?error="+url.QueryEscape(reason), http.StatusFound)
@@ -365,13 +403,17 @@ func (s *Signins) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, _, err := s.providers.get(r.Context(), i, s.now())
 	if err != nil {
-		s.logger().Error("sign-in: the issuer's discovery could not be read", "issuer", i.Name, "error", err)
+		s.lines.Do("discovery "+i.Name, func(dropped int) {
+			s.logger().Error("sign-in: the issuer's discovery could not be read", "issuer", i.Name, "error", err, "more_not_logged", dropped)
+		})
 		http.Error(w, "the identity provider cannot be reached now; try again", http.StatusServiceUnavailable)
 		return
 	}
 	cfg, err := s.oauthConfig(i, meta)
 	if err != nil {
-		s.logger().Error("sign-in: the issuer's client is misconfigured", "issuer", i.Name, "error", err)
+		s.lines.Do("misconfigured "+i.Name, func(dropped int) {
+			s.logger().Error("sign-in: the issuer's client is misconfigured", "issuer", i.Name, "error", err, "more_not_logged", dropped)
+		})
 		http.Error(w, "sign-in is misconfigured on this engine", http.StatusServiceUnavailable)
 		return
 	}
@@ -383,17 +425,13 @@ func (s *Signins) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	ls := loginState{Issuer: i.Name, State: state, Nonce: nonce, Verifier: oauth2.GenerateVerifier(),
 		Return: SafeReturnPath(r.URL.Query().Get("return")), Expires: s.now().Add(loginLifetime)}
-	plain, err := json.Marshal(ls)
+	cookie, err := s.loginCookie(ls)
 	if err != nil {
-		http.Error(w, "encode", http.StatusInternalServerError)
+		s.logger().Error("sign-in: the login cookie could not be made", "issuer", i.Name, "error", err)
+		http.Error(w, "the sign-in could not be started", http.StatusInternalServerError)
 		return
 	}
-	sealed, err := s.Sealer.Seal(PurposeLogin, "", plain)
-	if err != nil {
-		http.Error(w, "seal", http.StatusInternalServerError)
-		return
-	}
-	http.SetCookie(w, secureCookie(LoginCookie, string(sealed), int(loginLifetime/time.Second)))
+	http.SetCookie(w, cookie)
 	http.Redirect(w, r, cfg.AuthCodeURL(state, oauth2.S256ChallengeOption(ls.Verifier),
 		oauth2.SetAuthURLParam("nonce", nonce)), http.StatusFound)
 }
@@ -403,7 +441,7 @@ func (s *Signins) Login(w http.ResponseWriter, r *http.Request) {
 // and the response's iss against the issuer (RFC 9207), so a code from one
 // issuer is never redeemed at another; it redeems the code with the
 // verifier, verifies the ID token, refuses a disabled principal, writes
-// the record, sets the cookie and returns to the return path.
+// the record, sets the cookie and returns to the return path, checked again.
 func (s *Signins) Callback(w http.ResponseWriter, r *http.Request) {
 	s.init()
 	noStore(w)
@@ -533,7 +571,7 @@ func (s *Signins) Callback(w http.ResponseWriter, r *http.Request) {
 	s.event(r.Context(), SigninEvent{Action: "auth.signin.created", Principal: p, Issuer: i.Name, PublicID: view.PublicID})
 	http.SetCookie(w, secureCookie(LoginCookie, "", -1))
 	http.SetCookie(w, secureCookie(SigninCookie, cookie, int(s.Settings.MaxAge/time.Second)))
-	http.Redirect(w, r, ls.Return, http.StatusFound)
+	http.Redirect(w, r, SafeReturnPath(ls.Return), http.StatusFound)
 }
 
 func toRecordPrincipal(p *Principal) recordPrincipal {

@@ -115,6 +115,8 @@ type config struct {
 	// at boot outside their bounds (docs/DEPLOY.md §1).
 	continuation   continuationConfig
 	runMaxInFlight int32
+	// resume is engine.resume.*, refused at boot when malformed.
+	resume api.ResumeSettings
 	// pinCreationTimeout is ORK_PIN_CREATION_TIMEOUT (pinCreationTimeoutFromEnv):
 	// how long a pin waits for a free pin slot before its first task fails
 	// PIN_UNAVAILABLE. Whole seconds, 1s to 24h, refused at boot otherwise
@@ -208,6 +210,7 @@ func loadConfig() config {
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	pinCreationTimeout, pinCreationErr := pinCreationTimeoutFromEnv()
 	interruptions, interruptionsErr := interruptionBudgetsFromEnv()
+	resumeSettings, resumeErr := resumeSettingsFromEnv()
 	poolMetrics, poolMetricsErr := poolMetricsFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
@@ -251,7 +254,8 @@ func loadConfig() config {
 		snapshotOverlays:              snapshotOverlays,
 		composeMaxDepth:               composeMaxDepth,
 		cacheMaxTTL:                   cacheMaxTTL,
-		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
+		resume:                        resumeSettings,
+		limitsErr: errors.Join(resumeErr, valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
 			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr,
 			interruptionsErr, poolMetricsErr, concurrencyErr),
@@ -520,9 +524,8 @@ func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, lo
 			"settings", unsaid)
 	}
 	// The engine decodes an Orker's answer leniently (engine.DataConverter);
-	// the Orker dials with the SDK default and stays strict.
-	temporalOptions.DataConverter = engine.DataConverter()
-	temporalOptions.FailureConverter = engine.FailureConverter()
+	// the Orker's own converter stays strict (orkerDataConverter).
+	temporalOptions = engine.ClientOptions(temporalOptions, nil)
 	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(),
 		append(cfg.auth.capabilities(), described.Tokens()...)...)
 	if dialing != nil {
@@ -1139,12 +1142,8 @@ func apiHandler(tcfg telemetry.Config, sinks *telemetry.Sinks, mux *http.ServeMu
 	if !tcfg.TracesEnabled() && !tcfg.MetricsEnabled() {
 		return mux
 	}
-	providers := sinks.Default()
 	return otelhttp.NewHandler(mux, "orkstack.api",
-		otelhttp.WithTracerProvider(providers.Tracer),
-		otelhttp.WithMeterProvider(providers.Meter),
-		otelhttp.WithPropagators(providers.Propagator),
-		otelhttp.WithFilter(traceAPIRequest))
+		append(telemetry.InboundHTTPOptions(sinks.Default()), otelhttp.WithFilter(traceAPIRequest))...)
 }
 
 func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
@@ -1517,10 +1516,17 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open snapshot store: %w", err)
 	}
-	// Each run tree's run-context object is written to the same store.
-	runContexts, ok := snapshots.(api.RunContextWriter)
+	// ResumeRun lists a run's snapshots; every store NewRunSnapshotStore opens
+	// can.
+	resumeSnapshots, ok := snapshots.(api.ResumeSnapshots)
 	if !ok {
-		return fmt.Errorf("open snapshot store: %T cannot store run contexts", snapshots)
+		return fmt.Errorf("the snapshot store %T lists no snapshots", snapshots)
+	}
+	// Each run tree's run-context object is under a prefix of its own in the
+	// same store, the one prefix of the two an Orker may read.
+	runContexts, err := artifacts.NewRunContextStore(ctx, archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open run context store: %w", err)
 	}
 	// engine.definition_by_reference's effective value: on, unset, only
 	// where continuation is (docs/DEPLOY.md §1).
@@ -1590,7 +1596,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed).
 		WithRootIndex(rootIndexed).
-		WithPausedIndex(pausedIndexed)
+		WithPausedIndex(pausedIndexed).
+		WithQueuedIndex(concurrencyIndexed && namespaceIndexed)
 
 	// The retention policy store and controller: the deployment's maximum run
 	// retention (never a user-facing Temporal setting, AGENTS.md §7) and the
@@ -1658,6 +1665,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: engine.ActivityWriteCheckpoint})
 	runWorker.RegisterActivityWithOptions(snapshotActivities.ReadContinuationChunk,
 		activity.RegisterOptions{Name: engine.ActivityReadContinuationChunk})
+	runWorker.RegisterActivityWithOptions(snapshotActivities.WriteResumeEnding,
+		activity.RegisterOptions{Name: engine.ActivityWriteResumeEnding})
 	// The local activity that counts a fan-out's task-sourced array, over the
 	// same store internal/api reads artifacts with.
 	runWorker.RegisterActivityWithOptions(
@@ -1673,6 +1682,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	resume := engine.NewResumeActivities(commitStore, artifactStore).
 		WithHistory(temporalClient.WorkflowService(), cfg.temporalNamespace, resumeRecords)
+	runWorker.RegisterActivityWithOptions(resume.ReadResetFacts,
+		activity.RegisterOptions{Name: engine.ActivityReadResetFacts})
 	runWorker.RegisterActivityWithOptions(resume.LoadResumePlan,
 		activity.RegisterOptions{Name: engine.ActivityLoadResumePlan})
 	runWorker.RegisterActivityWithOptions(resume.AdoptRecorded,
@@ -1702,7 +1713,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// The concurrency gates' reads of the cluster, and the census's pass, as
 	// local activities of the worker that runs their workflow tasks (E88
 	// §5.1.8). The census reports nowhere until the telemetry gauges read it.
-	engine.RegisterGateActivities(runWorker, engine.NewGateActivities(temporalClient))
+	gateActivities := engine.NewGateActivities(temporalClient)
+	engine.RegisterGateActivities(runWorker, gateActivities)
 	concurrencyGauges := telemetry.NewConcurrencyGauges(sinks.Default(), cfg.censusSettings.Interval,
 		cfg.censusSettings.Timeout, !concurrencyIndexed || !namespaceIndexed, logger)
 	engine.RegisterCensusActivities(runWorker, engine.NewCensusActivities(temporalClient, censusSink{gauges: concurrencyGauges}))
@@ -1744,6 +1756,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// The continuation metrics, measured by the run worker's own local
 		// activities (registered above, on this same instance).
 		snapshotActivities.WithContinuationObserver(continuationObserver{observer})
+		resume.WithObserver(continuationObserver{observer})
 	}
 	// The archive sweep: a finished run that did not archive itself gets its
 	// archive from its history. It only writes, and the cluster's own
@@ -1782,6 +1795,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		cleanupMetrics  *telemetry.CleanupObserver
 		triggerMetrics  *telemetry.TriggerMetrics
 		scheduleMetrics *telemetry.ScheduleMetrics
+		concMetrics     *telemetry.ConcurrencyMetrics
 	)
 	if wireEventObserver(tcfg) {
 		route := func(ctx context.Context, namespace string) (*telemetry.Providers, bool) {
@@ -1796,6 +1810,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		}, logger)
 		triggerMetrics = telemetry.NewTriggerMetrics(sinks.Default(), route, logger)
 		scheduleMetrics = telemetry.NewScheduleMetrics(sinks.Default(), route, objectLabels, logger)
+		concMetrics = telemetry.NewConcurrencyMetrics(sinks.Default(), route, tcfg.OrkflowLabel, logger)
+		gateActivities.WithArrivalObserver(arrivalObserver{concMetrics}).WithGateReportObserver(gateReportObserver{concMetrics})
+		observer.WithConcurrencyMetrics(concMetrics)
 		hooks := telemetry.NewWebhookMetrics(sinks.Default(), route, objectLabels, logger)
 		webhookMetrics.Store(hooks)
 		webhookActivities.WithObserver(webhookObserver{hooks})
@@ -2080,6 +2097,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Runs:                   runs,
 		Bus:                    bus,
 		Starter:                starter,
+		Resume:                 resumeSeam(starter),
+		ResumeRecords:          resumeRecords,
+		ResumeSettings:         cfg.resume,
+		ResumeObserver:         observer,
+		ResumeClaims:           engine.NewTemporalIdempotency(temporalClient, q.run, api.ResumeClaimTTL),
+		ResumeSnapshots:        resumeSnapshots,
 		Pools:                  pools,
 		Orkers:                 starter,
 		Fleet:                  starter,
@@ -2170,6 +2193,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Admissions:                    admissionObserver,
 		TriggerMetrics:                triggerMetrics,
 		ScheduleMetrics:               scheduleMetrics,
+		ConcurrencyMetrics:            concMetrics,
 		// One usage measurement is shared by GetUsage and an enforced
 		// budget's admission check, reused for ORK_USAGE_CACHE_TTL.
 		UsageCacheTTL:  api.UsageCacheTTLFromEnv(),

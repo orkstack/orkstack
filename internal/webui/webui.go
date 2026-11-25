@@ -20,12 +20,15 @@ import (
 	"fmt"
 	"html"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 //go:embed all:dist
@@ -228,11 +231,13 @@ var encodings = []struct{ coding, suffix string }{
 //   - only GET and HEAD are answered; anything else outside the reserved
 //     paths is 405.
 func Handler(build fs.FS) http.Handler {
-	return &handler{build: build}
+	return &handler{build: build, faults: rate.Sometimes{Interval: time.Second}}
 }
 
 type handler struct {
 	build fs.FS
+	// faults bounds what a build that cannot be read logs: anyone may ask.
+	faults rate.Sometimes
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +309,11 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, name string) {
 	}
 	data, err := fs.ReadFile(h.build, served)
 	if err != nil {
-		http.Error(w, "read the UI build: "+err.Error(), http.StatusInternalServerError)
+		// Anyone may ask for a page: where the build is on disk is the log's.
+		if r.Context().Err() == nil {
+			h.faults.Do(func() { slog.Warn("the UI build could not be read", "file", served, "error", err) })
+		}
+		http.Error(w, "the UI build could not be read", http.StatusInternalServerError)
 		return
 	}
 	contentType := ContentType(name)

@@ -28,11 +28,6 @@ import (
 // (docs/RESUME.md, "The resume budget").
 const MaxResumesPerRun = 20
 
-// notReadBackReason is the reason a terminal snapshot gives a row that an
-// earlier resume had not read back when the run ended (E85 PR 4 emits it and
-// documents it). Such a row stays kept.
-const notReadBackReason = "RESUME_NOT_READ_BACK"
-
 // forceCanceledReason is E88's run ending for a force cancel (E88 emits it
 // and documents it).
 const forceCanceledReason = "RUN_FORCE_CANCELED"
@@ -123,6 +118,11 @@ const (
 	DispositionWait
 	DispositionSleepUntil
 )
+
+// Proto is the disposition on the wire; none for a unit left as checkpointed.
+func (d ResumeDisposition) Proto() orkstackv1.ResumeDisposition {
+	return wireDispositions[d]
+}
 
 var dispositionNames = [...]string{"NONE", "RERUN", "ADOPT", "SETTLE", "KEEP_SKIPPED", "WAIT", "SLEEP_UNTIL"}
 
@@ -290,6 +290,7 @@ const (
 	RefuseChildRun            ResumeRefusalCode = "CHILD_RUN"
 	RefuseTooManyResumes      ResumeRefusalCode = "TOO_MANY_RESUMES"
 	RefuseCheckUnavailable    ResumeRefusalCode = "RESUME_CHECK_UNAVAILABLE"
+	RefuseTooLarge            ResumeRefusalCode = "RESUME_TOO_LARGE"
 )
 
 // ResumeRefusalClass says what a caller can do about a refusal.
@@ -349,6 +350,16 @@ var resumableRunEndings = map[string]bool{
 	"RUN_CONCURRENCY_UNAVAILABLE": true,
 	"RUN_CONCURRENCY_FENCED":      true,
 	"RUN_CONCURRENCY_UNSUPPORTED": true,
+	// A resume whose plan could not be run left its base as it was.
+	ReasonResumePlanInvalid:    true,
+	ReasonResumePlanUnreadable: true,
+}
+
+// ResumePlanNeverRan reports whether code is the ending of a resume whose plan
+// could not be run: its run ended as the one before it had, with nothing run
+// again.
+func ResumePlanNeverRan(code string) bool {
+	return code == ReasonResumePlanInvalid || code == ReasonResumePlanUnreadable
 }
 
 // ---------------------------------------------------------------- the plan
@@ -482,27 +493,37 @@ func planOnce(in ResumePlanInput, action ResumeAction, from string) (*ResumePlan
 	return p.solve(action, from)
 }
 
-// refuseBase refuses a base the resume cannot start from, before any task
-// is looked at.
-func refuseBase(in ResumePlanInput) *ResumeRefusal {
-	status := in.Base.GetStatus()
-	code := in.Base.GetError().GetCode()
-	switch in.Class {
+// RefuseResumeState refuses a run that is not in a state class resumes, from
+// its status alone, so ResumeRun answers a running run before it reads its
+// history.
+func RefuseResumeState(base *orkstackv1.Run, class ResumeBaseClass) *ResumeRefusal {
+	status := base.GetStatus()
+	switch class {
 	case ResumeBaseFailed:
 		if status != orkstackv1.Status_STATUS_FAILED {
 			return refuse(RefuseStateNotResumable, RefusalPermanent,
 				"run %s is %s; only failed or force-cancelled runs can be resumed. Run again starts a fresh run",
-				in.Base.GetId(), resumeStatusWord(status))
+				base.GetId(), resumeStatusWord(status))
 		}
 	case ResumeBaseForceCanceled:
-		if status != orkstackv1.Status_STATUS_CANCELED || code != forceCanceledReason {
+		if status != orkstackv1.Status_STATUS_CANCELED || base.GetError().GetCode() != forceCanceledReason {
 			return refuse(RefuseStateNotResumable, RefusalPermanent,
 				"run %s is %s and was not force-cancelled; only failed or force-cancelled runs can be resumed. Run again starts a fresh run",
-				in.Base.GetId(), resumeStatusWord(status))
+				base.GetId(), resumeStatusWord(status))
 		}
 	default:
-		return refuse(RefuseStateNotResumable, RefusalPermanent, "run %s is in a state that can't be resumed", in.Base.GetId())
+		return refuse(RefuseStateNotResumable, RefusalPermanent, "run %s is in a state that can't be resumed", base.GetId())
 	}
+	return nil
+}
+
+// refuseBase refuses a base the resume cannot start from, before any task
+// is looked at.
+func refuseBase(in ResumePlanInput) *ResumeRefusal {
+	if r := RefuseResumeState(in.Base, in.Class); r != nil {
+		return r
+	}
+	code := in.Base.GetError().GetCode()
 	if in.ResumesUsed >= MaxResumesPerRun {
 		return refuse(RefuseTooManyResumes, RefusalPermanent,
 			"run %s has been resumed %d times, counting resumes that ended waiting for a concurrency slot. Run again",
@@ -644,6 +665,14 @@ func newPlanner(in ResumePlanInput) (*planner, error) {
 			}
 			p.dependents[need] = append(p.dependents[need], id)
 		}
+		// A lines fan-out reruns with its producer because the producer is
+		// one of its own needs. Without that edge its items could be kept
+		// over lines that were replaced. A "_" producer is no task: what the
+		// run itself received (_inputs) never changes.
+		if producer := p.tasks[id].def.GetEach().GetSource().GetArtifact().GetProducer(); producer != "" &&
+			!strings.HasPrefix(producer, "_") && !slices.Contains(p.tasks[id].def.GetNeeds(), producer) {
+			return nil, fmt.Errorf("engine: plan resume: fan-out %q reads the lines of %q, which it does not need", id, producer)
+		}
 	}
 	for src := range p.eachOf {
 		if p.tasks[src] == nil {
@@ -717,7 +746,7 @@ func isFailedSeed(row *orkstackv1.TaskRun) bool {
 // success, or a row an earlier resume kept and had not read back.
 func keptCandidate(row *orkstackv1.TaskRun) bool {
 	return row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED || row.GetReadingBack() ||
-		row.GetError().GetCode() == notReadBackReason
+		row.GetError().GetCode() == ReasonResumeNotReadBack
 }
 
 // answer returns the verification answer for a kept candidate, recording
@@ -761,7 +790,7 @@ func (p *planner) classify() error {
 				// kept when every item is, and the node rule puts it in S
 				// once any item reruns.
 				switch row := task.row; {
-				case row.GetReadingBack() || row.GetError().GetCode() == notReadBackReason:
+				case row.GetReadingBack() || row.GetError().GetCode() == ReasonResumeNotReadBack:
 					// An earlier resume had not read it back: it stays kept
 					// (§4.4); its items carry their own answers.
 					p.kept[u] = true
@@ -1303,12 +1332,22 @@ func checkResumePlan(in ResumePlanInput, plan *ResumePlan) error {
 				return fmt.Errorf("item %s[%d] is in S but its node is not", id, i)
 			}
 		}
-		if node.InRerunSet {
+		if node.InRerunSet || node.Disposition == DispositionWait {
+			// A dependent runs again whole, every item of a fan-out too: an
+			// item kept over a replaced result (an array, or the lines of an
+			// artifact) would be a silently wrong one.
 			for _, dep := range p.dependents[id] {
-				if !in.Facts.Earlier[dep] && !inS(nodeUnit(dep)) {
-					return fmt.Errorf("%s is in S but its dependent %s is not", id, dep)
+				if in.Facts.Earlier[dep] {
+					continue
+				}
+				for _, u := range p.tasks[dep].units() {
+					if !inS(u) {
+						return fmt.Errorf("%s reruns or waits again but its dependent %s does not rerun", id, u)
+					}
 				}
 			}
+		}
+		if node.InRerunSet {
 			if pin := task.def.GetPin(); pin != "" {
 				for _, m := range p.pins[pin] {
 					if !in.Facts.Earlier[m] && !inS(nodeUnit(m)) {

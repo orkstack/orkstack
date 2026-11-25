@@ -11,9 +11,12 @@ import (
 
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
@@ -110,7 +113,7 @@ func TestIntegration_ConcurrencyGateActivitiesNeverReachOrkers(t *testing.T) {
 	s.startWorker()
 	var reached atomic.Int64
 	orker := worker.New(s.c, s.gateQueue, worker.Options{DisableWorkflowWorker: true})
-	for _, name := range []string{engine.ActivityDescribeConcurrencyEntries, engine.ActivityListConcurrencyEntries, engine.ActivityRunConcurrencyCensus} {
+	for _, name := range []string{engine.ActivityDescribeConcurrencyEntries, engine.ActivityListConcurrencyEntries, engine.ActivityReportConcurrencyGate, engine.ActivityRunConcurrencyCensus} {
 		orker.RegisterActivityWithOptions(func(context.Context, any) (any, error) {
 			reached.Add(1)
 			return nil, nil
@@ -264,7 +267,7 @@ func TestIntegration_ConcurrencyRebuildVisibilityUnavailable(t *testing.T) {
 	// stalls, so an acquire sent meanwhile must not go stale.
 	tun.AcquireTimeout, tun.Linger = 20*time.Second, 26*time.Second
 	proxy := faultproxy.New(t, temporalAddress())
-	via, err := client.DialContext(ctx, client.Options{HostPort: proxy.Addr(), Namespace: s.namespace})
+	via, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: proxy.Addr(), Namespace: s.namespace}, nil))
 	must.OKf(t, err, "dial through the proxy")
 	t.Cleanup(via.Close)
 	s.activities = via
@@ -344,5 +347,66 @@ func TestIntegration_ConcurrencyGateReleaseAtContinueIsNotLost(t *testing.T) {
 			s.release(t, gate, crossing, 1, gateLevel)
 		}
 		s.closeEmpty(t, gate)
+	}
+}
+
+// TestIntegration_ConcurrencyStuckGateMakesTheCensusPartial: a gate whose
+// workflow task fails every time is not answering, and the next census says
+// so for its namespace, which is what ConcurrencyCensusPartial alerts on
+// (D29). While the same gate is healthy, the census reads it whole.
+func TestIntegration_ConcurrencyStuckGateMakesTheCensusPartial(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	s := newGateStack(t, ctx, "stuck")
+	usable, err := task.EnsureRunSearchAttributes(ctx, s.c, s.namespace)
+	must.OKf(t, err, "register the namespace attribute")
+	if !usable {
+		t.Fatalf("the namespace attribute is not usable in %s", s.namespace)
+	}
+	s.startWorker()
+	gate, a := engine.GateID(gateNamespace, "", "stuck"), gateRunID("a")
+	s.startStandIn(t, gate, a, 1, nil)
+	run, err := s.c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: gate, TaskQueue: s.gateQueue,
+		TypedSearchAttributes: temporal.NewSearchAttributes(task.SearchKeyOrkflowNamespace.ValueSet(gateNamespace))},
+		engine.ConcurrencyGateWorkflowType, engine.GateStart{GateID: gate, Namespace: gateNamespace, Key: "stuck",
+			Tunables: gateTunablesForTest(), Previous: engine.GatePreviousClean})
+	must.OKf(t, err, "start the gate")
+	s.wantAnswer(t, gate, gateAcq(a, 1, gateLevel, 1, "queue"), engine.GateAnswerGrantedForTest)
+	pass := func() engine.CensusSnapshot {
+		t.Helper()
+		census, err := s.c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: gateRunID("census"), TaskQueue: s.gateQueue},
+			engine.ConcurrencyCensusWorkflowType, engine.CensusSettings{Interval: time.Hour, Timeout: 30 * time.Second, MaxGates: 10, Parallel: 2})
+		must.OKf(t, err, "start a census")
+		must.OKf(t, census.Get(ctx, nil), "the census pass")
+		snap, _ := s.census.last()
+		return snap
+	}
+	var healthy engine.CensusSnapshot
+	s.poll(t, "a census that lists the gate", func() (bool, error) { healthy = pass(); return healthy.Gates == 1, nil })
+	if healthy.Unanswered != 0 || healthy.Partial[gateNamespace] || healthy.Unavailable {
+		t.Fatalf("the census of a healthy gate = %+v, want it read whole", healthy)
+	}
+
+	// The worker that takes over panics in the gate's code, as a release
+	// whose gate cannot replay this history would.
+	s.stopWorker()
+	w := worker.New(s.c, s.gateQueue, worker.Options{})
+	w.RegisterWorkflowWithOptions(func(workflow.Context, engine.GateStart) (engine.GateResult, error) {
+		panic("a gate that cannot carry on")
+	}, workflow.RegisterOptions{Name: engine.ConcurrencyGateWorkflowType})
+	w.RegisterWorkflowWithOptions(engine.ConcurrencyCensusWorkflow, workflow.RegisterOptions{Name: engine.ConcurrencyCensusWorkflowType})
+	engine.RegisterCensusActivities(w, engine.NewCensusActivities(s.activities, s.census))
+	must.OKf(t, w.Start(), "start the worker whose gate panics")
+	t.Cleanup(w.Stop)
+	s.signal(t, gate, engine.GateSignalVerify, nil)
+	s.poll(t, "the gate's workflow task failing again and again", func() (bool, error) {
+		d, err := s.c.DescribeWorkflow(ctx, gate, run.GetRunID())
+		if err != nil {
+			return false, err
+		}
+		return d.RawResponse.GetPendingWorkflowTask().GetAttempt() >= 2, nil
+	})
+	if stuck := pass(); stuck.Gates != 1 || stuck.Unanswered != 1 || !stuck.Partial[gateNamespace] || stuck.Unavailable {
+		t.Fatalf("the census of a stuck gate = %+v, want it unanswered and %s partial", stuck, gateNamespace)
 	}
 }

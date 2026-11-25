@@ -13,9 +13,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/jwt"
@@ -39,7 +42,7 @@ type admissionWorld struct {
 	records     *artifacts.RecordStore
 	dir         string
 	starter     *executionStarter
-	runContexts *artifacts.LocalRunSnapshotStore
+	runContexts *artifacts.RunContextStore
 }
 
 // executionStarter is the unit tests' stand-in cluster, answering each
@@ -96,7 +99,7 @@ func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
 		o.attemptsMax = identity.DefaultAttemptsMax
 	}
 	starter := &executionStarter{}
-	runContexts, err := artifacts.NewLocalRunSnapshotStore(o.dir)
+	runContexts, err := artifacts.NewLocalRunContextStore(o.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,8 +152,22 @@ func (nothingLive) PublishedKeyIDs(context.Context) (map[string]bool, error) { r
 // identityOrkflow is Orkflow deploy@1 of namespace default: a task that
 // holds identity aws, one that holds none, and an awaited task.
 func identityOrkflow() *orkstackv1.Orkflow {
+	return digested(undigestedIdentityOrkflow())
+}
+
+// digested gives wf the digest a create gives it.
+func digested(wf *orkstackv1.Orkflow) *orkstackv1.Orkflow {
+	digest, err := dsl.DefinitionDigest(wf)
+	if err != nil {
+		panic(err) // a definition of this file, not an input
+	}
+	wf.DefinitionDigest = digest
+	return wf
+}
+
+func undigestedIdentityOrkflow() *orkstackv1.Orkflow {
 	pinned := &orkstackv1.ImageRef{Reference: "ghcr.io/acme/deploy:1", Pinned: "ghcr.io/acme/deploy@sha256:" + strings.Repeat("a", 64)}
-	return &orkstackv1.Orkflow{Name: "deploy", Version: "1", DefinitionDigest: strings.Repeat("d", 64), Tasks: []*orkstackv1.Task{
+	return &orkstackv1.Orkflow{Name: "deploy", Version: "1", Tasks: []*orkstackv1.Task{
 		{Id: "apply", Image: pinned, Command: []string{"apply"}, Retry: &orkstackv1.RetryPolicy{MaximumAttempts: 3},
 			Identities: []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts.amazonaws.com", TtlSeconds: 900}}},
 		{Id: "report", Image: pinned, Needs: []string{"apply"}},
@@ -165,11 +182,12 @@ func composingOrkflows() (parent, child *orkstackv1.Orkflow) {
 	child.Name = "child"
 	child.Tasks = child.Tasks[:1]
 	child.Tasks[0].Id = "push"
+	digested(child)
 	pinned := &orkstackv1.ImageRef{Reference: "ghcr.io/acme/build:1", Pinned: "ghcr.io/acme/build@sha256:" + strings.Repeat("b", 64)}
-	parent = &orkstackv1.Orkflow{Name: "release", Version: "1", DefinitionDigest: strings.Repeat("e", 64), Tasks: []*orkstackv1.Task{
+	parent = digested(&orkstackv1.Orkflow{Name: "release", Version: "1", Tasks: []*orkstackv1.Task{
 		{Id: "build", Image: pinned},
 		{Id: "ship", Needs: []string{"build"}, Uses: "orkflow:child@1", Orkflow: &orkstackv1.OrkflowRef{Name: "child", Version: "1", DefinitionDigest: child.GetDefinitionDigest()}},
-	}}
+	}})
 	return parent, child
 }
 
@@ -227,7 +245,7 @@ func TestSubmitRun_AdmitsARunThatHoldsAnIdentity(t *testing.T) {
 	a := read.Value
 	if a.Starter != (artifacts.Starter{Kind: artifacts.StarterEngine}) || a.RootRunID != "" || a.Issuer != admissionIssuer ||
 		a.EngineBuild != "build-test" || a.TokenTTL != 3600 || a.NamespaceID == "" || a.OrkflowID == "" ||
-		a.Origin.Kind != "submit" || a.DefinitionDigest != strings.Repeat("d", 64) {
+		a.Origin.Kind != "submit" || "sha256:"+a.DefinitionDigest != identityOrkflow().GetDefinitionDigest() {
 		t.Fatalf("admission = %+v", a)
 	}
 	wantSet := artifacts.AdmittedIdentity{Name: "aws", Audience: "sts.amazonaws.com", TTLSeconds: 900, Refresh: artifacts.RefreshRequired}
@@ -428,6 +446,183 @@ func TestSubmitRun_AdmitsEveryRunOfATree(t *testing.T) {
 	}
 	if chain, _ := w.records.ReadChain(ctx, artifacts.DefaultNamespace, entry.RunID); chain.Answer != artifacts.RecordNone {
 		t.Fatalf("a child has a chain record: %+v", chain)
+	}
+}
+
+// TestSubmitRun_AdmitsADefinitionAsItWasCreated: from a document through
+// compile, the digest a create gives it and the store to SubmitRun, the
+// admission holds the digest the stored version has. Only the identity is added to the compiled
+// document, whose language still refuses it.
+func TestSubmitRun_AdmitsADefinitionAsItWasCreated(t *testing.T) {
+	ctx := context.Background()
+	wf, err := dsl.Compile([]byte(`apiVersion: orkstack/v1
+kind: Orkflow
+name: deploy
+version: "1"
+tasks:
+  - id: apply
+    uses: image:ghcr.io/acme/deploy@sha256:` + strings.Repeat("a", 64) + `
+    command:
+      - apply
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf.Tasks[0].Identities = identityOrkflow().Tasks[0].Identities
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{digested(wf)}})
+	run, err := w.submit(t, "deploy", "")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	got, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, run.GetId(), w.starter.startedPlans()[0].Identity.AdmissionSHA256)
+	if err != nil || got.Answer != artifacts.RecordFound {
+		t.Fatalf("the admission reads %+v, %v", got, err)
+	}
+	stored, err := w.svc.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: "1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := stored.Msg.GetOrkflow().GetDefinitionDigest(); want == "" || "sha256:"+got.Value.DefinitionDigest != want {
+		t.Fatalf("admitted digest %q; the stored version's is %q", got.Value.DefinitionDigest, want)
+	}
+}
+
+// TestSubmitRun_AdmitsASharedChildUnderItsOwner: a child run of an Orkflow
+// another namespace shared is admitted as that namespace's, with its
+// Orkflow's id, though it runs here. Admitted as this namespace's, its
+// tokens would carry the subject of this namespace's own Orkflow of that
+// name, which exists here beside it.
+func TestSubmitRun_AdmitsASharedChildUnderItsOwner(t *testing.T) {
+	ctx := context.Background()
+	parent, own := composingOrkflows()
+	shared, _ := proto.Clone(own).(*orkstackv1.Orkflow)
+	shared.Namespace = "platform"
+	shared.SharedWith = []*orkstackv1.OrkflowShare{{Namespace: "*"}}
+	digested(shared)
+	parent.Tasks[1].Uses = "orkflow:platform/child@1"
+	parent.Tasks[1].Orkflow.Namespace, parent.Tasks[1].Orkflow.DefinitionDigest = "platform", shared.GetDefinitionDigest()
+	digested(parent)
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{own, shared, parent}})
+	if _, err := w.submit(t, "release", ""); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if _, err := w.submit(t, "child", ""); err != nil {
+		t.Fatalf("submit this namespace's own child: %v", err)
+	}
+	plans := w.starter.startedPlans()
+	entry := plans[0].Children["ship"]
+	read := func(runID, sha string) artifacts.Admission {
+		t.Helper()
+		got, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, runID, sha)
+		if err != nil || got.Answer != artifacts.RecordFound {
+			t.Fatalf("the admission of %s reads %+v, %v", runID, got, err)
+		}
+		return got.Value
+	}
+	child := read(entry.RunID, entry.Plan.Identity.AdmissionSHA256)
+	if child.Namespace != artifacts.DefaultNamespace || child.OrkflowNamespace != "platform" {
+		t.Fatalf("the shared child is admitted in %q as %q's; want default, platform's", child.Namespace, child.OrkflowNamespace)
+	}
+	mine := read(w.starter.startedRuns()[1], plans[1].Identity.AdmissionSHA256)
+	if mine.OrkflowNamespace != "" || mine.OrkflowID == "" || child.OrkflowID == "" || mine.OrkflowID == child.OrkflowID {
+		t.Fatalf("the shared child's Orkflow id is %q, this namespace's own child's %q (owner %q)", child.OrkflowID, mine.OrkflowID, mine.OrkflowNamespace)
+	}
+	subject := func(a artifacts.Admission) any {
+		t.Helper()
+		claims, err := identity.BuildClaims(identity.ClaimsInput{Admission: a, TaskID: "push", Issuer: admissionIssuer,
+			Audience: "sts.amazonaws.com", Attempt: 1, Identity: "aws", Now: time.Now(), Lifetime: time.Hour, JTI: "j"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return claims["sub"]
+	}
+	if subject(child) == subject(mine) {
+		t.Fatalf("the shared child's token and this namespace's own child's have one subject, %v", subject(child))
+	}
+}
+
+// TestSubmitRun_ASharedOrkflowsOwnChildIsItsOwners: two levels deep, every
+// run is the namespace's that wrote its definition. platform/lib composes
+// platform's child by its bare name and default's hook by its full one, and
+// both namespaces hold an Orkflow of each name. The admission names the
+// owner, and the run's context hides the root's principal and reference from
+// every run at or below platform's. Its tokens name nobody either; a run of
+// default's own Orkflow beside them names who submitted the tree.
+func TestSubmitRun_ASharedOrkflowsOwnChildIsItsOwners(t *testing.T) {
+	ctx := authn.WithPrincipal(authn.WithMode(context.Background(), authn.ModeEnforce), &authn.Principal{ID: "user:corp:alice"})
+	everyone := []*orkstackv1.OrkflowShare{{Namespace: "*"}}
+	in := func(ns, name string, tasks ...*orkstackv1.Task) *orkstackv1.Orkflow {
+		_, child := composingOrkflows()
+		child.Namespace, child.Name, child.SharedWith = ns, name, everyone
+		child.Tasks[0].Command = []string{ns}
+		if tasks != nil {
+			child.Tasks = tasks
+		}
+		return digested(child)
+	}
+	mine, theirs := in("default", "child"), in("platform", "child")
+	hook, theirHook := in("default", "hook"), in("platform", "hook")
+	ref := func(ns string, to *orkstackv1.Orkflow) *orkstackv1.OrkflowRef {
+		return &orkstackv1.OrkflowRef{Namespace: ns, Name: to.GetName(), Version: "1", DefinitionDigest: to.GetDefinitionDigest()}
+	}
+	lib := in("platform", "lib",
+		&orkstackv1.Task{Id: "own", Uses: "orkflow:child@1", Orkflow: ref("", theirs)},
+		&orkstackv1.Task{Id: "back", Uses: "orkflow:default/hook@1", Orkflow: ref("default", hook)})
+	root := in("default", "release", &orkstackv1.Task{Id: "lib", Uses: "orkflow:platform/lib@1", Orkflow: ref("platform", lib)},
+		&orkstackv1.Task{Id: "mine", Uses: "orkflow:child@1", Orkflow: ref("", mine)})
+	w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{mine, theirs, hook, theirHook, lib, root}})
+	resp, err := w.svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "release"}))
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	run := resp.Msg.GetRun()
+	plan := w.starter.startedPlans()[0]
+	libEntry := plan.Children["lib"]
+	ids := map[string]string{}
+	for _, tc := range []struct {
+		task, owner string
+		def         *orkstackv1.Orkflow
+		entry       *engine.ChildRunPlan
+		submitter   any
+	}{
+		{"own", "platform", theirs, libEntry.Plan.Children["own"], nil},
+		{"back", "", hook, libEntry.Plan.Children["back"], nil},
+		{"mine", "", mine, plan.Children["mine"], "user:corp:alice"},
+	} {
+		entry := tc.entry
+		got, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, entry.RunID, entry.Plan.Identity.AdmissionSHA256)
+		if err != nil || got.Answer != artifacts.RecordFound {
+			t.Fatalf("%s's admission reads %+v, %v", tc.task, got, err)
+		}
+		a := got.Value
+		if a.Namespace != artifacts.DefaultNamespace || a.OrkflowNamespace != tc.owner || "sha256:"+a.DefinitionDigest != tc.def.GetDefinitionDigest() {
+			t.Errorf("%s is admitted in %q as %q's with digest %s; want default, %q's, %s", tc.task, a.Namespace, a.OrkflowNamespace, a.DefinitionDigest, tc.owner, tc.def.GetDefinitionDigest())
+		}
+		ids[tc.task] = a.OrkflowID
+		claims, err := identity.BuildClaims(identity.ClaimsInput{Admission: a, TaskID: "push", Issuer: admissionIssuer,
+			Audience: "sts.amazonaws.com", Attempt: 1, Identity: "aws", Now: time.Now(), Lifetime: time.Hour, JTI: "j"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if claims["ork_submitted_by"] != tc.submitter || claims["ork_root_run_id"] != run.GetId() || claims["ork_origin"] != "submit" {
+			t.Errorf("%s's token names submitter %v, root %v, origin %v; want %v, %s, submit", tc.task,
+				claims["ork_submitted_by"], claims["ork_root_run_id"], claims["ork_origin"], tc.submitter, run.GetId())
+		}
+	}
+	if ids["own"] == "" || ids["own"] == ids["mine"] || ids["own"] == ids["back"] {
+		t.Errorf("Orkflow ids %v; want three", ids)
+	}
+	obj, err := w.runContexts.ReadRunContext(ctx, artifacts.DefaultNamespace, run.GetId(), plan.RunContextSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(obj.Entries) != 5 {
+		t.Fatalf("%d runs in the context; want release, lib, own, back and mine", len(obj.Entries))
+	}
+	for _, e := range obj.Entries[1:] {
+		if want := e.ParentTaskID != "mine"; e.Shared != want {
+			t.Errorf("the run of task %q has the root's principal and reference hidden: %v; want %v", e.ParentTaskID, e.Shared, want)
+		}
 	}
 }
 

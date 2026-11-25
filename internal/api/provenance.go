@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -78,8 +79,8 @@ func (s *Service) GetArtifactProvenance(
 	if err != nil {
 		return nil, err
 	}
-	if !hasTask(run, msg.GetTaskId()) {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("task %q not found in run %q", msg.GetTaskId(), run.GetId()))
+	if err := checkArtifactTask(run, msg.GetTaskId()); err != nil {
+		return nil, err
 	}
 	// The item selector, exactly as ReadArtifact applies it.
 	if _, err := itemRunOf(run, msg.GetTaskId(), msg.Item); err != nil {
@@ -283,7 +284,8 @@ func (s *Service) loadReferencingRuns(ctx context.Context, runIDs []string) ([]*
 }
 
 // referencesIn is every recording of objectID in one run: Run.task_runs
-// order, then ArtifactKind ascending. A run whose marker exists but whose
+// order, then what the run received (task _inputs), then ArtifactKind
+// ascending. A run whose marker exists but whose
 // snapshot does not show the object yields nothing.
 func referencesIn(run *orkstackv1.Run, objectID string) []*orkstackv1.ArtifactReference {
 	taskIndex := make(map[string]int, len(run.GetTaskRuns()))
@@ -292,6 +294,8 @@ func referencesIn(run *orkstackv1.Run, objectID string) []*orkstackv1.ArtifactRe
 			taskIndex[task.GetTaskId()] = i
 		}
 	}
+	// What the run received is after every task, as everywhere else.
+	taskIndex[dsl.InputsProducer] = len(run.GetTaskRuns())
 	var matches []*orkstackv1.RunArtifact
 	for _, item := range runArtifacts(run, "", nil) {
 		if id, ok := artifacts.ObjectIDFromURI(item.GetArtifact().GetUri()); ok && id == objectID {
@@ -312,13 +316,14 @@ func referencesIn(run *orkstackv1.Run, objectID string) []*orkstackv1.ArtifactRe
 	refs := make([]*orkstackv1.ArtifactReference, 0, len(matches))
 	for _, item := range matches {
 		refs = append(refs, &orkstackv1.ArtifactReference{
-			RunId:          run.GetId(),
-			OrkflowName:    run.GetOrkflowName(),
-			OrkflowVersion: run.GetOrkflowVersion(),
-			TaskId:         item.GetTaskId(),
-			Kind:           item.GetKind(),
-			RunStatus:      run.GetStatus(),
-			RunCreatedAt:   run.GetCreatedAt(),
+			RunId:            run.GetId(),
+			OrkflowName:      run.GetOrkflowName(),
+			OrkflowNamespace: run.GetOrkflowNamespace(),
+			OrkflowVersion:   run.GetOrkflowVersion(),
+			TaskId:           item.GetTaskId(),
+			Kind:             item.GetKind(),
+			RunStatus:        run.GetStatus(),
+			RunCreatedAt:     run.GetCreatedAt(),
 			// Set when the referencing run recorded the object under an item.
 			Item: item.Item,
 		})

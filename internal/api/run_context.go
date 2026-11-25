@@ -12,7 +12,7 @@ import (
 )
 
 // RunContextWriter is where a run tree's run-context object is written: the
-// run snapshot store (artifacts.BlobRunSnapshotStore).
+// run-context store (artifacts.RunContextStore).
 type RunContextWriter interface {
 	WriteRunContext(ctx context.Context, namespace, rootRunID string, data []byte) error
 }
@@ -62,7 +62,10 @@ func addRunContextEntries(obj *artifacts.RunContextObject, parent int32, plan *e
 		index := int32(len(obj.Entries))
 		ork := runContextOrkflow(wf)
 		obj.Entries = append(obj.Entries, artifacts.RunContextEntry{
-			Parent: &parent, ParentTaskID: id, Orkflow: &ork, Shared: child.Plan.Shared != nil,
+			Parent: &parent, ParentTaskID: id, Orkflow: &ork,
+			// Another namespace's definition, whoever composes it, and whatever
+			// runs below one, which answers to it.
+			Shared: wf.GetDefinitionNamespace() != "" || obj.Entries[parent].Shared,
 		})
 		child.Plan.RunContextIndex = index
 		if err := addRunContextEntries(obj, index, &child.Plan); err != nil {

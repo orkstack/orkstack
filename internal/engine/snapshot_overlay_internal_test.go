@@ -873,7 +873,7 @@ func TestSnapshotOverlay_DiffCountsOnlyLiveWrites(t *testing.T) {
 func childStartPlanForTest(t *testing.T, policy *OverlayPolicy) RunPlan {
 	t.Helper()
 	s := buildRunState("ork-parent", flatDefinition(t, 1), nil, overlayPlan(t, policy))
-	return s.childStartPlan(&ChildRunPlan{RunID: "ork-child", Plan: RunPlan{Namespace: "default"}})
+	return s.childStartPlan("release", &ChildRunPlan{RunID: "ork-child", Plan: RunPlan{Namespace: "default"}})
 }
 
 // TestSnapshotBaseCache_HoldsEightBasesOrItsByteBudget pins the cache's two

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -448,5 +449,28 @@ func TestProbeImage_ConfiguredOrNot(t *testing.T) {
 	}
 	if NewReleaseProbe("x", "k", nil) != nil {
 		t.Fatal("a release probe with no verifier was built")
+	}
+}
+
+// TestProbeImage_EngineSilenceIsNoReleaseFailure: an image question the
+// engine left unanswered starts no back-off of the release path and is not
+// replayed as an image that is not there: the next check asks again.
+func TestProbeImage_EngineSilenceIsNoReleaseFailure(t *testing.T) {
+	g := &registry{}
+	clock := time.Unix(1_800_000_000, 0)
+	src := g.probe(t, time.Hour, &clock)
+	rt := &unitProbeRuntime{label: "c0ffee", pullErr: fmt.Errorf("%w: docker exited 1", errEngineUnreachable)}
+	for range 2 {
+		asked := &silenceRecorder{hostViewRuntime: rt}
+		if _, reason, _, err := checkProbeImage(t.Context(), asked, src, "c0ffee"); err != nil || reason == 0 || !asked.silent {
+			t.Fatalf("a silent engine = reason %v, silent %v, %v", reason, asked.silent, err)
+		}
+	}
+	rt.pullErr = nil
+	if image, reason, detail, err := checkProbeImage(t.Context(), &silenceRecorder{hostViewRuntime: rt}, src, "c0ffee"); err != nil || reason != 0 || image == "" {
+		t.Fatalf("the engine answers again, and the check = %q, %v (%s), %v; want the image", image, reason, detail, err)
+	}
+	if len(g.resolved) != 1 {
+		t.Fatalf("resolved %d times; the digest verified once stays verified", len(g.resolved))
 	}
 }

@@ -236,7 +236,7 @@ func TestBoot_ARetryThatPassesLogsTheContainerItCouldNotRemove(t *testing.T) {
 	activities := NewActivitiesWithOptions(nil, Options{
 		OrkerID:  fmt.Sprintf("orker-probe-leftover-%d", os.Getpid()),
 		WorkRoot: t.TempDir(),
-		Runtime:  &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget},
+		Runtime:  fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}),
 		Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 	t.Cleanup(activities.Close)

@@ -327,6 +327,9 @@ type EngineInstruments struct {
 	// never started, at their run timeout's hard end
 	// (Run.timeout.hard_end_reached), labelled ork.namespace.
 	RunTimeoutHardEnds metric.Int64Counter
+	// ResumeAnomalies counts what a resumed run met that should not happen
+	// (docs/DEPLOY.md §7), labelled ork.namespace and kind.
+	ResumeAnomalies metric.Int64Counter
 	// Continuations counts a run's continuations, labelled ork.namespace and
 	// outcome=written|write_failed|over_cap|restored, or a failed restore's
 	// RUN_STATE_* code. Recorded by the run's own local activities, never by
@@ -367,6 +370,8 @@ type EngineInstruments struct {
 	ArchiveSweepLastSuccess metric.Int64Gauge
 	// pause is the run-pause counter and histogram (pause_metrics.go).
 	pause *pauseInstruments
+	// resume is the run-resume instruments (resume.go).
+	resume *resumeInstruments
 	// Cardinality is the label policy EngineObserver applies through
 	// RunAttrs above.
 	Cardinality Cardinality
@@ -442,6 +447,12 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	resumeAnomalies, err := meter.Int64Counter(ResumeAnomaliesMetric,
+		metric.WithDescription("What a resumed run met that should not happen, by namespace and kind."),
+		metric.WithUnit("{anomaly}"))
+	if err != nil {
+		return nil, err
+	}
 	continuations, err := meter.Int64Counter("ork.run.continuations",
 		metric.WithDescription("Run continuations into a fresh history, by namespace and outcome."),
 		metric.WithUnit("{switch}"))
@@ -510,8 +521,13 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	resume, err := newResumeInstruments(meter)
+	if err != nil {
+		return nil, err
+	}
 	return &EngineInstruments{
 		pause:                       pause,
+		resume:                      resume,
 		ArchiveSweepListFailed:      sweepListFailed,
 		ArchiveSweepIntervalTooLong: sweepIntervalTooLong,
 		ArchiveSweepLastSuccess:     sweepLastSuccess,
@@ -531,6 +547,7 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 		RunsRefused:                 runsRefused,
 		RunTimeouts:                 runTimeouts,
 		RunTimeoutHardEnds:          runTimeoutHardEnds,
+		ResumeAnomalies:             resumeAnomalies,
 		Cardinality:                 highCard,
 	}, nil
 }

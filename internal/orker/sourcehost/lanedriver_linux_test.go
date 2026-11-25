@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/orker/servicehost"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // fakeSource is a container that keeps the contract over real files: it
@@ -29,6 +31,15 @@ type fakeSource struct {
 	// settleFirst settles each message before handing it over, as an image
 	// that acknowledges without waiting for a verdict does.
 	settleFirst bool
+	// settleFirstAs, when set, is what settleFirst and the settle below say
+	// after the header: an error, or a verdict's id.
+	settleFirstAs string
+	// closeOnVerdict answers each verdict with settleFirstAs, naming no
+	// verdict: an image whose own close landed as the verdict was written.
+	closeOnVerdict bool
+	// wrongVerdict answers each verdict with a settle naming another one,
+	// as an image whose settle answers no verdict of this lane does.
+	wrongVerdict bool
 	// mute answers no poll: a test that plants its own step needs the fake
 	// not to overwrite it.
 	mute atomic.Bool
@@ -63,7 +74,7 @@ func (f *fakeSource) run(ctx context.Context) {
 				f.mu.Unlock()
 				f.rename(LanePath(0, StepBody), []byte(body))
 				if f.settleFirst {
-					f.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(p.Seq)+`,"ok":true}`))
+					f.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(p.Seq)+`,`+f.settleBody()+`}`))
 				}
 				f.rename(LanePath(0, StepMessage), []byte(`{"schemaVersion":1,"seq":`+itoa(p.Seq)+`,"id":"m-`+itoa(p.Seq)+`","bodyBytes":`+itoa(int64(len(body)))+`,"deliveryCount":1}`))
 			}
@@ -75,10 +86,25 @@ func (f *fakeSource) run(ctx context.Context) {
 				f.mu.Lock()
 				f.verdicts = append(f.verdicts, v)
 				f.mu.Unlock()
-				f.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(v.Seq)+`,"ok":true}`))
+				if f.closeOnVerdict {
+					f.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(v.Seq)+`,`+f.settleBody()+`}`))
+					continue
+				}
+				id := v.VerdictID
+				if f.wrongVerdict {
+					id = "not-" + id
+				}
+				f.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":`+itoa(v.Seq)+`,"verdictId":"`+id+`","ok":true}`))
 			}
 		}
 	}
+}
+
+func (f *fakeSource) settleBody() string {
+	if f.settleFirstAs != "" {
+		return f.settleFirstAs
+	}
+	return `"ok":true`
 }
 
 func itoa(n int64) string {
@@ -221,6 +247,167 @@ func TestLane_SettledBeforeAVerdictIsAViolation(t *testing.T) {
 	}
 }
 
+// TestLane_ASettleMustNameItsVerdict: a settle answers the verdict it names
+// (verdictId), so one that names another, or none, is recognised whenever it
+// lands, and ends the attempt rather than being recorded as the verdict's.
+func TestLane_ASettleMustNameItsVerdict(t *testing.T) {
+	door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+	d, src, _ := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+	src.wrongVerdict = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var v *servicehost.ViolationError
+	if _, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), "verdict") {
+		t.Fatalf("a settle naming another verdict: %v", err)
+	}
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if len(src.verdicts) != 1 || src.verdicts[0].VerdictID == "" {
+		t.Fatalf("the verdict carried no id: %+v", src.verdicts)
+	}
+}
+
+const holdExpired = `"ok":false,"error":{"kind":"hold_expired"}`
+
+// laterClock is a clock the test moves ahead of the real one.
+type laterClock struct{ by atomic.Int64 }
+
+func (c *laterClock) now() time.Time { return time.Now().Add(time.Duration(c.by.Load())) }
+
+// TestLane_ACloseBeforeTheHoldBoundIsAViolation: a close at the hold bound
+// names no verdict, so it is taken only once the bound has passed. Before
+// that it is a settle nobody asked for, whether it lands before the verdict
+// or after it.
+func TestLane_ACloseBeforeTheHoldBoundIsAViolation(t *testing.T) {
+	tests := []struct {
+		name  string
+		set   func(*fakeSource)
+		later time.Duration
+		want  string
+		// verdict: a verdict (and its receipt) was written before it landed.
+		verdict bool
+	}{
+		{name: "before the verdict", set: func(f *fakeSource) { f.settleFirst = true }, want: "before its hold bound"},
+		{name: "as the verdict is written", set: func(f *fakeSource) { f.closeOnVerdict = true }, want: "before its hold bound", verdict: true},
+		{name: "at the bound, but naming a verdict", set: func(f *fakeSource) {
+			f.settleFirst, f.settleFirstAs = true, `"verdictId":"1-aa",`+holdExpired
+		}, later: time.Hour, want: "names a verdict"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var clock laterClock
+			door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){
+				func(Start) (Answer, error) {
+					clock.by.Store(int64(tt.later))
+					return startAnswer(AnswerAccepted)(Start{})
+				}}}
+			d, src, rec := newDriverFixture(t, door)
+			d.Now = clock.now
+			src.mu.Lock()
+			src.settleFirstAs = holdExpired
+			tt.set(src)
+			src.queue = []string{`{"status":"PAID","id":"o-1"}`}
+			src.mu.Unlock()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var v *servicehost.ViolationError
+			if ex, err := d.Poll(ctx, 0); !errors.As(err, &v) || !strings.Contains(v.Error(), tt.want) {
+				t.Fatalf("exchange %+v, %v; want a violation holding %q", ex, err, tt.want)
+			}
+			_, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict)))
+			if (err == nil) != tt.verdict || (len(rec.receipts) == 1) != tt.verdict {
+				t.Fatalf("verdict %v, receipts %+v; want both %v", err, rec.receipts, tt.verdict)
+			}
+		})
+	}
+}
+
+// TestLane_ACloseAtTheHoldBoundIsNoVerdictsOutcome: a container's own close
+// at the hold bound ends the exchange as just that. Met before the verdict,
+// no verdict is written, and the receipt says the message was given back
+// unless a run was already started for it; met as the verdict is written,
+// the verdict is ignored (docs/EVENT_SOURCE_IMAGES.md, "Leases and the hold
+// bound").
+func TestLane_ACloseAtTheHoldBoundIsNoVerdictsOutcome(t *testing.T) {
+	back := Receipt{Outcome: artifacts.ReceiptReleased, Reason: eventsources.ReasonMessageReleasedHoldExpired}
+	gone := Receipt{Outcome: artifacts.ReceiptDropped, Reason: eventsources.ReasonMessageReleasedHoldExpired}
+	rejected := Receipt{Outcome: artifacts.ReceiptRejected, Reason: "MESSAGE_REJECTED"}
+	accepted := Receipt{Outcome: artifacts.ReceiptAccepted, RunID: "ork-1"}
+	dropped := Receipt{Outcome: artifacts.ReceiptDropped, Reason: "MESSAGE_REJECTED"}
+	tests := []struct {
+		name       string
+		decided    Receipt
+		atMostOnce bool
+		afterward  bool // it lands as the verdict is written
+		want       []Receipt
+	}{
+		{name: "a reject", decided: rejected, want: []Receipt{back}},
+		{name: "a reject, crossing", decided: rejected, afterward: true, want: []Receipt{rejected, back}},
+		{name: "an accept", decided: accepted, want: []Receipt{accepted}},
+		{name: "an accept, crossing", decided: accepted, afterward: true, want: []Receipt{accepted}},
+		{name: "at most once", decided: dropped, atMostOnce: true, want: []Receipt{gone}},
+		{name: "at most once, crossing", decided: dropped, atMostOnce: true, afterward: true, want: []Receipt{dropped}},
+		{name: "no receipt decided", want: []Receipt{back}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var clock laterClock
+			d, src, rec := newDriverFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}})
+			d.Now, d.Judge.AtMostOnce = clock.now, tt.atMostOnce
+			src.mu.Lock()
+			src.settleFirstAs = holdExpired
+			src.closeOnVerdict = tt.afterward
+			src.queue = []string{`{"status":"PAID","id":"o-1"}`}
+			src.mu.Unlock()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			held, err := d.Poll(ctx, 0)
+			if err != nil || held.Kind != ExchangeHeld {
+				t.Fatalf("%+v, %v; want it held", held, err)
+			}
+			clock.by.Store(int64(d.Limits.Hold))
+			if !tt.afterward {
+				src.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":1,`+holdExpired+`}`))
+			}
+			ex, err := d.Verdict(ctx, held.Message, Decision{Disposition: Reject, Action: ActionReject, Receipt: tt.decided})
+			if err != nil || ex.Kind != ExchangeHoldExpired || !d.Lane.CanBegin() {
+				t.Fatalf("%+v, %v; want the exchange closed at its hold bound", ex, err)
+			}
+			if !slices.Equal(rec.receipts, tt.want) {
+				t.Fatalf("receipts %+v; want %+v", rec.receipts, tt.want)
+			}
+			if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); (err == nil) != tt.afterward {
+				t.Fatalf("verdict written: %v; want %v", err == nil, tt.afterward)
+			}
+		})
+	}
+}
+
+// TestLane_HoldExpired: a held message's close is taken at the bound and
+// refused before it, and an exchange's age is the longer of the two clocks'
+// readings, so a suspended host never makes a close at the bound look early.
+func TestLane_HoldExpired(t *testing.T) {
+	var clock laterClock
+	d, src, rec := newDriverFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}}, `{"status":"PAID","id":"o-1"}`)
+	d.Now = clock.now
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	held, err := d.Poll(ctx, 0)
+	if err != nil || held.Kind != ExchangeHeld {
+		t.Fatalf("%+v, %v; want it held", held, err)
+	}
+	src.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":1,`+holdExpired+`}`))
+	var v *servicehost.ViolationError
+	if _, err := d.HoldExpired(ctx, held.Message); !errors.As(err, &v) || !strings.Contains(v.Error(), "before its hold bound") {
+		t.Fatalf("an early close: %v", err)
+	}
+	// Suspended past the bound: the wall clock moved, the monotonic did not.
+	d.Now = func() time.Time { return time.Now().Round(0).Add(d.Limits.Hold) }
+	if expired, err := d.HoldExpired(ctx, held.Message); err != nil || !expired || len(rec.receipts) != 1 || !d.Lane.CanBegin() {
+		t.Fatalf("a close at the bound: %v, %v, receipts %+v", expired, err, rec.receipts)
+	}
+}
+
 func TestLane_AStepNobodyAskedForEndsTheAttempt(t *testing.T) {
 	door := &fakeDoor{}
 	d, src, _ := newDriverFixture(t, door)
@@ -278,5 +465,22 @@ func TestLane_WedgedPastTheHoldEndsTheAttempt(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	if err := d.tick(context.Background()); !errors.Is(err, ErrUnresponsive) {
 		t.Fatalf("wedged past the hold: %v", err)
+	}
+}
+
+// TestNewVerdictID: a verdict id is the lane's exchange and 128 random bits
+// from crypto/rand, so no two verdicts share one and none is guessable.
+func TestNewVerdictID(t *testing.T) {
+	seen := map[string]bool{}
+	for i := range 10000 {
+		id := newVerdictID(int64(i % 3))
+		seq, random, ok := strings.Cut(id, "-")
+		if !ok || seq != itoa(int64(i%3)) || len(random) != 32 {
+			t.Fatalf("verdict id %q: want the seq, a dash and 32 hex digits", id)
+		}
+		if seen[id] {
+			t.Fatalf("two verdicts share the id %q", id)
+		}
+		seen[id] = true
 	}
 }
