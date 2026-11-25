@@ -1,0 +1,4 @@
+KEY              HOLDING  WAITING  STATE
+db-migrate:prod  1        2        ok
+registry-push    0        1        reading its holders
+-                -        -        not answering: the limit did not answer within 5s

@@ -67,6 +67,7 @@ func TestParseProbeAnswer(t *testing.T) {
 		"bad via":               `{"q":1,"target":"a","kind":"address","via":"udp","connected":false}`,
 		"control in text":       "{\"q\":1,\"target\":\"a\\u001b\",\"kind\":\"address\",\"via\":\"tcp\",\"connected\":false}",
 		"answered, unconnected": `{"q":3,"target":"a","kind":"service","via":"plaintext","connected":false,"status":"OK"}`,
+		"connected, unresolved": `{"q":2,"target":"a:1","kind":"address","via":"tcp","connected":true,"unresolved":true}`,
 		"not JSON":              `q=1`,
 	} {
 		if _, err := ParseProbeAnswer([]byte(line)); err == nil {

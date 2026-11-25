@@ -639,7 +639,7 @@ func TestTemporalScheduler_RecentFiresReadMemoAndMarkUnavailable(t *testing.T) {
 	}
 	base := time.Date(2026, 9, 21, 1, 0, 0, 0, time.UTC)
 	var actions []client.ScheduleActionResult
-	for i, id := range []string{"ran", "refused", "preparing", "retired"} {
+	for i, id := range []string{"ran", "refused", "preparing", "retired", "skipped"} {
 		at := base.Add(time.Duration(i) * 24 * time.Hour)
 		actions = append(actions, client.ScheduleActionResult{
 			ScheduleTime: at, ActualTime: at.Add(time.Second),
@@ -649,6 +649,8 @@ func TestTemporalScheduler_RecentFiresReadMemoAndMarkUnavailable(t *testing.T) {
 	cluster.fire(t, "ran", map[string]string{engine.MemoScheduledRunID: "ork-20260921-1"})
 	cluster.fire(t, "refused", map[string]string{engine.MemoScheduleFireRefusal: `pool "gpu" has no live Orker`})
 	cluster.fire(t, "preparing", nil)
+	cluster.fire(t, "skipped", map[string]string{engine.MemoScheduleFireSkipCode: engine.FireSkippedConcurrencyCode,
+		engine.MemoScheduleFireSkipMessage: "key db:prod was full; this fire started no run"})
 	cluster.sc.handles["ork-schedule/payments/nightly"].desc.Info.RecentActions = actions
 
 	view, err := s.Describe(ctx, "payments", "nightly")
@@ -658,13 +660,15 @@ func TestTemporalScheduler_RecentFiresReadMemoAndMarkUnavailable(t *testing.T) {
 		{Refusal: `pool "gpu" has no live Orker`, DetailsAvailable: true},
 		{DetailsAvailable: true},
 		{DetailsAvailable: false},
+		{SkipCode: engine.FireSkippedConcurrencyCode, SkipMessage: "key db:prod was full; this fire started no run", DetailsAvailable: true},
 	}
 	if len(view.RecentFires) != len(want) {
 		t.Fatalf("recent fires = %+v", view.RecentFires)
 	}
 	for i, w := range want {
 		got := view.RecentFires[i]
-		if got.RunID != w.RunID || got.Refusal != w.Refusal || got.DetailsAvailable != w.DetailsAvailable {
+		if got.RunID != w.RunID || got.Refusal != w.Refusal || got.DetailsAvailable != w.DetailsAvailable ||
+			got.SkipCode != w.SkipCode || got.SkipMessage != w.SkipMessage {
 			t.Errorf("fire %d = %+v, want %+v", i, got, w)
 		}
 		if !got.ScheduledAt.Equal(actions[i].ScheduleTime) || !got.ActualAt.Equal(actions[i].ActualTime) {

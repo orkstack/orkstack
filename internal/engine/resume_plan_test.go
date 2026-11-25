@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -181,7 +182,7 @@ func TestResumePlan_SkippedStaysSkippedUnlessReached(t *testing.T) {
 func TestResumePlan_ReadingBackRowsStayKept(t *testing.T) {
 	a := prow("a", sCanc)
 	a.ReadingBack = true
-	a.Error = &orkstackv1.Error{Code: notReadBackReason}
+	a.Error = &orkstackv1.Error{Code: ReasonResumeNotReadBack}
 	f := newPlan([]*orkstackv1.Task{ptask("a"), ptask("b", "a")}, a, prow("b", sFail))
 	p := f.plan(t)
 	if u := unitOf(t, p, "a", -1); u.InRerunSet || u.Disposition != DispositionAdopt {
@@ -265,6 +266,114 @@ func TestResumePlan_EachSourceInSRerunsEveryItem(t *testing.T) {
 	p := f.plan(t)
 	if u := unitOf(t, p, "fan", 0); !u.InRerunSet {
 		t.Errorf("item 0 = %+v, want rerun: its source reruns", u)
+	}
+}
+
+// linesTask is a fan-out over the lines of an artifact of producer, which is
+// always one of its own needs (docs/DSL.md): its source names no task, so it
+// is in S through its need.
+func linesTask(id, producer string, needs ...string) *orkstackv1.Task {
+	t := ptask(id, needs...)
+	t.Each = &orkstackv1.EachSpec{
+		OverArtifact: producer + "/rows.jsonl",
+		Source:       &orkstackv1.EachSource{Artifact: &orkstackv1.EachArtifactSource{Producer: producer, Name: "rows.jsonl"}},
+	}
+	return t
+}
+
+// A lines fan-out whose producer runs again runs every item again, whatever
+// put the producer in S: an item kept over the lines of an artifact that was
+// replaced would be a silently wrong result.
+func TestResumePlan_LinesFanOutRerunsEveryItemWithItsProducer(t *testing.T) {
+	tasks := func() []*orkstackv1.Task {
+		return []*orkstackv1.Task{ptask("seed"), ptask("rows", "seed"), ptask("other"), linesTask("fan", "rows", "other", "rows")}
+	}
+	tests := map[string]struct {
+		fan   *orkstackv1.TaskRun
+		rows  orkstackv1.Status
+		setup func(*planFixture)
+	}{
+		"the producer is the task chosen": {
+			fan: fanRow("fan", sFail, pitem(0, sOK), pitem(1, sFail)), rows: sOK,
+			setup: func(f *planFixture) { f.in.Action, f.in.FromTask = ResumeActionRetryFrom, "rows" },
+		},
+		"the producer's result is gone": {
+			fan: fanRow("fan", sFail, pitem(0, sOK), pitem(1, sFail)), rows: sOK,
+			setup: func(f *planFixture) { f.in.Evidence.Kept[nodeUnit("rows")] = KeptGone },
+		},
+		"the producer is downstream of the task chosen": {
+			fan: fanRow("fan", sFail, pitem(0, sOK), pitem(1, sFail)), rows: sOK,
+			setup: func(f *planFixture) { f.in.Action, f.in.FromTask = ResumeActionRetryFrom, "seed" },
+		},
+		"every item succeeded": {
+			fan: fanRow("fan", sOK, pitem(0, sOK), pitem(1, sOK)), rows: sOK,
+			setup: func(f *planFixture) { f.in.Action, f.in.FromTask = ResumeActionRetryFrom, "rows" },
+		},
+		"an earlier resume ran the producer again and failed": {
+			// Items the first run committed, still SUCCEEDED beside a
+			// producer that now failed.
+			fan: fanRow("fan", sOK, pitem(0, sOK), pitem(1, sOK)), rows: sFail,
+			setup: func(*planFixture) {},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newPlan(tasks(), prow("seed", sOK), prow("rows", tc.rows), prow("other", sOK), tc.fan)
+			tc.setup(f)
+			p := f.plan(t)
+			for _, item := range []int{-1, 0, 1} {
+				if u := unitOf(t, p, "fan", item); !u.InRerunSet {
+					t.Errorf("fan[%d] = %+v, want run again with its producer", item, u)
+				}
+			}
+		})
+	}
+}
+
+// A lines fan-out whose producer is kept keeps its committed items: nothing
+// of the producer runs again, so its artifact, and the line index named by
+// that artifact's digest, are the ones those items read.
+func TestResumePlan_LinesFanOutKeepsItemsOfAKeptProducer(t *testing.T) {
+	f := newPlan([]*orkstackv1.Task{ptask("rows"), linesTask("fan", "rows", "rows")},
+		prow("rows", sOK), fanRow("fan", sFail, pitem(0, sOK), pitem(1, sFail), pitem(2, sOK)))
+	p := f.plan(t)
+	if u := unitOf(t, p, "rows", -1); u.InRerunSet || u.Disposition != DispositionAdopt {
+		t.Errorf("rows = %+v, want adopted", u)
+	}
+	for _, item := range []int{0, 2} {
+		if u := unitOf(t, p, "fan", item); u.InRerunSet || u.Disposition != DispositionAdopt {
+			t.Errorf("fan[%d] = %+v, want adopted", item, u)
+		}
+	}
+	if u := unitOf(t, p, "fan", 1); !u.InRerunSet {
+		t.Errorf("fan[1] = %+v, want run again", u)
+	}
+}
+
+// The plan's own check refuses a plan that would keep an item of a fan-out
+// whose need runs again, whether its source is an array or an artifact.
+func TestCheckResumePlan_RefusesAKeptItemOfAFanOutWhoseNeedReruns(t *testing.T) {
+	for name, fan := range map[string]*orkstackv1.Task{
+		"lines": linesTask("fan", "rows", "rows"),
+		"array": eachTask("fan", "rows", "rows"),
+		"need":  eachTask("fan", "", "rows"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "need" {
+				fan.Each.Source = &orkstackv1.EachSource{Input: "xs"}
+			}
+			f := newPlan([]*orkstackv1.Task{ptask("rows"), fan},
+				prow("rows", sFail), fanRow("fan", sOK, pitem(0, sOK), pitem(1, sOK)))
+			p := f.plan(t)
+			for i := range p.Units {
+				if p.Units[i].Unit == (ResumeUnit{Task: "fan", Item: 1}) {
+					p.Units[i].InRerunSet, p.Units[i].Disposition = false, DispositionAdopt
+				}
+			}
+			if err := checkResumePlan(f.in, p); err == nil || !strings.Contains(err.Error(), "its dependent fan[1] does not rerun") {
+				t.Fatalf("checkResumePlan = %v, want it to refuse item 1, kept while its need reruns", err)
+			}
+		})
 	}
 }
 
@@ -619,6 +728,7 @@ func TestResumePlan_InconsistentInputIsAnError(t *testing.T) {
 		"unknown answer":         func(f *planFixture) { f.in.Evidence.Kept[nodeUnit("a")] = KeptAnswer(99) },
 		"unknown earlier task":   func(f *planFixture) { f.in.Facts.Earlier = map[string]bool{"zz": true} },
 		"negative budget":        func(f *planFixture) { f.in.ResumesUsed = -1 },
+		"lines of no need":       func(f *planFixture) { f.in.Definition.Tasks[1] = linesTask("x", "a") },
 		"recorded, no follows": func(f *planFixture) {
 			f.in.Definition.Tasks[0] = awaitTask("a")
 			f.in.Evidence.Recorded = true
@@ -745,7 +855,7 @@ func TestResumePlan_AnAnswerOfAUnitThatRerunsRefusesNothing(t *testing.T) {
 func TestResumePlan_ReadingBackFanOutNodeStaysKept(t *testing.T) {
 	node := fanRow("fan", sCanc, pitem(0, sOK))
 	node.ReadingBack = true
-	node.Error = &orkstackv1.Error{Code: notReadBackReason}
+	node.Error = &orkstackv1.Error{Code: ReasonResumeNotReadBack}
 	f := newPlan([]*orkstackv1.Task{ptask("src"), eachTask("fan", "src", "src"), ptask("x")},
 		prow("src", sOK), node, prow("x", sFail))
 	if u := unitOf(t, f.plan(t), "fan", -1); u.InRerunSet || u.Disposition != DispositionAdopt {

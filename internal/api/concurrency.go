@@ -15,6 +15,7 @@ import (
 	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -52,6 +53,45 @@ func busy(err error) error {
 func isBusy(err error) bool {
 	var b *busyRefusal
 	return errors.As(err, &b)
+}
+
+// limitReached marks CONCURRENCY_LIMIT_REACHED with the strategy that
+// refused, so a fire tells a skip limit's full key (it skips) from a refuse
+// limit's (it is refused).
+type limitReached struct {
+	strategy, key string
+	err           error
+}
+
+func (l *limitReached) Error() string { return l.err.Error() }
+func (l *limitReached) Unwrap() error { return l.err }
+
+// limitReachedOf is the limitReached in err's chain, nil without one.
+func limitReachedOf(err error) *limitReached {
+	var l *limitReached
+	if errors.As(err, &l) {
+		return l
+	}
+	return nil
+}
+
+// checkUnavailable marks a refusal that says a limit could not be checked
+// now (CONCURRENCY_CHECK_UNAVAILABLE, CONCURRENCY_UNSUPPORTED), which a fire
+// asks again for, then completes without a run rather than failing.
+type checkUnavailable struct{ err error }
+
+func (c *checkUnavailable) Error() string { return c.err.Error() }
+func (c *checkUnavailable) Unwrap() error { return c.err }
+
+// unavailableCheck is a connect error of code marked checkUnavailable.
+func unavailableCheck(code connect.Code, err error) error {
+	return connect.NewError(code, &checkUnavailable{err: err})
+}
+
+// isCheckUnavailable reports a checkUnavailable anywhere in err's chain.
+func isCheckUnavailable(err error) bool {
+	var c *checkUnavailable
+	return errors.As(err, &c)
 }
 
 // concurrencySettingsOf is Config.Concurrency, the defaults for a zero value.
@@ -183,20 +223,27 @@ func (s *Service) planConcurrency(
 		return err
 	}
 	gateID := engine.GateID(namespace, incarnation, key)
+	strategy, err := planStrategy(spec.GetOnLimit())
+	if err != nil {
+		return err
+	}
 	if !s.keyBound(ctx, namespace, msg) {
-		if err := s.concurrencySupport(ctx, planned, starter); err != nil {
-			return err
+		err := s.concurrencySupport(ctx, planned, starter)
+		if err == nil {
+			err = s.lineChecks(ctx, namespace, gateID, key, strategy, spec)
 		}
-		if err := s.lineChecks(ctx, namespace, gateID, key, spec); err != nil {
+		if err != nil {
+			s.observeRefusedArrival(ctx, namespace, planned.GetName(), label, strategy, origin, err)
 			return err
 		}
 	}
 	run := 0
 	settings, gate := s.concurrency, s.gateTunables
 	plan.Concurrency = &engine.ConcurrencyPlan{
+		Orkflow: planned.GetName(),
 		Slots: []engine.ConcurrencySlotPlan{{
 			GateID: gateID, Key: key, Label: label,
-			Limit: int(spec.GetLimit()), Strategy: engine.ConcurrencyStrategyQueue,
+			Limit: int(spec.GetLimit()), Strategy: strategy,
 			QueueTimeoutSeconds: int64(s.queueTimeoutOf(spec) / time.Second), MaxQueued: int(spec.GetMaxQueued()),
 		}},
 		Run: &run,
@@ -307,10 +354,10 @@ func concurrencyIncarnation(ns *orkstackv1.Namespace) (string, error) {
 // that has ended still counts until the gate's own check frees it: the
 // verify a full key sends lands with the strategies that refuse at a full
 // key.
-func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key string, spec *orkstackv1.ConcurrencySpec) error {
+func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key, strategy string, spec *orkstackv1.ConcurrencySpec) error {
 	unavailable := func(scope, what string, err error) error {
 		s.logger.Warn("concurrency check could not read the cluster", "scope", scope, "key", key, "error", err)
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s (scope=%s): %s could not be read; try again: %w",
+		return unavailableCheck(connect.CodeUnavailable, fmt.Errorf("%s (scope=%s): %s could not be read; try again: %w",
 			engine.ConcurrencyCheckUnavailableCode, scope, what, err))
 	}
 	full := func(cause, format string, args ...any) error {
@@ -318,13 +365,20 @@ func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key string,
 	}
 	reader := s.concurrencyReader
 	if reader == nil {
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+		return unavailableCheck(connect.CodeUnavailable, fmt.Errorf(
 			"%s (scope=key): this engine is not wired to a cluster, so the line for key %s cannot be read",
 			engine.ConcurrencyCheckUnavailableCode, key))
 	}
 	line, err := reader.GateLine(ctx, gateID)
 	if err != nil {
 		return unavailable("key", "the line for key "+key, err)
+	}
+	// A rebuilding gate does not yet know its holders, so it cannot say a
+	// refuse or skip limit's key is full (a queue run waits in its line).
+	if strategy != engine.ConcurrencyStrategyQueue && line.Rebuilding {
+		return unavailableCheck(connect.CodeUnavailable, fmt.Errorf(
+			"%s (scope=key): the limit on key %s is rebuilding its record of running runs, so it cannot say whether the key is full; try again",
+			engine.ConcurrencyCheckUnavailableCode, key))
 	}
 	// A gate that lingers empty, or has just closed, holds nothing: a run
 	// on its key opens it again, as a new key would.
@@ -340,6 +394,9 @@ func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key string,
 				engine.ConcurrencyKeysExhaustedCode, namespace, active))
 		}
 		return nil
+	}
+	if strategy != engine.ConcurrencyStrategyQueue {
+		return s.fullKeyCheck(ctx, gateID, key, strategy, spec, line)
 	}
 	if line.Holders < int(spec.GetLimit()) {
 		return nil // it would hold a slot at once
@@ -361,6 +418,94 @@ func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key string,
 			"(engine.concurrency.max_queued_runs_per_namespace); submit again later", namespace, queued)
 	}
 	return nil
+}
+
+// observeRefusedArrival counts a submit the limit refused as an arrival
+// (§9.9.2): refused, or skipped for a schedule's fire under skip; full for a
+// full line or keys; unavailable or unsupported when the limit could not be
+// checked or held.
+func (s *Service) observeRefusedArrival(ctx context.Context, namespace, orkflow, label, strategy string, origin *orkstackv1.RunOrigin, err error) {
+	if s.concurrencyMetrics == nil {
+		return
+	}
+	var outcome string
+	switch {
+	case limitReachedOf(err) != nil && strategy == engine.ConcurrencyStrategySkip &&
+		origin.GetKind() == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE:
+		outcome = "skipped"
+	case limitReachedOf(err) != nil:
+		outcome = "refused"
+	case isBusy(err):
+		outcome = "full"
+	case isCheckUnavailable(err):
+		outcome = "unavailable"
+	case strings.Contains(err.Error(), engine.ConcurrencyUnsupportedCode):
+		outcome = "unsupported"
+	default:
+		return
+	}
+	s.concurrencyMetrics.Arrival(ctx, telemetry.ConcurrencyArrival{Namespace: namespace, Orkflow: orkflow,
+		Limit: engine.CensusLimitLabel(label), Level: "run", Strategy: strategy, Outcome: outcome})
+}
+
+// planStrategy is a declared strategy's name in the plan; one this release
+// cannot hold was refused at validate, so meeting one here is a definition
+// stored by another release.
+func planStrategy(s orkstackv1.ConcurrencyStrategy) (string, error) {
+	switch s {
+	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE:
+		return engine.ConcurrencyStrategyQueue, nil
+	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_REFUSE:
+		return engine.ConcurrencyStrategyRefuse, nil
+	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_SKIP:
+		return engine.ConcurrencyStrategySkip, nil
+	}
+	return "", connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		"concurrency.on_limit %s is not one this release holds; create a version with queue, refuse or skip", enumname.Of(s)))
+}
+
+// fullKeyCheck is §7.1 step 6 for refuse and skip: a key at its limit
+// refuses CONCURRENCY_LIMIT_REACHED. A holder the cluster reports ended is
+// counted free, and the gate is asked to check its holders, so the run's
+// own acquire finds the slot; a describe that fails cannot say the key is
+// full.
+func (s *Service) fullKeyCheck(ctx context.Context, gateID, key, strategy string, spec *orkstackv1.ConcurrencySpec, line engine.GateLine) error {
+	limit := int(spec.GetLimit())
+	if line.Holders < limit {
+		return nil
+	}
+	holding := line.Holders
+	if len(line.HolderRuns) > 0 {
+		closed, err := s.concurrencyReader.ClosedRuns(ctx, line.HolderRuns)
+		if err != nil {
+			// Whether the key is full turns on holders that may have
+			// ended: the check cannot be made, never "full".
+			s.logger.Warn("the runs holding a full concurrency key could not be described", "key", key, "error", err)
+			return unavailableCheck(connect.CodeUnavailable, fmt.Errorf(
+				"%s (scope=key): the runs holding key %s could not be checked; try again: %w",
+				engine.ConcurrencyCheckUnavailableCode, key, err))
+		}
+		if len(closed) > 0 {
+			if err := s.concurrencyReader.Verify(ctx, gateID); err != nil {
+				s.logger.Warn("a concurrency limit could not be asked to check its holders; its own pass frees them",
+					"key", key, "error", err)
+			}
+			holding -= len(closed)
+		}
+	}
+	if holding < limit {
+		return nil
+	}
+	shown := line.HolderRuns
+	if n := s.concurrency.APIHoldersShown; n > 0 && len(shown) > n {
+		shown = shown[:n]
+	}
+	text := fmt.Sprintf("%s: key %s is at its limit (%d of %d running: %s)",
+		engine.ConcurrencyLimitReachedCode, key, line.Holders, limit, strings.Join(shown, ", "))
+	for _, run := range line.StalledRuns {
+		text += fmt.Sprintf("; run %s is not making progress; an operator must end it", run)
+	}
+	return connect.NewError(connect.CodeFailedPrecondition, &limitReached{strategy: strategy, key: key, err: errors.New(text)})
 }
 
 // reserveConcurrencyRelease adds to the run's history reserve what its
@@ -413,7 +558,7 @@ func (s *Service) concurrencySupport(ctx context.Context, wf *orkstackv1.Orkflow
 		return unsupported(wf, causes, false)
 	}
 	if s.capabilities == nil {
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+		return unavailableCheck(connect.CodeUnavailable, fmt.Errorf(
 			"%s (scope=fleet): orkflow %s@%s declares a concurrency limit, and this engine "+
 				"is not wired to a cluster, so whether every engine process can hold one is unknown",
 			engine.ConcurrencyCheckUnavailableCode, wf.GetName(), wf.GetVersion()))
@@ -422,7 +567,7 @@ func (s *Service) concurrencySupport(ctx context.Context, wf *orkstackv1.Orkflow
 	if err != nil {
 		s.logger.Warn("concurrency check could not read the engine processes",
 			"orkflow", wf.GetName(), "version", wf.GetVersion(), "error", err)
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+		return unavailableCheck(connect.CodeUnavailable, fmt.Errorf(
 			"%s (scope=fleet): orkflow %s@%s declares a concurrency limit, and the cluster's "+
 				"list of engine processes could not be read; try again", engine.ConcurrencyCheckUnavailableCode, wf.GetName(), wf.GetVersion()))
 	}
@@ -445,11 +590,13 @@ func (s *Service) concurrencySupport(ctx context.Context, wf *orkstackv1.Orkflow
 // Unavailable (a trigger's 503, a fire's retry); a cluster that does not
 // index the limit is FailedPrecondition.
 func unsupported(wf *orkstackv1.Orkflow, causes []string, fleetOnly bool) error {
-	code := connect.CodeFailedPrecondition
+	// A rollout clears by itself, so a fire asks again (checkUnavailable);
+	// an unindexed cluster does not, so it is a refusal.
+	mark := func(err error) error { return connect.NewError(connect.CodeFailedPrecondition, err) }
 	if fleetOnly {
-		code = connect.CodeUnavailable
+		mark = func(err error) error { return unavailableCheck(connect.CodeUnavailable, err) }
 	}
-	return connect.NewError(code, fmt.Errorf(
+	return mark(fmt.Errorf(
 		"%s: orkflow %s@%s declares a concurrency limit this deployment cannot hold (%s)",
 		engine.ConcurrencyUnsupportedCode, wf.GetName(), wf.GetVersion(), strings.Join(causes, "; ")))
 }

@@ -253,3 +253,24 @@ func TestRenderStats_PausedRow(t *testing.T) {
 		t.Fatalf("a zero paused count draws a row:\n%s", out.String())
 	}
 }
+
+// Queued runs, which are among the running ones, get their own row after
+// running, only when there are some: the UI's Queued tile, in the same word.
+func TestRenderStats_QueuedRow(t *testing.T) {
+	stats := &orkstackv1.GetStatsResponse{RunsByStatus: map[string]int64{"running": 3, "succeeded": 1, "failed": 0, "canceled": 0}, Paused: 2, Queued: 1}
+	var out strings.Builder
+	if err := renderStats(&out, stats); err != nil {
+		t.Fatalf("renderStats: %v", err)
+	}
+	if got := collapseSpaces(out.String()); !strings.Contains(got, "running 3 queued 1 paused 2 succeeded 1") {
+		t.Fatalf("counts read %q, want running, then queued, then paused, then succeeded", got)
+	}
+	stats.Queued = 0
+	out.Reset()
+	if err := renderStats(&out, stats); err != nil {
+		t.Fatalf("renderStats: %v", err)
+	}
+	if strings.Contains(out.String(), "queued") {
+		t.Fatalf("a zero queued count draws a row:\n%s", out.String())
+	}
+}

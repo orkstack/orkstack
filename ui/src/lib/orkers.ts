@@ -186,7 +186,8 @@ const REASON_WORDS: Partial<Record<ProfileCordonReason, string>> = {
 	[ProfileCordonReason.HOOK_BUILD_UNKNOWN]: 'its hook is a build this release does not list',
 	[ProfileCordonReason.FOREIGN_UNITS_HELD]: 'containers it did not start hold its units',
 	[ProfileCordonReason.DEVICE_ABSENT]: 'a device is not there',
-	[ProfileCordonReason.UNITS_BELOW_CEILING]: 'fewer of its units are usable than the per-task gpu cap (max_request.gpu), so the Orker polls for no task'
+	[ProfileCordonReason.UNITS_BELOW_CEILING]: 'fewer of its units are usable than the per-task gpu cap (max_request.gpu), so the Orker polls for no task',
+	[ProfileCordonReason.PROBE_NOT_STARTED]: 'the container engine does not start its unit probes'
 };
 
 /**

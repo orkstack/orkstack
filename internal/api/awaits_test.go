@@ -848,3 +848,45 @@ func TestStreamTaskLogs_RefusesAnAwaitedTask(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+// Before the token is verified the door tells its caller nothing of why a run
+// could not be read: not the cluster's words, nor a key's.
+func TestAwaitDoor_AnUnreadableRunSaysNothingOfWhy(t *testing.T) {
+	f := newAwaitFixture(t)
+	const run = "ork-door-down"
+	f.seedRun(t, run, "team-a", nil)
+	f.reader.startErr = errors.New("payload key: describe run: dial 10.0.0.7:7233")
+	status, body := f.door(t, awaitPath(run, "gate"), bearer("nope"), `{}`, nil)
+	if status != 503 || !strings.Contains(string(body), "the run could not be read; try again") ||
+		strings.Contains(string(body), "10.0.0.7") || strings.Contains(string(body), "payload key") {
+		t.Fatalf("status %d, body %s", status, body)
+	}
+	// An id no run can have is not asked of the cluster at all.
+	for _, id := range []string{strings.Repeat("x", 201), "a%00b", "a%FFb", "a%20b"} {
+		status, body = f.door(t, awaitPath(id, "gate"), bearer("nope"), `{}`, nil)
+		if status != 404 {
+			t.Fatalf("run id %q: status %d, body %s", id, status, body)
+		}
+	}
+}
+
+// Nor does the trigger door, before its token is verified: what the trigger
+// store answered is the log's.
+func TestTriggerInvoke_AnUnreadableStoreSaysNothingOfWhy(t *testing.T) {
+	f := newFixtureWith(t, func(cfg *api.Config) {
+		cfg.Triggers = unreadableTriggers{err: errors.New("get s3://ork-prod/triggers: dial minio.internal:9000")}
+	})
+	status, body := f.invoke(t, "trg-0000000000000000", bearer("nope"), `{}`, nil)
+	if status != http.StatusInternalServerError || errorCode(t, body) != "storage_error" || strings.Contains(string(body), "ork-prod") || strings.Contains(string(body), "minio") {
+		t.Fatalf("status %d, body %s", status, body)
+	}
+}
+
+type unreadableTriggers struct {
+	triggers.Store
+	err error
+}
+
+func (u unreadableTriggers) Get(context.Context, string) (triggers.Trigger, bool, error) {
+	return triggers.Trigger{}, false, u.err
+}

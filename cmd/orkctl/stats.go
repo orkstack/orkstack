@@ -164,6 +164,11 @@ func renderStats(out io.Writer, stats *orkstackv1.GetStatsResponse) error {
 	// A fixed order, not the map's: a table whose rows move between calls is
 	// unreadable, and the live numbers (running, then paused) come first.
 	fmt.Fprintf(counts, "%s\t%d\n", "running", stats.GetRunsByStatus()["running"])
+	// Queued runs are among the running ones, waiting for a concurrency
+	// slot; shown only when there are some, as the UI's Queued tile is.
+	if queued := stats.GetQueued(); queued > 0 {
+		fmt.Fprintf(counts, "%s\t%d\n", "queued", queued)
+	}
 	// Paused runs are their own live count, never in running; shown only
 	// when there are some, since a cluster that does not index paused runs
 	// counts them as running and reports none.

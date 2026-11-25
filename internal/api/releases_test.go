@@ -26,6 +26,7 @@ type stubReleases struct {
 	obsErr     error
 	counts     map[string]int64
 	paused     map[string]int64
+	queued     map[string]int64
 	runs       map[string][]*orkstackv1.Run
 	runErr     map[string]error
 	running    int64
@@ -63,6 +64,13 @@ func (s *stubReleases) ReleasePausedRuns(_ context.Context, build string) (int64
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n, ok := s.paused[build]
+	return n, ok, nil
+}
+
+func (s *stubReleases) ReleaseQueuedRuns(_ context.Context, build string) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, ok := s.queued[build]
 	return n, ok, nil
 }
 
@@ -669,6 +677,21 @@ func TestListReleases_UnservedPoolsNameAPoolWithNoOrkerTakingWork(t *testing.T) 
 				t.Fatalf("unserved pools = %q; want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A release counts the runs among those it holds that wait for a
+// concurrency slot: each holds it from draining for up to its queue timeout.
+// A release with no runs is not asked.
+func TestListReleases_CountsAReleasesQueuedRuns(t *testing.T) {
+	stub := rolloutReleases()
+	stub.queued = map[string]int64{"v1": 3, "v2": 9}
+	resp := listReleases(t, releaseService(stub, releaseFleet()), "")
+	for _, r := range resp.GetReleases() {
+		want := map[string]int64{"v1": 3}[r.GetBuildId()]
+		if r.GetQueuedRuns() != want {
+			t.Errorf("release %s queued_runs = %d, want %d", r.GetBuildId(), r.GetQueuedRuns(), want)
+		}
 	}
 }
 

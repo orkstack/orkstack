@@ -1002,6 +1002,13 @@ enum EventType {
   // TASK_QUEUED: a task waits in line for a slot of its concurrency limit's
   // key. Not in a webhook's default events.
   EVENT_TYPE_TASK_QUEUED = 16;
+  // RUN_RESUMED: a failed run was resumed (orkctl run resume); resumed says
+  // how. It is the first event after the ending it sets aside, and the run
+  // is RUNNING again.
+  EVENT_TYPE_RUN_RESUMED = 17;
+  // RUN_RESULTS_KEPT: a resumed run read back every result it keeps
+  // (results_kept); only then does anything run again.
+  EVENT_TYPE_RUN_RESULTS_KEPT = 18;
   // RUN_PAUSED: the run became paused, or is still paused with its causes
   // changed (pause_transition says which). Status PAUSED.
   EVENT_TYPE_RUN_PAUSED = 19;
@@ -1044,6 +1051,47 @@ message Event {
   // pause_transition says what a RUN_PAUSED or RUN_UNPAUSED, or a terminal
   // event that ended a pause, did to it; unset on every other event.
   PauseTransition pause_transition = 13;
+
+  // (14 is the force cancel's, E88 P10.)
+
+  // wait_end is set on the one event that ends a run's wait in a
+  // concurrency limit's line, unset on every other event: how the wait
+  // ended and how long it took.
+  ConcurrencyWaitEnd wait_end = 15;
+  // results_kept is set on RUN_RESULTS_KEPT.
+  RunResultsKept results_kept = 16;
+}
+
+// ConcurrencyWaitEnd is how a wait in a concurrency limit's line ended.
+message ConcurrencyWaitEnd {
+  ConcurrencyWaitOutcome outcome = 1;
+  google.protobuf.Duration waited = 2;
+  ConcurrencyStrategy strategy = 3;
+  // limit_label is the limit's template, cut to 64 bytes, then "#" and
+  // eight hex digits of its SHA-256: never a rendered key.
+  string limit_label = 4;
+  bool task_level = 5;
+}
+
+// ConcurrencyWaitOutcome is how a wait in line ended.
+enum ConcurrencyWaitOutcome {
+  CONCURRENCY_WAIT_OUTCOME_UNSPECIFIED = 0;
+  // STARTED: it was granted its slot.
+  CONCURRENCY_WAIT_OUTCOME_STARTED = 1;
+  // CANCELED: the run ended, or left the line, for its own reason.
+  CONCURRENCY_WAIT_OUTCOME_CANCELED = 2;
+  // TIMED_OUT: its queue_timeout passed.
+  CONCURRENCY_WAIT_OUTCOME_TIMED_OUT = 3;
+  // SUPERSEDED: a newer run replaced it.
+  CONCURRENCY_WAIT_OUTCOME_SUPERSEDED = 4;
+  // FULL: the line was full.
+  CONCURRENCY_WAIT_OUTCOME_FULL = 5;
+  // UNAVAILABLE: the limit did not answer.
+  CONCURRENCY_WAIT_OUTCOME_UNAVAILABLE = 6;
+  // UNSUPPORTED: the limit could not take its request.
+  CONCURRENCY_WAIT_OUTCOME_UNSUPPORTED = 7;
+  // FENCED: the limit refused a stale request.
+  CONCURRENCY_WAIT_OUTCOME_FENCED = 8;
 }
 
 // AttemptCredential is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
@@ -1354,9 +1402,36 @@ message RunPause {
 // batch).
 message RunResume {}
 
-// RunResumed is E85's; it is empty until E85 lands (v0.4.0 proto
-// batch).
-message RunResumed {}
+// RunResumed is how a run was resumed, carried by RUN_RESUMED.
+message RunResumed {
+  ResumeAction action = 1;
+  // from_task_id is the task Retry from here chose; empty for Resume.
+  string from_task_id = 2;
+  // resumed_after_sequence is the sequence of the ending set aside.
+  int64 resumed_after_sequence = 3;
+  int32 rerun_count = 4;
+  int32 kept_count = 5;
+  // principal is who confirmed the resume, as recorded: asserted unless
+  // principal_verified (AGENTS.md §7).
+  string principal = 6;
+  bool principal_verified = 7;
+  string reason = 8;
+  // superseded_reason is the ending's reason, set aside.
+  string superseded_reason = 9;
+  // resume_count is how many resumes of the run got going, this one included.
+  int32 resume_count = 10;
+}
+
+// RunResultsKept is what a resumed run read back, carried by
+// RUN_RESULTS_KEPT.
+message RunResultsKept {
+  // kept_count is the results read back from their commits.
+  int32 kept_count = 1;
+  // settled_count is the awaited and composed tasks kept from their records.
+  int32 settled_count = 2;
+  // read_back_seconds is how long the read-back took.
+  double read_back_seconds = 3;
+}
 
 // RunScheduleFire is E86's; it is empty until E86 lands (v0.4.0 proto
 // batch).

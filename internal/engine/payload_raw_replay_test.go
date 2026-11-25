@@ -2,11 +2,13 @@ package engine_test
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
@@ -15,6 +17,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -113,7 +116,7 @@ func TestRunWorkflowRaw_WritesWhatTheTypedEntryWrites(t *testing.T) {
 // failure converter exactly as the typed entry's, its type its reason code.
 func TestRunWorkflowRaw_AnUnsealedFailureIsTheErrorItself(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.RegisterWorkflowWithOptions(engine.RunWorkflowRaw, workflow.RegisterOptions{Name: "raw"})
 	env.ExecuteWorkflow("raw", "ork-empty", &orkstackv1.Orkflow{Name: "empty"}, payload(t, nil), defaultPlan())
 	err := env.GetWorkflowError()
@@ -125,4 +128,66 @@ func TestRunWorkflowRaw_AnUnsealedFailureIsTheErrorItself(t *testing.T) {
 	if got := f.GetApplicationFailureInfo().GetType(); got != "INVALID_ORKFLOW" {
 		t.Fatalf("the SDK default writes the failure with type %q, want INVALID_ORKFLOW", got)
 	}
+}
+
+// TestRunWorkflowRaw_PublishesUnsealedRunsAsBefore: a run that is not sealed
+// hands every event publish its event, snapshot URI and dedupe key as the
+// values themselves, never wrapped, so their payloads are what they always
+// were.
+func TestRunWorkflowRaw_PublishesUnsealedRunsAsBefore(t *testing.T) {
+	h := rawHarness(t, "ork-plain-events", nil, nil)
+	rec := &publishArgsRecorder{}
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{rec}}))
+	h.env.ExecuteWorkflow(rawRunWorkflow, sealedStartArgs(t, "ork-plain-events", nil)...)
+	must.OK(t, h.env.GetWorkflowError())
+	if rec.publishes == 0 {
+		t.Fatal("no event was published")
+	}
+	if rec.wrapped != "" {
+		t.Fatalf("an unsealed run's publish was handed %s, not the value itself", rec.wrapped)
+	}
+}
+
+type publishArgsRecorder struct {
+	interceptor.WorkerInterceptorBase
+	publishes int
+	wrapped   string
+}
+
+func (r *publishArgsRecorder) InterceptWorkflow(_ workflow.Context, next interceptor.WorkflowInboundInterceptor) interceptor.WorkflowInboundInterceptor {
+	return &publishArgsInbound{WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{Next: next}, r: r}
+}
+
+type publishArgsInbound struct {
+	interceptor.WorkflowInboundInterceptorBase
+	r *publishArgsRecorder
+}
+
+func (i *publishArgsInbound) Init(outbound interceptor.WorkflowOutboundInterceptor) error {
+	return i.Next.Init(&publishArgsOutbound{WorkflowOutboundInterceptorBase: interceptor.WorkflowOutboundInterceptorBase{Next: outbound}, r: i.r})
+}
+
+type publishArgsOutbound struct {
+	interceptor.WorkflowOutboundInterceptorBase
+	r *publishArgsRecorder
+}
+
+func (o *publishArgsOutbound) ExecuteActivity(ctx workflow.Context, activityType string, args ...any) workflow.Future {
+	if activityType == engine.ActivityPublishEvent {
+		o.r.publishes++
+		if len(args) != 3 {
+			o.r.wrapped = fmt.Sprintf("%d arguments", len(args))
+		} else {
+			if _, ok := args[0].(*orkstackv1.Event); !ok {
+				o.r.wrapped = fmt.Sprintf("an event of type %T", args[0])
+			}
+			// The dedupe key is marked Plain: the same bytes in any run.
+			for _, a := range args[1:] {
+				if _, ok := payloadcrypt.Unplain(a).(string); !ok {
+					o.r.wrapped = fmt.Sprintf("an argument of type %T", a)
+				}
+			}
+		}
+	}
+	return o.Next.ExecuteActivity(ctx, activityType, args...)
 }

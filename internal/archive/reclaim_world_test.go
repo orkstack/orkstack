@@ -38,8 +38,10 @@ type world struct {
 	bodies     map[string]RunBody
 	executions map[string]bool
 	commits    map[string]int
-	records    map[string]artifacts.ReclaimRecord
-	index      []artifacts.RunIndexEntry
+	// attested is how many engine records lie under a run's attested prefix.
+	attested map[string]int
+	records  map[string]artifacts.ReclaimRecord
+	index    []artifacts.RunIndexEntry
 
 	// live and closed are what the low-water walk answers.
 	live    map[string]time.Time
@@ -79,7 +81,7 @@ func newWorld(t *testing.T) *world {
 		t: t, now: time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC),
 		objects: map[string]int64{}, markers: map[string]map[string]bool{}, lists: map[string][]string{},
 		sidecars: map[string]time.Time{}, bodies: map[string]RunBody{}, executions: map[string]bool{},
-		commits: map[string]int{}, records: map[string]artifacts.ReclaimRecord{},
+		commits: map[string]int{}, attested: map[string]int{}, records: map[string]artifacts.ReclaimRecord{},
 		live: map[string]time.Time{}, closed: map[string]time.Time{},
 		sweep: SweepPass{Clean: true}, hasSweep: true,
 		retention: 24 * time.Hour, fail: map[string]error{}, listed: map[string]int{},
@@ -243,10 +245,22 @@ func (w *world) ListUnder(_ context.Context, prefix string, limit int) ([]artifa
 	if err := w.fail["ListUnder"]; err != nil {
 		return nil, false, err
 	}
+	if err := w.fail["ListUnder "+prefix]; err != nil {
+		return nil, false, err
+	}
 	var keys []string
 	if strings.HasPrefix(prefix, artifacts.CommitPrefix+"/") {
 		for run, n := range w.commits {
 			p, _ := artifacts.RunCommitPrefix("default", run)
+			if p == prefix {
+				for i := 0; i < n; i++ {
+					keys = append(keys, fmt.Sprintf("%s%d/commit.json", p, i))
+				}
+			}
+		}
+	} else if strings.HasPrefix(prefix, artifacts.AttestedPrefix+"/") {
+		for run, n := range w.attested {
+			p, _ := artifacts.AttestedRunPrefix("default", run)
 			if p == prefix {
 				for i := 0; i < n; i++ {
 					keys = append(keys, fmt.Sprintf("%s%d/commit.json", p, i))

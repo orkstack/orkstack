@@ -205,10 +205,24 @@ func (d *OCIDispatcher) readItemCommit(
 		return nil, FailCause(ReasonInputUnavailable, err,
 			"fan-out task %q item %d: compose its commit key: %v", producer, i, err)
 	}
+	// A run whose results the engine records reads each item's engine
+	// record, under this Orker's own commit root where it knows one (never
+	// one only the input names), mapped, and nothing an Orker wrote.
+	if recordedRun(in) && d.CommitRoot != "" {
+		commitRoot = d.CommitRoot
+	}
 	uri := strings.TrimSuffix(commitRoot, "/") + "/" + key
+	if recordedRun(in) {
+		if uri, err = artifacts.AttestedCommitURI(uri); err != nil {
+			return nil, FailCause(ReasonUpstreamNotRecorded, err, "fan-out task %q item %d: %v", producer, i, err)
+		}
+	}
 	record, err := d.Commits.Get(ctx, uri)
 	switch {
 	case err == nil:
+	case errors.Is(err, artifacts.ErrNotFound) && recordedRun(in):
+		return nil, FailCause(ReasonUpstreamNotRecorded, err,
+			"fan-out task %q item %d: no engine recorded its result at %s", producer, i, uri)
 	case errors.Is(err, artifacts.ErrNotFound):
 		return nil, FailCause(ReasonInputUnavailable, err,
 			"fan-out task %q item %d has no commit at %s", producer, i, uri)
@@ -229,6 +243,10 @@ func (d *OCIDispatcher) readItemCommit(
 		return nil, Fail(ReasonCommitIdentity,
 			"fan-out task %q item %d: the commit at %s is for a different activity: %s",
 			producer, i, uri, mismatch)
+	}
+	if recordedRun(in) && commit.GetRecorded() == nil {
+		return nil, Fail(ReasonUpstreamNotRecorded,
+			"fan-out task %q item %d: the object at %s carries no engine's recording", producer, i, uri)
 	}
 	return commit, nil
 }

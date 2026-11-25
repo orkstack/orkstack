@@ -1,0 +1,13 @@
+Key:        db-migrate:prod
+Namespace:  payments
+State:      ok
+Epoch:      1
+
+Holding (1):
+  RUN       LEVEL  SINCE                 LIMIT  ON LIMIT  NOTE
+  ork-01k3  run    2026-01-02T03:04:05Z  1      queue     not making progress; an operator must end it
+
+Waiting (2):
+  #  RUN       LEVEL  SINCE                 TIMES OUT             LIMIT
+  1  ork-01k4  run    2026-01-02T03:04:05Z  2026-01-02T05:04:05Z  1
+  2  ork-01k5  task   2026-01-02T03:04:05Z  2026-01-02T05:04:05Z  1

@@ -137,6 +137,9 @@ func TestStartTied_APanickingStartIsTheCallersError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "panic") {
 		t.Fatalf("startRecovered(nil) = %v, want the panic as an error", err)
 	}
+	if errors.Is(err, errCLINotStarted) {
+		t.Fatal("a start that panicked was called one that never ran; it may have run")
+	}
 	ok := exec.Command("true")
 	if err := startTied(ok); err != nil {
 		t.Fatalf("a start after a panicking one failed: %v", err)

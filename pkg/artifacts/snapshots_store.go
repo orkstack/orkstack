@@ -60,6 +60,40 @@ func (s *BlobRunSnapshotStore) WriteSnapshot(
 	return s.putSnapshot(ctx, key, data)
 }
 
+// SnapshotURI is the URI WriteSnapshot gives the snapshot of (namespace,
+// runID) at sequence, without touching the backend: how a resumed run finds
+// its base's last snapshot by its sequence (E85 R4-1).
+func (s *BlobRunSnapshotStore) SnapshotURI(namespace, runID string, sequence int64) (string, error) {
+	key, err := RunSnapshotKey(namespace, runID, sequence)
+	if err != nil {
+		return "", err
+	}
+	return s.b.locate(key), nil
+}
+
+// CreateSnapshot writes one snapshot only if none is at its key: an object
+// already there is ErrSnapshotExists, never overwritten. A resumed run's
+// ending uses it, so it can never take a sequence another execution wrote.
+func (s *BlobRunSnapshotStore) CreateSnapshot(ctx context.Context, namespace, runID string, sequence int64, data []byte) (string, error) {
+	key, err := RunSnapshotKey(namespace, runID, sequence)
+	if err != nil {
+		return "", err
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("artifacts: snapshot %q: empty snapshot", s.b.uri(key))
+	}
+	if err := s.b.create(ctx, key, SnapshotContentType, data); err != nil {
+		if errors.Is(err, errBlobExists) {
+			return "", fmt.Errorf("artifacts: snapshot %q: %w", s.b.uri(key), ErrSnapshotExists)
+		}
+		return "", fmt.Errorf("artifacts: create snapshot %q: %w", s.b.uri(key), err)
+	}
+	return s.b.locate(key), nil
+}
+
+// ErrSnapshotExists: a snapshot is already at the key CreateSnapshot names.
+var ErrSnapshotExists = errors.New("a snapshot is already at this sequence")
+
 // WriteSnapshotOverlay writes one overlay beside the run's full snapshots.
 func (s *BlobRunSnapshotStore) WriteSnapshotOverlay(
 	ctx context.Context,

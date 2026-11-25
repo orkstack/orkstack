@@ -88,7 +88,10 @@ func DeclaredRows(wf *orkstackv1.Orkflow) int64 {
 // read depend on it, and none may depend on overlay support.
 func (s *runState) overlayPolicyFor(ctx workflow.Context, eventType orkstackv1.EventType) (OverlayPolicy, bool) {
 	policy := s.plan.SnapshotOverlay
-	if !policy.valid() || isTerminalRunEventType(eventType) || s.declaredRows <= policy.MinRows {
+	// A resumed run's RUN_RESUMED and RUN_RESULTS_KEPT are always full: each
+	// is where a reader first finds the resumed run's rows (E85 §5.3).
+	if !policy.valid() || isTerminalRunEventType(eventType) || s.declaredRows <= policy.MinRows ||
+		eventType == orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED || eventType == orkstackv1.EventType_EVENT_TYPE_RUN_RESULTS_KEPT {
 		return OverlayPolicy{}, false
 	}
 	return *policy, s.version(ctx, SnapshotOverlayChange, 1) >= 1

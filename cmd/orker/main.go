@@ -1023,6 +1023,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		go activities.WatchIdentitySupport(support).Run(ctx)
 		// The mint every attempt asks, at most max_concurrent at once.
 		activities.Dispatcher().SetIdentityMint(orker.NewIdentityMinter(engine, cfg.identity.MaxConcurrent))
+		activities.Dispatcher().SetResultCommit(orker.NewResultCommitter(engine))
 	}
 	// The periodic profile audit: every audit_interval, each device of an
 	// audited profile again; a difference is drift (docs/DEPLOY.md,
@@ -1040,8 +1041,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	taskWorker := worker.New(temporalClient, cfg.queue, taskOptions)
+	// Raw: a sealed run's task input is opened with its run tree's key, and
+	// its result sealed under it (internal/orker/payload.go); a task that is
+	// not sealed runs exactly as through ExecuteTask.
 	taskWorker.RegisterActivityWithOptions(
-		activities.ExecuteTask,
+		activities.ExecuteTaskRaw,
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 	taskWorker.RegisterActivityWithOptions(

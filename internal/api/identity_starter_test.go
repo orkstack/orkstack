@@ -12,6 +12,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/consent"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
@@ -36,6 +37,47 @@ func starterWorld(t *testing.T, bindings ...*orkstackv1.Binding) (*Service, *tri
 }
 
 var deployers = &orkstackv1.Binding{Name: "deployers", Role: "submitter", Scope: "namespace:payments", Subjects: []string{"group:corp:deployers"}}
+
+// TestAsksFor_ASharedChildAsksAsItsOwners: what a binder of a schedule, a
+// trigger or an event source consents to is what the owner's Orkflow asks
+// for, at every depth, though the running namespace has one of each name.
+// Changing the running namespace's changes nothing; changing the owner's
+// changes the consent.
+func TestAsksFor_ASharedChildAsksAsItsOwners(t *testing.T) {
+	ctx := context.Background()
+	composes := func(ns, name, refNS, child string) *orkstackv1.Orkflow {
+		return &orkstackv1.Orkflow{Namespace: ns, Name: name, Version: "1", Tasks: []*orkstackv1.Task{{Id: "go", Uses: "orkflow:" + child + "@1",
+			Orkflow: &orkstackv1.OrkflowRef{Namespace: refNS, Name: child, Version: "1"}}}}
+	}
+	asks := func(mine, theirs string) consent.Asks {
+		t.Helper()
+		orkflows := engine.NewMemoryOrkflowStore()
+		for _, def := range []*orkstackv1.Orkflow{
+			composes("payments", "release", "platform", "lib"), composes("platform", "lib", "", "child"),
+			composes("payments", "lib", "", "child"),
+			identityDef("payments", "child", "1", mine), identityDef("platform", "child", "1", theirs),
+		} {
+			if _, _, err := orkflows.Put(ctx, def, artifacts.HeadExpectation{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := (&Service{orkflows: orkflows}).asksFor(ctx, "payments", "release", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	first := asks("mine", "theirs")
+	if len(first.Audiences) != 1 || first.Audiences[0] != "theirs" {
+		t.Fatalf("release asks for %v; want platform's child's", first.Audiences)
+	}
+	if asks("other", "theirs").Digest != first.Digest {
+		t.Error("the running namespace's own child changed what the shared one asks for")
+	}
+	if asks("mine", "other").Digest == first.Digest {
+		t.Error("a change of the owner's child is not in the consent")
+	}
+}
 
 // TestCheckStarter_Trigger: a trigger's run that would hold an identity is
 // admitted only with a verified binder recorded with its granting binding,

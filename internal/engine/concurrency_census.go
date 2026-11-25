@@ -100,6 +100,7 @@ func ConcurrencyCensusWorkflow(ctx workflow.Context, in CensusSettings) error {
 // namespace it holds a key in. The key itself is never reported.
 type GateStateView struct {
 	Namespace string    `json:"namespace"`
+	Key       string    `json:"key,omitempty"`
 	State     gateState `json:"state"`
 }
 

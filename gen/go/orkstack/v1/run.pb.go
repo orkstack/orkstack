@@ -414,6 +414,13 @@ const (
 	// TASK_QUEUED: a task waits in line for a slot of its concurrency limit's
 	// key. Not in a webhook's default events.
 	EventType_EVENT_TYPE_TASK_QUEUED EventType = 16
+	// RUN_RESUMED: a failed run was resumed (orkctl run resume); resumed says
+	// how. It is the first event after the ending it sets aside, and the run
+	// is RUNNING again.
+	EventType_EVENT_TYPE_RUN_RESUMED EventType = 17
+	// RUN_RESULTS_KEPT: a resumed run read back every result it keeps
+	// (results_kept); only then does anything run again.
+	EventType_EVENT_TYPE_RUN_RESULTS_KEPT EventType = 18
 	// RUN_PAUSED: the run became paused, or is still paused with its causes
 	// changed (pause_transition says which). Status PAUSED.
 	EventType_EVENT_TYPE_RUN_PAUSED EventType = 19
@@ -442,29 +449,33 @@ var (
 		14: "EVENT_TYPE_TASK_SLEEPING",
 		15: "EVENT_TYPE_RUN_QUEUED",
 		16: "EVENT_TYPE_TASK_QUEUED",
+		17: "EVENT_TYPE_RUN_RESUMED",
+		18: "EVENT_TYPE_RUN_RESULTS_KEPT",
 		19: "EVENT_TYPE_RUN_PAUSED",
 		20: "EVENT_TYPE_RUN_UNPAUSED",
 	}
 	EventType_value = map[string]int32{
-		"EVENT_TYPE_UNSPECIFIED":    0,
-		"EVENT_TYPE_RUN_CREATED":    1,
-		"EVENT_TYPE_RUN_STARTED":    2,
-		"EVENT_TYPE_TASK_SCHEDULED": 3,
-		"EVENT_TYPE_TASK_STARTED":   4,
-		"EVENT_TYPE_TASK_LOG":       5,
-		"EVENT_TYPE_TASK_SUCCEEDED": 6,
-		"EVENT_TYPE_TASK_FAILED":    7,
-		"EVENT_TYPE_RUN_SUCCEEDED":  8,
-		"EVENT_TYPE_RUN_FAILED":     9,
-		"EVENT_TYPE_RUN_CANCELED":   10,
-		"EVENT_TYPE_TASK_AWAITING":  11,
-		"EVENT_TYPE_TASK_RESOLVED":  12,
-		"EVENT_TYPE_STREAM_GAP":     13,
-		"EVENT_TYPE_TASK_SLEEPING":  14,
-		"EVENT_TYPE_RUN_QUEUED":     15,
-		"EVENT_TYPE_TASK_QUEUED":    16,
-		"EVENT_TYPE_RUN_PAUSED":     19,
-		"EVENT_TYPE_RUN_UNPAUSED":   20,
+		"EVENT_TYPE_UNSPECIFIED":      0,
+		"EVENT_TYPE_RUN_CREATED":      1,
+		"EVENT_TYPE_RUN_STARTED":      2,
+		"EVENT_TYPE_TASK_SCHEDULED":   3,
+		"EVENT_TYPE_TASK_STARTED":     4,
+		"EVENT_TYPE_TASK_LOG":         5,
+		"EVENT_TYPE_TASK_SUCCEEDED":   6,
+		"EVENT_TYPE_TASK_FAILED":      7,
+		"EVENT_TYPE_RUN_SUCCEEDED":    8,
+		"EVENT_TYPE_RUN_FAILED":       9,
+		"EVENT_TYPE_RUN_CANCELED":     10,
+		"EVENT_TYPE_TASK_AWAITING":    11,
+		"EVENT_TYPE_TASK_RESOLVED":    12,
+		"EVENT_TYPE_STREAM_GAP":       13,
+		"EVENT_TYPE_TASK_SLEEPING":    14,
+		"EVENT_TYPE_RUN_QUEUED":       15,
+		"EVENT_TYPE_TASK_QUEUED":      16,
+		"EVENT_TYPE_RUN_RESUMED":      17,
+		"EVENT_TYPE_RUN_RESULTS_KEPT": 18,
+		"EVENT_TYPE_RUN_PAUSED":       19,
+		"EVENT_TYPE_RUN_UNPAUSED":     20,
 	}
 )
 
@@ -493,6 +504,82 @@ func (x EventType) Number() protoreflect.EnumNumber {
 // Deprecated: Use EventType.Descriptor instead.
 func (EventType) EnumDescriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{5}
+}
+
+// ConcurrencyWaitOutcome is how a wait in line ended.
+type ConcurrencyWaitOutcome int32
+
+const (
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_UNSPECIFIED ConcurrencyWaitOutcome = 0
+	// STARTED: it was granted its slot.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_STARTED ConcurrencyWaitOutcome = 1
+	// CANCELED: the run ended, or left the line, for its own reason.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_CANCELED ConcurrencyWaitOutcome = 2
+	// TIMED_OUT: its queue_timeout passed.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_TIMED_OUT ConcurrencyWaitOutcome = 3
+	// SUPERSEDED: a newer run replaced it.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_SUPERSEDED ConcurrencyWaitOutcome = 4
+	// FULL: the line was full.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_FULL ConcurrencyWaitOutcome = 5
+	// UNAVAILABLE: the limit did not answer.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_UNAVAILABLE ConcurrencyWaitOutcome = 6
+	// UNSUPPORTED: the limit could not take its request.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_UNSUPPORTED ConcurrencyWaitOutcome = 7
+	// FENCED: the limit refused a stale request.
+	ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_FENCED ConcurrencyWaitOutcome = 8
+)
+
+// Enum value maps for ConcurrencyWaitOutcome.
+var (
+	ConcurrencyWaitOutcome_name = map[int32]string{
+		0: "CONCURRENCY_WAIT_OUTCOME_UNSPECIFIED",
+		1: "CONCURRENCY_WAIT_OUTCOME_STARTED",
+		2: "CONCURRENCY_WAIT_OUTCOME_CANCELED",
+		3: "CONCURRENCY_WAIT_OUTCOME_TIMED_OUT",
+		4: "CONCURRENCY_WAIT_OUTCOME_SUPERSEDED",
+		5: "CONCURRENCY_WAIT_OUTCOME_FULL",
+		6: "CONCURRENCY_WAIT_OUTCOME_UNAVAILABLE",
+		7: "CONCURRENCY_WAIT_OUTCOME_UNSUPPORTED",
+		8: "CONCURRENCY_WAIT_OUTCOME_FENCED",
+	}
+	ConcurrencyWaitOutcome_value = map[string]int32{
+		"CONCURRENCY_WAIT_OUTCOME_UNSPECIFIED": 0,
+		"CONCURRENCY_WAIT_OUTCOME_STARTED":     1,
+		"CONCURRENCY_WAIT_OUTCOME_CANCELED":    2,
+		"CONCURRENCY_WAIT_OUTCOME_TIMED_OUT":   3,
+		"CONCURRENCY_WAIT_OUTCOME_SUPERSEDED":  4,
+		"CONCURRENCY_WAIT_OUTCOME_FULL":        5,
+		"CONCURRENCY_WAIT_OUTCOME_UNAVAILABLE": 6,
+		"CONCURRENCY_WAIT_OUTCOME_UNSUPPORTED": 7,
+		"CONCURRENCY_WAIT_OUTCOME_FENCED":      8,
+	}
+)
+
+func (x ConcurrencyWaitOutcome) Enum() *ConcurrencyWaitOutcome {
+	p := new(ConcurrencyWaitOutcome)
+	*p = x
+	return p
+}
+
+func (x ConcurrencyWaitOutcome) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ConcurrencyWaitOutcome) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_run_proto_enumTypes[6].Descriptor()
+}
+
+func (ConcurrencyWaitOutcome) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_run_proto_enumTypes[6]
+}
+
+func (x ConcurrencyWaitOutcome) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ConcurrencyWaitOutcome.Descriptor instead.
+func (ConcurrencyWaitOutcome) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{6}
 }
 
 // ConcurrencyQueueCause is why a run waits in line.
@@ -541,11 +628,11 @@ func (x ConcurrencyQueueCause) String() string {
 }
 
 func (ConcurrencyQueueCause) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[6].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[7].Descriptor()
 }
 
 func (ConcurrencyQueueCause) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[6]
+	return &file_orkstack_v1_run_proto_enumTypes[7]
 }
 
 func (x ConcurrencyQueueCause) Number() protoreflect.EnumNumber {
@@ -554,7 +641,7 @@ func (x ConcurrencyQueueCause) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ConcurrencyQueueCause.Descriptor instead.
 func (ConcurrencyQueueCause) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{6}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{7}
 }
 
 // MeasurementMethod is how an attempt's CPU and memory were measured.
@@ -597,11 +684,11 @@ func (x MeasurementMethod) String() string {
 }
 
 func (MeasurementMethod) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[7].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[8].Descriptor()
 }
 
 func (MeasurementMethod) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[7]
+	return &file_orkstack_v1_run_proto_enumTypes[8]
 }
 
 func (x MeasurementMethod) Number() protoreflect.EnumNumber {
@@ -610,7 +697,7 @@ func (x MeasurementMethod) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use MeasurementMethod.Descriptor instead.
 func (MeasurementMethod) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{7}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{8}
 }
 
 // UnmeasuredReason is why an attempt's CPU and memory were not measured.
@@ -679,11 +766,11 @@ func (x UnmeasuredReason) String() string {
 }
 
 func (UnmeasuredReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[8].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[9].Descriptor()
 }
 
 func (UnmeasuredReason) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[8]
+	return &file_orkstack_v1_run_proto_enumTypes[9]
 }
 
 func (x UnmeasuredReason) Number() protoreflect.EnumNumber {
@@ -692,7 +779,7 @@ func (x UnmeasuredReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use UnmeasuredReason.Descriptor instead.
 func (UnmeasuredReason) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{8}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{9}
 }
 
 // PauseTransition is what one event did to a run's pause.
@@ -747,11 +834,11 @@ func (x PauseTransition) String() string {
 }
 
 func (PauseTransition) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[9].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[10].Descriptor()
 }
 
 func (PauseTransition) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[9]
+	return &file_orkstack_v1_run_proto_enumTypes[10]
 }
 
 func (x PauseTransition) Number() protoreflect.EnumNumber {
@@ -760,7 +847,7 @@ func (x PauseTransition) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PauseTransition.Descriptor instead.
 func (PauseTransition) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{9}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{10}
 }
 
 // PauseEnd is how a run's own pause ended.
@@ -802,11 +889,11 @@ func (x PauseEnd) String() string {
 }
 
 func (PauseEnd) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[10].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[11].Descriptor()
 }
 
 func (PauseEnd) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[10]
+	return &file_orkstack_v1_run_proto_enumTypes[11]
 }
 
 func (x PauseEnd) Number() protoreflect.EnumNumber {
@@ -815,7 +902,7 @@ func (x PauseEnd) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PauseEnd.Descriptor instead.
 func (PauseEnd) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{10}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{11}
 }
 
 // ResumeAction is what a resume was asked to do.
@@ -854,11 +941,11 @@ func (x ResumeAction) String() string {
 }
 
 func (ResumeAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[11].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[12].Descriptor()
 }
 
 func (ResumeAction) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[11]
+	return &file_orkstack_v1_run_proto_enumTypes[12]
 }
 
 func (x ResumeAction) Number() protoreflect.EnumNumber {
@@ -867,7 +954,7 @@ func (x ResumeAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ResumeAction.Descriptor instead.
 func (ResumeAction) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{11}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{12}
 }
 
 // ResumeDisposition is how a resume treats one task or item (E85 §3.4).
@@ -922,11 +1009,11 @@ func (x ResumeDisposition) String() string {
 }
 
 func (ResumeDisposition) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[12].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[13].Descriptor()
 }
 
 func (ResumeDisposition) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[12]
+	return &file_orkstack_v1_run_proto_enumTypes[13]
 }
 
 func (x ResumeDisposition) Number() protoreflect.EnumNumber {
@@ -935,7 +1022,7 @@ func (x ResumeDisposition) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ResumeDisposition.Descriptor instead.
 func (ResumeDisposition) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{12}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{13}
 }
 
 // RunContextStatus is whether a run carries a run context.
@@ -970,11 +1057,11 @@ func (x RunContextStatus) String() string {
 }
 
 func (RunContextStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[13].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[14].Descriptor()
 }
 
 func (RunContextStatus) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[13]
+	return &file_orkstack_v1_run_proto_enumTypes[14]
 }
 
 func (x RunContextStatus) Number() protoreflect.EnumNumber {
@@ -983,7 +1070,7 @@ func (x RunContextStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RunContextStatus.Descriptor instead.
 func (RunContextStatus) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{13}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{14}
 }
 
 // RunDispatchHold is why a run holds back work it could otherwise start.
@@ -1024,11 +1111,11 @@ func (x RunDispatchHold) String() string {
 }
 
 func (RunDispatchHold) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[14].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[15].Descriptor()
 }
 
 func (RunDispatchHold) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[14]
+	return &file_orkstack_v1_run_proto_enumTypes[15]
 }
 
 func (x RunDispatchHold) Number() protoreflect.EnumNumber {
@@ -1037,7 +1124,7 @@ func (x RunDispatchHold) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RunDispatchHold.Descriptor instead.
 func (RunDispatchHold) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{14}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{15}
 }
 
 // InterruptionPhase is how far an interrupted attempt had got when it was
@@ -1089,11 +1176,11 @@ func (x InterruptionPhase) String() string {
 }
 
 func (InterruptionPhase) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[15].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[16].Descriptor()
 }
 
 func (InterruptionPhase) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[15]
+	return &file_orkstack_v1_run_proto_enumTypes[16]
 }
 
 func (x InterruptionPhase) Number() protoreflect.EnumNumber {
@@ -1102,7 +1189,7 @@ func (x InterruptionPhase) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use InterruptionPhase.Descriptor instead.
 func (InterruptionPhase) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{15}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{16}
 }
 
 // TaskEach is a fan-out task's own state on the run snapshot. It is SET for
@@ -3773,8 +3860,14 @@ type Event struct {
 	// pause_transition says what a RUN_PAUSED or RUN_UNPAUSED, or a terminal
 	// event that ended a pause, did to it; unset on every other event.
 	PauseTransition PauseTransition `protobuf:"varint,13,opt,name=pause_transition,json=pauseTransition,proto3,enum=orkstack.v1.PauseTransition" json:"pause_transition,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// wait_end is set on the one event that ends a run's wait in a
+	// concurrency limit's line, unset on every other event: how the wait
+	// ended and how long it took.
+	WaitEnd *ConcurrencyWaitEnd `protobuf:"bytes,15,opt,name=wait_end,json=waitEnd,proto3" json:"wait_end,omitempty"`
+	// results_kept is set on RUN_RESULTS_KEPT.
+	ResultsKept   *RunResultsKept `protobuf:"bytes,16,opt,name=results_kept,json=resultsKept,proto3" json:"results_kept,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Event) Reset() {
@@ -3898,6 +3991,99 @@ func (x *Event) GetPauseTransition() PauseTransition {
 	return PauseTransition_PAUSE_TRANSITION_UNSPECIFIED
 }
 
+func (x *Event) GetWaitEnd() *ConcurrencyWaitEnd {
+	if x != nil {
+		return x.WaitEnd
+	}
+	return nil
+}
+
+func (x *Event) GetResultsKept() *RunResultsKept {
+	if x != nil {
+		return x.ResultsKept
+	}
+	return nil
+}
+
+// ConcurrencyWaitEnd is how a wait in a concurrency limit's line ended.
+type ConcurrencyWaitEnd struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Outcome  ConcurrencyWaitOutcome `protobuf:"varint,1,opt,name=outcome,proto3,enum=orkstack.v1.ConcurrencyWaitOutcome" json:"outcome,omitempty"`
+	Waited   *durationpb.Duration   `protobuf:"bytes,2,opt,name=waited,proto3" json:"waited,omitempty"`
+	Strategy ConcurrencyStrategy    `protobuf:"varint,3,opt,name=strategy,proto3,enum=orkstack.v1.ConcurrencyStrategy" json:"strategy,omitempty"`
+	// limit_label is the limit's template, cut to 64 bytes, then "#" and
+	// eight hex digits of its SHA-256: never a rendered key.
+	LimitLabel    string `protobuf:"bytes,4,opt,name=limit_label,json=limitLabel,proto3" json:"limit_label,omitempty"`
+	TaskLevel     bool   `protobuf:"varint,5,opt,name=task_level,json=taskLevel,proto3" json:"task_level,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConcurrencyWaitEnd) Reset() {
+	*x = ConcurrencyWaitEnd{}
+	mi := &file_orkstack_v1_run_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConcurrencyWaitEnd) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConcurrencyWaitEnd) ProtoMessage() {}
+
+func (x *ConcurrencyWaitEnd) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConcurrencyWaitEnd.ProtoReflect.Descriptor instead.
+func (*ConcurrencyWaitEnd) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ConcurrencyWaitEnd) GetOutcome() ConcurrencyWaitOutcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return ConcurrencyWaitOutcome_CONCURRENCY_WAIT_OUTCOME_UNSPECIFIED
+}
+
+func (x *ConcurrencyWaitEnd) GetWaited() *durationpb.Duration {
+	if x != nil {
+		return x.Waited
+	}
+	return nil
+}
+
+func (x *ConcurrencyWaitEnd) GetStrategy() ConcurrencyStrategy {
+	if x != nil {
+		return x.Strategy
+	}
+	return ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED
+}
+
+func (x *ConcurrencyWaitEnd) GetLimitLabel() string {
+	if x != nil {
+		return x.LimitLabel
+	}
+	return ""
+}
+
+func (x *ConcurrencyWaitEnd) GetTaskLevel() bool {
+	if x != nil {
+		return x.TaskLevel
+	}
+	return false
+}
+
 // AttemptCredential is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
 // batch).
 type AttemptCredential struct {
@@ -3908,7 +4094,7 @@ type AttemptCredential struct {
 
 func (x *AttemptCredential) Reset() {
 	*x = AttemptCredential{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[19]
+	mi := &file_orkstack_v1_run_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3920,7 +4106,7 @@ func (x *AttemptCredential) String() string {
 func (*AttemptCredential) ProtoMessage() {}
 
 func (x *AttemptCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[19]
+	mi := &file_orkstack_v1_run_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3933,7 +4119,7 @@ func (x *AttemptCredential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptCredential.ProtoReflect.Descriptor instead.
 func (*AttemptCredential) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{19}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{20}
 }
 
 // AttemptIdentity is what one identity of an attempt was issued, as its
@@ -3962,7 +4148,7 @@ type AttemptIdentity struct {
 
 func (x *AttemptIdentity) Reset() {
 	*x = AttemptIdentity{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[20]
+	mi := &file_orkstack_v1_run_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3974,7 +4160,7 @@ func (x *AttemptIdentity) String() string {
 func (*AttemptIdentity) ProtoMessage() {}
 
 func (x *AttemptIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[20]
+	mi := &file_orkstack_v1_run_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3987,7 +4173,7 @@ func (x *AttemptIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptIdentity.ProtoReflect.Descriptor instead.
 func (*AttemptIdentity) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{20}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *AttemptIdentity) GetName() string {
@@ -4081,7 +4267,7 @@ type ConcurrencyQueued struct {
 
 func (x *ConcurrencyQueued) Reset() {
 	*x = ConcurrencyQueued{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[21]
+	mi := &file_orkstack_v1_run_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4093,7 +4279,7 @@ func (x *ConcurrencyQueued) String() string {
 func (*ConcurrencyQueued) ProtoMessage() {}
 
 func (x *ConcurrencyQueued) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[21]
+	mi := &file_orkstack_v1_run_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4106,7 +4292,7 @@ func (x *ConcurrencyQueued) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConcurrencyQueued.ProtoReflect.Descriptor instead.
 func (*ConcurrencyQueued) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{21}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ConcurrencyQueued) GetKey() string {
@@ -4231,7 +4417,7 @@ type EffectiveProfile struct {
 
 func (x *EffectiveProfile) Reset() {
 	*x = EffectiveProfile{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[22]
+	mi := &file_orkstack_v1_run_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4243,7 +4429,7 @@ func (x *EffectiveProfile) String() string {
 func (*EffectiveProfile) ProtoMessage() {}
 
 func (x *EffectiveProfile) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[22]
+	mi := &file_orkstack_v1_run_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4256,7 +4442,7 @@ func (x *EffectiveProfile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EffectiveProfile.ProtoReflect.Descriptor instead.
 func (*EffectiveProfile) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{22}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *EffectiveProfile) GetName() string {
@@ -4322,7 +4508,7 @@ type InheritedPause struct {
 
 func (x *InheritedPause) Reset() {
 	*x = InheritedPause{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[23]
+	mi := &file_orkstack_v1_run_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4334,7 +4520,7 @@ func (x *InheritedPause) String() string {
 func (*InheritedPause) ProtoMessage() {}
 
 func (x *InheritedPause) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[23]
+	mi := &file_orkstack_v1_run_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4347,7 +4533,7 @@ func (x *InheritedPause) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InheritedPause.ProtoReflect.Descriptor instead.
 func (*InheritedPause) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{23}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *InheritedPause) GetParentRunId() string {
@@ -4403,7 +4589,7 @@ type MeasuredUsage struct {
 
 func (x *MeasuredUsage) Reset() {
 	*x = MeasuredUsage{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[24]
+	mi := &file_orkstack_v1_run_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4415,7 +4601,7 @@ func (x *MeasuredUsage) String() string {
 func (*MeasuredUsage) ProtoMessage() {}
 
 func (x *MeasuredUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[24]
+	mi := &file_orkstack_v1_run_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4428,7 +4614,7 @@ func (x *MeasuredUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MeasuredUsage.ProtoReflect.Descriptor instead.
 func (*MeasuredUsage) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{24}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *MeasuredUsage) GetMethod() MeasurementMethod {
@@ -4529,7 +4715,7 @@ type NamedArtifact struct {
 
 func (x *NamedArtifact) Reset() {
 	*x = NamedArtifact{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[25]
+	mi := &file_orkstack_v1_run_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4541,7 +4727,7 @@ func (x *NamedArtifact) String() string {
 func (*NamedArtifact) ProtoMessage() {}
 
 func (x *NamedArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[25]
+	mi := &file_orkstack_v1_run_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4554,7 +4740,7 @@ func (x *NamedArtifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NamedArtifact.ProtoReflect.Descriptor instead.
 func (*NamedArtifact) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{25}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *NamedArtifact) GetName() string {
@@ -4605,7 +4791,7 @@ type PauseWarning struct {
 
 func (x *PauseWarning) Reset() {
 	*x = PauseWarning{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[26]
+	mi := &file_orkstack_v1_run_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4617,7 +4803,7 @@ func (x *PauseWarning) String() string {
 func (*PauseWarning) ProtoMessage() {}
 
 func (x *PauseWarning) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[26]
+	mi := &file_orkstack_v1_run_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4630,7 +4816,7 @@ func (x *PauseWarning) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseWarning.ProtoReflect.Descriptor instead.
 func (*PauseWarning) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{26}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *PauseWarning) GetTaskId() string {
@@ -4671,7 +4857,7 @@ type RecordRef struct {
 
 func (x *RecordRef) Reset() {
 	*x = RecordRef{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[27]
+	mi := &file_orkstack_v1_run_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4683,7 +4869,7 @@ func (x *RecordRef) String() string {
 func (*RecordRef) ProtoMessage() {}
 
 func (x *RecordRef) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[27]
+	mi := &file_orkstack_v1_run_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4696,7 +4882,7 @@ func (x *RecordRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordRef.ProtoReflect.Descriptor instead.
 func (*RecordRef) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{27}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{28}
 }
 
 // ResumeHint is E85's; it is empty until E85 lands (v0.4.0 proto
@@ -4709,7 +4895,7 @@ type ResumeHint struct {
 
 func (x *ResumeHint) Reset() {
 	*x = ResumeHint{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[28]
+	mi := &file_orkstack_v1_run_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4721,7 +4907,7 @@ func (x *ResumeHint) String() string {
 func (*ResumeHint) ProtoMessage() {}
 
 func (x *ResumeHint) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[28]
+	mi := &file_orkstack_v1_run_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4734,7 +4920,7 @@ func (x *ResumeHint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeHint.ProtoReflect.Descriptor instead.
 func (*ResumeHint) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{28}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{29}
 }
 
 // RunContextState is whether a run's tasks are given its run context.
@@ -4747,7 +4933,7 @@ type RunContextState struct {
 
 func (x *RunContextState) Reset() {
 	*x = RunContextState{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[29]
+	mi := &file_orkstack_v1_run_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4759,7 +4945,7 @@ func (x *RunContextState) String() string {
 func (*RunContextState) ProtoMessage() {}
 
 func (x *RunContextState) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[29]
+	mi := &file_orkstack_v1_run_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4772,7 +4958,7 @@ func (x *RunContextState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunContextState.ProtoReflect.Descriptor instead.
 func (*RunContextState) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{29}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RunContextState) GetStatus() RunContextStatus {
@@ -4808,7 +4994,7 @@ type RunPause struct {
 
 func (x *RunPause) Reset() {
 	*x = RunPause{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[30]
+	mi := &file_orkstack_v1_run_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4820,7 +5006,7 @@ func (x *RunPause) String() string {
 func (*RunPause) ProtoMessage() {}
 
 func (x *RunPause) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[30]
+	mi := &file_orkstack_v1_run_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4833,7 +5019,7 @@ func (x *RunPause) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunPause.ProtoReflect.Descriptor instead.
 func (*RunPause) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{30}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RunPause) GetPausedAt() *timestamppb.Timestamp {
@@ -4916,7 +5102,7 @@ type RunResume struct {
 
 func (x *RunResume) Reset() {
 	*x = RunResume{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[31]
+	mi := &file_orkstack_v1_run_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4928,7 +5114,7 @@ func (x *RunResume) String() string {
 func (*RunResume) ProtoMessage() {}
 
 func (x *RunResume) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[31]
+	mi := &file_orkstack_v1_run_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4941,20 +5127,35 @@ func (x *RunResume) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResume.ProtoReflect.Descriptor instead.
 func (*RunResume) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{31}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{32}
 }
 
-// RunResumed is E85's; it is empty until E85 lands (v0.4.0 proto
-// batch).
+// RunResumed is how a run was resumed, carried by RUN_RESUMED.
 type RunResumed struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Action ResumeAction           `protobuf:"varint,1,opt,name=action,proto3,enum=orkstack.v1.ResumeAction" json:"action,omitempty"`
+	// from_task_id is the task Retry from here chose; empty for Resume.
+	FromTaskId string `protobuf:"bytes,2,opt,name=from_task_id,json=fromTaskId,proto3" json:"from_task_id,omitempty"`
+	// resumed_after_sequence is the sequence of the ending set aside.
+	ResumedAfterSequence int64 `protobuf:"varint,3,opt,name=resumed_after_sequence,json=resumedAfterSequence,proto3" json:"resumed_after_sequence,omitempty"`
+	RerunCount           int32 `protobuf:"varint,4,opt,name=rerun_count,json=rerunCount,proto3" json:"rerun_count,omitempty"`
+	KeptCount            int32 `protobuf:"varint,5,opt,name=kept_count,json=keptCount,proto3" json:"kept_count,omitempty"`
+	// principal is who confirmed the resume, as recorded: asserted unless
+	// principal_verified (AGENTS.md §7).
+	Principal         string `protobuf:"bytes,6,opt,name=principal,proto3" json:"principal,omitempty"`
+	PrincipalVerified bool   `protobuf:"varint,7,opt,name=principal_verified,json=principalVerified,proto3" json:"principal_verified,omitempty"`
+	Reason            string `protobuf:"bytes,8,opt,name=reason,proto3" json:"reason,omitempty"`
+	// superseded_reason is the ending's reason, set aside.
+	SupersededReason string `protobuf:"bytes,9,opt,name=superseded_reason,json=supersededReason,proto3" json:"superseded_reason,omitempty"`
+	// resume_count is how many resumes of the run got going, this one included.
+	ResumeCount   int32 `protobuf:"varint,10,opt,name=resume_count,json=resumeCount,proto3" json:"resume_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunResumed) Reset() {
 	*x = RunResumed{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[32]
+	mi := &file_orkstack_v1_run_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4966,7 +5167,7 @@ func (x *RunResumed) String() string {
 func (*RunResumed) ProtoMessage() {}
 
 func (x *RunResumed) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[32]
+	mi := &file_orkstack_v1_run_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4979,7 +5180,142 @@ func (x *RunResumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResumed.ProtoReflect.Descriptor instead.
 func (*RunResumed) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{32}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *RunResumed) GetAction() ResumeAction {
+	if x != nil {
+		return x.Action
+	}
+	return ResumeAction_RESUME_ACTION_UNSPECIFIED
+}
+
+func (x *RunResumed) GetFromTaskId() string {
+	if x != nil {
+		return x.FromTaskId
+	}
+	return ""
+}
+
+func (x *RunResumed) GetResumedAfterSequence() int64 {
+	if x != nil {
+		return x.ResumedAfterSequence
+	}
+	return 0
+}
+
+func (x *RunResumed) GetRerunCount() int32 {
+	if x != nil {
+		return x.RerunCount
+	}
+	return 0
+}
+
+func (x *RunResumed) GetKeptCount() int32 {
+	if x != nil {
+		return x.KeptCount
+	}
+	return 0
+}
+
+func (x *RunResumed) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *RunResumed) GetPrincipalVerified() bool {
+	if x != nil {
+		return x.PrincipalVerified
+	}
+	return false
+}
+
+func (x *RunResumed) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *RunResumed) GetSupersededReason() string {
+	if x != nil {
+		return x.SupersededReason
+	}
+	return ""
+}
+
+func (x *RunResumed) GetResumeCount() int32 {
+	if x != nil {
+		return x.ResumeCount
+	}
+	return 0
+}
+
+// RunResultsKept is what a resumed run read back, carried by
+// RUN_RESULTS_KEPT.
+type RunResultsKept struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kept_count is the results read back from their commits.
+	KeptCount int32 `protobuf:"varint,1,opt,name=kept_count,json=keptCount,proto3" json:"kept_count,omitempty"`
+	// settled_count is the awaited and composed tasks kept from their records.
+	SettledCount int32 `protobuf:"varint,2,opt,name=settled_count,json=settledCount,proto3" json:"settled_count,omitempty"`
+	// read_back_seconds is how long the read-back took.
+	ReadBackSeconds float64 `protobuf:"fixed64,3,opt,name=read_back_seconds,json=readBackSeconds,proto3" json:"read_back_seconds,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RunResultsKept) Reset() {
+	*x = RunResultsKept{}
+	mi := &file_orkstack_v1_run_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunResultsKept) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunResultsKept) ProtoMessage() {}
+
+func (x *RunResultsKept) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunResultsKept.ProtoReflect.Descriptor instead.
+func (*RunResultsKept) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *RunResultsKept) GetKeptCount() int32 {
+	if x != nil {
+		return x.KeptCount
+	}
+	return 0
+}
+
+func (x *RunResultsKept) GetSettledCount() int32 {
+	if x != nil {
+		return x.SettledCount
+	}
+	return 0
+}
+
+func (x *RunResultsKept) GetReadBackSeconds() float64 {
+	if x != nil {
+		return x.ReadBackSeconds
+	}
+	return 0
 }
 
 // RunScheduleFire is E86's; it is empty until E86 lands (v0.4.0 proto
@@ -4992,7 +5328,7 @@ type RunScheduleFire struct {
 
 func (x *RunScheduleFire) Reset() {
 	*x = RunScheduleFire{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[33]
+	mi := &file_orkstack_v1_run_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5004,7 +5340,7 @@ func (x *RunScheduleFire) String() string {
 func (*RunScheduleFire) ProtoMessage() {}
 
 func (x *RunScheduleFire) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[33]
+	mi := &file_orkstack_v1_run_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5017,7 +5353,7 @@ func (x *RunScheduleFire) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunScheduleFire.ProtoReflect.Descriptor instead.
 func (*RunScheduleFire) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{33}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{35}
 }
 
 // RunTimeout is the run's own time limit, from the Orkflow's top-level
@@ -5044,7 +5380,7 @@ type RunTimeout struct {
 
 func (x *RunTimeout) Reset() {
 	*x = RunTimeout{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[34]
+	mi := &file_orkstack_v1_run_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5056,7 +5392,7 @@ func (x *RunTimeout) String() string {
 func (*RunTimeout) ProtoMessage() {}
 
 func (x *RunTimeout) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[34]
+	mi := &file_orkstack_v1_run_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5069,7 +5405,7 @@ func (x *RunTimeout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunTimeout.ProtoReflect.Descriptor instead.
 func (*RunTimeout) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{34}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *RunTimeout) GetSeconds() int64 {
@@ -5139,7 +5475,7 @@ type TaskInterruption struct {
 
 func (x *TaskInterruption) Reset() {
 	*x = TaskInterruption{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[35]
+	mi := &file_orkstack_v1_run_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5151,7 +5487,7 @@ func (x *TaskInterruption) String() string {
 func (*TaskInterruption) ProtoMessage() {}
 
 func (x *TaskInterruption) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[35]
+	mi := &file_orkstack_v1_run_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5164,7 +5500,7 @@ func (x *TaskInterruption) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskInterruption.ProtoReflect.Descriptor instead.
 func (*TaskInterruption) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{35}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *TaskInterruption) GetReason() string {
@@ -5263,7 +5599,7 @@ type TaskInterruptions struct {
 
 func (x *TaskInterruptions) Reset() {
 	*x = TaskInterruptions{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[36]
+	mi := &file_orkstack_v1_run_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5275,7 +5611,7 @@ func (x *TaskInterruptions) String() string {
 func (*TaskInterruptions) ProtoMessage() {}
 
 func (x *TaskInterruptions) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[36]
+	mi := &file_orkstack_v1_run_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5288,7 +5624,7 @@ func (x *TaskInterruptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskInterruptions.ProtoReflect.Descriptor instead.
 func (*TaskInterruptions) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{36}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *TaskInterruptions) GetLost() int32 {
@@ -5587,7 +5923,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"rootOrigin\x12-\n" +
 	"\x12principal_verified\x18\a \x01(\bR\x11principalVerified\x12\x1f\n" +
 	"\vauth_method\x18\b \x01(\tR\n" +
-	"authMethod\"\xaa\x04\n" +
+	"authMethod\"\xa6\x05\n" +
 	"\x05Event\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12*\n" +
@@ -5603,8 +5939,18 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\finterruption\x18\v \x01(\v2\x1d.orkstack.v1.TaskInterruptionR\finterruption\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\f \x01(\tR\trequestId\x12G\n" +
-	"\x10pause_transition\x18\r \x01(\x0e2\x1c.orkstack.v1.PauseTransitionR\x0fpauseTransitionB\a\n" +
-	"\x05_item\"\x13\n" +
+	"\x10pause_transition\x18\r \x01(\x0e2\x1c.orkstack.v1.PauseTransitionR\x0fpauseTransition\x12:\n" +
+	"\bwait_end\x18\x0f \x01(\v2\x1f.orkstack.v1.ConcurrencyWaitEndR\awaitEnd\x12>\n" +
+	"\fresults_kept\x18\x10 \x01(\v2\x1b.orkstack.v1.RunResultsKeptR\vresultsKeptB\a\n" +
+	"\x05_item\"\x84\x02\n" +
+	"\x12ConcurrencyWaitEnd\x12=\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2#.orkstack.v1.ConcurrencyWaitOutcomeR\aoutcome\x121\n" +
+	"\x06waited\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x06waited\x12<\n" +
+	"\bstrategy\x18\x03 \x01(\x0e2 .orkstack.v1.ConcurrencyStrategyR\bstrategy\x12\x1f\n" +
+	"\vlimit_label\x18\x04 \x01(\tR\n" +
+	"limitLabel\x12\x1d\n" +
+	"\n" +
+	"task_level\x18\x05 \x01(\bR\ttaskLevel\"\x13\n" +
 	"\x11AttemptCredential\"\xfd\x01\n" +
 	"\x0fAttemptIdentity\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
@@ -5691,9 +6037,28 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	" \x01(\bR\x10pausedByVerified\x12*\n" +
 	"\x11ended_by_verified\x18\v \x01(\bR\x0fendedByVerifiedJ\x04\b\x04\x10\x05R\n" +
 	"changed_by\"\v\n" +
-	"\tRunResume\"\f\n" +
+	"\tRunResume\"\x8c\x03\n" +
 	"\n" +
-	"RunResumed\"\x11\n" +
+	"RunResumed\x121\n" +
+	"\x06action\x18\x01 \x01(\x0e2\x19.orkstack.v1.ResumeActionR\x06action\x12 \n" +
+	"\ffrom_task_id\x18\x02 \x01(\tR\n" +
+	"fromTaskId\x124\n" +
+	"\x16resumed_after_sequence\x18\x03 \x01(\x03R\x14resumedAfterSequence\x12\x1f\n" +
+	"\vrerun_count\x18\x04 \x01(\x05R\n" +
+	"rerunCount\x12\x1d\n" +
+	"\n" +
+	"kept_count\x18\x05 \x01(\x05R\tkeptCount\x12\x1c\n" +
+	"\tprincipal\x18\x06 \x01(\tR\tprincipal\x12-\n" +
+	"\x12principal_verified\x18\a \x01(\bR\x11principalVerified\x12\x16\n" +
+	"\x06reason\x18\b \x01(\tR\x06reason\x12+\n" +
+	"\x11superseded_reason\x18\t \x01(\tR\x10supersededReason\x12!\n" +
+	"\fresume_count\x18\n" +
+	" \x01(\x05R\vresumeCount\"\x80\x01\n" +
+	"\x0eRunResultsKept\x12\x1d\n" +
+	"\n" +
+	"kept_count\x18\x01 \x01(\x05R\tkeptCount\x12#\n" +
+	"\rsettled_count\x18\x02 \x01(\x05R\fsettledCount\x12*\n" +
+	"\x11read_back_seconds\x18\x03 \x01(\x01R\x0freadBackSeconds\"\x11\n" +
 	"\x0fRunScheduleFire\"\xdc\x01\n" +
 	"\n" +
 	"RunTimeout\x12\x18\n" +
@@ -5760,7 +6125,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x17RUN_ORIGIN_KIND_TRIGGER\x10\x02\x12\x1c\n" +
 	"\x18RUN_ORIGIN_KIND_SCHEDULE\x10\x03\x12\x1e\n" +
 	"\x1aRUN_ORIGIN_KIND_PARENT_RUN\x10\x04\x12\x1d\n" +
-	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\xa9\x04\n" +
+	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\xe6\x04\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16EVENT_TYPE_RUN_CREATED\x10\x01\x12\x1a\n" +
@@ -5779,9 +6144,21 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x15EVENT_TYPE_STREAM_GAP\x10\r\x12\x1c\n" +
 	"\x18EVENT_TYPE_TASK_SLEEPING\x10\x0e\x12\x19\n" +
 	"\x15EVENT_TYPE_RUN_QUEUED\x10\x0f\x12\x1a\n" +
-	"\x16EVENT_TYPE_TASK_QUEUED\x10\x10\x12\x19\n" +
+	"\x16EVENT_TYPE_TASK_QUEUED\x10\x10\x12\x1a\n" +
+	"\x16EVENT_TYPE_RUN_RESUMED\x10\x11\x12\x1f\n" +
+	"\x1bEVENT_TYPE_RUN_RESULTS_KEPT\x10\x12\x12\x19\n" +
 	"\x15EVENT_TYPE_RUN_PAUSED\x10\x13\x12\x1b\n" +
-	"\x17EVENT_TYPE_RUN_UNPAUSED\x10\x14*\xd3\x01\n" +
+	"\x17EVENT_TYPE_RUN_UNPAUSED\x10\x14*\xfc\x02\n" +
+	"\x16ConcurrencyWaitOutcome\x12(\n" +
+	"$CONCURRENCY_WAIT_OUTCOME_UNSPECIFIED\x10\x00\x12$\n" +
+	" CONCURRENCY_WAIT_OUTCOME_STARTED\x10\x01\x12%\n" +
+	"!CONCURRENCY_WAIT_OUTCOME_CANCELED\x10\x02\x12&\n" +
+	"\"CONCURRENCY_WAIT_OUTCOME_TIMED_OUT\x10\x03\x12'\n" +
+	"#CONCURRENCY_WAIT_OUTCOME_SUPERSEDED\x10\x04\x12!\n" +
+	"\x1dCONCURRENCY_WAIT_OUTCOME_FULL\x10\x05\x12(\n" +
+	"$CONCURRENCY_WAIT_OUTCOME_UNAVAILABLE\x10\x06\x12(\n" +
+	"$CONCURRENCY_WAIT_OUTCOME_UNSUPPORTED\x10\a\x12#\n" +
+	"\x1fCONCURRENCY_WAIT_OUTCOME_FENCED\x10\b*\xd3\x01\n" +
 	"\x15ConcurrencyQueueCause\x12'\n" +
 	"#CONCURRENCY_QUEUE_CAUSE_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fCONCURRENCY_QUEUE_CAUSE_ARRIVAL\x10\x01\x12\"\n" +
@@ -5855,8 +6232,8 @@ func file_orkstack_v1_run_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_run_proto_rawDescData
 }
 
-var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 16)
-var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 17)
+var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_orkstack_v1_run_proto_goTypes = []any{
 	(TimingReason)(0),             // 0: orkstack.v1.TimingReason
 	(AwaitResolvedVia)(0),         // 1: orkstack.v1.AwaitResolvedVia
@@ -5864,197 +6241,206 @@ var file_orkstack_v1_run_proto_goTypes = []any{
 	(RetryState)(0),               // 3: orkstack.v1.RetryState
 	(RunOriginKind)(0),            // 4: orkstack.v1.RunOriginKind
 	(EventType)(0),                // 5: orkstack.v1.EventType
-	(ConcurrencyQueueCause)(0),    // 6: orkstack.v1.ConcurrencyQueueCause
-	(MeasurementMethod)(0),        // 7: orkstack.v1.MeasurementMethod
-	(UnmeasuredReason)(0),         // 8: orkstack.v1.UnmeasuredReason
-	(PauseTransition)(0),          // 9: orkstack.v1.PauseTransition
-	(PauseEnd)(0),                 // 10: orkstack.v1.PauseEnd
-	(ResumeAction)(0),             // 11: orkstack.v1.ResumeAction
-	(ResumeDisposition)(0),        // 12: orkstack.v1.ResumeDisposition
-	(RunContextStatus)(0),         // 13: orkstack.v1.RunContextStatus
-	(RunDispatchHold)(0),          // 14: orkstack.v1.RunDispatchHold
-	(InterruptionPhase)(0),        // 15: orkstack.v1.InterruptionPhase
-	(*TaskEach)(nil),              // 16: orkstack.v1.TaskEach
-	(*TaskChild)(nil),             // 17: orkstack.v1.TaskChild
-	(*TaskRun)(nil),               // 18: orkstack.v1.TaskRun
-	(*TimingQuantity)(nil),        // 19: orkstack.v1.TimingQuantity
-	(*TaskTiming)(nil),            // 20: orkstack.v1.TaskTiming
-	(*RunTiming)(nil),             // 21: orkstack.v1.RunTiming
-	(*AttemptTiming)(nil),         // 22: orkstack.v1.AttemptTiming
-	(*ResolutionDetail)(nil),      // 23: orkstack.v1.ResolutionDetail
-	(*TaskAwait)(nil),             // 24: orkstack.v1.TaskAwait
-	(*TaskSleep)(nil),             // 25: orkstack.v1.TaskSleep
-	(*AwaitSignal)(nil),           // 26: orkstack.v1.AwaitSignal
-	(*RunPauseSignal)(nil),        // 27: orkstack.v1.RunPauseSignal
-	(*PhaseSpan)(nil),             // 28: orkstack.v1.PhaseSpan
-	(*ReservedResources)(nil),     // 29: orkstack.v1.ReservedResources
-	(*TaskAttempt)(nil),           // 30: orkstack.v1.TaskAttempt
-	(*Run)(nil),                   // 31: orkstack.v1.Run
-	(*RunCancelRequest)(nil),      // 32: orkstack.v1.RunCancelRequest
-	(*RunOrigin)(nil),             // 33: orkstack.v1.RunOrigin
-	(*Event)(nil),                 // 34: orkstack.v1.Event
-	(*AttemptCredential)(nil),     // 35: orkstack.v1.AttemptCredential
-	(*AttemptIdentity)(nil),       // 36: orkstack.v1.AttemptIdentity
-	(*ConcurrencyQueued)(nil),     // 37: orkstack.v1.ConcurrencyQueued
-	(*EffectiveProfile)(nil),      // 38: orkstack.v1.EffectiveProfile
-	(*InheritedPause)(nil),        // 39: orkstack.v1.InheritedPause
-	(*MeasuredUsage)(nil),         // 40: orkstack.v1.MeasuredUsage
-	(*NamedArtifact)(nil),         // 41: orkstack.v1.NamedArtifact
-	(*PauseWarning)(nil),          // 42: orkstack.v1.PauseWarning
-	(*RecordRef)(nil),             // 43: orkstack.v1.RecordRef
-	(*ResumeHint)(nil),            // 44: orkstack.v1.ResumeHint
-	(*RunContextState)(nil),       // 45: orkstack.v1.RunContextState
-	(*RunPause)(nil),              // 46: orkstack.v1.RunPause
-	(*RunResume)(nil),             // 47: orkstack.v1.RunResume
-	(*RunResumed)(nil),            // 48: orkstack.v1.RunResumed
-	(*RunScheduleFire)(nil),       // 49: orkstack.v1.RunScheduleFire
-	(*RunTimeout)(nil),            // 50: orkstack.v1.RunTimeout
-	(*TaskInterruption)(nil),      // 51: orkstack.v1.TaskInterruption
-	(*TaskInterruptions)(nil),     // 52: orkstack.v1.TaskInterruptions
-	(*EachLines)(nil),             // 53: orkstack.v1.EachLines
-	(Status)(0),                   // 54: orkstack.v1.Status
-	(*Payload)(nil),               // 55: orkstack.v1.Payload
-	(*ArtifactRef)(nil),           // 56: orkstack.v1.ArtifactRef
-	(*Error)(nil),                 // 57: orkstack.v1.Error
-	(*timestamppb.Timestamp)(nil), // 58: google.protobuf.Timestamp
-	(*CommitRef)(nil),             // 59: orkstack.v1.CommitRef
-	(*CacheResult)(nil),           // 60: orkstack.v1.CacheResult
-	(JoinPolicy)(0),               // 61: orkstack.v1.JoinPolicy
-	(*durationpb.Duration)(nil),   // 62: google.protobuf.Duration
-	(*ImageRef)(nil),              // 63: orkstack.v1.ImageRef
-	(*TelemetrySelection)(nil),    // 64: orkstack.v1.TelemetrySelection
-	(*OrkflowRef)(nil),            // 65: orkstack.v1.OrkflowRef
-	(ConcurrencyStrategy)(0),      // 66: orkstack.v1.ConcurrencyStrategy
-	(ProfileKind)(0),              // 67: orkstack.v1.ProfileKind
+	(ConcurrencyWaitOutcome)(0),   // 6: orkstack.v1.ConcurrencyWaitOutcome
+	(ConcurrencyQueueCause)(0),    // 7: orkstack.v1.ConcurrencyQueueCause
+	(MeasurementMethod)(0),        // 8: orkstack.v1.MeasurementMethod
+	(UnmeasuredReason)(0),         // 9: orkstack.v1.UnmeasuredReason
+	(PauseTransition)(0),          // 10: orkstack.v1.PauseTransition
+	(PauseEnd)(0),                 // 11: orkstack.v1.PauseEnd
+	(ResumeAction)(0),             // 12: orkstack.v1.ResumeAction
+	(ResumeDisposition)(0),        // 13: orkstack.v1.ResumeDisposition
+	(RunContextStatus)(0),         // 14: orkstack.v1.RunContextStatus
+	(RunDispatchHold)(0),          // 15: orkstack.v1.RunDispatchHold
+	(InterruptionPhase)(0),        // 16: orkstack.v1.InterruptionPhase
+	(*TaskEach)(nil),              // 17: orkstack.v1.TaskEach
+	(*TaskChild)(nil),             // 18: orkstack.v1.TaskChild
+	(*TaskRun)(nil),               // 19: orkstack.v1.TaskRun
+	(*TimingQuantity)(nil),        // 20: orkstack.v1.TimingQuantity
+	(*TaskTiming)(nil),            // 21: orkstack.v1.TaskTiming
+	(*RunTiming)(nil),             // 22: orkstack.v1.RunTiming
+	(*AttemptTiming)(nil),         // 23: orkstack.v1.AttemptTiming
+	(*ResolutionDetail)(nil),      // 24: orkstack.v1.ResolutionDetail
+	(*TaskAwait)(nil),             // 25: orkstack.v1.TaskAwait
+	(*TaskSleep)(nil),             // 26: orkstack.v1.TaskSleep
+	(*AwaitSignal)(nil),           // 27: orkstack.v1.AwaitSignal
+	(*RunPauseSignal)(nil),        // 28: orkstack.v1.RunPauseSignal
+	(*PhaseSpan)(nil),             // 29: orkstack.v1.PhaseSpan
+	(*ReservedResources)(nil),     // 30: orkstack.v1.ReservedResources
+	(*TaskAttempt)(nil),           // 31: orkstack.v1.TaskAttempt
+	(*Run)(nil),                   // 32: orkstack.v1.Run
+	(*RunCancelRequest)(nil),      // 33: orkstack.v1.RunCancelRequest
+	(*RunOrigin)(nil),             // 34: orkstack.v1.RunOrigin
+	(*Event)(nil),                 // 35: orkstack.v1.Event
+	(*ConcurrencyWaitEnd)(nil),    // 36: orkstack.v1.ConcurrencyWaitEnd
+	(*AttemptCredential)(nil),     // 37: orkstack.v1.AttemptCredential
+	(*AttemptIdentity)(nil),       // 38: orkstack.v1.AttemptIdentity
+	(*ConcurrencyQueued)(nil),     // 39: orkstack.v1.ConcurrencyQueued
+	(*EffectiveProfile)(nil),      // 40: orkstack.v1.EffectiveProfile
+	(*InheritedPause)(nil),        // 41: orkstack.v1.InheritedPause
+	(*MeasuredUsage)(nil),         // 42: orkstack.v1.MeasuredUsage
+	(*NamedArtifact)(nil),         // 43: orkstack.v1.NamedArtifact
+	(*PauseWarning)(nil),          // 44: orkstack.v1.PauseWarning
+	(*RecordRef)(nil),             // 45: orkstack.v1.RecordRef
+	(*ResumeHint)(nil),            // 46: orkstack.v1.ResumeHint
+	(*RunContextState)(nil),       // 47: orkstack.v1.RunContextState
+	(*RunPause)(nil),              // 48: orkstack.v1.RunPause
+	(*RunResume)(nil),             // 49: orkstack.v1.RunResume
+	(*RunResumed)(nil),            // 50: orkstack.v1.RunResumed
+	(*RunResultsKept)(nil),        // 51: orkstack.v1.RunResultsKept
+	(*RunScheduleFire)(nil),       // 52: orkstack.v1.RunScheduleFire
+	(*RunTimeout)(nil),            // 53: orkstack.v1.RunTimeout
+	(*TaskInterruption)(nil),      // 54: orkstack.v1.TaskInterruption
+	(*TaskInterruptions)(nil),     // 55: orkstack.v1.TaskInterruptions
+	(*EachLines)(nil),             // 56: orkstack.v1.EachLines
+	(Status)(0),                   // 57: orkstack.v1.Status
+	(*Payload)(nil),               // 58: orkstack.v1.Payload
+	(*ArtifactRef)(nil),           // 59: orkstack.v1.ArtifactRef
+	(*Error)(nil),                 // 60: orkstack.v1.Error
+	(*timestamppb.Timestamp)(nil), // 61: google.protobuf.Timestamp
+	(*CommitRef)(nil),             // 62: orkstack.v1.CommitRef
+	(*CacheResult)(nil),           // 63: orkstack.v1.CacheResult
+	(JoinPolicy)(0),               // 64: orkstack.v1.JoinPolicy
+	(*durationpb.Duration)(nil),   // 65: google.protobuf.Duration
+	(*ImageRef)(nil),              // 66: orkstack.v1.ImageRef
+	(*TelemetrySelection)(nil),    // 67: orkstack.v1.TelemetrySelection
+	(*OrkflowRef)(nil),            // 68: orkstack.v1.OrkflowRef
+	(ConcurrencyStrategy)(0),      // 69: orkstack.v1.ConcurrencyStrategy
+	(ProfileKind)(0),              // 70: orkstack.v1.ProfileKind
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
-	53,  // 0: orkstack.v1.TaskEach.lines:type_name -> orkstack.v1.EachLines
-	41,  // 1: orkstack.v1.TaskChild.input_artifacts:type_name -> orkstack.v1.NamedArtifact
-	54,  // 2: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
-	55,  // 3: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
-	56,  // 4: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
-	57,  // 5: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
-	58,  // 6: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
-	58,  // 7: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	56,  // 8: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
-	59,  // 9: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
-	56,  // 10: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	56,  // 0: orkstack.v1.TaskEach.lines:type_name -> orkstack.v1.EachLines
+	43,  // 1: orkstack.v1.TaskChild.input_artifacts:type_name -> orkstack.v1.NamedArtifact
+	57,  // 2: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
+	58,  // 3: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
+	59,  // 4: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
+	60,  // 5: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
+	61,  // 6: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
+	61,  // 7: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	59,  // 8: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
+	62,  // 9: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
+	59,  // 10: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
 	3,   // 11: orkstack.v1.TaskRun.retry_state:type_name -> orkstack.v1.RetryState
-	58,  // 12: orkstack.v1.TaskRun.scheduled_at:type_name -> google.protobuf.Timestamp
-	24,  // 13: orkstack.v1.TaskRun.await:type_name -> orkstack.v1.TaskAwait
-	16,  // 14: orkstack.v1.TaskRun.each:type_name -> orkstack.v1.TaskEach
-	18,  // 15: orkstack.v1.TaskRun.items:type_name -> orkstack.v1.TaskRun
-	17,  // 16: orkstack.v1.TaskRun.child:type_name -> orkstack.v1.TaskChild
-	60,  // 17: orkstack.v1.TaskRun.cache:type_name -> orkstack.v1.CacheResult
-	61,  // 18: orkstack.v1.TaskRun.join:type_name -> orkstack.v1.JoinPolicy
-	20,  // 19: orkstack.v1.TaskRun.timing:type_name -> orkstack.v1.TaskTiming
-	25,  // 20: orkstack.v1.TaskRun.sleep:type_name -> orkstack.v1.TaskSleep
-	52,  // 21: orkstack.v1.TaskRun.interruptions:type_name -> orkstack.v1.TaskInterruptions
-	37,  // 22: orkstack.v1.TaskRun.queued:type_name -> orkstack.v1.ConcurrencyQueued
-	12,  // 23: orkstack.v1.TaskRun.resume_disposition:type_name -> orkstack.v1.ResumeDisposition
-	58,  // 24: orkstack.v1.TaskRun.wake_at:type_name -> google.protobuf.Timestamp
-	43,  // 25: orkstack.v1.TaskRun.record:type_name -> orkstack.v1.RecordRef
-	62,  // 26: orkstack.v1.TimingQuantity.duration:type_name -> google.protobuf.Duration
+	61,  // 12: orkstack.v1.TaskRun.scheduled_at:type_name -> google.protobuf.Timestamp
+	25,  // 13: orkstack.v1.TaskRun.await:type_name -> orkstack.v1.TaskAwait
+	17,  // 14: orkstack.v1.TaskRun.each:type_name -> orkstack.v1.TaskEach
+	19,  // 15: orkstack.v1.TaskRun.items:type_name -> orkstack.v1.TaskRun
+	18,  // 16: orkstack.v1.TaskRun.child:type_name -> orkstack.v1.TaskChild
+	63,  // 17: orkstack.v1.TaskRun.cache:type_name -> orkstack.v1.CacheResult
+	64,  // 18: orkstack.v1.TaskRun.join:type_name -> orkstack.v1.JoinPolicy
+	21,  // 19: orkstack.v1.TaskRun.timing:type_name -> orkstack.v1.TaskTiming
+	26,  // 20: orkstack.v1.TaskRun.sleep:type_name -> orkstack.v1.TaskSleep
+	55,  // 21: orkstack.v1.TaskRun.interruptions:type_name -> orkstack.v1.TaskInterruptions
+	39,  // 22: orkstack.v1.TaskRun.queued:type_name -> orkstack.v1.ConcurrencyQueued
+	13,  // 23: orkstack.v1.TaskRun.resume_disposition:type_name -> orkstack.v1.ResumeDisposition
+	61,  // 24: orkstack.v1.TaskRun.wake_at:type_name -> google.protobuf.Timestamp
+	45,  // 25: orkstack.v1.TaskRun.record:type_name -> orkstack.v1.RecordRef
+	65,  // 26: orkstack.v1.TimingQuantity.duration:type_name -> google.protobuf.Duration
 	0,   // 27: orkstack.v1.TimingQuantity.reason:type_name -> orkstack.v1.TimingReason
-	19,  // 28: orkstack.v1.TaskTiming.wait:type_name -> orkstack.v1.TimingQuantity
-	19,  // 29: orkstack.v1.TaskTiming.run:type_name -> orkstack.v1.TimingQuantity
-	19,  // 30: orkstack.v1.TaskTiming.total:type_name -> orkstack.v1.TimingQuantity
-	19,  // 31: orkstack.v1.TaskTiming.since_scheduled:type_name -> orkstack.v1.TimingQuantity
-	19,  // 32: orkstack.v1.RunTiming.elapsed:type_name -> orkstack.v1.TimingQuantity
-	19,  // 33: orkstack.v1.RunTiming.wait_sum:type_name -> orkstack.v1.TimingQuantity
-	58,  // 34: orkstack.v1.RunTiming.computed_at:type_name -> google.protobuf.Timestamp
+	20,  // 28: orkstack.v1.TaskTiming.wait:type_name -> orkstack.v1.TimingQuantity
+	20,  // 29: orkstack.v1.TaskTiming.run:type_name -> orkstack.v1.TimingQuantity
+	20,  // 30: orkstack.v1.TaskTiming.total:type_name -> orkstack.v1.TimingQuantity
+	20,  // 31: orkstack.v1.TaskTiming.since_scheduled:type_name -> orkstack.v1.TimingQuantity
+	20,  // 32: orkstack.v1.RunTiming.elapsed:type_name -> orkstack.v1.TimingQuantity
+	20,  // 33: orkstack.v1.RunTiming.wait_sum:type_name -> orkstack.v1.TimingQuantity
+	61,  // 34: orkstack.v1.RunTiming.computed_at:type_name -> google.protobuf.Timestamp
 	0,   // 35: orkstack.v1.AttemptTiming.phases_reason:type_name -> orkstack.v1.TimingReason
 	1,   // 36: orkstack.v1.ResolutionDetail.via:type_name -> orkstack.v1.AwaitResolvedVia
-	58,  // 37: orkstack.v1.TaskAwait.deadline:type_name -> google.protobuf.Timestamp
+	61,  // 37: orkstack.v1.TaskAwait.deadline:type_name -> google.protobuf.Timestamp
 	1,   // 38: orkstack.v1.TaskAwait.resolved_via:type_name -> orkstack.v1.AwaitResolvedVia
-	58,  // 39: orkstack.v1.TaskSleep.wake_at:type_name -> google.protobuf.Timestamp
-	56,  // 40: orkstack.v1.AwaitSignal.values:type_name -> orkstack.v1.ArtifactRef
+	61,  // 39: orkstack.v1.TaskSleep.wake_at:type_name -> google.protobuf.Timestamp
+	59,  // 40: orkstack.v1.AwaitSignal.values:type_name -> orkstack.v1.ArtifactRef
 	1,   // 41: orkstack.v1.AwaitSignal.via:type_name -> orkstack.v1.AwaitResolvedVia
-	58,  // 42: orkstack.v1.RunPauseSignal.origin_expires_at:type_name -> google.protobuf.Timestamp
-	58,  // 43: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
-	58,  // 44: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
-	19,  // 45: orkstack.v1.PhaseSpan.duration:type_name -> orkstack.v1.TimingQuantity
+	61,  // 42: orkstack.v1.RunPauseSignal.origin_expires_at:type_name -> google.protobuf.Timestamp
+	61,  // 43: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
+	61,  // 44: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
+	20,  // 45: orkstack.v1.PhaseSpan.duration:type_name -> orkstack.v1.TimingQuantity
 	2,   // 46: orkstack.v1.TaskAttempt.outcome:type_name -> orkstack.v1.AttemptOutcome
-	57,  // 47: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
-	58,  // 48: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
-	58,  // 49: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
-	63,  // 50: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
-	56,  // 51: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	28,  // 52: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
-	29,  // 53: orkstack.v1.TaskAttempt.resources:type_name -> orkstack.v1.ReservedResources
-	60,  // 54: orkstack.v1.TaskAttempt.cache:type_name -> orkstack.v1.CacheResult
-	22,  // 55: orkstack.v1.TaskAttempt.timing:type_name -> orkstack.v1.AttemptTiming
-	38,  // 56: orkstack.v1.TaskAttempt.profiles:type_name -> orkstack.v1.EffectiveProfile
-	40,  // 57: orkstack.v1.TaskAttempt.measured:type_name -> orkstack.v1.MeasuredUsage
-	36,  // 58: orkstack.v1.TaskAttempt.identities:type_name -> orkstack.v1.AttemptIdentity
-	35,  // 59: orkstack.v1.TaskAttempt.credentials:type_name -> orkstack.v1.AttemptCredential
-	54,  // 60: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
-	55,  // 61: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
-	55,  // 62: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
-	57,  // 63: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
-	18,  // 64: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
-	58,  // 65: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	58,  // 66: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	58,  // 67: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	64,  // 68: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
-	33,  // 69: orkstack.v1.Run.origin:type_name -> orkstack.v1.RunOrigin
-	21,  // 70: orkstack.v1.Run.timing:type_name -> orkstack.v1.RunTiming
-	41,  // 71: orkstack.v1.Run.input_artifacts:type_name -> orkstack.v1.NamedArtifact
-	41,  // 72: orkstack.v1.Run.output_artifacts:type_name -> orkstack.v1.NamedArtifact
-	45,  // 73: orkstack.v1.Run.run_context:type_name -> orkstack.v1.RunContextState
-	37,  // 74: orkstack.v1.Run.queued:type_name -> orkstack.v1.ConcurrencyQueued
-	47,  // 75: orkstack.v1.Run.resumes:type_name -> orkstack.v1.RunResume
-	44,  // 76: orkstack.v1.Run.resume_hint:type_name -> orkstack.v1.ResumeHint
-	46,  // 77: orkstack.v1.Run.pause:type_name -> orkstack.v1.RunPause
-	46,  // 78: orkstack.v1.Run.last_pause:type_name -> orkstack.v1.RunPause
-	39,  // 79: orkstack.v1.Run.paused_by_parent:type_name -> orkstack.v1.InheritedPause
-	42,  // 80: orkstack.v1.Run.pause_warnings:type_name -> orkstack.v1.PauseWarning
-	50,  // 81: orkstack.v1.Run.timeout:type_name -> orkstack.v1.RunTimeout
-	14,  // 82: orkstack.v1.Run.dispatch_hold:type_name -> orkstack.v1.RunDispatchHold
+	60,  // 47: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
+	61,  // 48: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
+	61,  // 49: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
+	66,  // 50: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
+	59,  // 51: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	29,  // 52: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
+	30,  // 53: orkstack.v1.TaskAttempt.resources:type_name -> orkstack.v1.ReservedResources
+	63,  // 54: orkstack.v1.TaskAttempt.cache:type_name -> orkstack.v1.CacheResult
+	23,  // 55: orkstack.v1.TaskAttempt.timing:type_name -> orkstack.v1.AttemptTiming
+	40,  // 56: orkstack.v1.TaskAttempt.profiles:type_name -> orkstack.v1.EffectiveProfile
+	42,  // 57: orkstack.v1.TaskAttempt.measured:type_name -> orkstack.v1.MeasuredUsage
+	38,  // 58: orkstack.v1.TaskAttempt.identities:type_name -> orkstack.v1.AttemptIdentity
+	37,  // 59: orkstack.v1.TaskAttempt.credentials:type_name -> orkstack.v1.AttemptCredential
+	57,  // 60: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
+	58,  // 61: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
+	58,  // 62: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
+	60,  // 63: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
+	19,  // 64: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
+	61,  // 65: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	61,  // 66: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	61,  // 67: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	67,  // 68: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	34,  // 69: orkstack.v1.Run.origin:type_name -> orkstack.v1.RunOrigin
+	22,  // 70: orkstack.v1.Run.timing:type_name -> orkstack.v1.RunTiming
+	43,  // 71: orkstack.v1.Run.input_artifacts:type_name -> orkstack.v1.NamedArtifact
+	43,  // 72: orkstack.v1.Run.output_artifacts:type_name -> orkstack.v1.NamedArtifact
+	47,  // 73: orkstack.v1.Run.run_context:type_name -> orkstack.v1.RunContextState
+	39,  // 74: orkstack.v1.Run.queued:type_name -> orkstack.v1.ConcurrencyQueued
+	49,  // 75: orkstack.v1.Run.resumes:type_name -> orkstack.v1.RunResume
+	46,  // 76: orkstack.v1.Run.resume_hint:type_name -> orkstack.v1.ResumeHint
+	48,  // 77: orkstack.v1.Run.pause:type_name -> orkstack.v1.RunPause
+	48,  // 78: orkstack.v1.Run.last_pause:type_name -> orkstack.v1.RunPause
+	41,  // 79: orkstack.v1.Run.paused_by_parent:type_name -> orkstack.v1.InheritedPause
+	44,  // 80: orkstack.v1.Run.pause_warnings:type_name -> orkstack.v1.PauseWarning
+	53,  // 81: orkstack.v1.Run.timeout:type_name -> orkstack.v1.RunTimeout
+	15,  // 82: orkstack.v1.Run.dispatch_hold:type_name -> orkstack.v1.RunDispatchHold
 	4,   // 83: orkstack.v1.RunOrigin.kind:type_name -> orkstack.v1.RunOriginKind
-	49,  // 84: orkstack.v1.RunOrigin.schedule:type_name -> orkstack.v1.RunScheduleFire
-	65,  // 85: orkstack.v1.RunOrigin.parent_orkflow:type_name -> orkstack.v1.OrkflowRef
-	65,  // 86: orkstack.v1.RunOrigin.root_orkflow:type_name -> orkstack.v1.OrkflowRef
-	33,  // 87: orkstack.v1.RunOrigin.root_origin:type_name -> orkstack.v1.RunOrigin
+	52,  // 84: orkstack.v1.RunOrigin.schedule:type_name -> orkstack.v1.RunScheduleFire
+	68,  // 85: orkstack.v1.RunOrigin.parent_orkflow:type_name -> orkstack.v1.OrkflowRef
+	68,  // 86: orkstack.v1.RunOrigin.root_orkflow:type_name -> orkstack.v1.OrkflowRef
+	34,  // 87: orkstack.v1.RunOrigin.root_origin:type_name -> orkstack.v1.RunOrigin
 	5,   // 88: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
-	54,  // 89: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
-	55,  // 90: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
-	58,  // 91: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	48,  // 92: orkstack.v1.Event.resumed:type_name -> orkstack.v1.RunResumed
-	51,  // 93: orkstack.v1.Event.interruption:type_name -> orkstack.v1.TaskInterruption
-	9,   // 94: orkstack.v1.Event.pause_transition:type_name -> orkstack.v1.PauseTransition
-	58,  // 95: orkstack.v1.AttemptIdentity.last_expires_at:type_name -> google.protobuf.Timestamp
-	66,  // 96: orkstack.v1.ConcurrencyQueued.strategy:type_name -> orkstack.v1.ConcurrencyStrategy
-	58,  // 97: orkstack.v1.ConcurrencyQueued.queued_since:type_name -> google.protobuf.Timestamp
-	58,  // 98: orkstack.v1.ConcurrencyQueued.times_out_at:type_name -> google.protobuf.Timestamp
-	6,   // 99: orkstack.v1.ConcurrencyQueued.cause:type_name -> orkstack.v1.ConcurrencyQueueCause
-	67,  // 100: orkstack.v1.EffectiveProfile.kind:type_name -> orkstack.v1.ProfileKind
-	58,  // 101: orkstack.v1.InheritedPause.since:type_name -> google.protobuf.Timestamp
-	58,  // 102: orkstack.v1.InheritedPause.backstop_at:type_name -> google.protobuf.Timestamp
-	7,   // 103: orkstack.v1.MeasuredUsage.method:type_name -> orkstack.v1.MeasurementMethod
-	58,  // 104: orkstack.v1.MeasuredUsage.first_sampled_at:type_name -> google.protobuf.Timestamp
-	58,  // 105: orkstack.v1.MeasuredUsage.last_sampled_at:type_name -> google.protobuf.Timestamp
-	58,  // 106: orkstack.v1.MeasuredUsage.container_started_at:type_name -> google.protobuf.Timestamp
-	58,  // 107: orkstack.v1.MeasuredUsage.container_exited_at:type_name -> google.protobuf.Timestamp
-	8,   // 108: orkstack.v1.MeasuredUsage.unmeasured_reason:type_name -> orkstack.v1.UnmeasuredReason
-	56,  // 109: orkstack.v1.NamedArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
-	13,  // 110: orkstack.v1.RunContextState.status:type_name -> orkstack.v1.RunContextStatus
-	58,  // 111: orkstack.v1.RunPause.paused_at:type_name -> google.protobuf.Timestamp
-	58,  // 112: orkstack.v1.RunPause.expires_at:type_name -> google.protobuf.Timestamp
-	10,  // 113: orkstack.v1.RunPause.end:type_name -> orkstack.v1.PauseEnd
-	58,  // 114: orkstack.v1.RunPause.ended_at:type_name -> google.protobuf.Timestamp
-	58,  // 115: orkstack.v1.RunTimeout.deadline:type_name -> google.protobuf.Timestamp
-	58,  // 116: orkstack.v1.RunTimeout.hard_end:type_name -> google.protobuf.Timestamp
-	15,  // 117: orkstack.v1.TaskInterruption.phase:type_name -> orkstack.v1.InterruptionPhase
-	58,  // 118: orkstack.v1.TaskInterruption.at:type_name -> google.protobuf.Timestamp
-	58,  // 119: orkstack.v1.TaskInterruption.orker_stopping_since:type_name -> google.protobuf.Timestamp
-	51,  // 120: orkstack.v1.TaskInterruptions.last:type_name -> orkstack.v1.TaskInterruption
-	58,  // 121: orkstack.v1.TaskInterruptions.not_before:type_name -> google.protobuf.Timestamp
-	122, // [122:122] is the sub-list for method output_type
-	122, // [122:122] is the sub-list for method input_type
-	122, // [122:122] is the sub-list for extension type_name
-	122, // [122:122] is the sub-list for extension extendee
-	0,   // [0:122] is the sub-list for field type_name
+	57,  // 89: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
+	58,  // 90: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
+	61,  // 91: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
+	50,  // 92: orkstack.v1.Event.resumed:type_name -> orkstack.v1.RunResumed
+	54,  // 93: orkstack.v1.Event.interruption:type_name -> orkstack.v1.TaskInterruption
+	10,  // 94: orkstack.v1.Event.pause_transition:type_name -> orkstack.v1.PauseTransition
+	36,  // 95: orkstack.v1.Event.wait_end:type_name -> orkstack.v1.ConcurrencyWaitEnd
+	51,  // 96: orkstack.v1.Event.results_kept:type_name -> orkstack.v1.RunResultsKept
+	6,   // 97: orkstack.v1.ConcurrencyWaitEnd.outcome:type_name -> orkstack.v1.ConcurrencyWaitOutcome
+	65,  // 98: orkstack.v1.ConcurrencyWaitEnd.waited:type_name -> google.protobuf.Duration
+	69,  // 99: orkstack.v1.ConcurrencyWaitEnd.strategy:type_name -> orkstack.v1.ConcurrencyStrategy
+	61,  // 100: orkstack.v1.AttemptIdentity.last_expires_at:type_name -> google.protobuf.Timestamp
+	69,  // 101: orkstack.v1.ConcurrencyQueued.strategy:type_name -> orkstack.v1.ConcurrencyStrategy
+	61,  // 102: orkstack.v1.ConcurrencyQueued.queued_since:type_name -> google.protobuf.Timestamp
+	61,  // 103: orkstack.v1.ConcurrencyQueued.times_out_at:type_name -> google.protobuf.Timestamp
+	7,   // 104: orkstack.v1.ConcurrencyQueued.cause:type_name -> orkstack.v1.ConcurrencyQueueCause
+	70,  // 105: orkstack.v1.EffectiveProfile.kind:type_name -> orkstack.v1.ProfileKind
+	61,  // 106: orkstack.v1.InheritedPause.since:type_name -> google.protobuf.Timestamp
+	61,  // 107: orkstack.v1.InheritedPause.backstop_at:type_name -> google.protobuf.Timestamp
+	8,   // 108: orkstack.v1.MeasuredUsage.method:type_name -> orkstack.v1.MeasurementMethod
+	61,  // 109: orkstack.v1.MeasuredUsage.first_sampled_at:type_name -> google.protobuf.Timestamp
+	61,  // 110: orkstack.v1.MeasuredUsage.last_sampled_at:type_name -> google.protobuf.Timestamp
+	61,  // 111: orkstack.v1.MeasuredUsage.container_started_at:type_name -> google.protobuf.Timestamp
+	61,  // 112: orkstack.v1.MeasuredUsage.container_exited_at:type_name -> google.protobuf.Timestamp
+	9,   // 113: orkstack.v1.MeasuredUsage.unmeasured_reason:type_name -> orkstack.v1.UnmeasuredReason
+	59,  // 114: orkstack.v1.NamedArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
+	14,  // 115: orkstack.v1.RunContextState.status:type_name -> orkstack.v1.RunContextStatus
+	61,  // 116: orkstack.v1.RunPause.paused_at:type_name -> google.protobuf.Timestamp
+	61,  // 117: orkstack.v1.RunPause.expires_at:type_name -> google.protobuf.Timestamp
+	11,  // 118: orkstack.v1.RunPause.end:type_name -> orkstack.v1.PauseEnd
+	61,  // 119: orkstack.v1.RunPause.ended_at:type_name -> google.protobuf.Timestamp
+	12,  // 120: orkstack.v1.RunResumed.action:type_name -> orkstack.v1.ResumeAction
+	61,  // 121: orkstack.v1.RunTimeout.deadline:type_name -> google.protobuf.Timestamp
+	61,  // 122: orkstack.v1.RunTimeout.hard_end:type_name -> google.protobuf.Timestamp
+	16,  // 123: orkstack.v1.TaskInterruption.phase:type_name -> orkstack.v1.InterruptionPhase
+	61,  // 124: orkstack.v1.TaskInterruption.at:type_name -> google.protobuf.Timestamp
+	61,  // 125: orkstack.v1.TaskInterruption.orker_stopping_since:type_name -> google.protobuf.Timestamp
+	54,  // 126: orkstack.v1.TaskInterruptions.last:type_name -> orkstack.v1.TaskInterruption
+	61,  // 127: orkstack.v1.TaskInterruptions.not_before:type_name -> google.protobuf.Timestamp
+	128, // [128:128] is the sub-list for method output_type
+	128, // [128:128] is the sub-list for method input_type
+	128, // [128:128] is the sub-list for extension type_name
+	128, // [128:128] is the sub-list for extension extendee
+	0,   // [0:128] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }
@@ -6069,14 +6455,14 @@ func file_orkstack_v1_run_proto_init() {
 	file_orkstack_v1_run_proto_msgTypes[2].OneofWrappers = []any{}
 	file_orkstack_v1_run_proto_msgTypes[14].OneofWrappers = []any{}
 	file_orkstack_v1_run_proto_msgTypes[18].OneofWrappers = []any{}
-	file_orkstack_v1_run_proto_msgTypes[35].OneofWrappers = []any{}
+	file_orkstack_v1_run_proto_msgTypes[37].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_run_proto_rawDesc), len(file_orkstack_v1_run_proto_rawDesc)),
-			NumEnums:      16,
-			NumMessages:   37,
+			NumEnums:      17,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

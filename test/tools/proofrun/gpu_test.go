@@ -250,7 +250,7 @@ func writeGPUProof(t *testing.T, r proofRecord) string {
 
 func passingGPUProof(tier, tree string) proofRecord {
 	r := proofRecord{Tier: tier, Tree: tree, TreeEnd: tree, CleanStart: true, CleanEnd: true, Result: "pass",
-		GPUHost: true, GPUGateRan: true}
+		GPUHost: true, GPUGateRan: true, GPUSpecsGateRan: true}
 	switch tier {
 	case tierFull:
 		r.MergeEligible = true
@@ -346,11 +346,13 @@ func TestMergeGPUTierProof(t *testing.T) {
 		name     string
 		host     bool
 		gate     bool
+		specs    bool // the GPU spec gate left its ledger
 		wantPass bool
 	}{
-		{"the gate ran on the GPU host", true, true, true},
-		{"a ledger that did not run on the host", false, true, false},
-		{"no gpu gate", true, false, false},
+		{"the gate ran on the GPU host", true, true, true, true},
+		{"the gate left no gpu-specs ledger", true, true, false, false},
+		{"a ledger that did not run on the host", false, true, true, false},
+		{"no gpu gate", true, false, true, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -369,6 +371,10 @@ func TestMergeGPUTierProof(t *testing.T) {
 			l := ledger{Suite: suiteGPU, Tests: []entry{}, Problems: []string{}, GPUHost: tt.host, GPUGateRan: tt.host,
 				ListSHA256: emptySHA, BaseSHA256: emptySHA}
 			must.OK(t, writeJSON(filepath.Join(local, suiteGPU+"-tests.json"), l))
+			if tt.specs {
+				sl := uiLedger{Suite: suiteGPUSpecs, Tests: []uiEntry{}, Problems: []string{}, ListSHA256: emptySHA, GPUHost: tt.host, GPUGateRan: tt.host}
+				must.OK(t, writeJSON(filepath.Join(local, suiteGPUSpecs+"-tests.json"), sl))
+			}
 			out := filepath.Join(root, "out")
 			must.OK(t, os.MkdirAll(out, 0o755))
 			must.OK(t, os.WriteFile(filepath.Join(out, gpuBaseFileName), nil, 0o644))
@@ -381,7 +387,7 @@ func TestMergeGPUTierProof(t *testing.T) {
 			if r.Tier != tierGPU || r.MergeEligible {
 				t.Fatalf("tier %q, merge-eligible %v: a gpu-tier proof is never merge evidence", r.Tier, r.MergeEligible)
 			}
-			if tt.wantPass && (!r.EligibleButForTier || !r.GPUHost || !r.GPUGateRan) {
+			if tt.wantPass && (!r.EligibleButForTier || !r.GPUHost || !r.GPUGateRan || !r.GPUSpecsGateRan) {
 				t.Fatalf("a passing gpu-tier proof: %+v", r)
 			}
 		})

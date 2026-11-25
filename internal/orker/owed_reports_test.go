@@ -30,11 +30,23 @@ func respond(t *testing.T, a *Activities, method string, req any, answer error) 
 }
 
 // drained reports whether every result an attempt returned has reached the
-// cluster, waiting at most a moment.
+// cluster. On a context already done AwaitReports answers at once, and nil
+// only when nothing is owed. The result is owed for ReportDrainBound by the
+// registry's clock, which the caller has stopped (owedActivities).
 func drained(a *Activities) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	return a.AwaitReports(ctx) == nil
+}
+
+// owedActivities is newCordonActivities whose owed results never lapse while
+// the test runs, however slow its host: their clock stands still.
+func owedActivities(t *testing.T) *Activities {
+	t.Helper()
+	a := newCordonActivities(t, t.TempDir())
+	started := time.Now()
+	a.reports.now = func() time.Time { return started }
+	return a
 }
 
 // An attempt that returns has not yet told the cluster: the SDK sends its
@@ -74,7 +86,7 @@ func TestOwedReports_AnAttemptsResultIsOwedUntilTheClusterAnswersIt(t *testing.T
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			a := newCordonActivities(t, t.TempDir())
+			a := owedActivities(t)
 			env := activityEnv(a)
 			var token []byte
 			// A failure report is for an attempt that failed: one made of a
@@ -111,7 +123,7 @@ func TestOwedReports_AnAttemptsResultIsOwedUntilTheClusterAnswersIt(t *testing.T
 // ErrResultPending to the SDK, which then sends nothing: its report is not
 // owed by the SDK, and AwaitHandedBack already waits for it.
 func TestOwedReports_AnAttemptThatReportsItselfOwesNothing(t *testing.T) {
-	a := newCordonActivities(t, t.TempDir())
+	a := owedActivities(t)
 	env := activityEnv(a)
 	env.RegisterActivityWithOptions(func(context.Context) error {
 		return activity.ErrResultPending
@@ -125,7 +137,7 @@ func TestOwedReports_AnAttemptThatReportsItselfOwesNothing(t *testing.T) {
 // Nothing owed is drained at once, even on a context already done, so an
 // idle Orker's stop waits for nothing.
 func TestOwedReports_NothingOwedIsDrainedAtOnce(t *testing.T) {
-	a := newCordonActivities(t, t.TempDir())
+	a := owedActivities(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := a.AwaitReports(ctx); err != nil {
@@ -135,7 +147,7 @@ func TestOwedReports_NothingOwedIsDrainedAtOnce(t *testing.T) {
 
 // A panic is reported by the SDK as a failure, so its result is owed too.
 func TestOwedReports_APanickingAttemptOwesItsFailure(t *testing.T) {
-	a := newCordonActivities(t, t.TempDir())
+	a := owedActivities(t)
 	env := activityEnv(a)
 	env.RegisterActivityWithOptions(func(context.Context) error {
 		panic("the workload's driver crashed")
@@ -149,7 +161,7 @@ func TestOwedReports_APanickingAttemptOwesItsFailure(t *testing.T) {
 // An attempt whose deadline passed gets no report from the SDK (the cluster
 // has already timed it out), so nothing is owed for it.
 func TestOwedReports_AnAttemptPastItsDeadlineOwesNothing(t *testing.T) {
-	a := newCordonActivities(t, t.TempDir())
+	a := owedActivities(t)
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 	a.oweReport(ctx, activity.Info{TaskToken: []byte("late")}, ctx.Err(), false)
@@ -191,7 +203,7 @@ func TestOwedReports_AnUnansweredReportLapses(t *testing.T) {
 // A pin's creation activity is reported when its pin closes, so it is owed
 // as an attempt is.
 func TestOwedReports_AClosedPinsCreationIsOwed(t *testing.T) {
-	a := newCordonActivities(t, t.TempDir())
+	a := owedActivities(t)
 	env := activityEnv(a)
 	env.RegisterActivityWithOptions(func(context.Context) error { return nil },
 		activity.RegisterOptions{Name: sessionCreationActivityName})
@@ -235,7 +247,7 @@ func TestOwedReports_AFailureForASucceededAttemptIsNotSent(t *testing.T) {
 		{"the attempt's own failure", errors.New("exit 1"), failed, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := newCordonActivities(t, t.TempDir())
+			a := owedActivities(t)
 			a.oweReport(context.Background(), activity.Info{TaskToken: []byte("tok")}, tc.returned, tc.returned == nil)
 			reached, err := sent(a, tc.method, cutShortFailure())
 			if reached != tc.wantSent {
@@ -253,7 +265,7 @@ func TestOwedReports_AFailureForASucceededAttemptIsNotSent(t *testing.T) {
 // failure the SDK then makes of it is still not sent.
 func TestOwedReports_ASuccessUnsentPastTheBoundIsStillNeverReportedFailed(t *testing.T) {
 	now := time.Date(2026, 11, 20, 16, 0, 0, 0, time.UTC)
-	a := newCordonActivities(t, t.TempDir())
+	a := owedActivities(t)
 	a.reports.now = func() time.Time { return now }
 	a.oweReport(context.Background(), activity.Info{TaskToken: []byte("tok")}, nil, true)
 	now = now.Add(ReportDrainBound)
@@ -289,7 +301,7 @@ func TestOwedReports_OnlyACutShortSuccessIsKeptBack(t *testing.T) {
 		Failure:   &failurepb.Failure{Message: "payload size 3000000 exceeds the limit"},
 	}
 	t.Run("another conversion of a success", func(t *testing.T) {
-		a := newCordonActivities(t, t.TempDir())
+		a := owedActivities(t)
 		a.oweReport(context.Background(), activity.Info{TaskToken: []byte("tok")}, nil, true)
 		if reached, err := sent(a, failed, oversize); !reached {
 			t.Fatalf("a payload-limit failure of a success was kept back (%v); want it sent with its reason", err)
@@ -304,7 +316,7 @@ func TestOwedReports_OnlyACutShortSuccessIsKeptBack(t *testing.T) {
 		{"a pin's creation", sessionCreationActivityName, func(context.Context) error { return nil }},
 	} {
 		t.Run(kind.name, func(t *testing.T) {
-			a := newCordonActivities(t, t.TempDir())
+			a := owedActivities(t)
 			env := activityEnv(a)
 			var token []byte
 			env.RegisterActivityWithOptions(func(ctx context.Context) error {

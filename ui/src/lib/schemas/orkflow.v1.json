@@ -154,7 +154,7 @@
           ]
         },
         "over_artifact": {
-          "description": "`<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.",
+          "description": "`<task>/<name>`, an artifact a task in this fan-out's own `needs:` records, or `_inputs/<name>`, an artifact input of this Orkflow. Exactly one of `over` and `over_artifact`.",
           "type": [
             "string",
             "number",

@@ -364,8 +364,12 @@ func checkAdmission(a Admission) string {
 			return fmt.Sprintf("set %d: %s", i+1, reason)
 		}
 	}
-	if len(a.Tasks) == 0 {
-		return "no task"
+	// A run whose tasks all compose, wait or sleep runs no container itself.
+	if a.Tasks == nil {
+		return "no table of tasks"
+	}
+	if len(a.Tasks) == 0 && (len(a.Sets) > 0 || len(a.Grants) > 0) {
+		return "it holds an identity no task uses"
 	}
 	for id, t := range a.Tasks {
 		if reason := checkAdmittedTask(id, t, len(a.Sets)); reason != "" {

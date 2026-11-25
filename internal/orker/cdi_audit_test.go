@@ -72,7 +72,7 @@ devices:
 
 const testKind = "test.orkstack.dev/gpu-1a2b3c4d"
 
-func specDir(t *testing.T, files map[string]string) string {
+func specDir(t testing.TB, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range files {
@@ -196,6 +196,35 @@ func TestAuditGPUSpecs_UntrustedDirectory(t *testing.T) {
 	_, err := auditGPUSpecs([]string{specDir(t, map[string]string{"g.yaml": amdSpec})}, testKind, []string{"amd"}, h)
 	if err == nil || !strings.Contains(err.Error(), DetailCDISpecDirUntrusted) {
 		t.Fatalf("auditGPUSpecs = %v, want %s", err, DetailCDISpecDirUntrusted)
+	}
+}
+
+// TestAuditGPUSpecs_RefusesNullEdits: a spec with an empty entry in an edits
+// list, which the library's own version check would dereference, is refused
+// naming the list, on a device and at the spec's level, and in a file of
+// another kind too, since every file in the directory is read.
+func TestAuditGPUSpecs_RefusesNullEdits(t *testing.T) {
+	for _, list := range []string{"deviceNodes", "netDevices", "hooks", "mounts"} {
+		device := "devices:\n  - name: amd\n    containerEdits:\n      " + list + ":\n        -\n"
+		spec := "devices:\n  - name: amd\n    containerEdits:\n      env:\n        - A=b\ncontainerEdits:\n  " + list + ":\n    -\n"
+		for name, body := range map[string]string{
+			"device":       "cdiVersion: 0.7.0\nkind: " + testKind + "\n" + device,
+			"spec":         "cdiVersion: 0.7.0\nkind: " + testKind + "\n" + spec,
+			"another kind": "cdiVersion: 0.7.0\nkind: other.example/gpu\n" + device,
+		} {
+			t.Run(list+" "+name, func(t *testing.T) {
+				dir := specDir(t, map[string]string{"gpu.yaml": amdSpec, "null.yaml": body})
+				_, err := auditGPUSpecs([]string{dir}, testKind, []string{"amd", "intel"}, testCDIHost())
+				if err == nil {
+					t.Fatal("auditGPUSpecs accepted a spec with an empty edit")
+				}
+				for _, want := range []string{DetailCDISpecInvalid, "null.yaml", list + " has an empty entry"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("auditGPUSpecs = %v, which does not say %q", err, want)
+					}
+				}
+			})
+		}
 	}
 }
 

@@ -255,3 +255,53 @@ func TestEngineClient_WhoamiDated(t *testing.T) {
 		t.Fatalf("the engine's Date %v is not about now", date)
 	}
 }
+
+// commitEngine answers CommitResult as an engine's AttemptService does.
+type commitEngine struct {
+	orkstackv1connect.UnimplementedAttemptServiceHandler
+	bearer string
+	got    *orkstackv1.CommitResultRequest
+}
+
+func (e *commitEngine) CommitResult(_ context.Context, req *connect.Request[orkstackv1.CommitResultRequest]) (*connect.Response[orkstackv1.CommitResultResponse], error) {
+	e.bearer, e.got = req.Header().Get("Authorization"), req.Msg
+	if req.Msg.GetAttempt() == 9 {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("COMMIT_IDENTITY_MISMATCH: the result is not of the attempt the request names"))
+	}
+	return connect.NewResponse(&orkstackv1.CommitResultResponse{Created: true, Commit: &orkstackv1.CommitRef{Uri: "s3://b/metadata/attested/ns/ork-1/build/commit.json"}}), nil
+}
+
+// TestEngineClient_CommitResult: the Orker hands the engine its attempt's
+// result with its own credential, and the engine's refusal reaches it
+// unchanged.
+func TestEngineClient_CommitResult(t *testing.T) {
+	engine := &commitEngine{}
+	mux := http.NewServeMux()
+	mux.Handle(orkstackv1connect.NewAttemptServiceHandler(engine))
+	server := httptest.NewUnstartedServer(mux)
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetHTTP1(true)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	t.Cleanup(server.Close)
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("eyJ.x.y\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewEngineClient(EngineSettings{URL: server.URL, Method: EngineAuthTokenFile, TokenFile: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.Close)
+	resp, err := c.CommitResult(context.Background(), &orkstackv1.CommitResultRequest{Namespace: "ns", RunId: "ork-1", TaskId: "build", Attempt: 1})
+	if err != nil || !resp.GetCreated() || !strings.Contains(resp.GetCommit().GetUri(), "/metadata/attested/") {
+		t.Fatalf("CommitResult = %v, %v", resp, err)
+	}
+	if engine.bearer != "Bearer eyJ.x.y" || engine.got.GetRunId() != "ork-1" {
+		t.Fatalf("the engine saw bearer %q, request %v", engine.bearer, engine.got)
+	}
+	if _, err := c.CommitResult(context.Background(), &orkstackv1.CommitResultRequest{Attempt: 9}); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "COMMIT_IDENTITY_MISMATCH") {
+		t.Fatalf("a refusal = %v", err)
+	}
+}

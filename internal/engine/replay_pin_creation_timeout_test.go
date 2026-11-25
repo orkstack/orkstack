@@ -74,7 +74,7 @@ func replayCapturingPinCreation(t *testing.T, recorded *historypb.History, runID
 	must.OKf(t, err, "new replayer")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return capture, replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
-		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
+		OriginalExecution: replayExecution(runID, recorded),
 	})
 }
 

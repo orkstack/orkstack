@@ -510,7 +510,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	// the child's own start, and the same on every replay. The memo is not
 	// part of what a replay compares, so a recorded child start replays as
 	// it was (docs/STORAGE.md, "Reclaiming space").
-	options.Memo = RunStartMemoAt(c.wf, childPlan, workflow.Now(ctx))
+	options.Memo = plainMemo(ctx, RunStartMemoAt(c.wf, childPlan, workflow.Now(ctx)))
 	// A child of a sealed tree carries the tree's key field as it is, and is
 	// started sealed for its own id (payload-encryption.md §4.1 rule 1).
 	if field, ok := workflow.GetInfo(ctx).Memo.GetFields()[payloadcrypt.MemoField]; ok {

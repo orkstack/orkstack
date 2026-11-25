@@ -10,6 +10,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -54,6 +55,13 @@ const (
 	MemoMissSourceObjectAbsent = "SOURCE_OBJECT_UNAVAILABLE"
 	MemoMissInputUnhashed      = "INPUT_UNHASHED"
 	MemoMissStoreAbsent        = "MEMO_STORE_ABSENT"
+	// The three misses of a run whose results the engine records
+	// (docs/TASK_IDENTITY.md, "Results the engine records"): a source that
+	// is not an engine's record, a record of another pool, and a record
+	// whose memo key is not this task's.
+	MemoMissSourceNotRecorded = "SOURCE_NOT_ENGINE_RECORDED"
+	MemoMissSourceOtherPool   = "SOURCE_OTHER_POOL"
+	MemoMissSourceKeyMismatch = "SOURCE_KEY_MISMATCH"
 )
 
 // The details of a memo miss the namespace guard (ORK_ORKER_NAMESPACES)
@@ -355,6 +363,11 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 		}
 		components["profiles"] = sha256Hex(component)
 	}
+	if recordedRun(in) {
+		// A run whose results the engine records and one whose results its
+		// Orkers write never share a memo, nor overwrite each other's.
+		components["results"] = "engine-recorded"
+	}
 	if len(secrets) > 0 {
 		// A hit checks nothing, so no result from before values.json was
 		// checked for a secret may be hit: a task with secrets misses once
@@ -475,6 +488,12 @@ func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTa
 		return nil
 	}
 	source := memo.GetSource()
+	// A run whose results the engine records takes a hit only from an
+	// engine's record, before anything of it is read.
+	if recordedRun(in) && !isAttestedURI(source.GetCommitUri()) {
+		trace.miss(key, MemoMissSourceNotRecorded, "the memo's source %s is not a result an engine recorded", source.GetCommitUri())
+		return nil
+	}
 	// Under the namespace guard the source must be a commit of this task's
 	// own namespace by its KEY, before it is read: a commit planted under
 	// another served namespace's key that claims this one in its body would
@@ -529,6 +548,23 @@ func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTa
 		trace.miss(key, MemoMissSourceMismatch, "the source commit %s is not this task's result: %s",
 			source.GetCommitUri(), mismatch)
 		return nil
+	}
+	// Rows 7b and 7c: an engine's record of this task's pool, under this
+	// task's memo key.
+	if recordedRun(in) {
+		if commit.GetRecorded() == nil {
+			trace.miss(key, MemoMissSourceNotRecorded, "the source %s carries no engine's recording", source.GetCommitUri())
+			return nil
+		}
+		if pool := commit.GetRecorded().GetPool(); resolvedPool(pool) != resolvedPool(in.GetPool()) {
+			trace.miss(key, MemoMissSourceOtherPool, "the source %s was recorded at pool %q, not this task's %q",
+				source.GetCommitUri(), pool, in.GetPool())
+			return nil
+		}
+		if got := commit.GetCache().GetKey(); got != key.Key {
+			trace.miss(key, MemoMissSourceKeyMismatch, "the source %s recorded memo key %q, not this task's", source.GetCommitUri(), got)
+			return nil
+		}
 	}
 	// Row 8.
 	limits := in.GetLimits()
@@ -718,7 +754,29 @@ func (d *OCIDispatcher) commitHit(ctx context.Context, in *orkstackv1.ExecuteTas
 	attempt int32, startedAt *timestamppb.Timestamp, key memoKey,
 	hit *memoHit, trace *memoTrace) (*orkstackv1.ExecuteTaskResult, *Failure) {
 	commit := hit.commit
-	record, err := d.Commits.Create(ctx, in.GetCommitUri(), commit)
+	uri := in.GetCommitUri()
+	var record artifacts.CommitRecord
+	var err error
+	if recordedRun(in) {
+		// A hit's own commit is recorded by the engine, as any result of
+		// such a run is (recorded_results.go).
+		resp, failure := d.commitThroughEngine(ctx, in, attempt, commit)
+		if failure != nil {
+			trace.result = &orkstackv1.CacheResult{Outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT, Key: key.Key,
+				Source: hit.source, KeyComponents: key.Components}
+			return nil, failure
+		}
+		switch {
+		case resp.GetCreated() && resp.GetCommit().GetUri() == "":
+			return nil, Fail(ReasonCommitEngineUnavailable, "the engine answered that it recorded task %q's result and named no record", in.GetTaskId())
+		case resp.GetCreated():
+			uri, record = resp.GetCommit().GetUri(), artifacts.CommitRecord{SHA256: resp.GetCommit().GetSha256(), ETag: resp.GetCommit().GetEtag()}
+		default:
+			err = artifacts.ErrPreconditionFailed
+		}
+	} else {
+		record, err = d.Commits.Create(ctx, uri, commit)
+	}
 	switch {
 	case err == nil:
 		trace.result = &orkstackv1.CacheResult{
@@ -734,7 +792,7 @@ func (d *OCIDispatcher) commitHit(ctx context.Context, in *orkstackv1.ExecuteTas
 		result := &orkstackv1.ExecuteTaskResult{
 			TaskId: in.GetTaskId(),
 			Commit: &orkstackv1.CommitRef{
-				Uri:       in.GetCommitUri(),
+				Uri:       uri,
 				Sha256:    record.SHA256,
 				Etag:      record.ETag,
 				CreatedAt: commit.GetFinishedAt(),
@@ -832,7 +890,7 @@ func (d *OCIDispatcher) writeMemo(ctx context.Context, in *orkstackv1.ExecuteTas
 		TaskId:         commit.GetTaskId(),
 		OrkflowName:    commit.GetOrkflowName(),
 		OrkflowVersion: commit.GetOrkflowVersion(),
-		CommitUri:      in.GetCommitUri(),
+		CommitUri:      memoSourceURI(in),
 		CommitSha256:   record.SHA256,
 		StartedAt:      commit.GetStartedAt(),
 		FinishedAt:     commit.GetFinishedAt(),
@@ -885,4 +943,27 @@ func (d *OCIDispatcher) completeStaging(ctx context.Context, in *orkstackv1.Exec
 		return d.stageSecrets(in, ws, staged)
 	}
 	return nil
+}
+
+// memoSourceURI is where a memo points for in's fresh commit: its commit
+// uri, or for a run whose results the engine records the engine's record.
+func memoSourceURI(in *orkstackv1.ExecuteTaskInput) string {
+	if recordedRun(in) {
+		if uri, err := artifacts.AttestedCommitURI(in.GetCommitUri()); err == nil {
+			return uri
+		}
+	}
+	return in.GetCommitUri()
+}
+
+// isAttestedURI reports whether uri is a store root then an attested
+// commit key: the twin of a well-formed commit key, and nothing that only
+// holds the prefix somewhere in its path.
+func isAttestedURI(uri string) bool {
+	i := strings.LastIndex(uri, "/"+artifacts.AttestedPrefix+"/")
+	if i < 0 {
+		return false
+	}
+	twin, err := artifacts.AttestedCommitURI(uri[:i+1] + artifacts.CommitPrefix + uri[i+1+len(artifacts.AttestedPrefix):])
+	return err == nil && twin == uri
 }

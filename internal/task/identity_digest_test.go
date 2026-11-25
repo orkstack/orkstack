@@ -26,7 +26,11 @@ func digestFixture(t *testing.T) *orkstackv1.ExecuteTaskInput {
 			{Name: "aws", Audience: "sts.amazonaws.com", TtlSeconds: 900, Refresh: orkstackv1.RefreshPolicy_REFRESH_POLICY_REQUIRED}},
 			Credentials: []*orkstackv1.CredentialRef{{Name: "cert", Grant: "pki", Path: "pki/issue/payments",
 				Params: map[string]string{"ttl": "12h", "common_name": "payments.internal"}, Refresh: orkstackv1.RefreshPolicy_REFRESH_POLICY_BEST_EFFORT}}},
-		Devices: []*orkstackv1.ProfileRef{{Name: "gpu-a", IdentityDigest: strings.Repeat("e", 64)}},
+		Devices: []*orkstackv1.ProfileRef{
+			{Name: "gpu-a", IdentityDigest: strings.Repeat("e", 64), Declared: true,
+				Contracts: []*orkstackv1.ProfileContractPin{{Label: "v2", IdentityDigests: []string{strings.Repeat("c", 64)}}}},
+			{Name: "fpga", IdentityDigest: strings.Repeat("f", 64), Contracts: []*orkstackv1.ProfileContractPin{{Label: "v1"}}},
+		},
 		// Not in version 1's list: never hashed.
 		Pool: "main", RunId: "ork-1", TaskId: "deploy",
 	}
@@ -42,7 +46,7 @@ func TestIdentitySpecDigest_Golden(t *testing.T) {
 	if len(members) != 11 {
 		t.Fatalf("members %v", members)
 	}
-	const golden = "d79e4b2ffbc1434d7fdc6e1453155c07f4159459aa37a0d9537fd906d49eb4ef"
+	const golden = "5bb498143e4affd81cc1ce132420f5907841c9199f68ccf89bfa3ebdb00a44af"
 	if digest != golden {
 		t.Fatalf("version 1's digest of the fixture is %s, want %s", digest, golden)
 	}
@@ -141,7 +145,7 @@ func TestIdentitySpecOfTask_IsTheInputsProjection(t *testing.T) {
 	task := &orkstackv1.Task{Id: "deploy", Image: in.GetImage(), Command: in.GetCommand(), Env: in.GetEnv(), With: in.GetWith(),
 		Secrets: in.GetSecrets(), Network: in.GetNetwork(), RunAsOrkerUser: in.GetRunAsOrkerUser(),
 		Identities: in.GetIdentity().GetIdentities(), Credentials: in.GetIdentity().GetCredentials(), TimeoutSeconds: 99,
-		Devices: []string{"gpu-a"}}
+		Devices: []string{"gpu-a", "fpga"}, DeviceContracts: map[string]string{"gpu-a": "v2"}}
 	a, _, err := IdentitySpecDigest(1, IdentitySpecOfTask(task))
 	if err != nil {
 		t.Fatal(err)
@@ -151,23 +155,59 @@ func TestIdentitySpecOfTask_IsTheInputsProjection(t *testing.T) {
 	}
 }
 
-// TestIdentitySpecDigest_DevicesBindNamesNotPins: the devices member is the
-// profiles' names in order; what the run pinned of each (its identity
-// digest, its contracts) is the profile check's, not the digest's.
-func TestIdentitySpecDigest_DevicesBindNamesNotPins(t *testing.T) {
-	_, base, err := IdentitySpecDigest(1, IdentitySpecOfInput(digestFixture(t)))
-	if err != nil {
-		t.Fatal(err)
+// TestIdentitySpecDigest_DevicesBindNamesAndNeededContracts: the devices
+// member is, per profile in order, its name and the contract label the task
+// needs of it. What the run pinned of a profile (its identity digest, the
+// label's definitions, the contracts of a task that needs none) is the
+// profile check's, not the digest's.
+func TestIdentitySpecDigest_DevicesBindNamesAndNeededContracts(t *testing.T) {
+	members := func(edit func(*orkstackv1.ExecuteTaskInput)) map[string]string {
+		t.Helper()
+		in := digestFixture(t)
+		edit(in)
+		_, got, err := IdentitySpecDigest(1, IdentitySpecOfInput(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
 	}
-	pinned := digestFixture(t)
-	pinned.Devices[0].IdentityDigest = strings.Repeat("f", 64)
-	pinned.Devices[0].Contracts = []*orkstackv1.ProfileContractPin{{Label: "v2"}}
-	if _, got, _ := IdentitySpecDigest(1, IdentitySpecOfInput(pinned)); !equalMembers(got, base) {
-		t.Error("a profile's pinned identity changed the digest")
+	base := members(func(*orkstackv1.ExecuteTaskInput) {})
+	for name, edit := range map[string]func(*orkstackv1.ExecuteTaskInput){
+		"a profile's pinned identity":     func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0].IdentityDigest = strings.Repeat("f", 64) },
+		"a needed contract's definitions": func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0].Contracts[0].IdentityDigests = []string{"x"} },
+		"the contracts of one that needs none": func(in *orkstackv1.ExecuteTaskInput) {
+			in.Devices[1].Contracts = []*orkstackv1.ProfileContractPin{{Label: "v9"}}
+		},
+	} {
+		if got := members(edit); !equalMembers(got, base) {
+			t.Errorf("%s changed the digest", name)
+		}
 	}
-	more := digestFixture(t)
-	more.Devices = append(more.Devices, &orkstackv1.ProfileRef{Name: "fpga"})
-	if _, got, _ := IdentitySpecDigest(1, IdentitySpecOfInput(more)); got["devices"] == base["devices"] {
-		t.Error("another profile left the devices member unchanged")
+	for name, edit := range map[string]func(*orkstackv1.ExecuteTaskInput){
+		"another profile": func(in *orkstackv1.ExecuteTaskInput) {
+			in.Devices = append(in.Devices, &orkstackv1.ProfileRef{Name: "nic"})
+		},
+		"the profiles' order":       func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0], in.Devices[1] = in.Devices[1], in.Devices[0] },
+		"another needed contract":   func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0].Contracts[0].Label = "v3" },
+		"a needed contract dropped": func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0].Declared = false },
+		"a contract needed where none was": func(in *orkstackv1.ExecuteTaskInput) {
+			in.Devices[1].Declared, in.Devices[1].Contracts = true, []*orkstackv1.ProfileContractPin{{Label: "v1"}}
+		},
+		"a needed contract with no label": func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0].Contracts = nil },
+		"a needed contract widened": func(in *orkstackv1.ExecuteTaskInput) {
+			in.Devices[0].Contracts = append(in.Devices[0].Contracts, &orkstackv1.ProfileContractPin{Label: "v3"})
+		},
+	} {
+		got := members(edit)
+		for member, d := range got {
+			if changed := d != base[member]; changed != (member == "devices") {
+				t.Errorf("%s: member %s changed = %v", name, member, changed)
+			}
+		}
+	}
+	// A declared profile with no contract is never one that needs none.
+	none := members(func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0].Declared = false })
+	if empty := members(func(in *orkstackv1.ExecuteTaskInput) { in.Devices[0].Contracts = nil }); empty["devices"] == none["devices"] {
+		t.Error("a declared contract with no label hashed as no needed contract")
 	}
 }

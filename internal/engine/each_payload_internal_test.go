@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -51,7 +52,7 @@ func TestTaskInputPayload_IsWhatTheSDKWouldWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	plain := &orkstackv1.Task{Id: "plain", With: with}
-	s := &runState{runID: "ork-p", wf: &orkstackv1.Orkflow{Name: "p", Tasks: []*orkstackv1.Task{plain}}}
+	s := &runState{runID: "ork-p", wf: &orkstackv1.Orkflow{Name: "p", Tasks: []*orkstackv1.Task{plain}}, scope: payloadcrypt.Unsealed()}
 	got, err := s.taskDispatch(plain, "plain", "main", nil)
 	if err != nil {
 		t.Fatal(err)

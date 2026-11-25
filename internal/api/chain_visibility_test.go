@@ -136,6 +136,10 @@ func (c *chainReleases) ReleasePausedRuns(ctx context.Context, build string) (in
 	return c.reader.ReleasePausedRuns(ctx, "orkstack", build)
 }
 
+func (c *chainReleases) ReleaseQueuedRuns(ctx context.Context, build string) (int64, bool, error) {
+	return c.reader.ReleaseQueuedRuns(ctx, "orkstack", build)
+}
+
 func (c *chainReleases) RunningRuns(ctx context.Context) (int64, error) {
 	return c.reader.RunningRuns(ctx)
 }

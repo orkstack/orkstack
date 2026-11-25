@@ -110,3 +110,53 @@ func TestJudgeAllowed(t *testing.T) {
 		t.Fatalf("unasked questions: %+v", f)
 	}
 }
+
+// TestJudgeAnswered: a name the probe could not resolve is a question it did
+// not ask, so the probe did not run, whatever else it found; unless the
+// operator accepted that question, or the name is a metadata endpoint's own,
+// whose addresses are asked by themselves.
+func TestJudgeAnswered(t *testing.T) {
+	closed := func(q int, kind, target string) Observation {
+		return Observation{Question: q, Kind: kind, Via: ViaTCP, Target: target}
+	}
+	unresolved := func(q int, kind, target string) Observation {
+		o := closed(q, kind, target)
+		o.Unresolved = true
+		return o
+	}
+	base := []Observation{closed(1, TargetAddress, "169.254.169.254:80"), closed(2, TargetAddress, "10.0.0.1:9"),
+		closed(3, TargetMembership, "10.0.0.2:6933"), closed(4, TargetAddress, "172.18.0.2:8080")}
+	tests := []struct {
+		name    string
+		add     Observation
+		allow   Allowances
+		ran     bool
+		unfit   bool
+		wantErr string
+	}{
+		{name: "every address asked", add: closed(2, TargetAddress, "10.0.0.1:10"), ran: true},
+		{name: "the host's name", add: unresolved(2, TargetAddress, "host.containers.internal:9"), wantErr: "host.containers.internal:9"},
+		{name: "the cluster's name", add: unresolved(3, TargetMembership, "temporal:6933"), wantErr: "temporal:6933"},
+		{name: "an operator's name", add: unresolved(1, TargetAddress, "imds.example:80"), wantErr: "imds.example:80"},
+		{name: "a metadata endpoint's own name", add: unresolved(1, TargetAddress, "metadata.google.internal:80"), ran: true},
+		{name: "an accepted question", add: unresolved(3, TargetMembership, "temporal:6933"), allow: Allowances{OpenCluster: true}, ran: true},
+		{name: "question 2 is never accepted", add: unresolved(2, TargetAddress, "host.containers.internal:9"),
+			allow: Allowances{MetadataReach: true, OpenCluster: true, ContainerReach: true}, wantErr: "host.containers.internal:9"},
+		{name: "something reached is still reached", add: Observation{Question: 2, Kind: TargetAddress, Via: ViaTCP, Target: "10.0.0.1:10", Connected: true},
+			ran: true, unfit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := JudgeAnswered(append(slices.Clone(base), tt.add), tt.allow)
+			if r.Ran != tt.ran || (tt.ran && r.Fitness.Fit == tt.unfit) || !strings.Contains(r.Err, tt.wantErr) || (r.Err == "") != tt.ran || r.ImageRefused {
+				t.Fatalf("%+v; want ran %v, error holding %q", r, tt.ran, tt.wantErr)
+			}
+		})
+	}
+	// Reached and unresolved together: the opening found is what is reported.
+	open := Observation{Question: 4, Kind: TargetAddress, Via: ViaTCP, Target: "172.18.0.3:8080", Connected: true}
+	r := JudgeAnswered(append(slices.Clone(base), open, unresolved(2, TargetAddress, "host.containers.internal:9")), Allowances{})
+	if !r.Ran || r.Fitness.Fit {
+		t.Fatalf("an opening beside an unresolved name: %+v", r)
+	}
+}

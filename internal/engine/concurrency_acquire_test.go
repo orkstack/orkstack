@@ -107,3 +107,49 @@ func TestAcquireConcurrency_AnUpdateTheGateCouldNotTakeIsAskedAgain(t *testing.T
 		}
 	}
 }
+
+// rebuildingGateClient is a gate that answers unavailable while it rebuilds
+// its record: the first `rebuilding` acquires, then granted. It records each
+// Update's id. A real gate's rebuild window is not produced on demand in a
+// unit test, so it is faked here (the integration test covers the real one).
+type rebuildingGateClient struct {
+	client.Client
+	rebuilding int
+	ids        []string
+}
+
+func (f *rebuildingGateClient) UpdateWorkflow(_ context.Context, o client.UpdateWorkflowOptions) (client.WorkflowUpdateHandle, error) {
+	f.ids = append(f.ids, o.UpdateID)
+	if len(f.ids) <= f.rebuilding {
+		return gateUpdateHandle{ans: gateAnswer{Proto: 1, Answer: gateAnswerUnavailable}}, nil
+	}
+	return gateUpdateHandle{ans: gateAnswer{Proto: 1, Answer: gateAnswerGranted, Seq: 1}}, nil
+}
+
+// TestAcquireConcurrency_AGateRebuildingIsAskedAgain: a refuse or skip
+// arrival the gate answers unavailable while it rebuilds its record is asked
+// again, each time under an Update id of its own (an id the cluster has
+// answered is answered the same again), and granted once the rebuild ends;
+// past its acquire_timeout the answer is the gate's unavailable.
+func TestAcquireConcurrency_AGateRebuildingIsAskedAgain(t *testing.T) {
+	in := AcquireConcurrencyInput{GateID: "g", UpdateID: "acq-1", BackoffMin: time.Millisecond, BackoffMax: time.Millisecond,
+		Request: gateAcquire{Strategy: gateStrategyRefuse}}
+	f := &rebuildingGateClient{rebuilding: 2}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	res, err := (&GateActivities{client: f}).AcquireConcurrency(ctx, in)
+	cancel()
+	if err != nil || res.Answer.Answer != gateAnswerGranted || len(f.ids) != 3 {
+		t.Fatalf("acquire = %+v, %v after %d asks; want granted on the third", res, err, len(f.ids))
+	}
+	if f.ids[0] != "acq-1" || f.ids[1] == f.ids[0] || f.ids[2] == f.ids[1] {
+		t.Fatalf("update ids %v; want the run's id first, then one of its own per ask", f.ids)
+	}
+
+	stuck := &rebuildingGateClient{rebuilding: 1 << 30}
+	dctx, dcancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	res, err = (&GateActivities{client: stuck}).AcquireConcurrency(dctx, in)
+	dcancel()
+	if err != nil || res.Answer.Answer != gateAnswerUnavailable || res.Unavailable != "" {
+		t.Fatalf("a rebuild past the acquire timeout = %+v, %v; want the gate's unavailable answer", res, err)
+	}
+}

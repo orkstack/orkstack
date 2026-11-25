@@ -63,6 +63,12 @@ type uiPlan struct {
 	// Tests, so a ledger names each as deferred, and they are in no shard.
 	Nightly  *uiPlanNightly   `json:"nightly,omitzero"`
 	Deferred []uiDeferredSpec `json:"deferred,omitempty"`
+	// GPUSpecs is how the plan read the GPU spec list (gpuspecs.go); its
+	// listed specs are in no shard and no Playwright run of the merge gate.
+	// HostDeferred are those both lists carry, recorded host-deferred by the
+	// ledger, unless the plan is of a GPU-host proof, whose GPU gate runs them.
+	GPUSpecs     *uiPlanGPUSpecs  `json:"gpu_specs,omitzero"`
+	HostDeferred []uiDeferredSpec `json:"host_deferred,omitempty"`
 }
 
 // uiPlanNightly records the nightly spec lists the plan read, hashed and
@@ -75,6 +81,22 @@ type uiPlanNightly struct {
 	BaseSHA256  string   `json:"base_sha256,omitempty"`
 	Entries     []string `json:"entries"`
 	BaseEntries []string `json:"base_entries,omitempty"`
+}
+
+// uiPlanGPUSpecs records the GPU spec lists the plan read, hashed, so the
+// merger can re-derive the host-deferral from the files.
+type uiPlanGPUSpecs struct {
+	File        string   `json:"file"`
+	SHA256      string   `json:"sha256"`
+	BaseFile    string   `json:"base_file,omitempty"`
+	BaseSHA256  string   `json:"base_sha256,omitempty"`
+	Entries     []string `json:"entries"`
+	BaseEntries []string `json:"base_entries,omitempty"`
+	// Host is whether the plan is of a proof on the GPU host, whose GPU gate
+	// runs the specs. Files are the listed spec files the plan leaves out of
+	// every Playwright run.
+	Host  bool     `json:"host,omitzero"`
+	Files []string `json:"files,omitempty"`
 }
 
 // uiDeferredSpec is one spec file the plan defers, with its list row.
@@ -90,6 +112,18 @@ type uiNightlyInput struct {
 	SHA256         string
 	BaseSHA256     string
 	Tree, Base     []nightlySpecEntry
+	// GPU is the GPU spec list's side (nil: none was given).
+	GPU *uiGPUInput
+}
+
+// uiGPUInput is what a plan reads of the GPU spec lists. Host is the plan of
+// a proof on the GPU host (ORK_PROOF_GPU_HOST=1).
+type uiGPUInput struct {
+	File, BaseFile string
+	SHA256         string
+	BaseSHA256     string
+	Tree, Base     []nightlySpecEntry
+	Host           bool
 }
 
 // buildUIPlanNightly plans by tier: the full tier (defer) leaves out of its
@@ -102,33 +136,65 @@ func buildUIPlanNightly(list pwReport, listBytes []byte, measured map[string]flo
 	for _, s := range list.Suites {
 		listed[s.File] = true
 	}
-	problems := nightlySpecProblems(in.Tree, listed, in.Mode != nightlyOnly)
-	keep := func(string) bool { return true }
+	gpuFiles := map[string]bool{}
+	var elsewhere map[string]string
+	if in.GPU != nil {
+		elsewhere = map[string]string{}
+		for _, e := range in.GPU.Tree {
+			gpuFiles[e.file()] = true
+			elsewhere[e.Spec] = "GPU spec list"
+		}
+	}
+	problems := specListProblems("nightly spec list", in.Tree, listed, in.Mode != nightlyOnly, elsewhere)
+	if in.GPU != nil {
+		if in.Mode == nightlyOnly {
+			// The nightly listing holds the nightly specs alone, so no GPU
+			// row is stale there; only a spec on both lists is a fault.
+			problems = append(problems, gpuSpecOverlapProblems(in.GPU.Tree, in.Tree)...)
+		} else {
+			problems = append(problems, gpuSpecListProblems(in.GPU.Tree, in.Tree, listed, true)...)
+		}
+	}
+	keep := func(f string) bool { return !gpuFiles[f] }
 	deferred := map[string]nightlySpecEntry{}
 	switch in.Mode {
 	case nightlyDefer:
 		deferred = deferredSpecSet(in.Tree, in.Base)
-		keep = func(f string) bool { _, d := deferred[f]; return !d }
+		keep = func(f string) bool { _, d := deferred[f]; return !d && !gpuFiles[f] }
 	case nightlyOnly:
 		on := map[string]bool{}
 		for _, e := range in.Tree {
 			on[e.file()] = true
 		}
-		keep = func(f string) bool { return on[f] }
+		keep = func(f string) bool { return on[f] && !gpuFiles[f] }
 	}
 	runs := list
 	runs.Suites = nil
+	// A GPU spec is judged by the GPU gate on the GPU host (its own ledger),
+	// elsewhere recorded host-deferred or, where only the tree lists it, left
+	// planned with no outcome: either way it is in no Playwright run.
+	planned := list
+	planned.Suites = nil
+	var gpuLeftOut []string
 	for _, s := range list.Suites {
 		if keep(s.File) {
 			runs.Suites = append(runs.Suites, s)
 		}
+		if gpuFiles[s.File] {
+			gpuLeftOut = append(gpuLeftOut, s.File)
+			if in.GPU.Host {
+				continue
+			}
+		}
+		planned.Suites = append(planned.Suites, s)
 	}
 	p := buildUIPlan(runs, listBytes, measured, costsFile, costsSHA, m)
-	if in.Mode == nightlyDefer && len(deferred) > 0 {
+	if in.Mode != nightlyOnly && (len(deferred) > 0 || len(gpuLeftOut) > 0) {
 		// Every listed test stays planned: a deferred one is recorded as
 		// deferred, never as missing.
-		all := buildUIPlan(list, listBytes, measured, costsFile, costsSHA, m)
-		p.Tests = all.Tests
+		p.Tests = buildUIPlan(planned, listBytes, measured, costsFile, costsSHA, m).Tests
+	}
+	if in.Mode == nightlyDefer && len(deferred) > 0 {
 		files := make([]string, 0, len(deferred))
 		for f := range deferred {
 			files = append(files, f)
@@ -136,6 +202,24 @@ func buildUIPlanNightly(list pwReport, listBytes []byte, measured map[string]flo
 		sort.Strings(files)
 		for _, f := range files {
 			p.Deferred = append(p.Deferred, uiDeferredSpec{File: f, Entry: deferred[f].Text})
+		}
+	}
+	if in.GPU != nil {
+		g := in.GPU
+		p.GPUSpecs = &uiPlanGPUSpecs{
+			File: g.File, SHA256: g.SHA256, BaseFile: g.BaseFile, BaseSHA256: g.BaseSHA256,
+			Entries: specEntryLines(g.Tree), BaseEntries: specEntryLines(g.Base), Host: g.Host, Files: gpuLeftOut,
+		}
+		sort.Strings(p.GPUSpecs.Files)
+		if in.Mode == nightlyOnly || g.Host {
+			p.GPUSpecs.BaseFile, p.GPUSpecs.BaseSHA256, p.GPUSpecs.BaseEntries = "", "", nil
+		} else {
+			hd := deferredSpecSet(g.Tree, g.Base)
+			for _, f := range p.GPUSpecs.Files {
+				if row, ok := hd[f]; ok {
+					p.HostDeferred = append(p.HostDeferred, uiDeferredSpec{File: f, Entry: row.Text})
+				}
+			}
 		}
 	}
 	p.Nightly = &uiPlanNightly{
@@ -306,9 +390,12 @@ func cmdUIPlan(args []string) int {
 	mode := fs.String("nightly-mode", nightlyInclude, "include (default), defer (leave out the spec files both nightly spec lists carry) or only")
 	specs := fs.String("nightly-specs", nightlySpecFile, "the tree's nightly spec list")
 	specsBase := fs.String("nightly-specs-base", "", "the base's copy of the nightly spec list (required with -nightly-mode defer)")
+	gpuSpecs := fs.String("gpu-specs", "", "the tree's GPU spec list (scripts/proof-gpu-specs.txt): its specs are left out of every Playwright run")
+	gpuSpecsBase := fs.String("gpu-specs-base", "", "the base's copy of the GPU spec list (required with -gpu-specs, unless -gpu-host or -nightly-mode only)")
+	gpuHost := fs.Bool("gpu-host", false, "this proof is on the GPU host (ORK_PROOF_GPU_HOST=1): its GPU gate runs the GPU specs, so none is host-deferred")
 	runFilesOut := fs.String("run-files-out", "", "where to write the spec files to run, one per line relative to ui/ (empty when the plan leaves no listed file out)")
 	if err := fs.Parse(args); err != nil || *listFile == "" || *out == "" || *shards < 1 || fs.NArg() > 0 {
-		fmt.Fprintln(os.Stderr, "proofrun ui-plan -list FILE -shards M -out FILE [-costs FILE] [-matrix-out FILE] [-nightly-mode include|defer|only -nightly-specs FILE -nightly-specs-base FILE]")
+		fmt.Fprintln(os.Stderr, "proofrun ui-plan -list FILE -shards M -out FILE [-costs FILE] [-matrix-out FILE] [-nightly-mode include|defer|only -nightly-specs FILE -nightly-specs-base FILE] [-gpu-specs FILE -gpu-specs-base FILE -gpu-host]")
 		return 2
 	}
 	switch *mode {
@@ -341,6 +428,33 @@ func cmdUIPlan(args []string) int {
 			fmt.Fprintln(os.Stderr, "proofrun ui-plan:", err)
 			return 2
 		}
+	}
+	if *gpuSpecs != "" {
+		g := &uiGPUInput{File: *gpuSpecs, Host: *gpuHost}
+		if *mode != nightlyOnly && !*gpuHost && *gpuSpecsBase == "" {
+			fmt.Fprintln(os.Stderr, "proofrun ui-plan: -gpu-specs requires -gpu-specs-base: a proof host-defers only the rows its base also lists")
+			return 2
+		}
+		if g.Tree, err = readGPUSpecs(*gpuSpecs); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun ui-plan:", err)
+			return 2
+		}
+		if g.SHA256, err = fileSHA256(*gpuSpecs); err != nil {
+			fmt.Fprintln(os.Stderr, "proofrun ui-plan:", err)
+			return 2
+		}
+		if *mode != nightlyOnly && !*gpuHost {
+			g.BaseFile = *gpuSpecsBase
+			if g.Base, err = readGPUSpecs(*gpuSpecsBase); err != nil {
+				fmt.Fprintln(os.Stderr, "proofrun ui-plan: the base's GPU spec list:", err)
+				return 2
+			}
+			if g.BaseSHA256, err = fileSHA256(*gpuSpecsBase); err != nil {
+				fmt.Fprintln(os.Stderr, "proofrun ui-plan:", err)
+				return 2
+			}
+		}
+		in.GPU = g
 	}
 	listBytes, err := os.ReadFile(*listFile)
 	if err != nil {
@@ -380,7 +494,7 @@ func cmdUIPlan(args []string) int {
 		// leaves a listed file out (a deferred spec, or the nightly tier's
 		// listed specs alone); otherwise none, and the run is the listing's.
 		var lines []string
-		if len(p.Deferred) > 0 || *mode == nightlyOnly {
+		if len(p.Deferred) > 0 || *mode == nightlyOnly || (p.GPUSpecs != nil && len(p.GPUSpecs.Files) > 0) {
 			for _, f := range p.Files {
 				lines = append(lines, "e2e/"+f.File+"\n")
 			}
@@ -420,6 +534,11 @@ func cmdUIPlan(args []string) int {
 	fmt.Fprintf(stdout, "  floor: %.0fs (%s)\n", floor, floorFile)
 	for _, d := range p.Deferred {
 		fmt.Fprintf(stdout, "  deferred to the nightly tier: %s\n", d.File)
+	}
+	if p.GPUSpecs != nil {
+		for _, f := range p.GPUSpecs.Files {
+			fmt.Fprintf(stdout, "  left to the GPU host: %s\n", f)
+		}
 	}
 	for _, pr := range problems {
 		fmt.Fprintln(stdout, "ui plan problem:", pr)
