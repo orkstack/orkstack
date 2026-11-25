@@ -305,9 +305,9 @@ func startCommitE2E(t *testing.T) *commitE2E {
 	t.Cleanup(cancel)
 
 	namespace := privateNamespaceForCommitE2E(t)
-	temporalClient, err := client.DialContext(ctx, client.Options{
+	temporalClient, err := client.DialContext(ctx, engine.ClientOptions(client.Options{
 		HostPort: address, Namespace: namespace,
-	})
+	}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}

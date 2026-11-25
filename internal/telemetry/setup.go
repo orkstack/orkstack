@@ -254,6 +254,7 @@ func buildProviders(ctx context.Context, cfg Config, name string, spec *SinkSpec
 		provider := sdktrace.NewTracerProvider(
 			sdktrace.WithBatcher(signalSpanExporter{SpanExporter: exporter, sink: name}),
 			sdktrace.WithResource(res),
+			sdktrace.WithIDGenerator(newPinnedIDs()),
 		)
 		p.Tracer = provider
 		p.shutdowns = append(p.shutdowns, provider.Shutdown)

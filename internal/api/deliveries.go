@@ -114,23 +114,24 @@ func (r *DeliveryRecorder) record(ctx context.Context, rec *orkstackv1.Delivery)
 // deliveryRecordFromResult is the one place a Result becomes a proto record.
 func deliveryRecordFromResult(result webhooks.Result) *orkstackv1.Delivery {
 	rec := &orkstackv1.Delivery{
-		SchemaVersion: artifacts.DeliverySchemaVersion,
-		Id:            result.DeliveryID,
-		WebhookId:     result.WebhookID,
-		Event:         orkstackv1.EventType(orkstackv1.EventType_value["EVENT_TYPE_"+string(result.Event)]),
-		RunId:         result.RunID,
-		Namespace:     artifacts.ResolveNamespace(result.Namespace),
-		OrkflowName:   result.OrkflowName,
-		TaskId:        result.TaskID,
-		Attempt:       result.Attempt,
-		Status:        orkstackv1.Status(orkstackv1.Status_value["STATUS_"+result.Status]),
-		Url:           result.URL,
-		Delivered:     result.Delivered,
-		Signature:     result.Signature,
-		BodySha256:    result.BodySHA256,
-		BodyBytes:     int64(result.BodyBytes),
-		RedeliveryOf:  result.RedeliveryOf,
-		Sequence:      result.Sequence,
+		SchemaVersion:    artifacts.DeliverySchemaVersion,
+		Id:               result.DeliveryID,
+		WebhookId:        result.WebhookID,
+		Event:            orkstackv1.EventType(orkstackv1.EventType_value["EVENT_TYPE_"+string(result.Event)]),
+		RunId:            result.RunID,
+		Namespace:        artifacts.ResolveNamespace(result.Namespace),
+		OrkflowName:      result.OrkflowName,
+		OrkflowNamespace: result.OrkflowNamespace,
+		TaskId:           result.TaskID,
+		Attempt:          result.Attempt,
+		Status:           orkstackv1.Status(orkstackv1.Status_value["STATUS_"+result.Status]),
+		Url:              result.URL,
+		Delivered:        result.Delivered,
+		Signature:        result.Signature,
+		BodySha256:       result.BodySHA256,
+		BodyBytes:        int64(result.BodyBytes),
+		RedeliveryOf:     result.RedeliveryOf,
+		Sequence:         result.Sequence,
 	}
 	for _, attempt := range result.Attempts {
 		message := attempt.Error
@@ -488,7 +489,7 @@ func (s *Service) RedeliverWebhook(
 	// A delivery body never carries a fan-out's items (docs/DSL.md "Fan-out"),
 	// the redelivery no more than the original: the same shape, the run as
 	// it reads now.
-	encoded, err := MarshalJSON(engine.WithoutItems(run))
+	encoded, err := MarshalJSON(withoutTraceparent(engine.WithoutItems(run)))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode run %q: %w", run.GetId(), err))
 	}
@@ -497,23 +498,28 @@ func (s *Service) RedeliverWebhook(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	// The body differs from the original in exactly one place: `run` is the
-	// run as it reads now. The transition's own coordinates, timestamp and
-	// sequence did not move, and the new record's body_sha256 says the bytes did.
+	// The body differs from the original in two places: `run` is the run as it
+	// reads now, and what a delivery's record does not hold (pauseTransition,
+	// resumeCount, resultsKept) is omitted. The transition's own coordinates,
+	// timestamp and sequence did not move, and the new record's body_sha256
+	// says the bytes did.
 	delivery := webhooks.Delivery{
-		ID:           id,
-		Event:        event,
-		RunID:        original.GetRunId(),
-		OrkflowName:  original.GetOrkflowName(),
-		Status:       enumname.Of(original.GetStatus()),
-		Timestamp:    original.GetEventAt().AsTime().UTC(),
-		Namespace:    original.GetNamespace(),
-		TaskID:       original.GetTaskId(),
-		Attempt:      original.GetAttempt(),
-		Sequence:     original.GetSequence(),
-		Run:          encoded,
-		QueuedAt:     now,
-		RedeliveryOf: original.GetId(),
+		ID:          id,
+		Event:       event,
+		RunID:       original.GetRunId(),
+		OrkflowName: original.GetOrkflowName(),
+		// A run's Orkflow never changes owner, so the run answers for a record
+		// written before records named it.
+		OrkflowNamespace: run.GetOrkflowNamespace(),
+		Status:           enumname.Of(original.GetStatus()),
+		Timestamp:        original.GetEventAt().AsTime().UTC(),
+		Namespace:        original.GetNamespace(),
+		TaskID:           original.GetTaskId(),
+		Attempt:          original.GetAttempt(),
+		Sequence:         original.GetSequence(),
+		Run:              encoded,
+		QueuedAt:         now,
+		RedeliveryOf:     original.GetId(),
 	}
 	// The request's own context: an operator who hangs up ends the one
 	// request. A failed POST is a recorded outcome, not an RPC failure.

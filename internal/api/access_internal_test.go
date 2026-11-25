@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -195,6 +196,20 @@ var matrixVariants = map[string]map[string]func(proto.Message){
 	},
 	orkstackv1connect.RunServiceSubmitRunProcedure: {
 		"plain": func(proto.Message) {},
+	},
+	orkstackv1connect.RunServiceResumeRunProcedure: {
+		"preview": func(m proto.Message) { m.(*orkstackv1.ResumeRunRequest).DryRun = true },
+		"confirm": func(proto.Message) {},
+		"preview past a gap": func(m proto.Message) {
+			m.(*orkstackv1.ResumeRunRequest).DryRun = true
+			m.(*orkstackv1.ResumeRunRequest).AcceptSequenceGap = true
+		},
+		"confirm past a gap":          func(m proto.Message) { m.(*orkstackv1.ResumeRunRequest).AcceptSequenceGap = true },
+		"confirm past an unseen stop": func(m proto.Message) { m.(*orkstackv1.ResumeRunRequest).AcceptUnverifiedStop = true },
+		"confirm past both of the gaps": func(m proto.Message) {
+			m.(*orkstackv1.ResumeRunRequest).AcceptSequenceGap = true
+			m.(*orkstackv1.ResumeRunRequest).AcceptUnverifiedStop = true
+		},
 	},
 	orkstackv1connect.WebhookServiceRegisterWebhookProcedure: {
 		"scoped":   func(proto.Message) {},
@@ -1577,5 +1592,34 @@ func TestAuthz_ProvenanceIsDecidedByKind(t *testing.T) {
 	}
 	if err := ask(orkstackv1.ArtifactKind_ARTIFACT_KIND_VALUES); err != nil {
 		t.Errorf("a viewer's values provenance: %v", err)
+	}
+}
+
+// TestAccessRows_ResumeRunChecks: what each kind of ResumeRun asks for. A
+// preview reads; a confirm resumes and may start the Orkflow; accepting a
+// gap or an unverified stop asks for the admin-only permission beside them.
+func TestAccessRows_ResumeRunChecks(t *testing.T) {
+	procedure := orkstackv1connect.RunServiceResumeRunProcedure
+	confirm := []authz.Permission{authz.PermRunResume, authz.PermRunSubmit}
+	withGap := append(slices.Clone(confirm), authz.PermRunResumeAcceptGap)
+	for variant, want := range map[string][]authz.Permission{
+		"preview":                       {authz.PermRunRead},
+		"preview past a gap":            {authz.PermRunRead, authz.PermRunResumeAcceptGap},
+		"confirm":                       confirm,
+		"confirm past a gap":            withGap,
+		"confirm past an unseen stop":   withGap,
+		"confirm past both of the gaps": withGap,
+	} {
+		t.Run(variant, func(t *testing.T) {
+			msg := requestFor(t, procedure)
+			matrixVariants[procedure][variant](msg)
+			var got []authz.Permission
+			for _, c := range applicable(t, newAccessService(t), procedure, msg) {
+				got = append(got, c.perm)
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("asked %v, want %v", got, want)
+			}
+		})
 	}
 }

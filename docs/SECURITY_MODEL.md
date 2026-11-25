@@ -669,8 +669,17 @@ callback, are their own ([DEPLOY.md](DEPLOY.md), "Ops notes").
 `enforce` does not bound a stolen Orker: its Temporal and storage credentials
 reach the cluster and the bucket without the API. A storage credential limited
 to the Orker's own prefixes at least keeps it from the access document and the
-definitions; each Orker checks its own credential and reports whether it is
-held there, and the engine logs every Orker that is not
+definitions, and from runs' saved state and admission records. Of the run
+contexts (each run tree's origin, its principal and reference among it, and the
+Orkflows it composes) such a credential may get one of any namespace whose key
+it has, and may neither list nor write them. The key is a content address and
+no secret: it ends in the SHA-256 of the object, so whoever holds the whole
+content already can confirm it, and a stolen Orker that can poll any pool is
+handed the key of any run whose task it takes. Results an engine attested
+(`metadata/attested/`) such a credential may read and list, and may write none
+there; it still writes the commits and memos above. Each Orker checks its own
+credential, those writes included, and reports whether it is held there, and
+the engine logs every Orker that is not
 ([DEPLOY.md](DEPLOY.md), "An Orker's own storage credential"). The check is a
 report: the store enforces the policy, an operator configures it.
 
@@ -857,7 +866,8 @@ authentication does not cover the cluster's frontend: a frontend that serves
 callers with no credential lets whoever reaches it take any tenant's tasks,
 signal and terminate anything. An Orker whose probe finds one is unfit to
 host services unless the operator accepts it with
-`orker.services.allow_open_cluster`, which is logged at every boot; run the
+`orker.services.allow_open_cluster`, which accepts service ports only, never a
+reachable membership port, and is logged at every boot; run the
 cluster with mutual TLS ([DEPLOY.md](DEPLOY.md#temporal-over-tls)).
 
 ## Webhook secrets and destinations

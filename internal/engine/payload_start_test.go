@@ -188,6 +188,53 @@ func TestRunWorkflowRaw_KeylessEnding(t *testing.T) {
 	}
 }
 
+// A keyless run's ending is plaintext, so it quotes nothing of the start it
+// could not read: not one that came in plaintext, nor one that opened and did
+// not decode.
+func TestPlaintext_AKeylessRunsEndingQuotesNothingOfItsStart(t *testing.T) {
+	s := newSealedRun(t, "ork-keyless")
+	wf := compile(t, strings.ReplaceAll(linearDocument, "echo alpha", "echo "+engine.Canary))
+	start := func(scope *payloadcrypt.Scope, args ...any) []any {
+		for i := range args {
+			args[i] = payloadcrypt.Seal(scope, args[i])
+		}
+		return args
+	}
+	input := payload(t, map[string]any{"k": engine.Canary})
+	for name, args := range map[string][]any{
+		"a plaintext start":                start(payloadcrypt.Unsealed(), "ork-keyless", wf, input, defaultPlan()),
+		"a start that opens, not decoding": start(s.scope, "ork-keyless", engine.Canary, input, defaultPlan()),
+		"a plan that is not one":           start(s.scope, "ork-keyless", wf, input, map[string]any{"namespace": []string{engine.Canary}}),
+		"a start sealed for another run":   start(s.scope.For(payloadcrypt.RunContext("ork-sibling")), "ork-keyless", wf, input, defaultPlan()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := rawHarness(t, "ork-keyless", s.keys, runMemo(t, &s))
+			spy := engine.NewPlaintextSpy("ork-keyless", s.keys)
+			spy.PlainLocal = []string{engine.ActivityWriteFailedRunSnapshot}
+			h.env.SetWorkerOptions(spy.Options(s.keys, worker.Options{}))
+			h.env.ExecuteWorkflow(rawRunWorkflow, args...)
+			err := h.env.GetWorkflowError()
+			if err == nil || !strings.Contains(err.Error(), engine.RunStartUnreadableCode) {
+				t.Fatalf("workflow error = %v, want %s", err, engine.RunStartUnreadableCode)
+			}
+			if strings.Contains(err.Error(), engine.Canary) {
+				t.Errorf("the run's failure quotes its start: %v", err)
+			}
+			for _, e := range h.bus.Events("ork-keyless", 0) {
+				if strings.Contains(e.String(), engine.Canary) {
+					t.Errorf("the run's event quotes its start: %v", e)
+				}
+			}
+			if run, _ := h.store.Get("ork-keyless"); strings.Contains(run.String(), engine.Canary) {
+				t.Errorf("the run's snapshot quotes its start: %v", run)
+			}
+			for _, p := range spy.Problems("activity " + engine.ActivityPublishEvent) {
+				t.Error(p)
+			}
+		})
+	}
+}
+
 func withKeyField(m map[string]any, k payloadcrypt.KeyMemo) map[string]any {
 	m[payloadcrypt.MemoField] = k
 	return m

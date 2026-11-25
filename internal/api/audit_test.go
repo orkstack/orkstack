@@ -1247,3 +1247,37 @@ func TestAudit_APauseDryRunRecordsNothing(t *testing.T) {
 		t.Fatalf("a refused pause recorded %v, want one failed run.pause", got)
 	}
 }
+
+// TestAudit_ResumeRecordsThePreviewAndWhatWasAccepted: a preview and a confirm
+// are each recorded under the run, and a confirm that accepts a sequence gap
+// as an action of its own, naming the sequence it accepted.
+func TestAudit_ResumeRecordsThePreviewAndWhatWasAccepted(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	runs := orkstackv1connect.NewRunServiceClient(f.server.Client(), f.server.URL)
+	for _, tc := range []struct {
+		req          *orkstackv1.ResumeRunRequest
+		action, want string
+	}{
+		{&orkstackv1.ResumeRunRequest{RunId: "ork-none", DryRun: true, Reason: "look"}, "run.resume", `dry_run=true from="" reason="look"`},
+		{&orkstackv1.ResumeRunRequest{RunId: "ork-none", ExpectedTerminalSequence: 9, FromTaskId: "deploy"}, "run.resume", `dry_run=false from="deploy"`},
+		{&orkstackv1.ResumeRunRequest{RunId: "ork-none", DryRun: true, AcceptSequenceGap: true, AcceptedHighestSeq: 12}, "run.resume", "dry_run=true"},
+		{&orkstackv1.ResumeRunRequest{RunId: "ork-none", ExpectedTerminalSequence: 9, AcceptSequenceGap: true, AcceptedHighestSeq: 12},
+			"run.resume.sequence_gap_accepted", "accepted_highest_seq=12"},
+		{&orkstackv1.ResumeRunRequest{RunId: "ork-none", ExpectedTerminalSequence: 9, ExpectedPlanDigest: strings.Repeat("a", 64),
+			AcknowledgedUnknownAttempts: []string{"o/t//1", "o/t//2"}}, "run.resume", "acknowledged_unknown_attempts=2"},
+	} {
+		before := len(f.records(t))
+		_, _ = runs.ResumeRun(context.Background(), connect.NewRequest(tc.req))
+		got := f.records(t)
+		if len(got) != before+1 {
+			t.Fatalf("%v recorded %d entries, want one", tc.req, len(got)-before)
+		}
+		found := false
+		for _, r := range got {
+			found = found || r.GetAction() == tc.action && r.GetTarget() == "ork-none" && !r.GetSucceeded() && strings.Contains(r.GetDetail(), tc.want)
+		}
+		if !found {
+			t.Fatalf("%v recorded %v, want %s with %q", tc.req, got, tc.action, tc.want)
+		}
+	}
+}

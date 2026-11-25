@@ -3472,6 +3472,9 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		DispatchHold:   s.dispatchHoldProto(),
 		Queued:         s.concQueuedProto(),
 	}
+	// The trace the run belongs to; empty when its submission was not traced
+	// (the plan is replay-pinned).
+	run.TraceId, run.Traceparent = s.plan.Trace.ids()
 	for _, id := range s.order {
 		row := s.taskRuns[id]
 		settleDispatchHeld(row, s.eaches[id] != nil)

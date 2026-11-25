@@ -172,6 +172,17 @@ const (
 	// effect. A never-started fault: it resets no never-started count, so a
 	// broken daemon cannot re-dispatch a task forever.
 	ReasonRuntimeStateUnknown = "RUNTIME_STATE_UNKNOWN"
+	// ReasonRunContextUnavailable is an attempt whose run-context object the
+	// store did not answer for (or that this Orker has no store for), so its
+	// task.json could not be written. Retried under the task's policy.
+	ReasonRunContextUnavailable = "RUN_CONTEXT_UNAVAILABLE"
+	// ReasonRunContextMissing is an attempt whose run-context object the
+	// store says is not there. Retried under the task's policy.
+	ReasonRunContextMissing = "RUN_CONTEXT_MISSING"
+	// ReasonRunContextInvalid is an attempt whose run-context object is not
+	// what its name says: other bytes, no object, or no entry for the run.
+	// Never retried: its bytes cannot change.
+	ReasonRunContextInvalid = "RUN_CONTEXT_INVALID"
 
 	// Image supply-chain policy (docs/DEPLOY.md "Image supply-chain policy"), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
@@ -288,6 +299,9 @@ var reasonCategory = map[string]string{
 	ReasonHeartbeatLost:             CategoryInfrastructureError,
 	ReasonAttemptStoreUnavailable:   CategoryInfrastructureError,
 	ReasonRuntimeStateUnknown:       CategoryInfrastructureError,
+	ReasonRunContextUnavailable:     CategoryInfrastructureError,
+	ReasonRunContextMissing:         CategoryInfrastructureError,
+	ReasonRunContextInvalid:         CategoryContractViolation,
 
 	ReasonRunAsOrkerUnavailable: CategoryInfrastructureError,
 	ReasonIdentityNotConfigured: CategoryInfrastructureError,

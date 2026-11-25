@@ -226,6 +226,16 @@ type OCIDispatcher struct {
 	EachIndexes    eachIndexReader
 	indexCacheOnce sync.Once
 	indexCache     *eachIndexCache
+	// RunContexts is where a task's run-context object is read from
+	// (run_context.go); nil fails a task whose input carries a run context
+	// RUN_CONTEXT_UNAVAILABLE. runContexts is the process's copy of the
+	// objects it read, built on first use.
+	RunContexts RunContextReader
+	// LocalRunContext, of a local run of a recorded run's task, is read in
+	// place of the object. Nil on an Orker.
+	LocalRunContext     *LocalRunContext
+	runContextCacheOnce sync.Once
+	runContexts         *eachIndexCache
 	// runAsOrker is the boot probe's finding about the §3.1 escape hatch on
 	// this host: nil until a probe ran (`orkctl activity test` and `task run`
 	// run none, and render the hatch as before), then what the probe found.
@@ -248,6 +258,8 @@ type OCIDispatcher struct {
 	reportPause func(context.Context, time.Duration) bool
 	// unremoved is the removals this process still owes (removal.go).
 	unremoved unremovedContainers
+	// attempts is what DescribeOrker lists as running (running_attempts.go).
+	attempts runningAttempts
 }
 
 // transferLimit is the per-phase bound on concurrent object-store requests.
@@ -1293,6 +1305,18 @@ func (d *OCIDispatcher) execute(
 		}
 	}
 
+	// STEP 5d. The run's context, read only for a task whose run-describing
+	// keys task.json carries: after the commit check and the memo, so neither
+	// a commit nor a hit is ever refused for it, and before the image, so a
+	// read that fails pulls nothing.
+	var runContext *artifacts.RunContextObject
+	contextCached := cached || (d.LocalRunContext != nil && d.LocalRunContext.Cached)
+	if !contextCached && d.LocalRunContext == nil {
+		if runContext, failure = d.runContextObject(ctx, in); failure != nil {
+			return nil, failure
+		}
+	}
+
 	// STEP 6. The image — BEFORE the render, so task.json can carry what the
 	// pull resolved.
 	beat.Phase("image")
@@ -1373,14 +1397,24 @@ func (d *OCIDispatcher) execute(
 	if err := ws.WriteRunJSON(payloadMapOf(in.GetRunInput())); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write run.json: %v", err)
 	}
-	// The trace key is optional and non-ABI (§3.2): d.TraceContext is nil in
-	// every deployment that does not trace, and ctx here is the one Phases.Begin
+	// The trace key is optional (§3.2): d.TraceContext is nil in every
+	// deployment that does not trace, and ctx here is the one Phases.Begin
 	// returned, which is what may carry a span.
 	var traceCarrier map[string]string
 	if d.TraceContext != nil {
 		traceCarrier = d.TraceContext(ctx)
 	}
+	lineage := objectLineage(in, runContext)
+	if d.LocalRunContext != nil {
+		lineage = fixedLineage(d.LocalRunContext.Lineage)
+	}
+	contextRun, contextTask, failure := runContextTaskJSON(in, lineage, contextCached, attempt, attemptStart(ctx, startedAt))
+	if failure != nil {
+		return nil, failure
+	}
 	if err := ws.WriteTaskJSON(in, TaskContext{
+		RunContext:     contextRun,
+		TaskContext:    contextTask,
 		Identities:     identitiesOf(ids, in),
 		Attempt:        attempt,
 		Pool:           resolvedPool(in.GetPool()),
@@ -1447,11 +1481,13 @@ func (d *OCIDispatcher) execute(
 	id, err := d.Runtime.Create(ctx, spec)
 	if err != nil {
 		if id != "" {
+			sink.Container(id)
 			d.removeFailedCreate(ctx, id, err)
 		}
 		return nil, d.runtimeFailure(err, "create the container")
 	}
 	beat.Container(id)
+	sink.Container(id)
 	// A declared capacity frees this attempt's reservation when the
 	// container is removed, never before (capacity.go).
 	admission := admissionFrom(ctx)

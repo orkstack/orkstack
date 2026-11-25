@@ -283,6 +283,9 @@ func (a *GateActivities) acquireOnce(ctx context.Context, in AcquireConcurrencyI
 		}, ConcurrencyGateWorkflowType, start)
 		update.WorkflowID = ""
 		h, err = a.client.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{StartWorkflowOperation: op, UpdateOptions: update})
+		if err == nil {
+			a.observeStart(ctx, start.Namespace, previous)
+		}
 	}
 	if err != nil {
 		return ans, err

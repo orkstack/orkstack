@@ -56,10 +56,10 @@ func dialVersioningCluster(t *testing.T, ctx context.Context, namespace string) 
 	}
 	_ = conn.Close()
 
-	bootstrap, err := client.DialContext(ctx, client.Options{
+	bootstrap, err := client.DialContext(ctx, engine.ClientOptions(client.Options{
 		HostPort:  address,
 		Namespace: client.DefaultNamespace,
-	})
+	}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -73,7 +73,7 @@ func dialVersioningCluster(t *testing.T, ctx context.Context, namespace string) 
 	// cache, so the first dial is retried rather than failed.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		c, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 		if err == nil {
 			if _, probe := c.DescribeTaskQueue(ctx, "ork-versioning-probe", 0); probe == nil {
 				t.Cleanup(c.Close)

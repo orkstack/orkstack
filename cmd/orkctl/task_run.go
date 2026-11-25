@@ -113,7 +113,8 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 			"renderer and workspace an Orker uses, and prints the rendered config.json before\n" +
 			"the container starts.\n\n" +
 			"With --from-run RUN, the task's upstream values and artifacts are the run's\n" +
-			"committed bytes, read through the engine's integrity-checked artifact reads. With\n" +
+			"committed bytes, read through the engine's integrity-checked artifact reads, and\n" +
+			"its task.json carries the run's context (what started the run and when). With\n" +
 			"--file, an edited document that is not stored is validated by the engine and run instead\n" +
 			"of the stored definition. --output and --artifact supply an upstream task's\n" +
 			"values.json and output files from local files.\n\n" +
@@ -447,6 +448,8 @@ type taskRunner struct {
 	input    *orkstackv1.Payload // effective, defaults applied
 	localID  string
 	in       *orkstackv1.ExecuteTaskInput
+	// localContext is the recorded run's, nil without one (recordedContext).
+	localContext *orker.LocalRunContext
 
 	// sources is each closure member's upstream source, in closure order.
 	sources []*upstreamSource
@@ -978,6 +981,7 @@ func (r *taskRunner) compose() error {
 	in, err := engine.LocalTaskInput(engine.LocalTask{
 		Orkflow: r.wf, TaskID: r.opts.task, RunID: r.localID, Input: input, Upstream: upstream,
 		Item: r.opts.itemSelected, ItemCount: itemCount, Join: join, Lines: r.eachLines(),
+		RunContext: r.recordedContext(),
 	})
 	r.report = r.newReport()
 	var refusal *engine.LocalTaskRefusal
@@ -1002,6 +1006,27 @@ func (r *taskRunner) compose() error {
 	r.in = in
 	r.report.IdempotencyKey = in.GetIdempotencyKey()
 	return r.dispatch()
+}
+
+// recordedContext is the run context of the recorded run this replays, read
+// off its record, and keeps the lineage the dispatcher writes beside it. Nil,
+// which task.json says as `unavailable`, with no run, for a run whose tasks
+// were given none, and where the record does not say the whole lineage.
+func (r *taskRunner) recordedContext() *orkstackv1.RunContext {
+	r.localContext = nil
+	rc := engine.RunContextFromRun(r.run, r.wf, r.opts.task, r.opts.itemSelected, time.Now())
+	if rc == nil {
+		return nil
+	}
+	local := &orker.LocalRunContext{Cached: r.spec.GetCache() != nil && r.spec.GetPin() == ""}
+	if !local.Cached {
+		var whole bool
+		if local.Lineage, whole = orker.LineageOfRun(r.run); !whole {
+			return nil
+		}
+	}
+	r.localContext = local
+	return rc
 }
 
 // itemCount is a fan-out task's item count for --item: the run's own count
@@ -1113,6 +1138,8 @@ func (r *taskRunner) dispatch() (err error) {
 		OrkerID:  owner.id,
 		Phases:   r.t,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		// The recorded run's context, where this replays one that has it.
+		LocalRunContext: r.localContext,
 		// Commits, Attempts, Logs, TaskLogs, TraceContext: nil — deliberately.
 		// A local run has no durable result to honor, records no attempt and
 		// streams no chunk anywhere. EnvAllowlist: nil — the caller's

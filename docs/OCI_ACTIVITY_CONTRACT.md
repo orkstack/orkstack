@@ -578,9 +578,10 @@ rule below and an image that has never heard of the feature loses nothing:
   produced values for it. Only the inputs the task names are staged. No task
   id can be `_inputs`.
 - **A deployment that exports traces** adds `trace` (`traceparent`, and
-  `tracestate` when the propagator set one, W3C header form). It is purely
-  informational: a workload that wants to join the trace propagates the two
-  strings verbatim to whatever it calls next.
+  `tracestate` when there is one, at most 512 bytes, W3C header form): the
+  context of the attempt's own span. A workload that wants to join the trace
+  propagates the two strings verbatim to whatever it calls next. It carries no
+  baggage, and no environment variable carries it.
 
 **Artifact names are UTF-8; paths are derived and lossy.** `path` is produced
 by the Orker's `safeComponent` rule, which rewrites separators, dot segments
@@ -603,8 +604,18 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `run.orkflow.name` | string | required | — | slug |
 | `run.orkflow.version` | string | required | — | pinned version string; for a document never created, run locally by `orkctl task run -f`, its content hash (§4.4) |
 | `run.orkflow.definitionDigest` | string | required | — | `sha256:<64 hex>` (§4.4) |
+| `run.context` | string | required | — | the run context's marker: `available` (every run-context key below that applies is present), `cached` (a cached task: the run-describing keys are left out, below), or `unavailable` (the input carries no run context: a local run of no recorded run (§10.4), `orkctl activity test`). Check it before trusting the absence of any run-context key |
+| `run.createdAt`, `run.startedAt` | string | optional | absent | RFC 3339 UTC: when the run was created and when it started executing; present when `run.context` is `available` |
+| `run.deadline` | string | optional | absent | RFC 3339 UTC: the run's deadline, for a run whose definition declares `timeout:` (a child's is its own `timeout:`'s); `available` only |
+| `run.origin` | object | optional | absent | what started the run; `available` only. `kind` (`SUBMIT`, `TRIGGER`, `SCHEDULE`, `RUN_AGAIN`, `PARENT_RUN`), `id` (the trigger, schedule or source run; for `PARENT_RUN` the parent run), `reference` and `description` (caller-supplied, at most 256 B), `principal` (who asked: asserted by a gateway unless `principalVerified` is true) |
+| `run.parent` | object | optional | absent | for a child run only: the parent's `runId`, the composed `taskId` that started this run, and its `orkflow` (name, version, definitionDigest) |
+| `run.root` | object | optional | absent | the run at the top of the composed chain, the run itself for a top-level run: `runId`, `orkflow` and `origin`; inside an Orkflow another namespace shared, at any depth, the root's `origin` has no `principal`, `principalVerified` or `reference` |
 | `task.id` | string | required | — | slug |
 | `task.attempt` | integer | required | — | 1-based Temporal attempt; it may differ from the ordinal the attempt's record and log carry (`docs/STORAGE.md`, "Attempt ordinals"), and it can repeat: a task run again after an interruption (AGENTS.md §4) starts again at 1. It identifies no attempt; key work that must not repeat on `idempotencyKey` |
+| `task.ownAttempt` | integer | optional | absent | 1-based count of this task's own attempts, interruptions (AGENTS.md §4) excluded; present when `run.context` is `available` or `cached` |
+| `task.maxAttempts` | integer | optional | absent | the attempts the task's `retry:` declares (`maximum_attempts`; 1 without `retry:` or with 0 or 1). The last attempt is `task.ownAttempt == task.maxAttempts`; present as `task.ownAttempt` is |
+| `task.scheduledAt` | string | optional | absent | RFC 3339 UTC: when the task, or this item, became ready and was dispatched; `available` only |
+| `task.attemptStartedAt` | string | optional | absent | RFC 3339 UTC: when this attempt started; `available` only |
 | `task.pool` | string | required | `"main"` | resolved pool name |
 | `task.runAsOrkerUser` | boolean | optional | absent = false | present and true when the Orker overrode the image's `USER` (§3.1) |
 | `task.pin` | object | optional | absent | present only for a pinned task |
@@ -677,8 +688,8 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `secrets` | array | required | `[]` | never null; names and paths only, never values |
 | `secrets[].name` | string | required | — | `^[A-Za-z0-9._-]{1,128}$` |
 | `secrets[].path` | string | required | — | absolute container path |
-| `trace.traceparent` | string | optional | absent | present only when this deployment exports traces |
-| `trace.tracestate` | string | optional | absent | present only alongside `traceparent`, and only when the propagator set one |
+| `trace.traceparent` | string | optional | absent | present only when this deployment exports traces: the attempt's span |
+| `trace.tracestate` | string | optional | absent | present only alongside `traceparent`, and only when there is one; at most 512 bytes |
 
 Each bound on a `join.needs[].error` text is measured on its JSON-escaped
 encoding; a cut text ends at a UTF-8 boundary with `…`. The need's full error
@@ -1790,8 +1801,9 @@ heard of.
 | 5b′ | — | **This Orker's policy**, a cached task after the memo step, unless it hit: step 3a's checks; a refusal ends the attempt here, recorded in phase `memo`, its workspace removed |
 | 5b″ | — | **First heartbeat awaited, then the claim**, a cached task that did not hit: steps 3′ and 4c |
 | 5c | `stage-artifacts` | **Deferred staging**, a cached task only: the recorded downloads, then secrets |
+| 5d | — | **Run context**, a task that is not cached and whose input carries one: the run tree's run-context object, read and verified against its SHA-256 and kept for the process's life (`RUN_CONTEXT_MISSING`, `RUN_CONTEXT_UNAVAILABLE`, `RUN_CONTEXT_INVALID`). After the commit check and the memo, so neither is ever refused for it, and before the image, so a read that fails pulls nothing; a context that does not account for the run whole is `RUN_CONTEXT_INVALID`, never a guessed key |
 | 6 | `image` | **Image**: `Runtime.Pull(image.pinned)`, or the verified embedded layout (§4.6); record platform digest and delivery. Then, for a task naming a profile, the pulled image's interface label: where it declares a contract of such a profile, it must be the one the run pinned as the image's need, else `PROFILE_DECLARATION_MISMATCH`, a `ContractViolation` with no container made; a label the runtime cannot read never started (`RUNTIME_STATE_UNKNOWN`) |
-| 7 | `render` | **Render**: resources and network resolved against policy; `with:` → `config.json`; `run.json`; `task.json`; input tree sealed |
+| 7 | `render` | **Render**: resources and network resolved against policy; `with:` → `config.json`; `run.json`; `task.json`, its run-context keys from the run tree's run-context object (read before step 6, below); input tree sealed |
 | 8 | `create` | **Create** from the security profile (§9.2), only if the attempt is still live: a run terminated or cancelled during the pull creates nothing |
 | 9–10 | `run` | **Run and wait**: stream stdout/stderr to the sink and to disk; wait for exit, cancellation (`cancel`) or the task timeout (`timeout`) |
 | 11 | `exit` | **Exit capture**; non-zero → classify and go to 14 |
@@ -2004,6 +2016,9 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
 | `ORKER_HEARTBEAT_LOST` | InfrastructureError | yes | nothing acknowledged the attempt's heartbeat for the heartbeat timeout, so the Orker stopped the attempt though nobody cancelled the task (§6.3) |
 | `ATTEMPT_STORE_UNAVAILABLE` | InfrastructureError | yes | the attempt store refused or did not answer the attempt's claim on its ordinal for four tries over about 10 s; the attempt did nothing: no container, no record, no log (§7.1) |
+| `RUN_CONTEXT_UNAVAILABLE` | InfrastructureError | yes | the store did not answer the read of the run's run-context object, or refused it (the object is missing, or this Orker's credential may not read it: a store such as AWS S3 does not say which), or this Orker has no store to read it from; no container was made (§7.1 step 5d) |
+| `RUN_CONTEXT_MISSING` | InfrastructureError | yes | the store says the run's run-context object is not there; no container was made |
+| `RUN_CONTEXT_INVALID` | ContractViolation | **no** | the run's run-context object is not what its SHA-256 names, does not decode, or has no entry for the run; a retry cannot change its bytes |
 | `ORKER_STOPPED` | InfrastructureError | yes | the attempt's Orker was stopping and handed the attempt back: a running container got the cancellation sequence, heartbeated throughout, and the Orker reported the attempt itself; one that reached the Orker after the signal started nothing (§6.3). A pinned member it stopped is recorded so and never reported: its pin fails `PIN_HOST_LOST` |
 
 One Orker code is recorded on an attempt and never reported:
@@ -2574,6 +2589,22 @@ answers the question §10.3 does not: *why did this task, in this document,
 with those inputs, fail?* It runs **one** task of an Orkflow on the caller's
 machine and prints the rendered `config.json` before the container starts
 (`--render-only` stops there).
+
+**The run context.** With `--from-run`, `task.json` carries the recorded run's
+(§3.2), read off its record and not from its run-context object, which only an
+Orker's credential reaches. Three members are always the local run's own:
+`run.id`, the `idempotencyKey` made of it, and `task.attemptStartedAt`. So are
+`task.attempt` and `task.ownAttempt`, which are 1 where the recorded attempt's
+may be more; `task.maxAttempts` is the document's; and `task.scheduledAt` is
+now for a task the run never scheduled. Otherwise every run-context key is the
+recorded run's, so `run.root.runId` names that run. A record names the owner of
+its own Orkflow, its parent's and its root's and no other, so for a run whose
+parent is not the root the root's `origin` has no `principal`,
+`principalVerified` or `reference`, as inside a shared Orkflow. `run.context` is
+`cached` for a cached task; and `unavailable`, with none of the keys, without
+`--from-run`, for a run whose tasks were given no context or that never
+started, and where the record does not say the whole lineage, or when the task
+or item that ran was scheduled.
 
 **What it shares with an Orker.** The dispatcher is the Orker's, built by the
 Orker's constructor, on this machine's runtime; the renderer is the Orker's,

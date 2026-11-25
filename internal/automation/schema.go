@@ -66,8 +66,8 @@ var automationDescriptions = map[string]string{
 	"triggers.*.description": "string",
 
 	"webhooks.*.url":        "absolute `http(s)` URL, **required**",
-	"webhooks.*.events":     "list of event names — absent means every run transition",
-	"webhooks.*.orkflow":    "slug — absent means every Orkflow",
+	"webhooks.*.events":     "list of event names — absent means the run's lifecycle: start, endings and resumption",
+	"webhooks.*.orkflow":    "slug: the namespace's own Orkflow, never another's shared one — absent means every Orkflow",
 	"webhooks.*.task":       "slug; needs a `TASK_*` event — absent means every task",
 	"webhooks.*.secret_env": "environment-variable name — absent means a generated signing secret, disclosed once",
 

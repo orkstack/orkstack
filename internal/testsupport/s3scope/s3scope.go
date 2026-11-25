@@ -72,6 +72,7 @@ func OrkerPolicy() Policy {
 		{Prefix: "metadata/probes/", Verbs: []Verb{Put, Get, Head, List, Delete}},
 		{Prefix: "metadata/receipts/", Verbs: []Verb{Put}},
 		{Prefix: "metadata/staging/event-sources/", Verbs: []Verb{Put}},
+		{Prefix: "metadata/run-context/", Verbs: []Verb{Get, Head}},
 	}
 }
 

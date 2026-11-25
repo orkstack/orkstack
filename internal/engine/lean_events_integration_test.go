@@ -74,7 +74,7 @@ func TestIntegration_LeanFanOutStreamsEveryItemEventInSequence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	namespace := privateNamespaceForCommitE2E(t)
-	temporalClient, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+	temporalClient, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}

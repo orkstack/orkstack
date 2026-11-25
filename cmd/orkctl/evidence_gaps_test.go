@@ -35,7 +35,7 @@ func TestEvidenceVerifyCommand_PrintsTheGap(t *testing.T) {
 	sum := sha256.Sum256(body)
 	at := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	manifest := &evidence.Manifest{
-		SchemaVersion: evidence.SchemaVersionEventGaps, RunID: "ork-gap", Namespace: "default",
+		SchemaVersion: evidence.SchemaVersion, RunID: "ork-gap", Namespace: "default",
 		OrkflowName: "deploy", OrkflowVersion: "1.0.0", RunStatus: "SUCCEEDED",
 		RunCreatedAt: at, RunFinishedAt: at, ExportedAt: at, EngineVersion: "v0.9.3",
 		Definition: evidence.Definition{State: evidence.StateReclaimed, Reason: evidence.ReasonDefinitionDeleted},
@@ -86,6 +86,7 @@ func TestEvidenceVerifyCommand_NamesANeverPublishedGap(t *testing.T) {
 	sum := sha256.Sum256(body)
 	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	manifest := &evidence.Manifest{
+		// As an engine before version 3 wrote it, which verify still reads.
 		SchemaVersion: evidence.SchemaVersionEventGaps, RunID: "ork-unpublished", Namespace: "default",
 		OrkflowName: "deploy", OrkflowVersion: "1.0.0", RunStatus: "FAILED",
 		RunCreatedAt: at, RunFinishedAt: at, ExportedAt: at, EngineVersion: "v0.9.3",

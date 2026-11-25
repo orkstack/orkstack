@@ -1299,7 +1299,9 @@ awaiting.
   it resolves exactly the await it was minted for, in the run's own
   namespace, and nothing else, and it grants no read. The body is read as
   JSON whatever `Content-Type` it declares, as on the trigger route
-  ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md), "Invoking a trigger").
+  ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md), "Invoking a trigger"). A `5xx`
+  answer says to send the resolution again (the same one twice is one) and
+  never why; the cause is in the engine's log.
 
 A completion's values are bounded by the deployment's values limit and stored
 as an immutable object; they reach a downstream container only as its
@@ -1671,7 +1673,7 @@ asserts the result does not depend on them. See `examples/each-lines.ork.yaml`.
 A task may name another Orkflow instead of an image. Such a **composed task**
 starts a **child run** of that Orkflow — its own run id, history, logs,
 commits, events and archive record, linked to its parent by its origin
-(`parent-run <parent id>`) — and waits for it. It reaches no Orker.
+(`parent-run <parent id>`, the composed task and both Orkflows) — and waits for it. It reaches no Orker.
 
 ```yaml
 tasks:

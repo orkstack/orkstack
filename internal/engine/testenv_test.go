@@ -32,14 +32,14 @@ func generousDeadlock(env *testsuite.TestWorkflowEnvironment) *testsuite.TestWor
 
 // testWorkerOptions is options with the harnesses' deadlock budget unless
 // options sets one, and with the interceptors every production run worker
-// has (RunWorkerInterceptors) after the test's own, so a test's interceptor
+// has (PayloadInterceptor, RunWorkerInterceptors) after the test's own, so a test's interceptor
 // sees what those set. SetWorkerOptions replaces every option, so a test that
 // sets others (interceptors, the session worker) passes them through here.
 func testWorkerOptions(options worker.Options) worker.Options {
 	if options.DeadlockDetectionTimeout == 0 {
 		options.DeadlockDetectionTimeout = testDeadlockDetectionTimeout
 	}
-	options.Interceptors = append(append([]interceptor.WorkerInterceptor(nil), options.Interceptors...), engine.RunWorkerInterceptors()...)
+	options.Interceptors = append(append([]interceptor.WorkerInterceptor(nil), options.Interceptors...), append([]interceptor.WorkerInterceptor{engine.PayloadInterceptor(nil)}, engine.RunWorkerInterceptors()...)...)
 	return options
 }
 

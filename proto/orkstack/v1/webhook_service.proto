@@ -66,7 +66,8 @@ message Webhook {
   // orkflow_name narrows to runs of one orkflow, by the name the author
   // wrote. Empty means every orkflow. It composes with namespace by
   // conjunction and does not require it: a name alone matches that name in
-  // every namespace.
+  // every namespace. The orkflow is the run's own namespace's: a child run of
+  // another namespace's shared orkflow never matches a name.
   string orkflow_name = 6;
   // task_id narrows the task outcome events to one task. Empty means every
   // task. It is consulted only for TASK_* events: a RUN_* event has no task
@@ -108,8 +109,9 @@ message RegisterWebhookResponse {
 }
 
 // UpdateWebhookRequest replaces every mutable field, on the terms
-// RegisterWebhookRequest states them: empty events means every run
-// transition; each scope field empty means every. It carries no secret.
+// RegisterWebhookRequest states them: empty events means the run's
+// lifecycle (its start, endings and resumption); each scope field empty means
+// every. It carries no secret.
 message UpdateWebhookRequest {
   string id = 1;
   string name = 2;
@@ -243,6 +245,10 @@ message Delivery {
   // a receiver orders deliveries by. A redelivery keeps the original's. Zero
   // on a record written before deliveries carried it.
   int64 sequence = 21;
+  // orkflow_namespace is the namespace that owns orkflow_name when that is
+  // not `namespace`: the run was a shared Orkflow's child run. The body
+  // carries it as "orkflowNamespace". Empty otherwise.
+  string orkflow_namespace = 22;
 }
 
 // ListDeliveriesRequest lists the deployment's delivery records. It is a
@@ -285,7 +291,7 @@ message ListDeliveriesRequest {
         path: "event"
         label: "Event"
         operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
-        allowed_values: ["RUN_QUEUED", "RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "TASK_QUEUED", "TASK_SCHEDULED", "TASK_STARTED", "TASK_AWAITING", "TASK_RESOLVED", "TASK_SLEEPING", "TASK_SUCCEEDED", "TASK_FAILED", "RUN_PAUSED", "RUN_UNPAUSED"]
+        allowed_values: ["RUN_QUEUED", "RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "TASK_QUEUED", "TASK_SCHEDULED", "TASK_STARTED", "TASK_AWAITING", "TASK_RESOLVED", "TASK_SLEEPING", "TASK_SUCCEEDED", "TASK_FAILED", "RUN_PAUSED", "RUN_UNPAUSED", "RUN_RESUMED", "RUN_RESULTS_KEPT"]
       },
       {
         path: "delivered"

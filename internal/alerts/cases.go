@@ -63,5 +63,11 @@ func newCases(name, labels string, want map[string]string) []Case {
 	}
 }
 
+// newOther is a NEW rule's counter appearing under labels the rule does not
+// read: the case "appears" of newCases, quiet.
+func newOther(name, counter, labels string) Case {
+	return Case{Name: name, Interval: "5m", EvalAt: "1955m", Input: []Series{s("ork_build_info", "", "1x420"), s(counter, labels, "_x390 1x20")}}
+}
+
 // isNEW is whether a rule's expression is a NEW one.
 func isNEW(expr string) bool { return strings.Contains(expr, "unless last_over_time(") }

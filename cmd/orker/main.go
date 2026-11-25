@@ -918,6 +918,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	opts.EachIndexes = eachIndexes
+	// Each run tree's run-context object, which a task's task.json is
+	// filled from: written at submit by an engine, and read by key alone.
+	runContexts, err := artifacts.NewRunContextStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return err
+	}
+	opts.RunContexts = runContexts
 	opts.Memos = memoStore
 	// The namespaces this Orker serves. It is read after the commit store's
 	// probe, which writes a probe key no namespace owns, and scopes every

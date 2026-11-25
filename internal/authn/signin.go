@@ -133,7 +133,9 @@ type Signins struct {
 	// OnEvent is told of every sign-in event; it writes the audit record.
 	OnEvent func(ctx context.Context, e SigninEvent)
 	Logger  *slog.Logger
-	Now     func() time.Time
+
+	lines LogBound // what callers with no sign-in can make it log
+	Now   func() time.Time
 
 	initOnce  sync.Once
 	providers providers
@@ -374,7 +376,10 @@ func noStore(w http.ResponseWriter) {
 // signinFailed sends the browser to the sign-in page with a short reason,
 // never the detail, which goes to the log.
 func (s *Signins) signinFailed(w http.ResponseWriter, r *http.Request, issuer, reason string, err error) {
-	s.logger().Warn("sign-in refused", "issuer", issuer, "reason", reason, "error", err)
+	s.lines.Do("refused "+reason, func(dropped int) {
+		s.logger().Warn("sign-in refused", "issuer", LogText(issuer, LogTextMax), "reason", reason,
+			"error", logError(err), "more_not_logged", dropped)
+	})
 	http.SetCookie(w, secureCookie(LoginCookie, "", -1))
 	noStore(w)
 	http.Redirect(w, r, "/signin?error="+url.QueryEscape(reason), http.StatusFound)
@@ -398,13 +403,17 @@ func (s *Signins) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, _, err := s.providers.get(r.Context(), i, s.now())
 	if err != nil {
-		s.logger().Error("sign-in: the issuer's discovery could not be read", "issuer", i.Name, "error", err)
+		s.lines.Do("discovery "+i.Name, func(dropped int) {
+			s.logger().Error("sign-in: the issuer's discovery could not be read", "issuer", i.Name, "error", err, "more_not_logged", dropped)
+		})
 		http.Error(w, "the identity provider cannot be reached now; try again", http.StatusServiceUnavailable)
 		return
 	}
 	cfg, err := s.oauthConfig(i, meta)
 	if err != nil {
-		s.logger().Error("sign-in: the issuer's client is misconfigured", "issuer", i.Name, "error", err)
+		s.lines.Do("misconfigured "+i.Name, func(dropped int) {
+			s.logger().Error("sign-in: the issuer's client is misconfigured", "issuer", i.Name, "error", err, "more_not_logged", dropped)
+		})
 		http.Error(w, "sign-in is misconfigured on this engine", http.StatusServiceUnavailable)
 		return
 	}

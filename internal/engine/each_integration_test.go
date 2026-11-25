@@ -19,6 +19,7 @@ import (
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/proto"
@@ -28,6 +29,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 
@@ -65,9 +67,23 @@ type eachE2E struct {
 	runWorker  worker.Worker
 	orkers     []worker.Worker
 	containers map[string]int
+	tracing    eachE2ETracing
+}
+
+// eachE2ETracing is how a deployment takes part in traces; the zero value is
+// one that does not.
+type eachE2ETracing struct {
+	engineClient, orkerClient []interceptor.ClientInterceptor
+	observer                  engine.EventObserver
+	orker                     *telemetry.OrkerObserver
 }
 
 func startEachE2E(t *testing.T, withDocker bool) *eachE2E {
+	t.Helper()
+	return startTracedEachE2E(t, withDocker, eachE2ETracing{})
+}
+
+func startTracedEachE2E(t *testing.T, withDocker bool, tracing eachE2ETracing) *eachE2E {
 	t.Helper()
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
@@ -83,7 +99,7 @@ func startEachE2E(t *testing.T, withDocker bool) *eachE2E {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 	namespace := privateNamespaceForCommitE2E(t)
-	temporalClient, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+	temporalClient, err := client.DialContext(ctx, engine.ClientOptions(client.Options{HostPort: address, Namespace: namespace, Interceptors: tracing.engineClient}, nil))
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
@@ -95,7 +111,8 @@ func startEachE2E(t *testing.T, withDocker bool) *eachE2E {
 
 	token := fmt.Sprintf("%d", time.Now().UnixNano())
 	e := &eachE2E{
-		t: t, ctx: ctx, cfg: cfg, temporal: temporalClient, namespace: namespace,
+		tracing: tracing,
+		t:       t, ctx: ctx, cfg: cfg, temporal: temporalClient, namespace: namespace,
 		runQueue:   "ork-each-run-" + token,
 		orkerQueue: "ork-each-tasks-" + token,
 		runs:       engine.NewRunStore(),
@@ -125,7 +142,7 @@ func startEachE2E(t *testing.T, withDocker bool) *eachE2E {
 		DisableRegistrationAliasing: true, DisableWorkflowWorker: true,
 	})
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewEventActivities(e.bus, e.runs).WithSnapshotStore(e.snapshots).PublishEvent,
+		engine.NewEventActivities(e.bus, e.runs).WithSnapshotStore(e.snapshots).WithEventObserver(tracing.observer).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	must.OKf(t, eventWorker.Start(), "start event worker")
 	t.Cleanup(eventWorker.Stop)
@@ -171,14 +188,24 @@ func (e *eachE2E) startRunWorker() {
 // every ExecuteTask invocation by task and item before delegating.
 func (e *eachE2E) startOrker(id string) (worker.Worker, *orker.Activities) {
 	refs, _ := e.store.(artifacts.RefPredictor)
-	activities := orker.NewActivitiesWithOptions(e.store, orker.Options{
+	options := orker.Options{
 		Logs: e.logs, Commits: e.commits, Attempts: e.attempts, Refs: refs,
 		Pool: task.DefaultPool, OrkerID: id, WorkRoot: e.workRoot,
-	})
+	}
+	temporalClient := e.temporal
+	if o := e.tracing.orker; o != nil {
+		options.Phases, options.TraceContext = o, o.TraceContext
+		// An Orker's own client, as another process has.
+		own, err := client.DialContext(e.ctx, engine.ClientOptions(client.Options{HostPort: temporalAddress(), Namespace: e.namespace, Interceptors: e.tracing.orkerClient}, nil))
+		must.OKf(e.t, err, "dial temporal as the orker")
+		e.t.Cleanup(own.Close)
+		temporalClient = own
+	}
+	activities := orker.NewActivitiesWithOptions(e.store, options)
 	if err := activities.Boot(e.ctx); err != nil {
 		infraAbsent(e.t, "orker boot checks failed: %v", err)
 	}
-	w := worker.New(e.temporal, e.orkerQueue, worker.Options{
+	w := worker.New(temporalClient, e.orkerQueue, worker.Options{
 		DisableRegistrationAliasing: true, DisableWorkflowWorker: true,
 		// MaxHeartbeatThrottleInterval stays unset, as cmd/orker leaves it: the
 		// Orker sends a task's heartbeats itself, so a cancel reaches it within

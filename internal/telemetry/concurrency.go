@@ -26,6 +26,10 @@ const (
 	AttrConcurrencyState = "ork.concurrency.state"
 )
 
+// ConcurrencyCensusFailuresMetric counts the census passes that could not
+// run.
+const ConcurrencyCensusFailuresMetric = "ork.concurrency.census.failures"
+
 // ConcurrencyCensus is one census pass, as the engine hands it over.
 type ConcurrencyCensus struct {
 	At                time.Time
@@ -74,6 +78,8 @@ type ConcurrencyGauges struct {
 	// its first census, local_age counts from it, so a census that never
 	// runs shows as an age that grows, not as an absent series.
 	started time.Time
+	// failures is nil when it could not be built.
+	failures metric.Int64Counter
 
 	mu   sync.Mutex
 	last ConcurrencyCensus
@@ -131,6 +137,13 @@ func NewConcurrencyGauges(p *Providers, interval, timeout time.Duration, indexUn
 	floatGauge("ork.concurrency.census.local_age", "s", "How old this replica's census snapshot is.")
 	floatGauge("ork.concurrency.census.interval", "s", "The census's interval.")
 	intGauge("ork.concurrency.index_unavailable", "{flag}", "1 when the cluster does not index concurrency limits.")
+	failures, err := meter.Int64Counter(ConcurrencyCensusFailuresMetric, metric.WithUnit("{pass}"),
+		metric.WithDescription("Census passes that could not run."))
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		g.failures = failures
+	}
 	if len(observables) > 0 {
 		if _, err := meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 			g.observe(o, ints, floats)
@@ -147,8 +160,12 @@ func NewConcurrencyGauges(p *Providers, interval, timeout time.Duration, indexUn
 	return g
 }
 
-// Record keeps c as this replica's latest snapshot.
+// Record keeps c as this replica's latest snapshot, and counts it when its
+// pass could not run.
 func (g *ConcurrencyGauges) Record(c ConcurrencyCensus) {
+	if c.Unavailable && g.failures != nil {
+		g.failures.Add(context.Background(), 1)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.last, g.have = c, true

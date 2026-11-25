@@ -16,7 +16,7 @@ import (
 )
 
 // gateHarness runs ConcurrencyGateWorkflow in the test environment, with
-// its two local activities answered by the test.
+// its three local activities answered by the test.
 type gateHarness struct {
 	t        *testing.T
 	env      *testsuite.TestWorkflowEnvironment
@@ -26,6 +26,9 @@ type gateHarness struct {
 	granted  []ConcurrencyGrant
 	grantAt  []time.Time
 	grantErr func(ConcurrencyGrant) error
+	// reports are what the gate reported; reportErr fails each report.
+	reports   []ConcurrencyGateReport
+	reportErr error
 }
 
 func newGateHarness(t *testing.T) *gateHarness {
@@ -54,6 +57,10 @@ func newGateHarness(t *testing.T) *gateHarness {
 		}
 		return h.describe(in)
 	}, activity.RegisterOptions{Name: ActivityDescribeConcurrencyEntries})
+	h.env.RegisterActivityWithOptions(func(_ context.Context, r ConcurrencyGateReport) error {
+		h.reports = append(h.reports, r)
+		return h.reportErr
+	}, activity.RegisterOptions{Name: ActivityReportConcurrencyGate})
 	h.env.OnSignalExternalWorkflow(mock.Anything, mock.Anything, "", ConcurrencyGrantSignal, mock.Anything).Return(
 		func(_, _, _, _ string, arg any) error {
 			g := arg.(ConcurrencyGrant)

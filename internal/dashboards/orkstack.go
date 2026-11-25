@@ -8,11 +8,14 @@ import "strings"
 // concurrency, cleanup and GC areas is drawn
 // (TestDashboards_EveryAreaSeriesIsDrawn).
 
-// sel selects runs by the shared variables. When runs can be resumed and a
-// resumed run counts again (ork.run.resumed), sel gains
-// ork_run_resumed!="true"; TestDashboards_RunCountsExcludeResumed requires it
-// the moment the label is exported, and refuses it before.
+// sel selects runs' endings by the shared variables. A resumed run ends again
+// under ork_run_resumption="true": a panel that means runs adds distinctRuns
+// to count each once, and every other counts each ending
+// (TestDashboards_RunCountsExcludeResumed lists which).
 const sel = `ork_namespace=~"$namespace",ork_orkflow_name=~"$orkflow"`
+
+// distinctRuns leaves out every ending of a run but its first.
+const distinctRuns = `ork_run_resumption!="true"`
 
 // pools selects by the pool variable.
 const pools = `ork_pool=~"$pool"`
@@ -32,9 +35,9 @@ func topRow() []panel {
 	backlog := `max by (ork_pool) (ork_pool_backlog_tasks{` + pools + `})`
 	polling := `max by (ork_pool) (ork_pool_pollers{` + pools + `})`
 	return []panel{
-		stat("Runs / min", "Runs that finished, per minute, over the last 5 minutes.", unitShort,
-			qi(`sum(rate(`+runs+`[5m])) * 60 or vector(0)`, "runs")).withThresholds(neutral()...),
-		stat("Failure ratio, 15 m", "The share of runs that finished in the last 15 minutes and failed.", unitPercent,
+		stat("Runs / min", "Runs that finished, per minute, over the last 5 minutes. A resumed run counts once: its later endings are left out.", unitShort,
+			qi(`sum(rate(`+with("ork_runs_total", distinctRuns, sel)+`[5m])) * 60 or vector(0)`, "runs")).withThresholds(neutral()...),
+		stat("Failure ratio, 15 m", "The share of runs that finished in the last 15 minutes and failed. Each ending of a resumed run counts.", unitPercent,
 			qi(`(sum(rate(`+failed+`[15m])) or vector(0)) / (sum(rate(`+runs+`[15m])) > 0)`, "failed")).
 			withThresholds(okWarnFail(0.05, 0.2)...).withNoValue("no runs"),
 		stat("Open runs", "Runs open in the deployment now, each counted once.", unitShort,
@@ -69,12 +72,12 @@ func topRow() []panel {
 func areaRows() []row {
 	rows := []row{
 		{title: "Are runs and tasks succeeding?", panels: []panel{
-			series("Runs by status", "Runs that finished, per second, by status.", unitOps,
+			series("Runs by status", "Runs that finished, per second, by status. Each ending of a resumed run counts.", unitOps,
 				q(`sum by (status) (rate(`+with("ork_runs_total", sel)+`[$__rate_interval]))`, "{{status}}")),
-			series("Run duration", "Run duration from start to finish, at the 50th, 95th and 99th percentiles.", unitSeconds,
-				q(`histogram_quantile(0.5, sum by (le) (rate(`+with("ork_run_duration_seconds_bucket", sel)+`[$__rate_interval])))`, "p50"),
-				q(`histogram_quantile(0.95, sum by (le) (rate(`+with("ork_run_duration_seconds_bucket", sel)+`[$__rate_interval])))`, "p95"),
-				q(`histogram_quantile(0.99, sum by (le) (rate(`+with("ork_run_duration_seconds_bucket", sel)+`[$__rate_interval])))`, "p99")),
+			series("Run duration", "Run duration from start to finish, at the 50th, 95th and 99th percentiles. A resumed run's later endings are left out.", unitSeconds,
+				q(`histogram_quantile(0.5, sum by (le) (rate(`+with("ork_run_duration_seconds_bucket", distinctRuns, sel)+`[$__rate_interval])))`, "p50"),
+				q(`histogram_quantile(0.95, sum by (le) (rate(`+with("ork_run_duration_seconds_bucket", distinctRuns, sel)+`[$__rate_interval])))`, "p95"),
+				q(`histogram_quantile(0.99, sum by (le) (rate(`+with("ork_run_duration_seconds_bucket", distinctRuns, sel)+`[$__rate_interval])))`, "p99")),
 			series("Attempts that failed, by reason", "Attempts that ended in failure on the Orkers, the ten most frequent reasons, across every namespace.", unitOps,
 				q(`topk(10, sum by (ork_failure_reason) (rate(ork_deployment_orker_tasks_total{outcome="failed"}[$__rate_interval])))`, "{{ork_failure_reason}}")),
 			series("Submissions refused", "Submissions the admission gate refused, by reason: a hold, a cap on running runs, or a budget.", unitOps,

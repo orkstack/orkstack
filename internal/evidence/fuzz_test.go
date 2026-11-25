@@ -208,15 +208,15 @@ func unsafeName(name string) bool {
 	return false
 }
 
-// FuzzParseManifest: a document is read as a manifest of schema version 1 or
-// 2 or refused by name; a version 2 manifest names at least one event gap and
-// every gap is a range, a version 1 manifest names none; and what it reads
+// FuzzParseManifest: a document is read as a manifest of schema version 1, 2
+// or 3 or refused by name; a version 2 manifest names at least one event gap, a
+// version 1 manifest none, and every gap is a range; and what it reads
 // writes back to a document that reads back as the same manifest.
 func FuzzParseManifest(f *testing.F) {
 	golden, _ := (&Manifest{SchemaVersion: SchemaVersion, RunID: "ork-1"}).MarshalJSON()
 	gapped, _ := (&Manifest{SchemaVersion: SchemaVersionEventGaps, RunID: "ork-1", EventGaps: []EventGap{{First: 2, Last: 5, Reason: "lost"}}}).MarshalJSON()
 	for _, seed := range [][]byte{
-		golden, gapped, []byte(`{}`), []byte(`{"schema_version":3}`), []byte(`{"schema_version":2}`), []byte(`{"schema_version":1,"event_gaps":[{"first":1,"last":2}]}`),
+		golden, gapped, []byte(`{}`), []byte(`{"schema_version":3}`), []byte(`{"schema_version":4}`), []byte(`{"schema_version":3,"event_gaps":[{"first":1,"last":2}]}`), []byte(`{"schema_version":2}`), []byte(`{"schema_version":1,"event_gaps":[{"first":1,"last":2}]}`),
 		[]byte(`{"schema_version":2,"event_gaps":[{"first":0,"last":2}]}`), []byte(`{"schema_version":2,"event_gaps":[{"first":3,"last":2}]}`),
 		[]byte(`null`), []byte(``), []byte(`[]`), []byte(`{"schema_version":1,"members":[{"path":"a","state":"present","size_bytes":-1}]}`),
 	} {
@@ -230,10 +230,10 @@ func FuzzParseManifest(f *testing.F) {
 			}
 			return
 		}
-		if manifest.SchemaVersion != SchemaVersion && manifest.SchemaVersion != SchemaVersionEventGaps {
+		if manifest.SchemaVersion < SchemaVersionNoGaps || manifest.SchemaVersion > SchemaVersion {
 			t.Fatalf("ParseManifest(%q) read schema_version %d", document, manifest.SchemaVersion)
 		}
-		if (manifest.SchemaVersion == SchemaVersionEventGaps) != (len(manifest.EventGaps) > 0) {
+		if manifest.SchemaVersion != SchemaVersion && (manifest.SchemaVersion == SchemaVersionEventGaps) != (len(manifest.EventGaps) > 0) {
 			t.Fatalf("ParseManifest(%q): schema_version %d with %d gaps", document, manifest.SchemaVersion, len(manifest.EventGaps))
 		}
 		for _, gap := range manifest.EventGaps {

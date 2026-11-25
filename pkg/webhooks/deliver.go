@@ -29,8 +29,12 @@ type Delivery struct {
 	// RunID, OrkflowName, Status and Timestamp are the payload's flat header.
 	RunID       string
 	OrkflowName string
-	Status      string
-	Timestamp   time.Time
+	// OrkflowNamespace owns the Orkflow of a shared Orkflow's child run; empty
+	// for the run's own namespace's, and then omitted from the body and from a
+	// delivery input.
+	OrkflowNamespace string `json:",omitempty"`
+	Status           string
+	Timestamp        time.Time
 	// Sequence is the run event's sequence: monotonic per run, from 1, in the
 	// order the run emitted its events. It is the body's "sequence" and
 	// X-Ork-Sequence, so a receiver can order deliveries that arrive out of
@@ -46,6 +50,12 @@ type Delivery struct {
 	// ENDED_RUN_ENDED); empty on every other delivery, and then omitted from
 	// the body and from a delivery input, which encodes as it did before.
 	PauseTransition string `json:",omitempty"`
+	// ResumeCount is, on RUN_RESUMED, how many resumes of the run got going,
+	// this one included; 0 on every other delivery, and then omitted.
+	ResumeCount int32 `json:",omitzero"`
+	// ResultsKept is, on RUN_RESULTS_KEPT, what the resumed run read back;
+	// nil on every other delivery, and then omitted.
+	ResultsKept *ResultsKept `json:",omitempty"`
 	// Namespace is the run's resolved namespace, used to match; it is not
 	// part of the body (the embedded run already carries it).
 	Namespace string
@@ -65,23 +75,36 @@ type Delivery struct {
 	RedeliveryOf string
 }
 
+// ResultsKept is what a resumed run read back: the results it kept from their
+// commits, the awaited and composed tasks it kept from their records, and how
+// long that took.
+type ResultsKept struct {
+	KeptCount       int32   `json:"keptCount"`
+	SettledCount    int32   `json:"settledCount"`
+	ReadBackSeconds float64 `json:"readBackSeconds"`
+}
+
 // payload is the wire body, in the field order the contract states:
 //
-//	{"runId":…,"orkflowName":…,"status":…,"timestamp":…,"sequence":…,"taskId":…,"attempt":…,"run":{…}}
+//	{"runId":…,"orkflowName":…,"orkflowNamespace":…,"status":…,"timestamp":…,"sequence":…,"taskId":…,"attempt":…,"run":{…}}
 //
-// taskId and attempt are omitted when empty, so a run transition's body is
+// orkflowNamespace is omitted unless the run is a shared Orkflow's child, and
+// taskId and attempt when empty, so a run transition's body is
 // byte-identical to what it was before task outcomes were deliverable, apart
 // from sequence. sequence is omitted only when the delivery has none.
 type payload struct {
-	RunID           string             `json:"runId"`
-	OrkflowName     string             `json:"orkflowName"`
-	Status          string             `json:"status"`
-	Timestamp       string             `json:"timestamp"`
-	Sequence        int64              `json:"sequence,omitzero"`
-	PauseTransition string             `json:"pauseTransition,omitempty"`
-	TaskID          string             `json:"taskId,omitempty"`
-	Attempt         int32              `json:"attempt,omitzero"`
-	Run             stablejson.RawJSON `json:"run"`
+	RunID            string             `json:"runId"`
+	OrkflowName      string             `json:"orkflowName"`
+	OrkflowNamespace string             `json:"orkflowNamespace,omitempty"`
+	Status           string             `json:"status"`
+	Timestamp        string             `json:"timestamp"`
+	Sequence         int64              `json:"sequence,omitzero"`
+	PauseTransition  string             `json:"pauseTransition,omitempty"`
+	ResumeCount      int32              `json:"resumeCount,omitzero"`
+	ResultsKept      *ResultsKept       `json:"resultsKept,omitempty"`
+	TaskID           string             `json:"taskId,omitempty"`
+	Attempt          int32              `json:"attempt,omitzero"`
+	Run              stablejson.RawJSON `json:"run"`
 }
 
 // Body renders the signed request body. It is computed once per delivery and
@@ -100,15 +123,18 @@ func (d Delivery) Body() ([]byte, error) {
 		}
 	}
 	body, err := stablejson.Marshal(payload{
-		RunID:           d.RunID,
-		OrkflowName:     d.OrkflowName,
-		Status:          d.Status,
-		Timestamp:       d.Timestamp.UTC().Format(time.RFC3339Nano),
-		Sequence:        d.Sequence,
-		PauseTransition: d.PauseTransition,
-		TaskID:          d.TaskID,
-		Attempt:         d.Attempt,
-		Run:             d.Run,
+		RunID:            d.RunID,
+		OrkflowName:      d.OrkflowName,
+		OrkflowNamespace: d.OrkflowNamespace,
+		Status:           d.Status,
+		Timestamp:        d.Timestamp.UTC().Format(time.RFC3339Nano),
+		Sequence:         d.Sequence,
+		PauseTransition:  d.PauseTransition,
+		ResumeCount:      d.ResumeCount,
+		ResultsKept:      d.ResultsKept,
+		TaskID:           d.TaskID,
+		Attempt:          d.Attempt,
+		Run:              d.Run,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("webhooks: encode delivery %s: %w", d.ID, err)
@@ -198,15 +224,16 @@ type Result struct {
 	// be read by then (the engine logs which).
 	Signature string    `json:"signature,omitempty"`
 	Attempts  []Attempt `json:"attempts"`
-	// Namespace, OrkflowName, Sequence, TaskID, Attempt and Status are the delivery's
+	// Namespace, OrkflowName, OrkflowNamespace, Sequence, TaskID, Attempt and Status are the delivery's
 	// coordinates as the body carried them: what a record needs to say WHICH
 	// transition of which run was sent, without keeping the body.
-	Namespace   string `json:"namespace,omitempty"`
-	OrkflowName string `json:"orkflowName"`
-	Sequence    int64  `json:"sequence,omitzero"`
-	TaskID      string `json:"taskId,omitempty"`
-	Attempt     int32  `json:"attempt,omitzero"`
-	Status      string `json:"status"`
+	Namespace        string `json:"namespace,omitempty"`
+	OrkflowName      string `json:"orkflowName"`
+	OrkflowNamespace string `json:"orkflowNamespace,omitempty"`
+	Sequence         int64  `json:"sequence,omitzero"`
+	TaskID           string `json:"taskId,omitempty"`
+	Attempt          int32  `json:"attempt,omitzero"`
+	Status           string `json:"status"`
 	// EventAt is the transition's timestamp (X-Ork-Timestamp); QueuedAt the
 	// id's instant; SettledAt when the last attempt returned.
 	EventAt   time.Time `json:"eventAt"`
@@ -267,23 +294,24 @@ func NewDispatcher(options DispatcherOptions) *Dispatcher {
 func NewResult(hook Webhook, delivery Delivery, body []byte) Result {
 	digest := sha256.Sum256(body)
 	return Result{
-		DeliveryID:   delivery.ID,
-		WebhookID:    hook.ID,
-		Event:        delivery.Event,
-		RunID:        delivery.RunID,
-		URL:          hook.URL,
-		Namespace:    delivery.Namespace,
-		OrkflowName:  delivery.OrkflowName,
-		Sequence:     delivery.Sequence,
-		TaskID:       delivery.TaskID,
-		Attempt:      delivery.Attempt,
-		Status:       delivery.Status,
-		EventAt:      delivery.Timestamp.UTC(),
-		QueuedAt:     delivery.QueuedAt.UTC(),
-		RedeliveryOf: delivery.RedeliveryOf,
-		BodySHA256:   hex.EncodeToString(digest[:]),
-		BodyBytes:    len(body),
-		Signature:    Sign(hook.Secret, body),
+		DeliveryID:       delivery.ID,
+		WebhookID:        hook.ID,
+		Event:            delivery.Event,
+		RunID:            delivery.RunID,
+		URL:              hook.URL,
+		Namespace:        delivery.Namespace,
+		OrkflowName:      delivery.OrkflowName,
+		OrkflowNamespace: delivery.OrkflowNamespace,
+		Sequence:         delivery.Sequence,
+		TaskID:           delivery.TaskID,
+		Attempt:          delivery.Attempt,
+		Status:           delivery.Status,
+		EventAt:          delivery.Timestamp.UTC(),
+		QueuedAt:         delivery.QueuedAt.UTC(),
+		RedeliveryOf:     delivery.RedeliveryOf,
+		BodySHA256:       hex.EncodeToString(digest[:]),
+		BodyBytes:        len(body),
+		Signature:        Sign(hook.Secret, body),
 	}
 }
 

@@ -254,11 +254,10 @@ func TestUnpublishedEventsReason_NamesTheGapInEveryNotice(t *testing.T) {
 	}
 }
 
-// TestEvidenceExport_AnUnpublishedStartIsSchemaTwo: the bundle of a run
-// archived with its start as a gap is schema_version 2, as every bundle of a
-// gapped archive already is (TestEvidenceExport_GappedArchiveIsSchemaTwoWithEventGaps),
-// with the gap and its reason, and the offline verifier reports it.
-func TestEvidenceExport_AnUnpublishedStartIsSchemaTwo(t *testing.T) {
+// TestEvidenceExport_AnUnpublishedStartIsAnEventGap: the bundle of a run
+// archived with its start as a gap names the gap and its reason, as every bundle
+// of a gapped archive does (TestEvidenceExport_GappedArchiveNamesItsEventGaps), and the offline verifier reports it.
+func TestEvidenceExport_AnUnpublishedStartIsAnEventGap(t *testing.T) {
 	f := newEvidenceFixture(t)
 	run := &orkstackv1.Run{Id: "ork-ev-unpublished", OrkflowName: "evidence", OrkflowVersion: "0.1.0",
 		OrkflowDefinitionDigest: f.digest, Status: orkstackv1.Status_STATUS_FAILED,
@@ -273,8 +272,8 @@ func TestEvidenceExport_AnUnpublishedStartIsSchemaTwo(t *testing.T) {
 	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-unpublished"})
 	m := r.manifest
 	want := evidence.EventGap{First: 1, Last: 1, Reason: evidence.UnpublishedEventsReason}
-	if m.SchemaVersion != evidence.SchemaVersionEventGaps || len(m.EventGaps) != 1 || m.EventGaps[0] != want {
-		t.Fatalf("manifest schema %d gaps %+v, want 2 with %+v", m.SchemaVersion, m.EventGaps, want)
+	if m.SchemaVersion != 3 || len(m.EventGaps) != 1 || m.EventGaps[0] != want {
+		t.Fatalf("manifest schema %d gaps %+v, want 3 with %+v", m.SchemaVersion, m.EventGaps, want)
 	}
 	if report := verifyBundle(t, r.data); len(report.EventGaps) != 1 || report.EventGaps[0] != want {
 		t.Fatalf("Verify reported gaps %+v, want %+v", report.EventGaps, want)

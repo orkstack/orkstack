@@ -14,13 +14,16 @@
     "RUN_UNPAUSED",
     "RUN_SUCCEEDED",
     "RUN_FAILED",
-    "RUN_CANCELED"
+    "RUN_CANCELED",
+    "RUN_RESUMED",
+    "RUN_RESULTS_KEPT"
   ],
   "run": [
     "RUN_STARTED",
     "RUN_SUCCEEDED",
     "RUN_FAILED",
-    "RUN_CANCELED"
+    "RUN_CANCELED",
+    "RUN_RESUMED"
   ],
   "task": [
     "TASK_QUEUED",

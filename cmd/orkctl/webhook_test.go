@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // webhookIDPattern extracts the id `webhook create` reports.
@@ -162,5 +165,15 @@ func TestWebhookCommand_IsDiscoverableFromHelp(t *testing.T) {
 				t.Errorf("orkctl %v help does not mention %q:\n%s", tc.args, fragment, stdout.String())
 			}
 		}
+	}
+}
+
+// A delivery of a shared Orkflow's child run names the Orkflow's owner.
+func TestRenderDelivery_NamesASharedOrkflowsOwner(t *testing.T) {
+	var out bytes.Buffer
+	must.OK(t, renderDelivery(&out, &orkstackv1.Delivery{Id: "dlv-1", RunId: "ork-1", Namespace: "payments",
+		OrkflowName: "build", OrkflowNamespace: "platform"}))
+	if !strings.Contains(out.String(), "ork-1  (namespace payments, orkflow platform/build)") {
+		t.Fatalf("delivery:\n%s", out.String())
 	}
 }

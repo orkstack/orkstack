@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/payloadcrypt"
@@ -50,6 +51,27 @@ func (a *Activities) ExecuteTaskRaw(ctx context.Context, raw converter.RawValue)
 	return sealTaskResult(ctx, res, err)
 }
 
+// IndexEachLinesRaw is IndexEachLines as cmd/orker registers it: the request
+// names an artifact of the run, so a sealed run's is opened, and what it
+// answers is sealed, as a task's are (ExecuteTaskRaw).
+func (a *Activities) IndexEachLinesRaw(ctx context.Context, raw converter.RawValue) (any, error) {
+	return indexRaw(ctx, a.taskKeys, raw, a.IndexEachLines)
+}
+
+func indexRaw(ctx context.Context, keys TaskKeys, raw converter.RawValue,
+	index func(context.Context, *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error),
+) (any, error) {
+	in, scope, err := openInput[*orkstackv1.IndexEachLinesInput](ctx, keys, raw)
+	if err != nil {
+		return nil, err
+	}
+	if keys != nil {
+		ctx = withTaskScope(ctx, scope)
+	}
+	res, err := index(ctx, in)
+	return sealResult(ctx, res, err)
+}
+
 // openTaskInput reads a task input: plaintext as it is, sealed under the key
 // of the run tree it names. Each refusal is an explicit failure with its
 // reason: no source of keys, PAYLOAD_ENCRYPTION_NOT_CONFIGURED (never
@@ -57,43 +79,52 @@ func (a *Activities) ExecuteTaskRaw(ctx context.Context, raw converter.RawValue)
 // (retried); one that does not open it, or an input that names another run
 // than it was sealed for, PAYLOAD_UNREADABLE.
 func openTaskInput(ctx context.Context, keys TaskKeys, raw converter.RawValue) (*orkstackv1.ExecuteTaskInput, *payloadcrypt.Scope, error) {
+	return openInput[*orkstackv1.ExecuteTaskInput](ctx, keys, raw)
+}
+
+// runInput is an activity's input that names the run it is of.
+type runInput interface{ GetRunId() string }
+
+// openInput is openTaskInput for any of a task's inputs.
+func openInput[T runInput](ctx context.Context, keys TaskKeys, raw converter.RawValue) (T, *payloadcrypt.Scope, error) {
+	var none T
 	p := raw.Payload()
 	scope := payloadcrypt.Unsealed()
 	if payloadcrypt.IsSealed(p) {
 		c, err := payloadcrypt.ParseContext(string(p.GetMetadata()[payloadcrypt.MetaContext]))
 		if err != nil || c.Kind != payloadcrypt.KindRun {
-			return nil, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input is sealed for no run")
+			return none, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input is sealed for no run")
 		}
 		if keys == nil {
-			return nil, nil, payloadFailure(keys, ReasonPayloadEncryptionNotConfigured,
+			return none, nil, payloadFailure(keys, ReasonPayloadEncryptionNotConfigured,
 				"this task's run is encrypted, and this Orker has no way to get its key")
 		}
 		key, err := keys.KeyFor(ctx, c)
 		switch {
 		case errors.Is(err, payloadcrypt.ErrKeyless):
 			// The run can never be opened: no attempt will change that.
-			return nil, nil, payloadFailure(keys, ReasonPayloadUnreadable, "this task's run has no key that opens it")
+			return none, nil, payloadFailure(keys, ReasonPayloadUnreadable, "this task's run has no key that opens it")
 		case err != nil:
 			// The source's own words stay out of the failure, which no key
 			// seals here: they may quote what it read.
-			return nil, nil, payloadFailure(keys, ReasonPayloadKeyUnavailable, "the key of this task's run could not be had")
+			return none, nil, payloadFailure(keys, ReasonPayloadKeyUnavailable, "the key of this task's run could not be had")
 		}
 		// A sealed input is bound to its run: an attempt scheduled by any other
 		// workflow is refused before anything of it is opened.
 		if activity.IsActivity(ctx) && activity.GetInfo(ctx).WorkflowExecution.ID != c.ID {
-			return nil, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input is sealed for another run than the one that scheduled it")
+			return none, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input is sealed for another run than the one that scheduled it")
 		}
 		scope = payloadcrypt.NewScope(key, c)
 		if p, err = scope.Open(p); err != nil {
-			return nil, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input does not open under its run's key")
+			return none, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input does not open under its run's key")
 		}
 	}
-	in, err := decodeTaskInput(p)
+	in, err := decodeInput[T](p)
 	if err != nil {
-		return nil, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input does not decode")
+		return none, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input does not decode")
 	}
 	if scope.Sealed() && in.GetRunId() != scope.Context().ID {
-		return nil, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input names another run than it is sealed for")
+		return none, nil, payloadFailure(keys, ReasonPayloadUnreadable, "the task input names another run than it is sealed for")
 	}
 	return in, scope, nil
 }
@@ -102,9 +133,14 @@ func openTaskInput(ctx context.Context, keys TaskKeys, raw converter.RawValue) (
 // interceptor, which sizes the attempt's reservation from it, and the attempt
 // itself do.
 func decodeTaskInput(p *commonpb.Payload) (*orkstackv1.ExecuteTaskInput, error) {
-	var in *orkstackv1.ExecuteTaskInput
+	return decodeInput[*orkstackv1.ExecuteTaskInput](p)
+}
+
+// decodeInput is decodeTaskInput for any of a task's inputs.
+func decodeInput[T runInput](p *commonpb.Payload) (T, error) {
+	var in, none T
 	if err := converter.GetDefaultDataConverter().FromPayload(p, &in); err != nil {
-		return nil, err
+		return none, err
 	}
 	return in, nil
 }
@@ -124,6 +160,11 @@ func payloadFailure(keys TaskKeys, reason, message string) error {
 // result, and the failure whole, with its reason code as its plaintext. For
 // a run that is not sealed each is itself (markUnsealed).
 func sealTaskResult(ctx context.Context, res *orkstackv1.ExecuteTaskResult, err error) (any, error) {
+	return sealResult(ctx, res, err)
+}
+
+// sealResult is sealTaskResult for any of an attempt's results.
+func sealResult[R proto.Message](ctx context.Context, res R, err error) (any, error) {
 	// The SDK compares ErrResultPending by identity: an attempt whose outcome
 	// the Orker reports itself returns it as it is.
 	if errors.Is(err, activity.ErrResultPending) {
@@ -134,7 +175,7 @@ func sealTaskResult(ctx context.Context, res *orkstackv1.ExecuteTaskResult, err 
 		return res, markUnsealed(ctx, err)
 	}
 	var result any
-	if res != nil {
+	if res.ProtoReflect().IsValid() {
 		result = payloadcrypt.Seal(scope, res)
 	}
 	return result, payloadcrypt.WithKey(err, scope, attemptReason(err))
