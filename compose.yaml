@@ -69,7 +69,7 @@ services:
   # an upload to a bucket that does not exist. With no keys set this store checks
   # none, and with them auto-create would let an admin's upload make that bucket.
   seaweedfs:
-    image: chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
+    image: chrislusf/seaweedfs:4.54@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
     command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts", "-s3.autoCreateBucket=false"]
     environment:
       AWS_ACCESS_KEY_ID: orkstack
@@ -129,7 +129,7 @@ services:
   # Pushes the six activities to the registry, where they get the digests the
   # engine pins, and exits; the engine starts only once it has.
   activities:
-    image: docker:29.9.3-cli@sha256:5a7af0dcb0e46c803efe9b45371dd21cb500e5b4453250394ac6f06d49b6e6f1
+    image: docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d
     entrypoint: ["sh", "-ec"]
     command:
       - |
@@ -180,7 +180,7 @@ services:
   # catalog's references to digests. It lives in the engine's network
   # namespace, so it restarts whenever the engine does.
   registry-forward:
-    image: alpine/socat:1.8.1.3@sha256:603174b77eebaba25ba8f8ebb15e1234d6600409554e95d6fb203fd106150287
+    image: alpine/socat:1.8.1.3@sha256:5aa280c6fc5bee94dbd2bbdf2a58d30f50396eaa110be84b03636945b157ae68
     network_mode: service:ork
     command: ["TCP4-LISTEN:${ORKSTACK_REGISTRY_PORT-5002},bind=127.0.0.1,fork,reuseaddr", "TCP:registry:5000"]
     depends_on:
