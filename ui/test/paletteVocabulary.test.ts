@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { BUILD_PAGES, OPERATE_PAGES } from '../src/lib/navigation';
 import { namespaceCommands, openRunCommand, pageCommands, themeCommands } from '../src/lib/palette/commands';
+import { readSource, scanTest } from './sourceTree';
 
 // The words the new shell puts in front of a person (AGENTS.md §7, and the
 // product's own vocabulary in ui/PRODUCT.md): no Temporal mechanism, and none
@@ -92,7 +92,7 @@ test('no page name or mode says a banned word', () => {
 	expect(words.flatMap((w) => bannedWords(w).map((b) => `${w}: ${b}`))).toEqual([]);
 });
 
-test('the shell and its new components render no banned word', () => {
+scanTest('the shell and its new components render no banned word', () => {
 	const files = [
 		'routes/+layout.svelte',
 		'routes/admin/+layout.svelte',
@@ -117,23 +117,23 @@ test('the shell and its new components render no banned word', () => {
 	];
 	const found: string[] = [];
 	for (const f of files) {
-		const strings = renderedStrings(readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8'));
+		const strings = renderedStrings(readSource(`${import.meta.dir}/../src/${f}`));
 		expect(strings.length > 0 || f.endsWith('StatusPill.svelte') || f.endsWith('RevisionCloud.svelte')).toBe(true);
 		for (const s of strings) for (const w of bannedWords(s)) found.push(`${f}: "${s}" (${w})`);
 	}
 	expect(found).toEqual([]);
 	// The landmark and the skip link carry the product's words.
-	const layout = readFileSync(`${import.meta.dir}/../src/routes/+layout.svelte`, 'utf8');
+	const layout = readSource(`${import.meta.dir}/../src/routes/+layout.svelte`);
 	expect(layout.includes('Skip to content')).toBe(true);
-	const side = readFileSync(`${import.meta.dir}/../src/lib/components/Sidebar.svelte`, 'utf8');
+	const side = readSource(`${import.meta.dir}/../src/lib/components/Sidebar.svelte`);
 	expect(side.includes('aria-label="Main"')).toBe(true);
-	const top = readFileSync(`${import.meta.dir}/../src/lib/components/TopBar.svelte`, 'utf8');
+	const top = readSource(`${import.meta.dir}/../src/lib/components/TopBar.svelte`);
 	expect(top.includes('aria-label="Breadcrumb"')).toBe(true);
 });
 
 // The commands a page adds to the palette, and the words its title block
 // and the map say: every `label: '…'` literal and the cloud's tag.
-test('the run, runs and authoring pages add no banned word to the palette or the title block', () => {
+scanTest('the run, runs and authoring pages add no banned word to the palette or the title block', () => {
 	const found: string[] = [];
 	for (const f of [
 		'routes/runs/[id]/RunView.svelte',
@@ -148,7 +148,7 @@ test('the run, runs and authoring pages add no banned word to the palette or the
 		'routes/orkflows/+new/+page.svelte',
 		'lib/palette/orkflowPage.ts'
 	]) {
-		const text = readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8');
+		const text = readSource(`${import.meta.dir}/../src/${f}`);
 		const labels = [...text.matchAll(/label: (?:'([^']*)'|`([^`]*)`)/g)].map((m) => (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, ' '));
 		const sentences = [...text.matchAll(/(?:text \+?= |return )["'`]([^"'`]*)["'`]/g)].map((m) => m[1]);
 		for (const s of [...labels, ...sentences]) for (const w of bannedWords(s)) found.push(`${f}: "${s}" (${w})`);
@@ -159,7 +159,7 @@ test('the run, runs and authoring pages add no banned word to the palette or the
 // Stage 4: the Operate sheets. Every string an admin page, its components and
 // the scope NOTE render — the headers, field labels, captions and registers —
 // says the product's words.
-test('the Operate sheets render no banned word', () => {
+scanTest('the Operate sheets render no banned word', () => {
 	const files = [
 		'routes/admin/+page.svelte',
 		'routes/admin/namespaces/+page.svelte',
@@ -182,7 +182,7 @@ test('the Operate sheets render no banned word', () => {
 	];
 	const found: string[] = [];
 	for (const f of files) {
-		const strings = renderedStrings(readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8'));
+		const strings = renderedStrings(readSource(`${import.meta.dir}/../src/${f}`));
 		expect(strings.length > 0).toBe(true);
 		for (const s of strings) for (const w of bannedWords(s)) found.push(`${f}: "${s}" (${w})`);
 	}

@@ -62,6 +62,14 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 		Name:               ConcurrencyGateWorkflowType,
 		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
 	})
+	// AutoUpgrade: a force cancel outlives no version a release waits on
+	// beyond its own ceiling, and it acts on a run whatever version that run
+	// is pinned to; every step is a local activity whose answer its history
+	// records (design §22.1.2).
+	w.RegisterWorkflowWithOptions(ForceCancelWorkflow, workflow.RegisterOptions{
+		Name:               ForceCancelWorkflowType,
+		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
+	})
 	// AutoUpgrade: a census fire is one local activity on a Schedule the
 	// engine owns, and pins no version a release would wait on.
 	w.RegisterWorkflowWithOptions(ConcurrencyCensusWorkflow, workflow.RegisterOptions{

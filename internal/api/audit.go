@@ -384,6 +384,36 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail:    "reason=" + in.GetReason(),
 		}
 	},
+	// Who asked, and what became of asking. What a force cancel does it
+	// records itself (run.cancel.force.requested and .completed).
+	orkstackv1connect.RunServiceForceCancelRunProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.ForceCancelRunRequest)
+		entry := auditEntry{
+			Action:    "run.cancel.force",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetRunId(),
+		}
+		if in.GetPreview() {
+			return auditEntry{} // it lists, and writes nothing
+		}
+		out, _ := resp.(*orkstackv1.ForceCancelRunResponse)
+		switch {
+		case in.GetStop():
+			entry.Action = "run.cancel.force.stopped"
+		case out.GetDirect():
+			entry.Action = "run.cancel.force.direct"
+		case out.GetAttached():
+			entry.Action = "run.cancel.force.attached"
+		}
+		if out != nil {
+			entry.Detail = fmt.Sprintf("state=%s request_id=%s ", enumname.Of(out.GetState()), orDashAudit(out.GetRequestId()))
+		}
+		if in.GetCascade() {
+			entry.Detail += "cascade=true "
+		}
+		entry.Detail += fmt.Sprintf("reason=%q", in.GetReason())
+		return entry
+	},
 	// One record per request that passed the checks, its request id in the
 	// detail (noted by sendPause): "recorded" means delivered, not applied —
 	// the RUN_PAUSED or RUN_UNPAUSED event carrying that id says what the

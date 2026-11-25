@@ -564,6 +564,7 @@ func TestOrkflowSchema_WordsAreTheCompilersWords(t *testing.T) {
 		"tasks[].join":                joinWordsSorted(),
 		"tasks[].network":             networkWords,
 		"tasks[].cache.scope":         cacheScopeWords,
+		"concurrency.on_limit":        concurrencyStrategyWords,
 		"tasks[].await.schema.*.type": typeWords,
 		"inputs.*.type":               append(append([]string(nil), typeWords...), InputTypeArtifact),
 	} {

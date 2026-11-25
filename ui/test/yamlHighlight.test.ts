@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
 import { yamlSegments, diffSegments, SYNTAX_ROLES } from '../src/lib/yaml/highlight';
+import { listDir, readSource, scanTest } from './sourceTree';
 
 // One classifier colours YAML everywhere the UI shows it: the editor, the
 // automation export and the version diff. These tests hold its roles and its
@@ -41,17 +41,17 @@ test('anchors, aliases, tags and block scalars', () => {
 	expect(out.some((r) => r.startsWith('string:') && r.includes('echo'))).toBe(true);
 });
 
-test('the segments are the text, byte for byte, for every shipped example', () => {
+scanTest('the segments are the text, byte for byte, for every shipped example', () => {
 	const repo = `${import.meta.dir}/../..`;
 	const files = [
-		...readdirSync(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `examples/${f}`),
+		...listDir(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `examples/${f}`),
 		'examples/custom-image/custom-image.ork.yaml',
-		...readdirSync(`${repo}/internal/dsl/testdata/orkflows`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `internal/dsl/testdata/orkflows/${f}`),
-		...readdirSync(`${repo}/examples/automation`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `examples/automation/${f}`)
+		...listDir(`${repo}/internal/dsl/testdata/orkflows`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `internal/dsl/testdata/orkflows/${f}`),
+		...listDir(`${repo}/examples/automation`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `examples/automation/${f}`)
 	];
 	expect(files.length > 20).toBe(true);
 	for (const file of files) {
-		const src = readFileSync(`${repo}/${file}`, 'utf8');
+		const src = readSource(`${repo}/${file}`);
 		expect(`${file}: ${yamlSegments(src).map((s) => s.text).join('') === src}`).toBe(`${file}: true`);
 	}
 	const odd = 'a: [1, {b: c}]\n? complex\n: v\n--- \n...\n%YAML 1.2\n\ttab: x\n';
@@ -79,7 +79,7 @@ test('a diff keeps every line verbatim and colours each side as YAML', () => {
 });
 
 test('every role has a token', () => {
-	const tokens = readFileSync(`${import.meta.dir}/../src/tokens.css`, 'utf8');
+	const tokens = readSource(`${import.meta.dir}/../src/tokens.css`);
 	for (const role of SYNTAX_ROLES) expect(`${role}: ${tokens.includes(`--color-syntax-${role}:`)}`).toBe(`${role}: true`);
 });
 

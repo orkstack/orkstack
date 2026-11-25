@@ -168,6 +168,9 @@ var crossSites = map[string]string{
 	"continuation.go:(*runState).endUnrestorable ExecuteActivity":             "PublishEvent: sealed; the engine opens it with the run's key",
 	"payload_start.go:keylessEnding ExecuteActivity":                          "PublishEvent of a keyless run: Plain, since no reader is given its key",
 	"webhook_delivery.go:WebhookDeliveryWorkflow ExecuteActivity":             "a webhook delivery is not a sealed run",
+	"force_cancel_cascade_workflow.go:(*cascade).one ExecuteChildWorkflow":    "a force cancel of a run below is no run: a decision, ids and settings",
+	"force_cancel_workflow.go:(*forceCancel).release SignalExternalWorkflow":  "the gate holds no run's key: a run id and a sequence",
+	"force_cancel_workflow.go:(*forceCancel).publish ExecuteActivity":         "a force cancel is no run: the event says what its record does, or is the run's own ending announced again; its reads hold no run's key, so a sealed run's is not read, and is said to be unpublished",
 }
 
 // TestPayloads_EveryCrossWorkflowWriteDecides: every SignalChildWorkflow,
@@ -258,6 +261,8 @@ var localReads = map[string]string{
 	"concurrency_gate.go:(*gateRun).pass":              "a gate is no run, and is never sealed",
 	"concurrency_gate.go:(*gateRun).listAll":           "a gate is no run, and is never sealed",
 	"concurrency_gate_report.go:(*gateRun).sendReport": "a gate is no run, and is never sealed",
+	"force_cancel_workflow.go:(*forceCancel).stepOn":   "a force cancel is no run, and is never sealed",
+	"force_cancel_cascade_workflow.go:(*cascade).step": "a force cancel is no run, and is never sealed",
 }
 
 // TestPayloads_EveryLocalActivityReadOpens: a local activity's failure is
@@ -347,8 +352,9 @@ var unsealedDoors = map[string]bool{
 // otherDoors is every engine file that uses one, and why: a workflow that is
 // no run, and is never sealed.
 var otherDoors = map[string]string{
-	"claim.go":            "an idempotency claim is no run: it holds a run id and a fingerprint",
-	"concurrency_gate.go": "a gate is no run: it holds ids, sequences and its limit's own terms",
+	"claim.go":                         "an idempotency claim is no run: it holds a run id and a fingerprint",
+	"concurrency_gate.go":              "a gate is no run: it holds ids, sequences and its limit's own terms",
+	"force_cancel_cascade_workflow.go": "a force cancel is no run: its cascade answers ids, Orkflow names, states and causes",
 }
 
 // TestPayloads_NoRunUsesADoorNothingSeals: a new use of one needs a decision

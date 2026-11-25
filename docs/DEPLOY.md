@@ -774,6 +774,22 @@ then the variable it becomes.
 | `engine.concurrency.fire_unavailable_retry` | `ORK_CONCURRENCY_FIRE_UNAVAILABLE_RETRY` | `5m` | `ork` | how long a schedule's fire asks again while its concurrency limit cannot be checked, before it completes `FIRE_CONCURRENCY_UNAVAILABLE` without a run; pinned per fire |
 | `engine.concurrency.event_holders_shown` | `ORK_CONCURRENCY_EVENT_HOLDERS_SHOWN` | `5` | `ork` | how many holders a `RUN_QUEUED` event names. At most `api_holders_shown`. Read at boot and pinned into each run's plan at submit, so a change applies to new runs only |
 | `engine.concurrency.api_holders_shown` | `ORK_CONCURRENCY_API_HOLDERS_SHOWN` | `10` | `ork` | how many holders `GetRun` names for a waiting run |
+| `engine.runs.force_cancel_grace` | `ORK_FORCE_CANCEL_GRACE` | `1m` | `ork` | how long a run a force cancel asked to cancel is given before it is ended for making no progress, and the least a request may ask; never less than the run's longest task cancellation grace plus 30 s. At least `30s`. Pinned into each force cancel |
+| `engine.runs.max_force_cancel_grace` | `ORK_MAX_FORCE_CANCEL_GRACE` | `10m` | `ork` | the longest grace a force cancel may ask. At least `force_cancel_grace` |
+| `engine.runs.force_cancel_ceiling` | `ORK_FORCE_CANCEL_CEILING` | `30m` | `ork` | how long a run that keeps making progress is waited for before it is ended anyway, its record saying so; looked at as each grace ends. At least `max_force_cancel_grace`, at most `24h` and 500 times `force_cancel_grace`. Pinned into each force cancel |
+| `engine.runs.force_cancel_record_timeout` | `ORK_FORCE_CANCEL_RECORD_TIMEOUT` | `10s` | `ork` | how long one try of a force cancel's step may take. Between `1s` and `1m` |
+| `engine.runs.force_cancel_scan_events` | `ORK_FORCE_CANCEL_SCAN_EVENTS` | `2000` | `ork` | how many of a run's newest history events a force cancel reads to see whether it made progress; more than that since is progress. Between 1 and 20000 |
+| `engine.runs.force_cancel_page_size` | `ORK_FORCE_CANCEL_PAGE_SIZE` | `250` | `ork` | how many of them it reads at a time. Between 1 and 1000 |
+| `engine.runs.force_cancel_execution_timeout` | `ORK_FORCE_CANCEL_EXECUTION_TIMEOUT` | *(derived from the settings above)* | `ork` | how long a force cancel may take in all: unless set, long enough that a force cancel always ends by itself: its graces and its ceiling, as long again (at least 10 minutes) for what an ended run still needs, and every step with all its tries failing, about 3h5m at the defaults. An explicit value below that is refused at boot, and raised for a run whose tasks need a longer grace |
+| `engine.runs.force_cancel_attach_progress_slack` | `ORK_FORCE_CANCEL_ATTACH_PROGRESS_SLACK` | `1m` | `ork` | how long past its grace and ceiling another request's force cancel of the same run is still joined rather than superseded |
+| `engine.runs.force_cancel_cascade_max` | `ORK_FORCE_CANCEL_CASCADE_MAX` | `200` | `ork` | how many runs one cascade force-cancels, at most 300; the rest are left to their parents' cancel, and said |
+| `engine.runs.force_cancel_cascade_scan` | `ORK_FORCE_CANCEL_CASCADE_SCAN` | `1000` | `ork` | how many open runs one search below a run reads |
+| `engine.runs.force_cancel_cascade_walk_scan` | `ORK_FORCE_CANCEL_CASCADE_WALK_SCAN` | `2000` | `ork` | how many closed runs that search reads, only to look below them |
+| `engine.runs.force_cancel_cascade_batch` | `ORK_FORCE_CANCEL_CASCADE_BATCH` | `50` | `ork` | how many runs one of its queries names, at most 100 |
+| `engine.runs.force_cancel_cascade_starts_per_task` | `ORK_FORCE_CANCEL_CASCADE_STARTS_PER_TASK` | `25` | `ork` | how many force cancels a cascade starts at once, at most 100 |
+| `engine.runs.force_cancel_cascade_poll` | `ORK_FORCE_CANCEL_CASCADE_POLL` | `10s` | `ork` | how often a cascade looks at a run it waits for, 1s to 1m |
+| `engine.runs.force_cancel_cascade_list_timeout` | `ORK_FORCE_CANCEL_CASCADE_LIST_TIMEOUT` | `30s` | `ork` | how long one search may take, 1s to 1m |
+| `engine.runs.force_cancel_cascade_settle_slack` | `ORK_FORCE_CANCEL_CASCADE_SETTLE_SLACK` | `30s` | `ork` | how long past `max_force_cancel_grace` runs left to their parents' cancel are waited for, at most 10m |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
@@ -2609,6 +2625,30 @@ cannot tell an archived run from one that is not, so it counts every finished
 run it holds, and its figures are an upper bound. A longer outage than you can
 afford calls for a larger `ORK_CLEANUP_RETENTION_BUFFER`, which helps only the
 runs that close after it is set.
+
+**Force cancels and the signing keys.** A force cancel is signed and verified
+with the engines' keys from the published copy each engine holds, so it works
+through a storage outage only while that copy is at most
+`identity.keys_copy_max_age` old; past it every force cancel is refused
+`unavailable`, and an ordinary cancel still works. Raise the setting ahead of
+planned maintenance of the object store. A fleet in which some engines hold no
+key answers `no_signing_key` from those, and works from the others.
+
+**A force cancel's audit records** are written as it goes, and tried again
+until it ends. One that could not write them, because object storage was down,
+has them written as its run is archived, from the signed decision and record
+the cluster holds; each says it was backfilled. The sweep archives such a run
+only once they are written, except in its last pass before the cluster deletes
+it.
+
+**A force cancel nobody can verify.** A run whose close carries a force
+cancel's record cannot be read, and is not archived, while the keys that record
+was signed under cannot be read: a later pass may decide it. Within three
+cleanup intervals of the cluster's delete time, by the cluster's retention as
+last read, the sweep stops waiting and archives it `CANCELED`
+`RUN_FORCE_CANCEL_UNVERIFIED`, naming nobody ([REASONS.md](./REASONS.md)). Each
+one is an error in the log and counts as `unverified` beside `archived` in
+`ork.archive.sweep.runs`.
 
 An archive write that stops short, on all three attempts of the run's own
 publish, leaves no body, because the body is its last write. The run reads as
@@ -7174,6 +7214,7 @@ policy names one — they can land on a different sink than the process default
 |---|---|---|
 | `ork.runs` | `status`, `ork.run.resumption`, `ork.failure.reason` | engine, once per terminal run (succeeded/failed/canceled), and once more for each ending a resume led to, labelled `ork.run.resumption="true"`; the label is absent from a run's first ending. Leave those out to count runs, and keep them in a failure ratio, where each ending is one outcome. A resumed run that ended with no event of its own is not counted again; `ork.failure.reason` only on a run that ended `RUN_HISTORY_LIMIT` |
 | `ork.run.duration` | `status`, `ork.run.resumption` | engine, same event, `finished_at - started_at`; for a resumed run, `started_at` is its first start's |
+| `ork.runs.force_canceled` | `ork.cancel.outcome` | engine, on the default sink alone, with no namespace: each force cancel once as it ends, by its state (`force_canceled`, `canceled`, `ended`, `already_ended`, `failed`), and, for each request for one, what it found named as a force cancel of its run: `squatter` (forged, ended), `superseded`, `unknown_execution` (could not be judged, left alone), `unsigned_left` (nobody signed it, left alone), and `direct` for a run it ended itself |
 | `ork.run.timeouts` | `ork.namespace` | engine, once per terminal run its own `timeout:` ended (`RUN_TIMED_OUT`, `docs/DSL.md` "Run timeout"); a run already failing when its deadline passed keeps its own cause and counts only on `ork.run.timeout.hard_ends`, if its handlers were stopped |
 | `ork.run.timeout.hard_ends` | `ork.namespace` | engine, once per terminal run whose failure handlers were stopped, or never started, at its run timeout's hard end (`engine.run_timeout_handler_grace`) |
 | `ork.run.resumes` | `ork.namespace`, `action` (`resume`, `retry_from`), `from_state` (`failed`, `canceled_force`), `outcome` (`resumed`, `already`, `refused`, `preview_refused`, `unavailable`, `unconfirmed`), `ork.refusal.reason` | engine, once per request to resume a run that was answered one of these; a preview that planned is none |
@@ -7221,7 +7262,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.run.continuation.duration` | `ork.namespace`, `phase` | engine, seconds a switch's write (`write`) or a whole restore (`restore`) took |
 | `ork.run.continuation.hold.duration` | `ork.namespace` | engine, seconds a run held new tasks before it carried on (0 when it found a moment with nothing running on its own) |
 | `ork.run.continuation.read.attempts` | `ork.namespace` | engine, the attempt each successful read of a saved state succeeded on |
-| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost). Every outcome's series is present, at zero, from the first pass |
+| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), `expired` (the cluster had already let it go: the run is lost), or `unverified` (also counted as archived: a force cancel's record in its close could not be verified before the cluster deletes it). Every outcome's series is present, at zero, from the first pass |
 | `ork.archive.sweep.unconfirmed` | — | engine, each pass: finished runs it could not confirm have an archive. **Alert on this above zero.** While object storage is down it counts every finished run the pass did not reach, archived or not |
 | `ork.archive.sweep.earliest_expiry` | — | engine, each pass: seconds left until the first of those runs expires: 0 when the pass has none or could not date them, so an undated risk reads as imminent, and negative once that time has passed. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
 | `ork.archive.sweep.list_failed` | — | engine, each pass: 1 when the pass could not read the cluster's index of finished runs to its end, so its counts are only what it reached; else 0. **Alert on 1** |

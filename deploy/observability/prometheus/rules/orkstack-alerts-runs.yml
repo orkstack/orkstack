@@ -106,6 +106,16 @@ groups:
       description: A run of namespace "{{ $labels.ork_namespace }}" was still paused when its pause ended, and failed. Namespaces exported to this sink only.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackrunpausetimedout
       summary: A paused run failed because its pause ran out.
+  - alert: OrkStackForceCancelUnsignedLeft
+    expr: sum by (ork_deployment) (((ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left"} - last_over_time(ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left"}[1d] offset 15m)) > 0) or ((ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left"} unless last_over_time(ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left"}[1d] offset 15m)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 15m)) > 0))) > 0
+    labels:
+      component: runs
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: A request for a force cancel found another of its run that nobody signed. This deployment signs nothing, so it was left alone, and the request's own runs beside it.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackforcecancelunsignedleft
+      summary: Something claims to be a force cancel that nobody signed.
   - alert: OrkStackAdmissionRefusing
     expr: sum by (ork_deployment, ork_namespace, ork_refusal_reason) (rate(ork_runs_refused_total{ork_refusal_reason!="budget_unmeasurable"}[15m])) > 0
     for: 15m

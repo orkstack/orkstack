@@ -93,7 +93,11 @@ func cancelPrincipal(cause string) CanceledBy {
 // run's own record says a cancellation ended it: status CANCELED with code
 // RUN_CANCELED. A run terminated from outside (RUN_TERMINATED), a failed or
 // succeeded one, and a run still draining after its cancel was requested
-// (RUNNING) are left as they are. An empty principal sets nothing.
+// (RUNNING) are left as they are. So is a force-canceled one
+// (RUN_FORCE_CANCELED): its verified record names who
+// (ForceCanceledTerminalEvent), and a cancel request, which another caller
+// may have made first and nothing signs, never does. An empty principal sets
+// nothing.
 //
 // It is the one rule, shared by the run reader (GetRun) and the projection
 // activity (the archived run and the webhook delivery), so every surface

@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -53,10 +56,61 @@ type scanState struct {
 	// forArchive is the archive built from a run's history (readForArchive):
 	// the closing event also loads the run's record, tolerating what is lost.
 	forArchive bool
+	// lastResort: a force cancel's record that cannot be verified now is read
+	// as that, not as an error: the archive's last chance.
+	lastResort bool
 	// carryRefused: a carry failed verification, so nothing it names was read.
 	carryRefused bool
 	// recordLoss says what of the run's record could not be recovered.
 	recordLoss string
+	// resetScope is the sequence the resume that made the execution being read
+	// starts at, 0 for none: every event below it is one of the executions
+	// before, whether or not this one's history holds it.
+	resetScope int64
+}
+
+// noteReset notes the reset a resume made the execution with. An execution
+// reset again holds the reset of the one before too, where it goes back to a
+// point after it: the newest resume's holds then, and one by hand changes
+// nothing, since what that resume set aside is still not in this history.
+func (st *scanState) noteReset(attrs *historypb.WorkflowTaskFailedEventAttributes) {
+	if attrs.GetCause() != enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW {
+		return
+	}
+	if key, ok := ParseResumePlanKey(attrs.GetFailure().GetMessage()); ok {
+		st.resetScope = int64(key.Scope)
+	}
+}
+
+// snapshotNamer names a run's snapshot by its sequence, without reading it.
+type snapshotNamer interface {
+	SnapshotURI(namespace, runID string, sequence int64) (string, error)
+}
+
+// endAfterReset readies the ending of a resumed run that was ended before it
+// recorded anything of its own: its last recorded state, and its last event,
+// are those its resume set aside, which end just below the resume's scope. Its
+// history holds neither.
+func (r *TemporalRunReader) endAfterReset(
+	runID string, start, closing *historypb.HistoryEvent, fromSequence int64, wantRun bool, send func(*orkstackv1.Event) error, st *scanState,
+) error {
+	before := st.resetScope - 1
+	if before <= st.lastSequence {
+		return nil
+	}
+	if namer, ok := r.snapshots.(snapshotNamer); ok {
+		namespace := artifacts.ResolveNamespace(r.startedNamespace(start.GetWorkflowExecutionStartedEventAttributes()))
+		uri, err := namer.SnapshotURI(namespace, runID, before)
+		if err != nil {
+			return fmt.Errorf("engine: run %s: the record its resume set aside: %w", runID, err)
+		}
+		st.projection.priorSnapshotURI, st.projection.snapshotURI = st.projection.snapshotURI, uri
+	}
+	if err := st.noteSkipped(runID, before, closing.GetEventTime(), fromSequence, wantRun, send); err != nil {
+		return err
+	}
+	st.lastSequence = before
+	return nil
 }
 
 func newScanState(tolerateLostSegments bool) *scanState {
@@ -237,6 +291,37 @@ func (r *TemporalRunReader) startedNamespace(attrs *historypb.WorkflowExecutionS
 		return ""
 	}
 	return wf.GetNamespace()
+}
+
+// startedBy is the namespace a run was started in and what started it, from
+// its first event.
+func (r *TemporalRunReader) startedBy(first *historypb.HistoryEvent) (namespace string, origin *RunOrigin, err error) {
+	attrs := first.GetWorkflowExecutionStartedEventAttributes()
+	payloads := attrs.GetInput().GetPayloads()
+	if len(payloads) < 4 {
+		return "", nil, fmt.Errorf("engine: a run's start carries %d arguments, want 4", len(payloads))
+	}
+	var plan RunPlan
+	if err := r.converter.FromPayload(payloads[3], &plan); err != nil {
+		return "", nil, fmt.Errorf("engine: decode a run's plan: %w", err)
+	}
+	return r.startedNamespace(attrs), plan.Origin, nil
+}
+
+// longestTaskGrace is LongestTaskGrace of the definition a run was started
+// with, LongestTaskGraceUnknown where that cannot be read.
+func (r *TemporalRunReader) longestTaskGrace(ctx context.Context, runID string) time.Duration {
+	start, err := r.RunStart(ctx, runID)
+	var wf *orkstackv1.Orkflow
+	if err == nil {
+		wf, err = r.RunDefinition(ctx, runID, start)
+	}
+	if err != nil {
+		slog.WarnContext(ctx, "force cancel: the run's definition could not be read; its tasks are taken to need the longest grace",
+			"run_id", runID, "error", err)
+		return LongestTaskGraceUnknown
+	}
+	return LongestTaskGrace(wf)
 }
 
 // validateCarry applies the carry's consistency rules — the ones a

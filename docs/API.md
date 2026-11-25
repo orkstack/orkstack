@@ -280,6 +280,8 @@ Defined in `proto/orkstack/v1/run_service.proto`.
 | `GetRun` | [`GetRunRequest`](#getrunrequest) | [`GetRunResponse`](#getrunresponse) |  |
 | `ListRuns` | [`ListRunsRequest`](#listrunsrequest) | [`ListRunsResponse`](#listrunsresponse) |  |
 | `CancelRun` | [`CancelRunRequest`](#cancelrunrequest) | [`CancelRunResponse`](#cancelrunresponse) |  |
+| `ForceCancelRun` | [`ForceCancelRunRequest`](#forcecancelrunrequest) | [`ForceCancelRunResponse`](#forcecancelrunresponse) | ForceCancelRun ends an open run an ordinary cancel does not end. The run is asked to cancel as CancelRun asks it, and is ended only once it has made no progress for the grace, or still has not ended at the deployment's ceiling. Nothing of a run ended that way runs afterwards: no failure handler, no output; its tasks read as of its last event, and it ends CANCELED with RUN_FORCE_CANCELED (docs/REASONS.md). Its child runs are only asked to cancel, unless the request cascades.<br><br>It answers once the force cancel has been started, or one of the run in flight joined, not once the run has ended: read the run for that. A request made again joins, or finishes, what an earlier one left, and two force cancels that were given their whole time and left the run open are followed by its direct end. |
+| `GetForceCancel` | [`GetForceCancelRequest`](#getforcecancelrequest) | [`GetForceCancelResponse`](#getforcecancelresponse) | GetForceCancel reads one force cancel of a run: where it stands while it runs, and what it did once it is over. The run's own status and error say how the run ended; this says what the force cancel reports of itself. |
 | `PauseRun` | [`PauseRunRequest`](#pauserunrequest) | [`PauseRunResponse`](#pauserunresponse) | PauseRun stops a running run starting anything new, failure handlers included, and pauses its running child runs too; the one exception is what an already-open pin needs to finish. Work it already started finishes under its own rules, and every clock keeps running: a task's or the run's timeout, an await's deadline and a sleep's wake-up are not stretched. The run's status is PAUSED from its RUN_PAUSED event until RUN_UNPAUSED or its end. A pause lasts at most its timeout (the deployment's default when the request names none): a run that is not failing then ends FAILED with RUN_PAUSE_TIMEOUT, and a failing run ends with its own reason, its held failure handlers never started.<br><br>It answers once the run has recorded the request, not once it has applied it: the RUN_PAUSED event carrying the response's request_id says it did, read from after_sequence. The checks before sending read the run as the read model has it and refuse FAILED_PRECONDITION with a reason (docs/REASONS.md, "Pausing a run"); in a race the run's own decision is final. A request that recording would take past the run's history limit is not applied: the run stops RUN_HISTORY_LIMIT naming the request, or, a run already failing, drops the request, records no event for it and ends with its own reason. A pause cannot be changed: unpause and pause again. |
 | `UnpauseRun` | [`UnpauseRunRequest`](#unpauserunrequest) | [`UnpauseRunResponse`](#unpauserunresponse) | UnpauseRun lifts a run's own pause, and the pauses of its child runs that it caused; a child paused on its own stays paused. The run then starts what it held, in the order it would have with no pause. The RUN_UNPAUSED event carrying the response's request_id says it applied (pause_transition NOT_PAUSED when the run was not paused). A run paused because its parent run is paused is refused RUN_PAUSE_INHERITED: unpause the parent. |
 | `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start): the stream continues after that event, so a client that passes the last sequence it received sees nothing repeated and nothing skipped, from any replica. A stream that ends Unavailable is resumed that way; `orkctl run watch` and the UI's run page do it, a bounded number of times in a row. Numbers the run never published (an event whose record object storage refused) read two ways. Read live, the stream serves a STREAM_GAP event naming them and goes on to the run's terminal event. Read from the archive, they are a gap in the run's events, as are events lost from object storage before the run was archived: the stream ends DataLoss, after the events before the gap, naming the range and its cause. A live read that meets lost events ends Unavailable. Resuming past a DataLoss gap's last number serves what follows it. |
@@ -1990,6 +1992,102 @@ in runs_evidence_missing instead.
 | `example_run_ids` | repeated `string` | example_run_ids holds at most 3 of the group's retried runs, newest created first, so a row leads to a run page whose attempt timeline shows the retries. Ids are never compared with each other (AGENTS.md §7). |
 | `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
 
+### ForceCancelCascade
+
+ForceCancelCascade is what a cascade reports of itself.
+
+| Field | Type | Description |
+|---|---|---|
+| `state` | [`ForceCancelCascadeState`](#forcecancelcascadestate) |  |
+| `as_of` | `google.protobuf.Timestamp` |  |
+| `runs` | repeated [`ForceCancelRunBelow`](#forcecancelrunbelow) |  |
+| `left_to_parents` | `int32` | left_to_parents is how many deeper runs past the most a cascade covers (engine.runs.force_cancel_cascade_max) are left to their parents' cancel; not_started, how many that reaches none of. |
+| `not_started` | `int32` |  |
+| `found_by_root_index` | `int32` | found_by_root_index is how many only the tree's root names. |
+| `truncated_by` | `string` |  |
+| `exclusions` | repeated [`ForceCancelExclusion`](#forcecancelexclusion) |  |
+| `rerun_suggested` | `bool` | rerun_suggested: more were found late, or a search was cut short; the same request made again covers what is left. |
+| `open_after` | [`ForceCancelOpenAfter`](#forcecancelopenafter) | open_after is what was open below when it ended; unset until it looked. |
+| `cause` | `string` | cause is why a search below could not be made; empty when none failed. |
+| `unread` | `bool` | unread: where it stands could not be asked, so the rest is not known. |
+
+### ForceCancelExclusion
+
+ForceCancelExclusion is a run that names a run of the tree as what started
+it, and may not be acted on.
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `cause` | `string` | cause is "other_namespace" or "unreadable". |
+
+### ForceCancelOpenAfter
+
+ForceCancelOpenAfter is what is open below a run after its cascade.
+
+| Field | Type | Description |
+|---|---|---|
+| `count` | `int32` |  |
+| `run_ids` | repeated `string` | run_ids are the first of them the caller may read. |
+| `unconfirmed_cause` | `string` | unconfirmed_cause is why there may be more: "too_many_runs", "took_too_long" or "could_not_read"; empty when there are no more. |
+
+### ForceCancelRunBelow
+
+ForceCancelRunBelow is a run below one that is force-canceled.
+
+| Field | Type | Description |
+|---|---|---|
+| `redacted` | `bool` | redacted: a run of an Orkflow the caller may not read; only its state is told. |
+| `run_id` | `string` |  |
+| `parent_run_id` | `string` |  |
+| `orkflow` | `string` | orkflow is its Orkflow's name, "&lt;owner>/&lt;name>" for a shared one. |
+| `depth` | `int32` | depth is how far below; 0 where only the tree's root names it. |
+| `state` | [`ForceCancelState`](#forcecancelstate) | state, request_id, attached and cause are of its force cancel in a cascade, unset in a preview. Attached: another caller's was in flight, and the run's end is that one's. |
+| `request_id` | `string` |  |
+| `attached` | `bool` |  |
+| `cause` | `string` |  |
+
+### ForceCancelRunRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `namespace` | `string` | empty = the default namespace |
+| `reason` | `string` | reason is required: at most 512 bytes, with no control or invisible characters. It is recorded with the run's end. |
+| `grace` | `google.protobuf.Duration` | grace is how long the run may show no progress after its cancel before it is ended. Unset is the least that may be asked: the deployment's engine.runs.force_cancel_grace, or 30 s more than the longest cancellation grace of the run's own tasks when that is longer. The most is engine.runs.max_force_cancel_grace, or that least when it is more. Where the run's definition cannot be read, the least is the most. |
+| `client_request_id` | `string` | client_request_id names this request to whoever repeats it: the same caller's same id is the same request. At most 128 bytes of printable ASCII; optional. Where the deployment signs nothing it is ignored. |
+| `cascade` | `bool` | cascade also force-cancels every open run below this one: each is asked to cancel, given its own grace and ended only if it stalls. It needs the permissions at the run's namespace, as preview and stop do, because the runs below may be of any of its Orkflows. A run that has ended still cascades to what it left open. |
+| `preview` | `bool` | preview answers the open runs below and does nothing. The reason is not required. |
+| `stop` | `bool` | stop stops the newest cascade of this run: it starts no further force cancel, its run's own stops too unless it has ended it, and those already started go on. The reason is not required. |
+
+### ForceCancelRunResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `state` | [`ForceCancelState`](#forcecancelstate) |  |
+| `request_id` | `string` | request_id is the force cancel's, which the run's records carry: the one started, or the one joined. Empty when there is none. |
+| `attached` | `bool` | attached: the request joined a force cancel already made, so its own reason and grace are not used; those in force are below. |
+| `attach_unverified` | `int32` | attach_unverified is how many executions claimed to be force cancels of this run, were nobody's, and were ended. |
+| `attach_unknown` | `bool` | attach_unknown: whether one is in flight could not be told, so this one may run beside it. |
+| `direct` | `bool` | direct: the run was ended by this request, because two force cancels given their whole time had left it open. |
+| `principal` | `string` | The decision in force: who asked, whether this deployment verified them, why, and the grace. Empty when it could not be read. |
+| `principal_verified` | `bool` |  |
+| `reason` | `string` |  |
+| `grace` | `google.protobuf.Duration` |  |
+| `cascades` | `bool` | cascades: the force cancel started or joined cascades. |
+| `open_descendants` | [`ForceCancelSubtree`](#forcecancelsubtree) | open_descendants answers a preview. |
+
+### ForceCancelSubtree
+
+ForceCancelSubtree is the open runs below one, as the cluster's index has
+them now: a run started a moment ago may not be there yet.
+
+| Field | Type | Description |
+|---|---|---|
+| `runs` | repeated [`ForceCancelRunBelow`](#forcecancelrunbelow) |  |
+| `truncated_by` | `string` | truncated_by is the bound that cut the search short: "scan" or "timeout"; "could_not_read" when it could not be made. |
+| `exclusions` | repeated [`ForceCancelExclusion`](#forcecancelexclusion) |  |
+
 ### GetAccessRequest
 
 No fields.
@@ -2170,6 +2268,32 @@ No fields.
 | `window_since` | `google.protobuf.Timestamp` |  |
 | `window_until` | `google.protobuf.Timestamp` |  |
 | `computed_at` | `google.protobuf.Timestamp` |  |
+
+### GetForceCancelRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `namespace` | `string` | empty = the default namespace |
+| `request_id` | `string` | request_id is the force cancel's; empty is the run's newest. |
+
+### GetForceCancelResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `request_id` | `string` |  |
+| `state` | [`ForceCancelState`](#forcecancelstate) | state is REQUESTED while it runs. |
+| `cause` | `string` | cause is what it lacks or why it stopped (docs/REASONS.md, "Force cancel"); empty when it has nothing to say. |
+| `started_at` | `google.protobuf.Timestamp` |  |
+| `principal` | `string` | Who asked, whether this deployment verified them, why, and the grace. |
+| `principal_verified` | `bool` |  |
+| `reason` | `string` |  |
+| `grace` | `google.protobuf.Duration` |  |
+| `incomplete` | `bool` | incomplete: the run was ended and something of its end is missing. The same request made again finishes it. |
+| `cascade` | [`ForceCancelCascade`](#forcecancelcascade) | cascade is set on one that cascades. |
+| `open_descendants` | [`ForceCancelSubtree`](#forcecancelsubtree) | open_descendants are the open runs below now, of one that ended its run and does not cascade. |
+| `newer_unknown` | `bool` | newer_unknown: without a request_id, a newer one of the run could not be judged, and this may not be the newest. |
+| `unaudited` | `bool` | unaudited: a record of it, or of its cascade, could not be written to the audit trail. Nothing of the run's end is missing for it. |
 
 ### GetImagePolicyRequest
 
@@ -4342,6 +4466,7 @@ Run is one execution of an Orkflow.
 | `pause_slot_kept` | `bool` | pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `timeout` | [`RunTimeout`](#runtimeout) | timeout is the run's own time limit; unset when its Orkflow declares no `timeout:`. |
 | `dispatch_hold` | [`RunDispatchHold`](#rundispatchhold) | dispatch_hold is why the run itself is holding back work it could start, as of the last time it looked: it is at its in-flight limit, or it is carrying on. Unspecified when nothing is held, and while the run is paused (pause says why). A task waiting behind this hold reads PENDING. |
+| `force_cancel_record` | `string` | force_cancel_record is the record of the force cancel that ended this run (RUN_FORCE_CANCELED), as the engine that ended it signed it, or unsigned where the deployment signs nothing. Only the archive's own body carries it, and so an evidence bundle's run.jsonl: who ended the run can be checked after the run's history is gone, and a read of the archive answers canceled_by as verified only where this record verifies. It is unset on every run an API call, a list or a webhook answers. |
 | `traceparent` | `string` | traceparent is the W3C trace context the run was started in, whose span is its run span's parent; for a child run that is its parent's run span. Only a read of the run carries it: a response to a submit or a cancel, and a webhook body, do not. Empty when the submission was not traced. |
 
 ### RunArtifact
@@ -5866,6 +5991,34 @@ the CLI spelling of each operator is in the trailing comment.
 | `FILTER_OPERATOR_PREFIX` | 5 | one non-empty value; text f^v |
 | `FILTER_OPERATOR_AT_OR_AFTER` | 6 | one instant, inclusive f>=t |
 | `FILTER_OPERATOR_BEFORE` | 7 | one instant, exclusive f&lt;t |
+
+### ForceCancelCascadeState
+
+ForceCancelCascadeState is where a cascade stands.
+
+| Value | Number | Description |
+|---|---|---|
+| `FORCE_CANCEL_CASCADE_STATE_UNSPECIFIED` | 0 |  |
+| `FORCE_CANCEL_CASCADE_STATE_RUNNING` | 1 |  |
+| `FORCE_CANCEL_CASCADE_STATE_COMPLETE` | 2 | COMPLETE: every run below it found has ended, and a last search confirmed nothing open. |
+| `FORCE_CANCEL_CASCADE_STATE_PARTIAL` | 3 | PARTIAL: it reached its end, and something is open, failed, was not started or could not be told. |
+| `FORCE_CANCEL_CASCADE_STATE_STOPPED` | 4 | STOPPED: it was stopped, or ended from outside, before its end. |
+
+### ForceCancelState
+
+ForceCancelState is what became of a request for a force cancel.
+
+| Value | Number | Description |
+|---|---|---|
+| `FORCE_CANCEL_STATE_UNSPECIFIED` | 0 |  |
+| `FORCE_CANCEL_STATE_REQUESTED` | 1 | REQUESTED: a force cancel of the run was started. Of a run already force-canceled, it finishes what an earlier one may have left undone. |
+| `FORCE_CANCEL_STATE_WAITING` | 2 | WAITING: one of the run was in flight, and the request joined it. |
+| `FORCE_CANCEL_STATE_ALREADY_ENDED` | 3 | ALREADY_ENDED: the run had ended, and nothing was started. |
+| `FORCE_CANCEL_STATE_FORCE_CANCELED` | 4 | The states below are a finished force cancel's alone.<br><br>FORCE_CANCELED: it ended the run. |
+| `FORCE_CANCEL_STATE_CANCELED` | 5 | CANCELED: the run ended on its cancel, by its own path. |
+| `FORCE_CANCEL_STATE_ENDED` | 6 | ENDED: the run ended on its own. |
+| `FORCE_CANCEL_STATE_FAILED` | 7 | FAILED: it stopped, and cause says why; the run may still be open. |
+| `FORCE_CANCEL_STATE_PENDING` | 8 | PENDING: a run below whose force cancel had not ended when its cascade stopped waiting. It goes on. |
 
 ### HeartbeatUnavailableReason
 

@@ -346,7 +346,10 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 		// on (E88 §5.1.10).
 		engine.ConcurrencyGateWorkflowType:   workflow.VersioningBehaviorAutoUpgrade,
 		engine.ConcurrencyCensusWorkflowType: workflow.VersioningBehaviorAutoUpgrade,
-		engine.ScheduleFireWorkflowType:      workflow.VersioningBehaviorPinned,
+		// A force cancel acts on a run whatever version that run is pinned
+		// to, and outlives no version beyond its ceiling (AGENTS.md §7.2).
+		engine.ForceCancelWorkflowType:  workflow.VersioningBehaviorAutoUpgrade,
+		engine.ScheduleFireWorkflowType: workflow.VersioningBehaviorPinned,
 		// A delivery lives about a minute and never replays on a build it
 		// did not start on (docs/DEPLOY.md, "Why a webhook delivery is
 		// Pinned").

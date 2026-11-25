@@ -60,6 +60,10 @@
 	import { runEnded, runGoing } from '#lib/sidebarCounts.ts';
 	import { tipWhenTruncated } from '#lib/tipWhenTruncated.ts';
 	import RunPausedCard from '#lib/components/RunPausedCard.svelte';
+	import RunForceCancelCard from '#lib/components/RunForceCancelCard.svelte';
+	import RunForceCancelDialog from '#lib/components/RunForceCancelDialog.svelte';
+	import { awaited, forceCancelOffer, POLL_MS, requestNotes } from '#lib/forceCancel.ts';
+	import type { GetForceCancelResponse } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import { can, runTarget } from '#lib/permissions.ts';
 	import RunQueuedCard from '#lib/components/RunQueuedCard.svelte';
 	import { waitsOnArrival } from '#lib/concurrency.ts';
@@ -2044,6 +2048,8 @@
 					}
 				}
 			});
+		if (forceOffer.shown && !forceOffer.disabled)
+			out.push({ id: 'run-force-cancel', group: 'Actions', label: 'Force cancel', action: { kind: 'page', run: () => (forceDialog = true) } });
 		out.push({ id: 'run-compare', group: 'Actions', label: 'Compare with', action: { kind: 'page', run: () => void openCompare() } });
 		if (isTerminal(runStatus))
 			out.push({ id: 'run-evidence', group: 'Actions', label: 'Open evidence', action: { kind: 'page', run: () => (evidenceDialogOpen = true) } });
@@ -2096,6 +2102,56 @@
 			requested: cancellationRequested
 		})
 	);
+	// ---- Force cancel (E88): offered on an open run to a caller the server would let ----
+	const forceAllowed = $derived(
+		can(data.grants, 'run.cancel.force', runTarget(data.namespace, run)) && can(data.grants, 'run.read', runTarget(data.namespace, run))
+	);
+	const forceCascadeAllowed = $derived(can(data.grants, 'run.cancel.force', { namespace: data.namespace }) && can(data.grants, 'run.read', { namespace: data.namespace }));
+	let forceDialog = $state(false);
+	let forceCancel = $state<GetForceCancelResponse | undefined>();
+	// The request this page made, or the run's newest.
+	let forceRequest = $state('');
+	let forceNotes = $state<string[]>([]);
+	let forceStale = $state('');
+	let forceReading = false;
+	const forceOffer = $derived(forceCancelOffer(runStatus, { allowed: forceAllowed, current: forceCancel }));
+	// Whether one may be there to read: on an open run only to a caller who
+	// could have made one, and on a run one ended.
+	const forceMayExist = $derived(!!run && (forceRequest !== '' || (isTerminal(runStatus) ? (runError?.code ?? run.error?.code) === 'RUN_FORCE_CANCELED' : forceAllowed)));
+	async function readForceCancel(): Promise<void> {
+		if (!run || forceReading) return;
+		const id = run.id;
+		const request = forceRequest;
+		forceReading = true;
+		try {
+			const read = await runClient(fetch).getForceCancel({ runId: id, namespace: data.namespace, requestId: request });
+			if (run?.id === id && request === forceRequest) {
+				forceCancel = read;
+				forceStale = '';
+			}
+		} catch (err) {
+			// A run with none has nothing to show; where one is shown, what was
+			// read stays, said to be old.
+			if (run?.id === id && request === forceRequest) {
+				// There is none, unless this page asked for one.
+				const none = request === '' && err instanceof ConnectError && (err.code === Code.NotFound || (err.code === Code.FailedPrecondition && !isTerminal(runStatus)));
+				forceStale = none ? '' : errorMessage(err);
+			}
+		} finally {
+			forceReading = false;
+			if (request !== forceRequest) void readForceCancel();
+		}
+	}
+	$effect(() => {
+		// Read once where one may be, and again while it is in progress.
+		void run?.id;
+		if (forceMayExist) untrack(() => void readForceCancel());
+	});
+	$effect(() => {
+		if (!awaited(forceCancel, forceRequest) && forceStale === '') return;
+		const timer = setInterval(() => { if (!document.hidden) void readForceCancel(); }, POLL_MS);
+		return () => clearInterval(timer);
+	});
 	const pauseRunning = $derived(tasks.filter((t) => t.status === Status.RUNNING).length);
 	const pauseChildren = $derived(
 		pausedChildCount((run?.taskRuns ?? []).map((t) => ({ childRunId: t.child?.runId, status: findTask(t.taskId)?.status ?? t.status })))
@@ -2597,6 +2653,17 @@
 						class="btn"><Icon name="ban" />{cancelOffer.disabled || 'Cancel run'}</button
 					>
 				{/if}
+				<!-- Where Cancel is offered, its dialog and its note offer this: the header has no room for both. -->
+				{#if forceOffer.shown && !cancelOffer.shown}
+					<button
+						type="button"
+						data-testid="force-cancel-run"
+						aria-disabled={forceOffer.disabled ? 'true' : undefined}
+						data-tip={forceOffer.disabled ? undefined : 'End a run that a cancel does not end'}
+						onclick={() => { if (!forceOffer.disabled) forceDialog = true; }}
+						class="btn btn-quiet">{forceOffer.disabled || 'Force cancel'}</button
+					>
+				{/if}
 			{/if}
 			<button type="button" data-testid="run-again" onclick={() => (runAgainDialogOpen = true)} class="btn btn-primary"><Icon name="play" />Run again</button>
 			<CliPopover testid="run-inspect-cli" title="Command line: this run" commands={[...runCli, ...activeCli]} />
@@ -2659,10 +2726,16 @@
 			/>
 		</div>
 	{/if}
+	{#if forceNotes.length > 0}
+		<p data-testid="force-cancel-notes" class="note mb-4 flex gap-3 px-3 py-2 text-sm" role="status">
+			<span class="caps text-ink-muted">Note</span>
+			<span>{forceNotes.join(' ')}</span>
+		</p>
+	{/if}
 	{#if cancellationRequested && !isTerminal(runStatus)}
 		<p data-testid="cancellation-requested" class="note mb-4 flex gap-3 px-3 py-2 text-sm">
 			<span class="caps text-ink-muted">Note</span>
-			<span>Cancellation requested. Waiting for the run to stop.</span>
+			<span>Cancellation requested. Waiting for the run to stop.{#if forceOffer.shown && !forceOffer.disabled} <button type="button" class="link" data-testid="force-cancel-after" onclick={() => (forceDialog = true)}>Force cancel</button> ends a run that does not.{/if}</span>
 		</p>
 	{/if}
 	{#if firstWaiter?.capacityWait}
@@ -3285,6 +3358,17 @@
 </div>
 			{/if}
 			</section>
+			{#if forceDialog && run}
+				<RunForceCancelDialog
+					runId={run.id}
+					namespace={data.namespace}
+					cascadeAllowed={forceCascadeAllowed}
+					ended={isTerminal(runStatus)}
+					{runHref}
+					onrequested={(resp) => { forceDialog = false; forceRequest = resp.requestId; forceStale = ''; forceNotes = requestNotes(resp); void readForceCancel(); void invalidateAll(); }}
+					onclose={() => (forceDialog = false)}
+				/>
+			{/if}
 			{#if cancelDialog && run}
 				<ConfirmDialog
 					testid="cancel-run-confirm"
@@ -3304,13 +3388,19 @@
 						<p>Running tasks get a stop signal and the run ends Canceled once they have stopped. Tasks that have not started never will. This page keeps the current status until the run records the change.</p>
 						<label class="text-dense font-semibold text-ink" for="cancel-reason">Reason <span class="font-normal text-ink-3">(optional)</span></label>
 						<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="field w-full px-2.5 py-2 text-base" placeholder="Why should this run stop?"></textarea>
-
+						{#if forceOffer.shown && !forceOffer.disabled}
+							<p class="text-sm text-ink-3">A run that does not end on its cancel can be ended all the same. <button type="button" class="link" data-testid="force-cancel-instead" disabled={cancelBusy} onclick={() => { cancelDialog = false; cancelError = ''; cancelReason = ''; forceDialog = true; }}>Force cancel</button></p>
+						{/if}
 					{/snippet}
 				</ConfirmDialog>
 			{/if}
 		</div>
 
 		<aside class="run-aside" aria-label="Run details">
+			{#if forceMayExist && !forceCancel && forceStale}<p class="note mb-4 px-3 py-2 text-sm" role="status" data-testid="force-cancel-unread">Where the force cancel stands could not be read, and is asked again: {forceStale}</p>{/if}
+			{#if forceCancel && run}
+				{#key forceCancel.requestId}<RunForceCancelCard runId={run.id} namespace={data.namespace} current={forceCancel} ended={isTerminal(runStatus)} allowed={forceAllowed} cascadeAllowed={forceCascadeAllowed} {runHref} stale={forceStale} asked={forceRequest !== '' && forceCancel.requestId !== forceRequest} onstopped={readForceCancel} onagain={() => (forceDialog = true)} />{/key}
+			{/if}
 			{#if run?.queued && !queueLeft && !isTerminal(runStatus)}
 				<RunQueuedCard queued={run.queued} {runHref} />
 			{/if}

@@ -261,6 +261,13 @@ type TemporalRunReader struct {
 	// nil means time.Now. A test sets it.
 	now func() time.Time
 
+	// forceCancel verifies a force cancel's termination record and authMode
+	// is the deployment's authentication mode it is judged under
+	// (WithForceCancelVerifier); unset, a run a force cancel ended cannot be
+	// read (ErrForceCancelUndecided).
+	forceCancel ForceCancelVerifier
+	authMode    func() string
+
 	// chainINUnsupported records that this cluster refused a
 	// `WorkflowId IN (…)` listing, so resolveChains lists one id at a time
 	// for the rest of the process's life.
@@ -482,6 +489,58 @@ func (r *TemporalRunReader) SetNamespaceRetention(
 	return response.GetConfig().GetWorkflowExecutionRetentionTtl().AsDuration(), nil
 }
 
+// WithForceCancelVerifier sets what reads a force cancel's termination
+// record: the deployment's keys and its authentication mode (asked at each
+// read, so a lowered mode applies at once).
+func (r *TemporalRunReader) WithForceCancelVerifier(v ForceCancelVerifier, mode func() string) *TemporalRunReader {
+	r.forceCancel, r.authMode = v, mode
+	return r
+}
+
+// forceCancelOutcome is a TERMINATED close read through its force cancel
+// record (ReadForceCancelClose); its Verification is ForceCancelNone for a
+// close that names no force cancel, which keeps what closedExecution said.
+// execution is the closed execution's run id, or "" for the workflow id's
+// current one, which is then asked of the cluster. What cannot be decided now
+// is ErrForceCancelUndecided: a run is never read, and so never archived, as
+// plainly terminated because keys or the cluster could not be read.
+func (r *TemporalRunReader) forceCancelOutcome(
+	ctx context.Context, runID, execution string, start, closeEvent *historypb.HistoryEvent,
+) (ForceCancelClose, error) {
+	attrs := closeEvent.GetWorkflowExecutionTerminatedEventAttributes()
+	if attrs == nil || attrs.GetReason() != ForceCancelTerminateReason {
+		return ForceCancelClose{}, nil
+	}
+	if execution == "" {
+		if r.client == nil {
+			return ForceCancelClose{}, fmt.Errorf("engine: run %s: %w: its closed execution is not known", runID, ErrForceCancelUndecided)
+		}
+		described, err := r.client.DescribeWorkflowExecution(ctx, runID, "")
+		if err != nil {
+			return ForceCancelClose{}, fmt.Errorf("engine: run %s: %w: describe its closed execution: %w", runID, ErrForceCancelUndecided, err)
+		}
+		info := described.GetWorkflowExecutionInfo()
+		if info.GetStatus() == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+			return ForceCancelClose{}, fmt.Errorf("engine: run %s: %w: it was resumed while its close was read", runID, ErrForceCancelUndecided)
+		}
+		if n := info.GetHistoryLength(); n > 0 && n != closeEvent.GetEventId() {
+			return ForceCancelClose{}, fmt.Errorf("engine: run %s: %w: it was resumed and closed again while its close was read", runID, ErrForceCancelUndecided)
+		}
+		execution = info.GetExecution().GetRunId()
+	}
+	mode := ""
+	if r.authMode != nil {
+		mode = r.authMode()
+	}
+	namespace := artifacts.ResolveNamespace(r.startedNamespace(start.GetWorkflowExecutionStartedEventAttributes()))
+	read := ReadForceCancelClose(ctx, r.forceCancel, mode, namespace, runID, execution,
+		closeEvent, closeEvent.GetEventTime().AsTime())
+	if read.Verification == ForceCancelUnavailable {
+		return ForceCancelClose{}, fmt.Errorf("engine: run %s: %w", runID, errForceCancelUnread)
+	}
+	return read, nil
+}
+
 // WithNamespaceIndex records whether the cluster indexes a run's OrkStack
 // namespace. It defaults to off, which is the safe half: the reader then
 // reads the whole index rather than trusting a predicate the cluster would
@@ -554,6 +613,7 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 	applyCanceledBy(projection.run, projection.canceledBy)
 	// Derived on read, never stored: why a waiting row is not running yet.
 	applyPendingReasons(projection.run, time.Now())
+	projection.run.ForceCancelRecord = "" // showForceCancel says why
 	return projection.run, nil
 }
 
@@ -575,6 +635,7 @@ func (r *TemporalRunReader) GetRunAndSequence(ctx context.Context, runID string)
 	}
 	applyCanceledBy(projection.run, projection.canceledBy)
 	applyPendingReasons(projection.run, time.Now())
+	projection.run.ForceCancelRecord = ""
 	return projection.run, st.lastSequence, nil
 }
 
@@ -1403,6 +1464,10 @@ func (r *TemporalRunReader) scanExecution(
 			projection.canceledBy, projection.cancelSeen = CanceledBy{}, false
 			return attrs.GetNewExecutionRunId(), nil
 		}
+		if attrs := historyEvent.GetWorkflowTaskFailedEventAttributes(); attrs != nil {
+			st.noteReset(attrs)
+			continue
+		}
 		if r.isPublishEvent(historyEvent) {
 			event, snapshotURI, err := r.decodePublishEvent(runID, historyEvent)
 			if err != nil {
@@ -1435,6 +1500,21 @@ func (r *TemporalRunReader) scanExecution(
 			continue
 		}
 		if status, cause, closed := closedExecution(historyEvent, st.carried); closed {
+			forced, err := r.forceCancelOutcome(ctx, runID, execution, first, historyEvent)
+			if st.lastResort && errors.Is(err, errForceCancelUnread) {
+				forced, err = ForceCancelClose{Verification: ForceCancelUnverified, Carried: carriedForceCancel(historyEvent)}, nil
+			}
+			if err != nil {
+				return "", err
+			}
+			if forced.Verification != ForceCancelNone {
+				status, cause = forced.Outcome(historyEvent.GetWorkflowExecutionTerminatedEventAttributes().GetReason())
+			}
+			if forced.built() && !projection.sawTerminal {
+				if err := r.endAfterReset(runID, first, historyEvent, fromSequence, wantRun, send, st); err != nil {
+					return "", err
+				}
+			}
 			st.closed = true
 			if wantRun {
 				// For a CLOSED run a missing snapshot stays fatal — and stays
@@ -1453,8 +1533,11 @@ func (r *TemporalRunReader) scanExecution(
 					return "", err
 				}
 			}
-			terminal := r.closeRun(projection, runID, historyEvent, status, cause, st.lastSequence)
+			terminal := r.closeRun(projection, runID, historyEvent, status, cause, forced, st.lastSequence)
 			if st.forArchive {
+				if projection.sawTerminal && forced.Verification != ForceCancelNone {
+					cause = nil // it came after the run's own end, and says nothing of that
+				}
 				settleRunForArchive(projection, st, status, cause)
 			}
 			if terminal == nil || terminal.GetSequence() <= fromSequence {
@@ -1489,11 +1572,20 @@ func (r *TemporalRunReader) closeRun(
 	historyEvent *historypb.HistoryEvent,
 	status orkstackv1.Status,
 	cause *orkstackv1.Error,
+	forced ForceCancelClose,
 	lastSequence int64,
 ) *orkstackv1.Event {
 	closedAt := cloneTime(historyEvent.GetEventTime())
 	if projection.run == nil {
 		projection.run = &orkstackv1.Run{Id: runID}
+	}
+	if forced.built() && !projection.sawTerminal {
+		// No workflow code ran after the termination: the ending is built
+		// from the last recorded state and the record, by the one function
+		// the force cancel publishes it with.
+		var event *orkstackv1.Event
+		event, projection.run = ForceCanceledTerminalEvent(projection.run, forced, lastSequence+1, closedAt.AsTime())
+		return event
 	}
 	// The run announced its own end either on the loaded run projection or —
 	// for an event read that deliberately fetched no snapshot — as a decoded
@@ -2059,7 +2151,7 @@ func closedExecution(
 			message = "run terminated"
 		}
 		return orkstackv1.Status_STATUS_CANCELED, &orkstackv1.Error{
-			Code:    "RUN_TERMINATED",
+			Code:    RunTerminatedCode,
 			Message: message,
 		}, true
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT:

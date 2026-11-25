@@ -229,6 +229,17 @@ func (g *ModeGuard) Check(ctx context.Context) {
 	}
 }
 
+// Effective is the higher of this engine's mode and the record's as last read:
+// what the deployment runs.
+func (g *ModeGuard) Effective() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if artifacts.AuthModeRank(g.record.Mode) > artifacts.AuthModeRank(g.Mode) {
+		return g.record.Mode
+	}
+	return g.Mode
+}
+
 func (g *ModeGuard) setProblem(p string) {
 	g.mu.Lock()
 	g.problem = p

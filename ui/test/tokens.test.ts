@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
 import { Scanner } from '@tailwindcss/oxide';
 import { __unstable__loadDesignSystem, compile } from '@tailwindcss/node';
 import { PIN_ACCENTS } from '../src/lib/runDetail';
+import { listTree, readSource, scanTest } from './sourceTree';
 
 // The token discipline: every value the UI is drawn with lives in
 // ui/src/tokens.css, and these rules make a value written anywhere else a
@@ -23,7 +23,7 @@ import { PIN_ACCENTS } from '../src/lib/runDetail';
 
 const ui = `${import.meta.dir}/..`;
 const src = `${ui}/src`;
-const read = (path: string) => readFileSync(path, 'utf8');
+const read = readSource;
 const tokensCss = read(`${src}/tokens.css`);
 const registrationCss = read(`${src}/tailwind-tokens.css`);
 const appCss = read(`${src}/app.css`);
@@ -34,7 +34,7 @@ interface Source {
 	text: string;
 }
 
-const sources: Source[] = readdirSync(src, { recursive: true })
+const sources: Source[] = listTree(src)
 	.map((rel) => `${src}/${rel}`)
 	.filter((p) => /\.(svelte|ts|css|html)$/.test(p) && !p.includes('/lib/gen/') && !p.endsWith('/src/tokens.css'))
 	.map((path) => ({ path, ext: path.slice(path.lastIndexOf('.') + 1), text: read(path) }));
@@ -84,7 +84,7 @@ test('rule 1 fixtures: raw colours are caught, tokens pass', () => {
 	expect(rawColours('const q = `#${id}`; white-space: nowrap;', 'ts')).toEqual([]);
 });
 
-test('rule 1: no raw colour outside tokens.css', () => {
+scanTest('rule 1: no raw colour outside tokens.css', () => {
 	const found = sources.flatMap((s) => rawColours(s.text, s.ext).map((h) => `${rel(s.path)}: ${h}`));
 	expect(found).toEqual([]);
 });
@@ -111,7 +111,7 @@ test('rule 2 fixtures: palette shades, white/black, arbitrary colours and ring o
 	expect(paletteUtilities('class="bg-red-tint text-red border-blue-strong bg-paper whitespace-nowrap text-danger-700"')).toEqual([]);
 });
 
-test('rule 2: no palette, arbitrary colour or ring-offset utility', () => {
+scanTest('rule 2: no palette, arbitrary colour or ring-offset utility', () => {
 	const found = sources
 		.filter((s) => s.ext !== 'css')
 		.flatMap((s) => paletteUtilities(stripComments(s.text, s.ext)).map((h) => `${rel(s.path)}: ${h}`));
@@ -158,7 +158,7 @@ test('rule 3 fixtures: raw type, size, radius, shadow and motion literals are ca
 	).toEqual([]);
 });
 
-test('rule 3: no raw font, size, radius, shadow or motion literal outside tokens.css', () => {
+scanTest('rule 3: no raw font, size, radius, shadow or motion literal outside tokens.css', () => {
 	const found = sources.flatMap((s) => rawLiterals(s.text, s.ext).map((h) => `${rel(s.path)}: ${h}`));
 	expect(found).toEqual([]);
 });
@@ -220,7 +220,7 @@ test('rule 4 fixtures: typos and unlisted templates are caught, tokens and liste
 	).toEqual([]);
 });
 
-test('rule 4: every var() resolves to a token', () => {
+scanTest('rule 4: every var() resolves to a token', () => {
 	expect(PIN_ACCENTS.length).toBe(6);
 	const all = [...sources, { path: `${src}/tokens.css`, ext: 'css', text: tokensCss }];
 	const found = all.flatMap((s) => unresolvedVars(s.text, s.ext, declared).map((h) => `${rel(s.path)}: ${h}`));
@@ -320,7 +320,8 @@ async function systems(appCssText: string) {
 	return { reference, ours };
 }
 
-test('rule 5 fixtures: dead utilities and lost variants are caught; prose and live classes pass', async () => {
+// Four loads of Tailwind's design system: the host's load again, so the same guard.
+scanTest('rule 5 fixtures: dead utilities and lost variants are caught; prose and live classes pass', async () => {
 	const { reference, ours } = await systems(appCss);
 	const fixture = candidatesOf(
 		'<p class="rounded-lg shadow-xs text-white hover:bg-ink-100 animate-pulse-dot bg-paper text-ink p-4 rounded-md current:text-fg animate-live-dot font-semibold">to row list content-type</p>',
@@ -339,7 +340,7 @@ test('rule 5 fixtures: dead utilities and lost variants are caught; prose and li
 	expect(deadCandidates(lost, dropped.reference, dropped.ours).sort()).toEqual(['current:font-semibold', 'current:text-fg']);
 });
 
-test('rule 5: no dead utility in the sources', async () => {
+scanTest('rule 5: no dead utility in the sources', async () => {
 	const { reference, ours } = await systems(appCss);
 	const found: string[] = [];
 	for (const s of sources.filter((x) => x.ext !== 'css')) {
@@ -516,7 +517,7 @@ test('rule 8 fixtures', () => {
 	).toEqual([]);
 });
 
-test('rule 8: the compiled stylesheet holds no colour outside tokens.css', async () => {
+scanTest('rule 8: the compiled stylesheet holds no colour outside tokens.css', async () => {
 	const empty = `${import.meta.dir}/fixtures/empty.css`;
 	const compiler = await compile(appCss, {
 		base: src,

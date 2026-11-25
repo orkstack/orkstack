@@ -113,7 +113,7 @@ func (s *Service) GetConcurrencyLimit(ctx context.Context, req *connect.Request[
 
 // concurrencyLimit reads the limit of key in the namespace's incarnation.
 func (s *Service) concurrencyLimit(ctx context.Context, namespace, key string) (*orkstackv1.ConcurrencyLimit, error) {
-	if err := dsl.CheckConcurrencyKey(key); err != nil {
+	if err := dsl.CheckStoredConcurrencyKey(key); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("key: %w", err))
 	}
 	ns, err := s.namespace(ctx, namespace)

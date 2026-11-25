@@ -43,7 +43,7 @@ only the events below, and a subscription receives only the ones it names
 | `RUN_STARTED` | the run moves from pending to running |
 | `RUN_SUCCEEDED` | the run ends successfully |
 | `RUN_FAILED` | the run ends failed |
-| `RUN_CANCELED` | the run ends cancelled |
+| `RUN_CANCELED` | the run ends cancelled, by its own cancel or by a force cancel (`RUN_FORCE_CANCELED`), whose tasks are as of its last event and before which no failure-handler event comes |
 | `TASK_QUEUED` | a task waits for a task-level concurrency slot |
 | `TASK_SCHEDULED` | a task is handed to the scheduler |
 | `TASK_STARTED` | a task is dispatched to an Orker; the activity is scheduled, which does not mean a container is running |

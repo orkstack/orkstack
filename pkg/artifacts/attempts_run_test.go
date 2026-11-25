@@ -11,6 +11,21 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
+// putAttemptUnsynced stores record as store does, but leaves a local store's
+// disk to sync when it will: a thousand synced writes are most of a test's
+// time, and on a busy disk minutes of it.
+func putAttemptUnsynced(ctx context.Context, store AttemptStore, record *orkstackv1.TaskAttempt) error {
+	blob, ok := store.(*BlobAttemptStore)
+	if !ok {
+		return store.PutAttempt(ctx, record)
+	}
+	key, document, err := encodeAttemptForStore(record)
+	if err != nil {
+		return err
+	}
+	return blob.b.put(ctx, key, AttemptContentType, document)
+}
+
 // countingRunReader counts the round trips ReadRunAttempts makes.
 type countingRunReader struct {
 	RunAttemptReader
@@ -60,7 +75,7 @@ func TestReadRunAttempts_OneListingAnswersEveryScopeLikeListAttempts(t *testing.
 				}
 			}
 			for _, record := range records {
-				if err := store.PutAttempt(ctx, record); err != nil {
+				if err := putAttemptUnsynced(ctx, store, record); err != nil {
 					t.Fatalf("PutAttempt: %v", err)
 				}
 			}

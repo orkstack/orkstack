@@ -770,6 +770,26 @@ other's message.
 - **Unsigned is a rule of the mode.** In `observe` and `enforce` an unsigned
   decision is forged; in `asserted` it is accepted as asserted and names no
   verified principal. Nothing attaches to an unsigned decision in any mode.
+- **A force cancel ends a run on its signed decision only.** The decision
+  names who was admitted, by what permission, scope, rule and policy
+  revision, the run and its execution, and is good in the one execution the
+  engine started for it; a termination carries a record signed from it, and
+  every reader takes who ended the run from that record and from nothing
+  else. It is decided once, when it is requested: a permission withdrawn
+  since does not stop it, and `orkctl run cancel --force --stop` stops a
+  cascade. A cascade's own force cancels act on decisions derived from it,
+  each for one run that is below it by the cluster's own record of what
+  started it. Whoever holds a credential of the cluster's namespace can end
+  a run without any of this, and the run then reads `RUN_TERMINATED`, by
+  nobody. It can also have an engine announce an event of any run, to
+  its stream and its webhooks, with any snapshot the store holds, which a
+  terminal event's archive is then made from; and it can answer an
+  announcement as made that was not. Nothing checks who asked for one, or
+  who answered.
+- **In `asserted` mode with no keys** a force cancel is worth what anything
+  asserted is: whoever can start work on the cluster can have one made and
+  name anyone, always shown as asserted. Nothing that claims to be one is
+  joined or ended, so it cannot stop a genuine one.
 - **Writing the published keys document is control of what verifies**, as
   it is of the issuer ([TASK_IDENTITY.md](./TASK_IDENTITY.md)): only the
   engines' storage credential may write `metadata/identity/`.

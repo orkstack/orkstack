@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { listTree, readSource, scanTest } from './sourceTree';
 
 // The data-testid contract, as a baseline. The Playwright specs reference
 // hundreds of ids; a redesign that silently drops one breaks a spec far from
@@ -148,7 +149,7 @@ const ALLOWED_REMOVALS: Record<string, string> = {
 };
 
 function sources(): string[] {
-	return readdirSync(src, { recursive: true })
+	return listTree(src)
 		.map((rel) => `${src}/${rel}`)
 		.filter((p) => /\.(svelte|ts)$/.test(p) && !p.includes('/lib/gen/'));
 }
@@ -241,7 +242,7 @@ export function shapes(text: string): string[] {
 
 function current(): Set<string> {
 	const all = new Set<string>();
-	for (const file of sources()) for (const s of shapes(readFileSync(file, 'utf8'))) all.add(s);
+	for (const file of sources()) for (const s of shapes(readSource(file))) all.add(s);
 	return all;
 }
 
@@ -258,7 +259,7 @@ test('the extractor reads literal, templated and prop testids', () => {
 	);
 });
 
-test('every testid shape on the baseline is still produced', () => {
+scanTest('every testid shape on the baseline is still produced', () => {
 	const now = current();
 	const env = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env;
 	if (env.UPDATE_TESTID_BASELINE === '1') {

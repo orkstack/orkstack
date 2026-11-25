@@ -224,6 +224,13 @@ func (a *EventActivities) PublishEvent(
 		}
 		run = read
 	}
+	// Only the archive carries the record of a force cancel (showForceCancel).
+	// The snapshot is shared, so what the rest is handed is a clone.
+	record := run.GetForceCancelRecord()
+	if record != "" {
+		run = proto.Clone(run).(*orkstackv1.Run)
+		run.ForceCancelRecord = ""
+	}
 	// A canceled run's end names who canceled it, which only the run's own
 	// record holds (applyCanceledBy). The walk the archive write makes anyway
 	// is made here instead, BEFORE anything is applied or published, so the
@@ -297,6 +304,10 @@ func (a *EventActivities) PublishEvent(
 		// were handed this run already, and what they were told stands.
 		snapshot = proto.Clone(snapshot).(*orkstackv1.Run)
 		applyCanceledBy(snapshot, read.CanceledBy)
+	}
+	if record != "" {
+		snapshot = proto.Clone(snapshot).(*orkstackv1.Run)
+		snapshot.ForceCancelRecord = record
 	}
 	// Returning the error makes Temporal retry the activity, so a transient
 	// storage failure heals itself instead of silently dropping the run. A

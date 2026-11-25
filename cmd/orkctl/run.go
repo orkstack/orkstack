@@ -235,6 +235,7 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 			if err := renderRunWith(cmd.OutOrStdout(), resp.Msg.GetRun(), g.namespace); err != nil {
 				return err
 			}
+			appendForceCancel(cmd, g, resp.Msg.GetRun())
 			if tree {
 				read := func(runID, namespace string) (*orkstackv1.Run, error) {
 					ctx, cancel := g.unaryContext(cmd)
@@ -380,7 +381,10 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 }
 
 func newRunCancelCommand(g *globalFlags) *cobra.Command {
-	var reason string
+	var (
+		reason string
+		force  forceCancelFlags
+	)
 	cmd := &cobra.Command{
 		Use:   "cancel <run-id>",
 		Short: "Request cancellation of a run",
@@ -392,9 +396,15 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 			"A run this request cancels records who asked: the Ork-Principal your\n" +
 			"gateway asserts, or $ORK_PRINCIPAL when this CLI talks to the engine\n" +
 			"directly. It is an assertion, never authenticated; `run get` and\n" +
-			"`run list` show it as asserted.",
+			"`run list` show it as asserted." + forceCancelHelp,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := force.check(cmd); err != nil {
+				return err
+			}
+			if force.force {
+				return runForceCancel(cmd, g, args[0], reason, &force)
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -412,6 +422,7 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "human readable cancellation reason")
+	force.register(cmd)
 	return cmd
 }
 

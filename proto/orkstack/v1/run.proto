@@ -845,6 +845,15 @@ message Run {
   // paused (pause says why). A task waiting behind this hold reads PENDING.
   RunDispatchHold dispatch_hold = 36;
 
+  // force_cancel_record is the record of the force cancel that ended this run
+  // (RUN_FORCE_CANCELED), as the engine that ended it signed it, or unsigned
+  // where the deployment signs nothing. Only the archive's own body carries
+  // it, and so an evidence bundle's run.jsonl: who ended the run can be
+  // checked after the run's history is gone, and a read of the archive answers
+  // canceled_by as verified only where this record verifies. It is unset on
+  // every run an API call, a list or a webhook answers.
+  string force_cancel_record = 37;
+
   // traceparent is the W3C trace context the run was started in, whose span
   // is its run span's parent; for a child run that is its parent's run span.
   // Only a read of the run carries it: a response to a submit or a cancel,
@@ -1074,7 +1083,9 @@ message Event {
   // event that ended a pause, did to it; unset on every other event.
   PauseTransition pause_transition = 13;
 
-  // (14 is the force cancel's, E88 P10.)
+  // 14 was to sign a force cancel's terminal event; its record is signed
+  // instead, and the event is rebuilt from it.
+  reserved 14;
 
   // wait_end is set on the one event that ends a run's wait in a
   // concurrency limit's line, unset on every other event: how the wait

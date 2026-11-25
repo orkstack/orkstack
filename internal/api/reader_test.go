@@ -13,6 +13,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/coder/websocket"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -203,6 +204,11 @@ func (f *fakeReader) GetRun(_ context.Context, runID string) (*orkstackv1.Run, e
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.readRun(runID)
+}
+
+// readRun is GetRun under mu.
+func (f *fakeReader) readRun(runID string) (*orkstackv1.Run, error) {
 	// Counted, because reading a run is the expensive answer in this system:
 	// engine.TemporalRunReader.GetRun replays the run's whole history. A poll
 	// loop that asks it per tick is a cost no test would otherwise see.
@@ -211,7 +217,9 @@ func (f *fakeReader) GetRun(_ context.Context, runID string) (*orkstackv1.Run, e
 	if !ok {
 		return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
 	}
-	return run, nil
+	// Its caller's own, as the real reader builds one for each read: a test
+	// changes runs while a request still reads the one it was answered.
+	return proto.Clone(run).(*orkstackv1.Run), nil
 }
 
 // runReads is how many whole-run reads this reader has served.

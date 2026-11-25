@@ -196,8 +196,7 @@ func (c *resumeClaimer) Claim(ctx context.Context, key string, candidate engine.
 // resumeRunReader answers the run and its last sequence from one read.
 type resumeRunReader struct {
 	*fakeReader
-	mu       sync.Mutex
-	sequence int64
+	sequence int64 // under mu, as the run is
 }
 
 func (r *resumeRunReader) set(sequence int64) {
@@ -206,10 +205,13 @@ func (r *resumeRunReader) set(sequence int64) {
 	r.sequence = sequence
 }
 
-func (r *resumeRunReader) GetRunAndSequence(ctx context.Context, runID string) (*orkstackv1.Run, int64, error) {
-	run, err := r.GetRun(ctx, runID)
+func (r *resumeRunReader) GetRunAndSequence(_ context.Context, runID string) (*orkstackv1.Run, int64, error) {
+	if r.getErr != nil {
+		return nil, 0, r.getErr
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	run, err := r.readRun(runID)
 	return run, r.sequence, err
 }
 

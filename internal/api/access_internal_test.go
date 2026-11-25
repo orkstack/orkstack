@@ -150,6 +150,12 @@ func requestFor(t testing.TB, procedure string) proto.Message {
 // generated matrix has one case for each (docs/ACCESS.md, "Where it is
 // enforced").
 var matrixVariants = map[string]map[string]func(proto.Message){
+	orkstackv1connect.RunServiceForceCancelRunProcedure: {
+		"run":     func(proto.Message) {},
+		"cascade": func(m proto.Message) { m.(*orkstackv1.ForceCancelRunRequest).Cascade = true },
+		"preview": func(m proto.Message) { m.(*orkstackv1.ForceCancelRunRequest).Preview = true },
+		"stop":    func(m proto.Message) { m.(*orkstackv1.ForceCancelRunRequest).Stop = true },
+	},
 	orkstackv1connect.AccessServiceCreateBindingProcedure: {
 		"no binding": func(proto.Message) {},
 		"at a namespace": func(m proto.Message) {
@@ -875,6 +881,22 @@ func TestModeGuard_Boot(t *testing.T) {
 	cas.SetFailure(errors.New("down"))
 	if err := boot(cas, authn.ModeEnforce); err == nil {
 		t.Fatal("an engine started with the store unreadable")
+	}
+}
+
+// TestModeGuard_Effective: the higher of the engine's own mode and the
+// record's, as last read; a record no engine wrote is the engine's own.
+func TestModeGuard_Effective(t *testing.T) {
+	for _, tt := range []struct{ own, recorded, want string }{
+		{"asserted", "", "asserted"}, {"asserted", "enforce", "enforce"}, {"enforce", "asserted", "enforce"}, {"observe", "observe", "observe"},
+	} {
+		g := &ModeGuard{Mode: tt.own}
+		if tt.recorded != "" {
+			g.adopt(artifacts.ModeRecord{Mode: tt.recorded}, "e")
+		}
+		if got := g.Effective(); got != tt.want {
+			t.Errorf("own %s, recorded %q: %s, want %s", tt.own, tt.recorded, got, tt.want)
+		}
 	}
 }
 

@@ -3322,9 +3322,36 @@ gateway asserts, or $ORK_PRINCIPAL when this CLI talks to the engine
 directly. It is an assertion, never authenticated; `run get` and
 `run list` show it as asserted.
 
+--force ends an open run that an ordinary cancel does not end. The run is
+asked to cancel, and is ended only once it has made no progress for --grace,
+or has still not ended at the deployment's ceiling. Nothing of a run ended
+that way runs afterwards: no failure handler, no output, and its tasks read
+as of its last event. It ends CANCELED with RUN_FORCE_CANCELED. Its child
+runs are only asked to cancel; --cascade also force-cancels every open run
+below it, each with its own grace, and needs the permission at the namespace.
+A child run's own cancellation graces do not lengthen --grace: where they are
+long, give one. Repeating the command joins, or finishes, what an earlier one
+left.
+
+Exit codes with --force:
+  0  accepted; with --wait, the run has ended, and with --cascade nothing
+     below it is open
+  1  it failed, or the cascade left something open or unknown
+  4  --wait-timeout passed first
+  5  refused
+  6  the cascade was accepted and still runs (without --wait)
+
 Flags:
 
+- `--cascade` — with --force: also force-cancel every open run below it
+- `--dry-run` — with --cascade: list the open runs below it and do nothing
+- `--force` — end the run even if an ordinary cancel does not (needs --reason)
+- `--grace DURATION` — with --force: how long the run may make no progress before it is ended (default: the least allowed)
 - `--reason STRING` — human readable cancellation reason
+- `--request-id STRING` — with --force: names this request to whoever repeats it, so the same id is the same request
+- `--stop` — with --force: stop the run's newest cascade; those it started go on
+- `--wait` — with --force: wait until it is over
+- `--wait-timeout DURATION` (default `1h0m0s`) — with --force: how long --wait waits
 
 Inherited flags:
 

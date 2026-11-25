@@ -99,7 +99,7 @@ func TestClientOptions_EveryHarnessDialsWithThem(t *testing.T) {
 // are, where the execution carries no key, is a decision: a new one is made
 // here, never by default.
 func TestClientOptions_UnsealedErrorTypesAreTheListed(t *testing.T) {
-	want := "ConcurrencyCensusWorkflow,ConcurrencyGateWorkflow,RunWorkflow,ScheduleFireWorkflow"
+	want := "ConcurrencyCensusWorkflow,ConcurrencyGateWorkflow,ForceCancelWorkflow,RunWorkflow,ScheduleFireWorkflow"
 	got := engine.UnsealedErrorTypesForTest()
 	slices.Sort(got)
 	if strings.Join(got, ",") != want {

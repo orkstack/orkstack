@@ -435,12 +435,15 @@ func TestRender_TheSameRowsGiveTheSameBytes(t *testing.T) {
 // TestParseVersion: MAJOR.MINOR.PATCH with a package's release suffix; a
 // pre-release, a missing part or a leading zero is refused.
 func TestParseVersion(t *testing.T) {
-	for in, want := range map[string]string{"1.20.2": "1.20.2", "1.20.2-1": "1.20.2", "10.0.0": "10.0.0"} {
+	for in, want := range map[string]string{"1.20.2": "1.20.2", "1.20.2-1": "1.20.2", "10.0.0": "10.0.0", "0.0.0": "0.0.0",
+		"1.20.999999999": "1.20.999999999"} {
 		if v, err := parseVersion(in); err != nil || v.String() != want {
 			t.Errorf("parseVersion(%q) = %v, %v; want %s", in, v, err, want)
 		}
 	}
-	for _, in := range []string{"1.20", "1.20.2~rc.1-1", "1.020.2", "a.b.c", "", "1.20.2.1"} {
+	for _, in := range []string{"1.20", "1.20.2~rc.1-1", "1.020.2", "a.b.c", "", "1.20.2.1",
+		"1.+0.0-0", "+1.20.2", "1.-0.2", "1.20.-2", " 1.20.2", "1. 20.2", "1.20.2 ", "1..2", "1.20.", "0x1.2.3", "1_0.2.3", "1.\u0662.3",
+		"1.20.1000000000", "1.20.99999999999999999999"} {
 		if v, err := parseVersion(in); err == nil {
 			t.Errorf("parseVersion(%q) = %v; want an error", in, v)
 		}

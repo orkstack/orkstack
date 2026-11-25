@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
@@ -519,6 +520,65 @@ func awaitedRestoreRows(open int) *orkstackv1.Run {
 	return &orkstackv1.Run{
 		Id: refusalWorkflowID, Namespace: "team-a", OrkflowName: "awaited", OrkflowVersion: "v1",
 		Status: orkstackv1.Status_STATUS_RUNNING, CreatedAt: now, StartedAt: now, TaskRuns: rows,
+	}
+}
+
+// A failure handler that awaits, or sleeps, when its run is carried forward
+// runs to its own end when the run then fails: the failure stops the run's
+// other work, never its handlers.
+func TestContinuation_ARestoredHandlersTimerOutlivesTheRunsFailure(t *testing.T) {
+	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
+name: handlers
+version: v1
+tasks:
+  - id: build
+    uses: shell
+    with: {op: exec}
+  - {id: hold, needs: [build], join: all_done, await: {timeout_seconds: 600}}
+  - {id: nap, needs: [build], join: all_done, sleep: {seconds: 600}}
+  - {id: gate, needs: [build], await: {timeout_seconds: 600}}
+  - id: work
+    uses: shell
+    needs: [build]
+    with: {op: exec}
+`))
+	must.OK(t, err)
+	wf.Namespace = "team-a"
+	began := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	now, due := timestamppb.New(began), timestamppb.New(began.Add(10*time.Minute))
+	run := &orkstackv1.Run{Id: refusalWorkflowID, Namespace: "team-a", OrkflowName: "handlers", OrkflowVersion: "v1",
+		Status: orkstackv1.Status_STATUS_RUNNING, CreatedAt: now, StartedAt: now, TaskRuns: []*orkstackv1.TaskRun{
+			{TaskId: "build", Status: orkstackv1.Status_STATUS_SUCCEEDED, ValuesRef: &orkstackv1.ArtifactRef{Uri: "s3://x/values.json"}},
+			{TaskId: "hold", Status: orkstackv1.Status_STATUS_AWAITING, Await: &orkstackv1.TaskAwait{Deadline: due}},
+			{TaskId: "nap", Status: orkstackv1.Status_STATUS_SLEEPING, Sleep: &orkstackv1.TaskSleep{WakeAt: due}},
+			{TaskId: "gate", Status: orkstackv1.Status_STATUS_AWAITING, Await: &orkstackv1.TaskAwait{Deadline: due}},
+			{TaskId: "work", Status: orkstackv1.Status_STATUS_PENDING},
+		}}
+	store := newMemSnapshotStore()
+	carry := carryOver(t, store, run, "team-a", refusalWorkflowID)
+	h := newRefusalHarnessOver(t, store)
+	h.env.SetStartTime(began.Add(time.Minute))
+	h.env.OnActivity(task.ActivityExecuteTask, mock.Anything, mock.Anything).Return(
+		nil, temporal.NewNonRetryableApplicationError("broke", task.CategoryActivityFailed, nil))
+	h.env.ExecuteWorkflow(RunWorkflowType, "", wf, (*orkstackv1.Payload)(nil), refusalRoutedPlan(t), carry)
+	if !h.env.IsWorkflowCompleted() || h.env.GetWorkflowError() == nil {
+		t.Fatalf("the run ended %v", h.env.GetWorkflowError())
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	data, ok := store.get(h.uris[len(h.uris)-1])
+	if !ok {
+		t.Fatal("no terminal snapshot")
+	}
+	final := &orkstackv1.Run{}
+	must.OK(t, proto.Unmarshal(data, final))
+	for id, want := range map[string]orkstackv1.Status{"work": orkstackv1.Status_STATUS_FAILED, "gate": orkstackv1.Status_STATUS_CANCELED,
+		"nap": orkstackv1.Status_STATUS_SUCCEEDED, "hold": orkstackv1.Status_STATUS_FAILED} {
+		if got := rowOf(final, id); got.GetStatus() != want || (id == "hold" && got.GetError().GetCode() != AwaitTimedOutCode) {
+			t.Errorf("%s ended %v %v, want %v", id, got.GetStatus(), got.GetError(), want)
+		}
 	}
 }
 

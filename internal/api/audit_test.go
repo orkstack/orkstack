@@ -79,6 +79,7 @@ func (b *lockedBuffer) String() string {
 }
 
 type auditFixture struct {
+	runs    *engine.RunStore
 	svc     *api.Service
 	store   *artifacts.MemoryAuditStore
 	counter *fakeAuditCounter
@@ -90,7 +91,9 @@ type auditFixture struct {
 type auditOptions struct {
 	store artifacts.AuditStore // nil = a fresh memory store
 	none  bool                 // wire no audit store at all
-	fleet engine.OrkerFleet    // the Orker inventory seam; nil wires none
+	// forceCancels answers ForceCancelRun, of a run in runs; nil wires none.
+	forceCancels api.ForceCanceler
+	fleet        engine.OrkerFleet // the Orker inventory seam; nil wires none
 	// releases is the release routing seam; nil wires none.
 	releases engine.ReleaseCluster
 	// imagePolicies is the image policy store; nil wires none.
@@ -122,6 +125,7 @@ func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
 		store = f.store
 	}
 	counter := 0
+	f.runs = engine.NewRunStore()
 	var starter api.RunStarter = &fakeStarter{}
 	if opts.starter != nil {
 		starter = opts.starter
@@ -129,7 +133,8 @@ func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
 	f.svc = api.NewService(api.Config{
 		Orkflows:      engine.NewMemoryOrkflowStore(),
 		Namespaces:    newFakeRegistry(),
-		Runs:          engine.NewRunStore(),
+		Runs:          f.runs,
+		ForceCancels:  opts.forceCancels,
 		Bus:           engine.NewEventBus(),
 		Starter:       starter,
 		Reader:        opts.reader,

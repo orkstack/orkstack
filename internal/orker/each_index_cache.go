@@ -88,6 +88,13 @@ func (c *eachIndexCache) load(ctx context.Context, uri, sha string, fetch func(c
 	if body, ok := c.cached(key, want); ok {
 		return body, nil
 	}
+	return c.share(ctx, key, want, fetch)
+}
+
+// share answers a load that found no kept copy: it waits for the fetch of the
+// index in flight, or makes it. A fetch keeps its copy before it leaves the
+// flight, so one that is not in flight has kept what it could.
+func (c *eachIndexCache) share(ctx context.Context, key string, want []byte, fetch func(context.Context) ([]byte, error)) ([]byte, error) {
 	for {
 		c.mu.Lock()
 		f, ok := c.inflight[key]
@@ -95,7 +102,13 @@ func (c *eachIndexCache) load(ctx context.Context, uri, sha string, fetch func(c
 			f = &eachIndexFetch{done: make(chan struct{})}
 			c.inflight[key] = f
 			c.mu.Unlock()
-			f.body, f.err = c.fill(ctx, key, want, fetch)
+			// Looked for again: the fetch that was in flight when this load
+			// missed may have kept its copy and gone since.
+			body, kept := c.cached(key, want)
+			if !kept {
+				body, f.err = c.fill(ctx, key, want, fetch)
+			}
+			f.body = body
 			c.mu.Lock()
 			delete(c.inflight, key)
 			c.mu.Unlock()

@@ -3403,6 +3403,14 @@ type Run struct {
 	// carrying on. Unspecified when nothing is held, and while the run is
 	// paused (pause says why). A task waiting behind this hold reads PENDING.
 	DispatchHold RunDispatchHold `protobuf:"varint,36,opt,name=dispatch_hold,json=dispatchHold,proto3,enum=orkstack.v1.RunDispatchHold" json:"dispatch_hold,omitempty"`
+	// force_cancel_record is the record of the force cancel that ended this run
+	// (RUN_FORCE_CANCELED), as the engine that ended it signed it, or unsigned
+	// where the deployment signs nothing. Only the archive's own body carries
+	// it, and so an evidence bundle's run.jsonl: who ended the run can be
+	// checked after the run's history is gone, and a read of the archive answers
+	// canceled_by as verified only where this record verifies. It is unset on
+	// every run an API call, a list or a webhook answers.
+	ForceCancelRecord string `protobuf:"bytes,37,opt,name=force_cancel_record,json=forceCancelRecord,proto3" json:"force_cancel_record,omitempty"`
 	// traceparent is the W3C trace context the run was started in, whose span
 	// is its run span's parent; for a child run that is its parent's run span.
 	// Only a read of the run carries it: a response to a submit or a cancel,
@@ -3692,6 +3700,13 @@ func (x *Run) GetDispatchHold() RunDispatchHold {
 		return x.DispatchHold
 	}
 	return RunDispatchHold_RUN_DISPATCH_HOLD_UNSPECIFIED
+}
+
+func (x *Run) GetForceCancelRecord() string {
+	if x != nil {
+		return x.ForceCancelRecord
+	}
+	return ""
 }
 
 func (x *Run) GetTraceparent() string {
@@ -6337,7 +6352,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"identities\x12@\n" +
 	"\vcredentials\x18\x19 \x03(\v2\x1e.orkstack.v1.AttemptCredentialR\vcredentials\x12-\n" +
 	"\x12masked_occurrences\x18\x1a \x01(\x03R\x11maskedOccurrencesB\a\n" +
-	"\x05_item\"\xa2\x0e\n" +
+	"\x05_item\"\xd2\x0e\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -6382,7 +6397,8 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x0epause_warnings\x18! \x03(\v2\x19.orkstack.v1.PauseWarningR\rpauseWarnings\x12&\n" +
 	"\x0fpause_slot_kept\x18\" \x01(\bR\rpauseSlotKept\x121\n" +
 	"\atimeout\x18# \x01(\v2\x17.orkstack.v1.RunTimeoutR\atimeout\x12A\n" +
-	"\rdispatch_hold\x18$ \x01(\x0e2\x1c.orkstack.v1.RunDispatchHoldR\fdispatchHold\x12 \n" +
+	"\rdispatch_hold\x18$ \x01(\x0e2\x1c.orkstack.v1.RunDispatchHoldR\fdispatchHold\x12.\n" +
+	"\x13force_cancel_record\x18% \x01(\tR\x11forceCancelRecord\x12 \n" +
 	"\vtraceparent\x18& \x01(\tR\vtraceparent\"w\n" +
 	"\x10RunCancelRequest\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\x05R\x06format\x12\x1c\n" +
@@ -6404,7 +6420,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"rootOrigin\x12-\n" +
 	"\x12principal_verified\x18\a \x01(\bR\x11principalVerified\x12\x1f\n" +
 	"\vauth_method\x18\b \x01(\tR\n" +
-	"authMethod\"\xa6\x05\n" +
+	"authMethod\"\xac\x05\n" +
 	"\x05Event\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12*\n" +
@@ -6423,7 +6439,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x10pause_transition\x18\r \x01(\x0e2\x1c.orkstack.v1.PauseTransitionR\x0fpauseTransition\x12:\n" +
 	"\bwait_end\x18\x0f \x01(\v2\x1f.orkstack.v1.ConcurrencyWaitEndR\awaitEnd\x12>\n" +
 	"\fresults_kept\x18\x10 \x01(\v2\x1b.orkstack.v1.RunResultsKeptR\vresultsKeptB\a\n" +
-	"\x05_item\"\x84\x02\n" +
+	"\x05_itemJ\x04\b\x0e\x10\x0f\"\x84\x02\n" +
 	"\x12ConcurrencyWaitEnd\x12=\n" +
 	"\aoutcome\x18\x01 \x01(\x0e2#.orkstack.v1.ConcurrencyWaitOutcomeR\aoutcome\x121\n" +
 	"\x06waited\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x06waited\x12<\n" +

@@ -777,10 +777,13 @@ func runWorkflow(
 		if state.concWaiting() {
 			selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
 		}
-		// The run timeout's timer, last of all, while not yet ready: it only
-		// wakes a blocked run, and the next pass's ending check decides.
+		// The run timeout's timer, last of all: it only wakes a blocked run,
+		// and the next pass's ending check decides. Registered even when
+		// ready: one that fired during this pass's dispatch would otherwise
+		// be missed until something else woke the run. Never one the check
+		// passes over, which would be selected again for ever.
 		timerReady := false
-		if t := state.runTimeout; t != nil && !t.taken && t.timer != nil && !t.timer.IsReady() {
+		if t := state.runTimeout; t != nil && !t.taken && t.timer != nil && !(t.timer.IsReady() && state.idleAndDone(inFlight)) {
 			selector.AddFuture(t.timer, func(workflow.Future) { timerReady = true })
 		}
 		if readyLoopProbeForTest != nil && readyLoopProbeForTest.selector != nil {

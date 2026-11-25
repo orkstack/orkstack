@@ -70,6 +70,19 @@ type fakeStore struct {
 	stalls   bool
 	writeErr map[string]error
 	written  []string
+	// lastResort is what was archived that way; unverified, those that only
+	// could be so.
+	lastResort []string
+	unverified map[string]bool
+}
+
+func (f *fakeStore) ArchiveLastResort(ctx context.Context, runID string) (bool, error) {
+	f.lastResort = append(f.lastResort, runID)
+	if f.unverified[runID] {
+		f.bodies[runID] = true
+		return true, nil
+	}
+	return false, f.ArchiveFromHistory(ctx, runID)
 }
 
 func (f *fakeStore) HasRun(ctx context.Context, runID string) (bool, error) {
@@ -347,3 +360,71 @@ func TestSweeper_RunPassesAtOnceThenEveryIntervalUntilCanceled(t *testing.T) {
 type sweepObserverFunc func(context.Context, SweepResult)
 
 func (f sweepObserverFunc) ObserveSweep(ctx context.Context, r SweepResult) { f(ctx, r) }
+
+// TestSweeper_ARunAboutToBeDeletedIsArchivedAsItStands: within three cleanup
+// intervals of the cluster's delete time a run whose ending could not be
+// verified is archived saying so, which is counted and said; before that it is
+// asked again. A run that can be archived as it ended is, however late.
+func TestSweeper_ARunAboutToBeDeletedIsArchivedAsItStands(t *testing.T) {
+	f := newSweepFixture()
+	f.runs.add("ork-early", sweepTTL-3*sweepInterval-time.Minute)
+	f.runs.add("ork-late", sweepTTL-3*sweepInterval)
+	f.runs.add("ork-late-fine", sweepTTL-time.Minute)
+	f.store.writeErr = map[string]error{"ork-early": errors.New("undecided"), "ork-late": errors.New("undecided")}
+	f.store.unverified = map[string]bool{"ork-early": true, "ork-late": true}
+
+	result, err := f.sweeper.RunOnce(context.Background())
+	if err == nil {
+		t.Fatal("a run that could not be archived was not said")
+	}
+	if !sameStrings(f.store.lastResort, []string{"ork-late", "ork-late-fine"}) || !sameStrings(f.store.written, []string{"ork-late-fine"}) {
+		t.Fatalf("as a last resort %v, as they ended %v", f.store.lastResort, f.store.written)
+	}
+	if result.Archived != 2 || result.Unverified != 1 || result.Unconfirmed != 1 || result.Failed != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if f.store.bodies["ork-early"] {
+		t.Fatal("a run with time left was archived as it stands")
+	}
+}
+
+// TestSweeper_TheLastRetentionReadDatesALastResort: a cluster whose retention
+// cannot be read now is judged by the last one that was; one never read dates
+// nothing.
+func TestSweeper_TheLastRetentionReadDatesALastResort(t *testing.T) {
+	f := newSweepFixture()
+	f.runs.add("ork-late", sweepTTL-time.Minute)
+	f.store.writeErr = map[string]error{"ork-late": errors.New("undecided")}
+	f.store.unverified = map[string]bool{"ork-late": true}
+	f.cluster.retentionErr = errors.New("cluster down")
+	_, _ = f.sweeper.RunOnce(context.Background())
+	if len(f.store.lastResort) != 0 {
+		t.Fatalf("with no retention ever read, as a last resort %v", f.store.lastResort)
+	}
+	f.runs.order = nil
+	f.cluster.retentionErr = nil
+	_, err := f.sweeper.RunOnce(context.Background())
+	must.OK(t, err)
+	f.runs.order = []string{"ork-late"}
+	f.cluster.retentionErr = errors.New("cluster down")
+	_, err = f.sweeper.RunOnce(context.Background())
+	must.OK(t, err)
+	if !sameStrings(f.store.lastResort, []string{"ork-late"}) {
+		t.Fatalf("as a last resort %v, want ork-late by the last retention read", f.store.lastResort)
+	}
+}
+
+// TestSweeper_ALastResortIsNeverARunsFirstHalf: however long the interval, a
+// run is not archived as it stands before half the time the cluster keeps it.
+func TestSweeper_ALastResortIsNeverARunsFirstHalf(t *testing.T) {
+	f := newSweepFixture()
+	f.cluster.retention = 4 * sweepInterval // three intervals leave a quarter
+	f.runs.add("ork-first-half", 2*sweepInterval-time.Minute)
+	f.runs.add("ork-second-half", 2*sweepInterval)
+	f.store.writeErr = map[string]error{"ork-first-half": errors.New("undecided"), "ork-second-half": errors.New("undecided")}
+	f.store.unverified = map[string]bool{"ork-first-half": true, "ork-second-half": true}
+	_, _ = f.sweeper.RunOnce(context.Background())
+	if !sameStrings(f.store.lastResort, []string{"ork-second-half"}) {
+		t.Fatalf("as a last resort %v", f.store.lastResort)
+	}
+}

@@ -473,11 +473,12 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 			a.timeout = time.Duration(a.spec.GetTimeoutSeconds()) * time.Second
 			a.deadlineAt = row.GetAwait().GetDeadline().AsTime()
 			if ctx.Err() == nil {
-				// openAwait's timer recipe exactly: resolve cancels it
-				// unconditionally. A deadline already passed is a ready
-				// future with no command, so expire fires at once with the
-				// original deadline in its message.
-				timerCtx, cancel := workflow.WithCancel(runCtx)
+				// openAwait's timer recipe exactly, a failure handler's on the
+				// handlers' context: resolve cancels it unconditionally. A
+				// deadline already passed is a ready future with no command,
+				// so expire fires at once with the original deadline in its
+				// message.
+				timerCtx, cancel := workflow.WithCancel(s.dispatchContext(runCtx, id))
 				a.deadline = workflow.NewTimer(timerCtx, a.deadlineAt.Sub(workflow.Now(ctx)))
 				a.cancelDeadline = cancel
 				if a.deadlineAt.After(workflow.Now(ctx)) {
@@ -495,7 +496,7 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 				// openSleep's timer recipe, toward the ORIGINAL instant: a
 				// wake-up time already passed is a ready future with no
 				// command, so the sleep wakes at once.
-				timerCtx, cancel := workflow.WithCancel(runCtx)
+				timerCtx, cancel := workflow.WithCancel(s.dispatchContext(runCtx, id))
 				sl.wake = workflow.NewTimer(timerCtx, sl.wakeAt.Sub(workflow.Now(ctx)))
 				sl.cancelWake = cancel
 				if sl.wakeAt.After(workflow.Now(ctx)) {

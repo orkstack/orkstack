@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
-import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { openProcessLog, startTranscript } from '../e2e/processLog';
+import { listTree, readSource, scanTest } from './sourceTree';
 
 // A spec's engine and Orker logs are the record of a failing window. After a
 // failure Playwright runs the file's remaining tests in a new worker, whose
@@ -64,15 +65,15 @@ test('a spec file started again keeps its transcript: the earlier start, a line 
 // `out('engine.log')`, `ENGINE_LOG`.
 const LOG_OR_TRANSCRIPT = /transcript|\.log\b|_log\b/i;
 
-test('no e2e file opens a log or a transcript afresh, which would erase what an earlier start wrote', () => {
+scanTest('no e2e file opens a log or a transcript afresh, which would erase what an earlier start wrote', () => {
 	const e2eDir = `${import.meta.dir}/../e2e`;
 	const offenders: string[] = [];
-	for (const name of readdirSync(e2eDir, { recursive: true })
+	for (const name of listTree(e2eDir)
 		.filter((f: string) => f.endsWith('.ts'))
 		.sort()) {
 		// The one place a spec's log or transcript is opened, and it appends.
 		if (name === 'processLog.ts') continue;
-		const source = readFileSync(`${e2eDir}/${name}`, 'utf8');
+		const source = readSource(`${e2eDir}/${name}`);
 		const at = (index: number | undefined) => `${name}:${source.slice(0, index ?? 0).split('\n').length}`;
 		for (const call of source.matchAll(/createWriteStream\(/g)) offenders.push(`${at(call.index)}: createWriteStream`);
 		// A whole-file write, or an open for writing, whose path (its first

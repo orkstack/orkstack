@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { expect } from 'bun:test';
+import { listTree, readSource, scanTest } from './sourceTree';
 
 // AGENTS.md §7: "Queue means only an internal Temporal task queue and never a
 // user-facing OrkStack concept." How long a task waited before an Orker took
@@ -10,12 +10,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 const root = `${import.meta.dir}/../..`;
 
 function files(dir: string, keep: (path: string) => boolean): string[] {
-	return readdirSync(dir, { recursive: true })
+	return listTree(dir)
 		.map((rel) => `${dir}/${rel}`)
 		.filter(keep);
 }
 
-test('no user-facing source says "queue wait"', () => {
+scanTest('no user-facing source says "queue wait"', () => {
 	const surfaces = [
 		...files(`${root}/ui/src`, (p) => /\.(ts|svelte)$/.test(p) && !p.includes('/lib/gen/')),
 		...files(`${root}/cmd/orkctl`, (p) => p.endsWith('.go') && !p.endsWith('_test.go')),
@@ -24,7 +24,7 @@ test('no user-facing source says "queue wait"', () => {
 	];
 	expect(surfaces.length > 50).toBe(true);
 	const offenders = surfaces
-		.filter((path) => /queue[\s-]+wait/i.test(readFileSync(path, 'utf8')))
+		.filter((path) => /queue[\s-]+wait/i.test(readSource(path)))
 		.map((path) => path.slice(root.length + 1));
 	expect(offenders).toEqual([]);
 });

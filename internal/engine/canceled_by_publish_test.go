@@ -107,6 +107,39 @@ func TestPublishEvent_ACanceledRunNamesWhoCanceledIt(t *testing.T) {
 	}
 }
 
+// The record a force-canceled run's end carries is written to its archive and
+// nowhere else the projection writes.
+func TestPublishEvent_AForceCancelsRecordReachesOnlyTheArchive(t *testing.T) {
+	const record = `{"signed":"a.b.c"}`
+	source := &canceledSource{events: []*orkstackv1.Event{{RunId: "ork-canceled", Sequence: 3, Type: orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED}}}
+	archiver, store, _ := newArchiveFixture(t)
+	notifier, runs := &recordingNotifier{}, engine.NewRunStore()
+	activities, snapshots := eventActivitiesWithSnapshots(
+		engine.NewArchivingEventActivities(engine.NewEventBus(), runs, archiver).WithEventSource(source).WithRunNotifier(notifier))
+	run := sampleRun(t, "ork-canceled", orkstackv1.Status_STATUS_CANCELED, at(t, "2026-10-01T00:00:00Z"))
+	run.Error = &orkstackv1.Error{Code: engine.RunForceCanceledCode}
+	run.CanceledBy, run.CanceledByVerified, run.ForceCancelRecord = "user:corp:alice", true, record
+	uri := snapshots.putRun(t, run)
+	// The first try reaches no archive, so the second, over the same shared
+	// snapshot, must still have the record to write.
+	source.failures = 2
+	if activities.PublishEvent(context.Background(), canceledEvent(t), uri, "force-cancel:fc-1") == nil {
+		t.Fatal("the first try archived")
+	}
+	must.OKf(t, activities.PublishEvent(context.Background(), canceledEvent(t), uri, "force-cancel:fc-1"), "PublishEvent")
+	if stored, _ := runs.Get("ork-canceled"); stored.GetForceCancelRecord() != "" || stored.GetCanceledBy() != "user:corp:alice" {
+		t.Errorf("stored %v", stored)
+	}
+	if len(notifier.runs) != 1 || notifier.runs[0].GetForceCancelRecord() != "" {
+		t.Errorf("webhook runs %v", notifier.runs)
+	}
+	body, err := store.GetRun(context.Background(), "ork-canceled")
+	must.OK(t, err)
+	if archived, _, err := engine.UnmarshalRunArchive(body); err != nil || archived.GetForceCancelRecord() != record || archived.GetCanceledBy() != "user:corp:alice" {
+		t.Errorf("archived %v, %v", archived, err)
+	}
+}
+
 // A record that cannot be read on the last attempt — a direct call has no
 // retry behind it, so it is its own last — costs the announcement the name,
 // never the announcement: the webhook goes out, the activity returns the

@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
 import { lintDocument } from '../src/lib/yaml/lint';
 import { lineCol, parseYaml, rangeAt, parseFieldPath } from '../src/lib/yaml/document';
 import type { Diagnostic } from '../src/lib/yaml/types';
 import { API_VERSION, ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/lib/placeholders';
+import { listDir, readSource, scanTest } from './sourceTree';
 
 // The editor's own findings: YAML syntax and the generated schemas
 // (docs/schemas/), each placed on the line and column a person would point
@@ -11,7 +11,7 @@ import { API_VERSION, ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/
 // the document's start, or to the wrong key, fails here first.
 
 const repo = `${import.meta.dir}/../..`;
-const read = (path: string) => readFileSync(`${repo}/${path}`, 'utf8');
+const read = (path: string) => readSource(`${repo}/${path}`);
 const HEADER = `apiVersion: ${API_VERSION}\nkind: Orkflow\n`;
 const AUTOMATION = `apiVersion: ${API_VERSION}\nkind: Automation\nnamespace: n\n`;
 
@@ -138,21 +138,21 @@ test('an empty document has no findings: the placeholder says what goes there', 
 	expect(lintDocument('  \n\n', 'Automation')).toEqual([]);
 });
 
-test('every document this repository ships lints clean', () => {
+scanTest('every document this repository ships lints clean', () => {
 	let count = 0;
 	const clean = (label: string, src: string, kind: 'Orkflow' | 'Automation') => {
 		const ds = lintDocument(src, kind);
 		expect(ds.map((d) => `${label} ${where(src, d)} ${d.message}`)).toEqual([]);
 		count++;
 	};
-	for (const f of readdirSync(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')))
+	for (const f of listDir(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')))
 		clean(`examples/${f}`, read(`examples/${f}`), 'Orkflow');
 	clean('the custom-image recipe', read('examples/custom-image/custom-image.ork.yaml'), 'Orkflow');
-	for (const f of readdirSync(`${repo}/internal/dsl/testdata/orkflows`).filter((f) => f.endsWith('.ork.yaml')))
+	for (const f of listDir(`${repo}/internal/dsl/testdata/orkflows`).filter((f) => f.endsWith('.ork.yaml')))
 		clean(`internal/dsl/testdata/orkflows/${f}`, read(`internal/dsl/testdata/orkflows/${f}`), 'Orkflow');
-	for (const f of readdirSync(`${repo}/examples/automation`).filter((f) => f.endsWith('.ork.yaml')))
+	for (const f of listDir(`${repo}/examples/automation`).filter((f) => f.endsWith('.ork.yaml')))
 		clean(`examples/automation/${f}`, read(`examples/automation/${f}`), 'Automation');
-	for (const f of readdirSync(`${repo}/internal/dsl/testdata/schema-vectors`).filter((f) => f.endsWith('.ork.yaml')))
+	for (const f of listDir(`${repo}/internal/dsl/testdata/schema-vectors`).filter((f) => f.endsWith('.ork.yaml')))
 		clean(f, read(`internal/dsl/testdata/schema-vectors/${f}`), 'Orkflow');
 	clean('ORKFLOW_PLACEHOLDER', ORKFLOW_PLACEHOLDER, 'Orkflow');
 	clean('automationPlaceholder', automationPlaceholder('default'), 'Automation');

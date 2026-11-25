@@ -1,15 +1,15 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
 import { ACCESS_TABS, BUILD_PAGES, OPERATE_PAGES, buildPageOf, modeOf, operatePageOf, pageOf } from '../src/lib/navigation';
 import { pageCommands } from '../src/lib/palette/commands';
+import { listDir, listTree, readSource, scanTest } from './sourceTree';
 
 // The app's map (#lib/navigation.ts) is the one list the top bar, the Operate
 // strip, the drawer, the palette and the title block read. These hold it to
 // the routes that exist.
 const routes = `${import.meta.dir}/../src/routes`;
 
-test('every admin page has exactly one Operate entry and a palette command', () => {
-	const pages = readdirSync(`${routes}/admin`, { recursive: true })
+scanTest('every admin page has exactly one Operate entry and a palette command', () => {
+	const pages = listTree(`${routes}/admin`)
 		.filter((rel) => rel.endsWith('+page.svelte'))
 		// One namespace's page is reached from its row, on the page that lists it.
 		.filter((rel) => !rel.includes('['))
@@ -27,11 +27,11 @@ test('every admin page has exactly one Operate entry and a palette command', () 
 	expect(new Set(OPERATE_PAGES.map((p) => p.id)).size).toBe(OPERATE_PAGES.length);
 });
 
-test('every Build entry is a route, and Build is the dashboard, Runs, Orkflows and Create Orkflow', () => {
+scanTest('every Build entry is a route, and Build is the dashboard, Runs, Orkflows and Create Orkflow', () => {
 	expect(BUILD_PAGES.map((p) => p.href)).toEqual(['/', '/runs', '/orkflows', '/orkflows/+new']);
 	for (const p of BUILD_PAGES) {
 		const dir = p.href === '/' ? routes : `${routes}${p.href}`;
-		expect(readdirSync(dir).includes('+page.svelte')).toBe(true);
+		expect(listDir(dir).includes('+page.svelte')).toBe(true);
 	}
 });
 
@@ -61,7 +61,7 @@ test('a path belongs to exactly one mode and one page', () => {
 });
 
 test('the root layout imports no run or Orkflow client statically (the palette loads them on first open)', () => {
-	const layout = readFileSync(`${routes}/+layout.svelte`, 'utf8');
+	const layout = readSource(`${routes}/+layout.svelte`);
 	const statics = [...layout.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
 	expect(statics.length > 3).toBe(true);
 	for (const from of statics) {
@@ -70,7 +70,7 @@ test('the root layout imports no run or Orkflow client statically (the palette l
 	expect(/import\(\s*['"]#lib\/components\/CommandPalette\.svelte['"]\s*\)/.test(layout)).toBe(true);
 });
 
-test('Create Orkflow sits on a segment no Orkflow name can take, so /orkflows/new is an Orkflow', () => {
+scanTest('Create Orkflow sits on a segment no Orkflow name can take, so /orkflows/new is an Orkflow', () => {
 	// An Orkflow name is ^[a-z][a-z0-9-]*$ (docs/DSL.md, validation rule 2);
 	// the create page's segment must fail it, or an Orkflow of that name
 	// could never be opened.
@@ -79,15 +79,15 @@ test('Create Orkflow sits on a segment no Orkflow name can take, so /orkflows/ne
 	expect(create?.href).toBe('/orkflows/+new');
 	expect(slug.test(create!.href.split('/').pop()!)).toBe(false);
 	// Every static directory beside [name] is one no Orkflow name matches.
-	for (const dir of readdirSync(`${routes}/orkflows`)) {
+	for (const dir of listDir(`${routes}/orkflows`)) {
 		if (dir.startsWith('[') || dir.startsWith('+page') || dir.includes('.')) continue;
 		expect(`${dir}: ${slug.test(dir) ? 'shadows an Orkflow name' : 'ok'}`).toBe(`${dir}: ok`);
 	}
 	expect(pageOf('/orkflows/new')?.id).toBe('orkflows');
 });
 
-test('Access has one tab per screen of its own, and every screen is a tab', () => {
-	const screens = readdirSync(`${routes}/admin/access`, { recursive: true })
+scanTest('Access has one tab per screen of its own, and every screen is a tab', () => {
+	const screens = listTree(`${routes}/admin/access`)
 		.filter((rel) => rel.endsWith('+page.svelte'))
 		.map((rel) => (rel === '+page.svelte' ? '/admin/access' : `/admin/access/${rel.replace(/\/\+page\.svelte$/, '')}`))
 		.sort();

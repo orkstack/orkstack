@@ -354,6 +354,19 @@ type ArchiveQuery struct {
 // encoding, while pkg/artifacts owns object keys, prefix scans and storage.
 type RunArchiver struct {
 	archive artifacts.RunArchive
+	// forceCancel and authMode check the record a force-canceled run carries.
+	forceCancel ForceCancelVerifier
+	authMode    func() string
+}
+
+// WithForceCancelVerifier wires what checks the record of a force-canceled
+// run (showForceCancel), and the deployment's authentication mode. Without it
+// every archived force cancel is shown as asserted.
+func (a *RunArchiver) WithForceCancelVerifier(v ForceCancelVerifier, mode func() string) *RunArchiver {
+	if a != nil {
+		a.forceCancel, a.authMode = v, mode
+	}
+	return a
 }
 
 // NewRunArchiver wraps a storage archive. A nil archive yields a nil archiver,
@@ -490,7 +503,18 @@ func (a *RunArchiver) Load(ctx context.Context, runID string) (*orkstackv1.Run, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("engine: load run %q: %w", runID, err)
 	}
+	a.show(ctx, run)
 	return run, events, nil
+}
+
+// show makes a run read from its body say who force-canceled it only as far
+// as the record it carries proves.
+func (a *RunArchiver) show(ctx context.Context, run *orkstackv1.Run) {
+	mode := ""
+	if a.authMode != nil {
+		mode = a.authMode()
+	}
+	showForceCancel(ctx, a.forceCancel, mode, run)
 }
 
 // LoadRunBody returns the archive body exactly as stored: the JSONL document
@@ -517,6 +541,7 @@ func (a *RunArchiver) LoadRun(ctx context.Context, runID string) (*orkstackv1.Ru
 	if err != nil {
 		return nil, fmt.Errorf("engine: load run %q: %w", runID, err)
 	}
+	a.show(ctx, run)
 	return run, nil
 }
 

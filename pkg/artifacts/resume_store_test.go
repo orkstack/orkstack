@@ -191,7 +191,8 @@ func TestResumeStore_AScopeIsOnePage(t *testing.T) {
 	}
 	dir, _ := ResumeRecordKey("ns", "ork-1", 1, 0)
 	for i := range resumeScopePage {
-		if err := b.create(ctx, path.Dir(dir)+fmt.Sprintf("/extra-%04d", i), "application/json", []byte("{}")); err != nil {
+		// put, not create: a page of synced writes is most of the test's time.
+		if err := b.put(ctx, path.Dir(dir)+fmt.Sprintf("/extra-%04d", i), "application/json", []byte("{}")); err != nil {
 			t.Fatal(err)
 		}
 	}

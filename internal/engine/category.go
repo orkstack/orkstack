@@ -30,6 +30,9 @@ type failureReading struct {
 	// unknownRun: the run a signal was sent to does not exist, or has
 	// already closed (UnknownExternalWorkflowExecutionError).
 	unknownRun bool
+	// alreadyStarted: the id a child was to start under is taken
+	// (ChildWorkflowExecutionAlreadyStartedError, or the start's own error).
+	alreadyStarted bool
 	// viaActivity and viaChild: the chain holds an activity's, or a child
 	// run's, failure wrapper, so the error is that task's and not the run's
 	// own.
@@ -74,6 +77,7 @@ func categoryOf(err error) failureReading {
 	r.terminated = errors.As(err, &terminated)
 	var unknown *temporal.UnknownExternalWorkflowExecutionError
 	r.unknownRun = errors.As(err, &unknown)
+	r.alreadyStarted = temporal.IsWorkflowExecutionAlreadyStartedError(err)
 	var activityErr *temporal.ActivityError
 	if errors.As(err, &activityErr) {
 		r.viaActivity = true

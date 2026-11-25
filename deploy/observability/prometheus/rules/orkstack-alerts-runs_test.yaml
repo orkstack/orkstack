@@ -869,6 +869,101 @@ tests:
   - eval_time: 90m
     alertname: OrkStackRunPauseTimedOut
     exp_alerts: []
+- name: 'OrkStackForceCancelUnsignedLeft: appears'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackForceCancelUnsignedLeft
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A request for a force cancel found another of its run that nobody signed. This deployment signs nothing, so it was left alone, and the request's own runs beside it.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackforcecancelunsignedleft
+        summary: Something claims to be a force cancel that nobody signed.
+- name: 'OrkStackForceCancelUnsignedLeft: steady for 2 days'
+  interval: 10m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x300
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left",ork_deployment="d"}
+    values: 5x300
+  alert_rule_test:
+  - eval_time: 48h
+    alertname: OrkStackForceCancelUnsignedLeft
+    exp_alerts: []
+- name: 'OrkStackForceCancelUnsignedLeft: 10m gap, same value'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left",ork_deployment="d"}
+    values: 1x400 _x2 1x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackForceCancelUnsignedLeft
+    exp_alerts: []
+- name: 'OrkStackForceCancelUnsignedLeft: growth during a 20m gap'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left",ork_deployment="d"}
+    values: 1x400 _x4 2x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackForceCancelUnsignedLeft
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A request for a force cancel found another of its run that nobody signed. This deployment signs nothing, so it was left alone, and the request's own runs beside it.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackforcecancelunsignedleft
+        summary: Something claims to be a force cancel that nobody signed.
+- name: 'OrkStackForceCancelUnsignedLeft: same Orker under a new instance'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left",instance="a",ork_deployment="d"}
+    values: 1x400
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left",instance="b",ork_deployment="d"}
+    values: _x390 1x10
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackForceCancelUnsignedLeft
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A request for a force cancel found another of its run that nobody signed. This deployment signs nothing, so it was left alone, and the request's own runs beside it.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackforcecancelunsignedleft
+        summary: Something claims to be a force cancel that nobody signed.
+- name: 'OrkStackForceCancelUnsignedLeft: a new Prometheus meets a counter already above 0'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x20
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="unsigned_left",ork_deployment="d"}
+    values: 7x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OrkStackForceCancelUnsignedLeft
+    exp_alerts: []
 - name: 'OrkStackAdmissionRefusing: held'
   interval: 1m
   input_series:
