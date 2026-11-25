@@ -417,7 +417,7 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 		}
 	}
 	// Pins: every pin starts unopened, so one with a started member must
-	// have every member terminal. A skipped member opened nothing.
+	// have every member terminal. One SKIPPED or PENDING opened nothing.
 	for _, name := range s.pinOrder {
 		p := s.pins[name]
 		started, unfinished := false, false
@@ -520,9 +520,11 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 				return fmt.Sprintf("fan-out %q is RUNNING but not expanded", id)
 			}
 		case orkstackv1.Status_STATUS_SKIPPED:
-			// One whose condition, or a need, skipped it: it never expanded.
-			if row.GetEach().GetExpanded() || len(row.GetItems()) > 0 {
-				return fmt.Sprintf("fan-out %q is SKIPPED and expanded", id)
+			// One whose condition, or a need, skipped it: it never expanded, so
+			// nothing of an expansion or a result is on it.
+			if each := row.GetEach(); each.GetExpanded() || each.GetCount() != 0 || each.GetLines() != nil || len(row.GetItems()) > 0 ||
+				row.GetValuesRef() != nil || row.GetCommit() != nil {
+				return fmt.Sprintf("fan-out %q is SKIPPED and holds what only one that ran does", id)
 			}
 		default:
 			return fmt.Sprintf("task %q is %s", id, statusWord(status))

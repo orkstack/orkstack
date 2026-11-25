@@ -127,7 +127,7 @@ enters a run's input:
 |---|---|---|
 | `input:` | value inputs, with constants | a YAML mapping, converted by the strict mapping ([JSON.md](JSON.md)) |
 | `map:` | value inputs, from the message | one selector per input: `pointer:` (an RFC 6901 JSON Pointer into the body, `format: json` only), `attribute:` (a header or attribute, its first value), or `field:` (`subject`, `id`, `published_at`, `group`, facts the broker supplies) |
-| `artifacts:` | artifact inputs | `body` or `metadata` |
+| `artifacts:` | artifact inputs | `body` or `metadata`. A run of an Orkflow with an artifact input is refused in this release, `ARTIFACT_INPUT_UNSUPPORTED` |
 
 A name appears under one key only; a `map:` or `input:` name is a value
 input, an `artifacts:` name an artifact input; every artifact input is

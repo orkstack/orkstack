@@ -145,7 +145,8 @@ type AdmittedOrigin struct {
 	ID        string `json:"id,omitzero"`
 	Principal string `json:"principal,omitzero"`
 	Verified  bool   `json:"verified"`
-	// Binder is a stored starter's binder (a schedule's or a trigger's).
+	// Binder is a stored starter's binder (a schedule's, a trigger's or an
+	// event source's).
 	Binder *AdmittedBinder `json:"binder,omitzero"`
 }
 

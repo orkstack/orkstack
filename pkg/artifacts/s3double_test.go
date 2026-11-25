@@ -83,6 +83,23 @@ type s3Double struct {
 	// missingIfMatchDelete404 answers a DeleteObject with If-Match on a key
 	// that is not there 404, as a store may: a resend of a delete that landed.
 	missingIfMatchDelete404 bool
+	// ignoreCopyCondition makes CopyObject ignore x-amz-copy-source-if-match,
+	// as a store without it does, or one behind a proxy that strips the
+	// header. copyAs, when set, is what every copy stores instead of its
+	// source's bytes, and copyNothing answers a copy as done and stores none.
+	ignoreCopyCondition bool
+	copyAs              []byte
+	copyNothing         bool
+	copies              int
+	// copyAnswers are the next copies' answers instead of a copy: a status
+	// and an error code, 200 with a code being the error body S3 may put in
+	// an answer it has begun.
+	copyAnswers []doubleAnswer
+}
+
+type doubleAnswer struct {
+	status int
+	code   string
 }
 
 type doubleUpload struct {
@@ -192,6 +209,10 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 	if d.serveMultipart(w, r, key, query) {
 		return
 	}
+	if r.Method == http.MethodPut && key != "" && r.Header.Get("X-Amz-Copy-Source") != "" {
+		d.copyObject(w, r, key)
+		return
+	}
 	switch {
 	case r.Method == http.MethodPut && key != "":
 		d.puts++
@@ -276,6 +297,12 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		// Like S3: what the write said of the object is answered with it.
+		for name, values := range d.headers[key] {
+			if strings.HasPrefix(name, "X-Amz-Meta-") || name == "Content-Type" {
+				w.Header()[name] = values
+			}
+		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.Header().Set("ETag", doubleETag(body))
 		w.WriteHeader(http.StatusOK)
@@ -305,6 +332,37 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		s3Error(w, http.StatusNotImplemented, "NotImplemented")
 	}
+}
+
+// copyObject answers CopyObject within the double's bucket, honouring
+// x-amz-copy-source-if-match, with the caller's lock held.
+func (d *s3Double) copyObject(w http.ResponseWriter, r *http.Request, key string) {
+	if len(d.copyAnswers) > 0 {
+		answer := d.copyAnswers[0]
+		d.copyAnswers = d.copyAnswers[1:]
+		s3Error(w, answer.status, answer.code)
+		return
+	}
+	source, ok := strings.CutPrefix(r.Header.Get("X-Amz-Copy-Source"), d.bucket+"/")
+	body, exists := d.objects[source]
+	if !ok || !exists {
+		s3Error(w, http.StatusNotFound, "NoSuchKey")
+		return
+	}
+	if want := r.Header.Get("X-Amz-Copy-Source-If-Match"); want != "" && want != doubleETag(body) && !d.ignoreCopyCondition {
+		s3Error(w, http.StatusPreconditionFailed, "PreconditionFailed")
+		return
+	}
+	if d.copyAs != nil {
+		body = d.copyAs
+	}
+	d.copies++
+	if !d.copyNothing {
+		d.objects[key] = body
+		d.headers[key] = r.Header.Clone()
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	_, _ = io.WriteString(w, xml.Header+"<CopyObjectResult><ETag>"+doubleETag(body)+"</ETag></CopyObjectResult>")
 }
 
 // serveMultipart answers the four multipart operations the upload manager

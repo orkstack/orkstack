@@ -159,17 +159,25 @@ func (s *Service) checkConcurrencyBounds(wf *orkstackv1.Orkflow) error {
 // so the limit's admission checks are skipped for it. The plan is still
 // built, because a key claimed and never started starts with this
 // submission's. A lookup that fails is no answer: the checks run.
-func (s *Service) keyBound(ctx context.Context, namespace string, msg *orkstackv1.SubmitRunRequest) bool {
-	if msg.GetIdempotencyKey() == "" || s.idempotency == nil {
+func (s *Service) keyBound(ctx context.Context, namespace string, claim claimCoords) bool {
+	if claim.own == "" || s.idempotency == nil {
 		return false
 	}
-	_, bound, err := s.idempotency.Lookup(ctx, submission{namespace: namespace, key: msg.GetIdempotencyKey()}.claimKey())
-	if err != nil {
-		s.logger.Warn("an idempotency key's binding could not be read before the concurrency checks; checking",
-			"namespace", namespace, "error", err)
-		return false
+	for _, at := range []string{claim.own, claim.other} {
+		if at == "" {
+			continue
+		}
+		_, bound, err := s.idempotency.Lookup(ctx, at)
+		if err != nil {
+			s.logger.Warn("an idempotency key's binding could not be read before the concurrency checks; checking",
+				"namespace", namespace, "error", err)
+			return false
+		}
+		if bound {
+			return true
+		}
 	}
-	return bound
+	return false
 }
 
 // planConcurrency is §7.1 steps 3 and 4 and the plan: it refuses a tree
@@ -184,6 +192,7 @@ func (s *Service) planConcurrency(
 	plan *engine.RunPlan,
 	msg *orkstackv1.SubmitRunRequest,
 	origin *orkstackv1.RunOrigin,
+	claim claimCoords,
 	starter engine.RunStarter,
 ) error {
 	if err := refuseChildLimits(planned, plan); err != nil {
@@ -227,7 +236,7 @@ func (s *Service) planConcurrency(
 	if err != nil {
 		return err
 	}
-	if !s.keyBound(ctx, namespace, msg) {
+	if !s.keyBound(ctx, namespace, claim) {
 		err := s.concurrencySupport(ctx, planned, starter)
 		if err == nil {
 			err = s.lineChecks(ctx, namespace, gateID, key, strategy, spec)

@@ -1817,13 +1817,14 @@ type submission struct {
 	input *orkstackv1.Payload
 	plan  engine.RunPlan
 	// namespace is what the request resolved to, as prepare resolved it. It
-	// is the run's tenant, and half of the claim coordinate below.
+	// is the run's tenant, and part of the claim's coordinate.
 	namespace string
 	// key is the caller's idempotency key, "" when they sent none. It is the
-	// caller's own word and what an error quotes back to them; the coordinate
-	// the claim authority is asked about is claimKey(), which is a different
-	// string.
+	// caller's own word and what an error quotes back to them; the claim
+	// authority is asked about claim, which is a different string.
 	key string
+	// claim is where the key is claimed (claim_key.go).
+	claim claimCoords
 	// origin is what started this run, decided and validated by the door
 	// that accepted it before prepare ran. It rides the plan into history and
 	// the pending run into the response, the claim and a failed start's
@@ -1855,27 +1856,6 @@ func (s submission) startDefinition() *orkstackv1.Orkflow {
 		return s.start
 	}
 	return s.wf
-}
-
-// claimKey is the coordinate one idempotency key occupies: the caller's key,
-// scoped by the namespace it was submitted into.
-//
-// The scope is load-bearing. engine.ClaimWorkflowID hashes this string into a
-// Temporal workflow id, and one id is one binding for the whole deployment, so
-// an unscoped key makes "nightly" in payments and "nightly" in staging the
-// same claim: the second tenant is answered with the first tenant's run id,
-// reported as success, and the run they asked for is never started. A key is
-// a caller's private word for one submission, so it is a coordinate WITHIN a
-// namespace exactly as an orkflow name is.
-//
-// A namespace name is a slug (^[a-z][a-z0-9-]*$, pkg/artifacts), so it can
-// never contain "/": the first separator splits the pair back apart, and no
-// two (namespace, key) pairs can compose to one coordinate.
-func (s submission) claimKey() string {
-	if s.key == "" {
-		return ""
-	}
-	return s.namespace + "/" + s.key
 }
 
 // SubmitRun creates a pending run and starts its Temporal workflow.
@@ -2010,7 +1990,7 @@ func (s *Service) prepare(
 	}
 	// An artifact input is passed only by a composing task: no other start
 	// can bind one, so it is refused before any id is minted.
-	if err := refuseArtifactInputs(stored, origin.GetKind(), "a "+originNoun(origin.GetKind())); err != nil {
+	if err := refuseArtifactInputs(stored, origin.GetKind(), originNoun(origin.GetKind())); err != nil {
 		return submission{}, err
 	}
 	// Task identity: what the definition asks for against the namespace's
@@ -2030,7 +2010,8 @@ func (s *Service) prepare(
 		if err := s.checkStoreScopedForIdentity(ctx); err != nil {
 			return submission{}, err
 		}
-		// A run a schedule or a trigger starts holds an identity only from
+		// A run a schedule, a trigger or an event source starts holds an
+		// identity only from
 		// a binder who may still submit, and a consent to what it asks for.
 		byObject, err := startedByAnObject(origin)
 		if err != nil {
@@ -2123,7 +2104,11 @@ func (s *Service) prepare(
 	// A run-level concurrency limit: its key rendered, the deployment asked
 	// whether it can hold one, and its slot pinned (planConcurrency). A run
 	// with no limit asks nothing.
-	if err := s.planConcurrency(ctx, ns, planned, &plan, msg, origin, binding.Starter); err != nil {
+	claim, err := s.claimCoordsOf(ctx, ns.GetName(), msg.GetIdempotencyKey(), origin)
+	if err != nil {
+		return submission{}, err
+	}
+	if err := s.planConcurrency(ctx, ns, planned, &plan, msg, origin, claim, binding.Starter); err != nil {
 		return submission{}, err
 	}
 	// The snapshot-overlay policy, a run-tree limit like those
@@ -2207,6 +2192,7 @@ func (s *Service) prepare(
 		plan:             plan,
 		namespace:        ns.GetName(),
 		key:              msg.GetIdempotencyKey(),
+		claim:            claim,
 		origin:           origin,
 		start:            start,
 		definitionObject: definitionObject,

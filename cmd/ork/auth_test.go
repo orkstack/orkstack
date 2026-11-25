@@ -185,6 +185,49 @@ func TestSetModeRecord(t *testing.T) {
 	}
 }
 
+// TestSetModeRecord_KeepsWhenEnforceWasLeft: a record set below enforce says
+// the deployment left it now where the record it replaces was enforcing,
+// unreadable or missing, and keeps what a lower one says: the wait for
+// asserted, and the look for a caller's own idempotency keys, rest on it.
+func TestSetModeRecord_KeepsWhenEnforceWasLeft(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.New(slog.DiscardHandler)
+	left := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		was  *artifacts.ModeRecord // nil is none
+		raw  string
+		to   string
+		want func(time.Time) bool
+	}{
+		"enforce to observe":            {was: &artifacts.ModeRecord{Mode: "enforce", UpdatedAt: left}, to: "observe", want: recent},
+		"enforce to asserted":           {was: &artifacts.ModeRecord{Mode: "enforce", UpdatedAt: left}, to: "asserted", want: recent},
+		"unreadable to observe":         {raw: "garbage", to: "observe", want: recent},
+		"none to observe":               {to: "observe", want: recent},
+		"observe to asserted":           {was: &artifacts.ModeRecord{Mode: "observe", LeftEnforceAt: left}, to: "asserted", want: left.Equal},
+		"observe, which never enforced": {was: &artifacts.ModeRecord{Mode: "observe"}, to: "asserted", want: time.Time.IsZero},
+		"anything to enforce":           {was: &artifacts.ModeRecord{Mode: "observe", LeftEnforceAt: left}, to: "enforce", want: time.Time.IsZero},
+	} {
+		cas := artifacts.NewMemoryCAS()
+		modes := artifacts.NewModeStoreOn(cas)
+		if tc.was != nil {
+			if _, err := modes.Put(ctx, *tc.was, artifacts.PutConditions{IfAbsent: true}); err != nil {
+				t.Fatal(err)
+			}
+		} else if tc.raw != "" {
+			cas.PutRaw(artifacts.ModeRecordKey, []byte(tc.raw))
+		}
+		recorder := api.NewAuditRecorder(artifacts.NewMemoryAuditStore(), nil, logger, nil)
+		if err := setModeRecordIn(ctx, setModeRecordArgs{requested: true, mode: tc.to, reason: "r", force: true}, modes, "e", recorder, io.Discard, logger); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if rec, _, err := modes.Get(ctx); err != nil || rec.Mode != tc.to || !tc.want(rec.LeftEnforceAt) {
+			t.Errorf("%s: %+v, %v", name, rec, err)
+		}
+	}
+}
+
+func recent(at time.Time) bool { return time.Since(at).Abs() < time.Minute }
+
 type failingAudit struct{ *artifacts.MemoryAuditStore }
 
 func (failingAudit) PutAuditRecord(context.Context, *orkstackv1.AuditRecord) error {

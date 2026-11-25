@@ -3636,9 +3636,11 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not
   process memory. Retries are safe from any address behind the load balancer.
   A key is scoped to the ork namespace it was submitted into, so two tenants
-  can both submit `nightly` and get their own run
-  (`api.submission.claimKey`); unscoped, the second would be answered with the
-  first tenant's run id and its work would never start.
+  can both submit `nightly` and get their own run; unscoped, the second would
+  be answered with the first tenant's run id and its work would never start.
+  With `auth.mode: enforce` it is scoped to its caller too
+  ([AUTHENTICATION.md](./AUTHENTICATION.md#idempotency-keys), "Idempotency
+  keys").
 - **Idempotency keys: one key, one submission, one run id, at most one run.**
   - *A key is bound to what was submitted.* The claim holds the submission's
     fingerprint: the Orkflow, the version as the caller wrote it (none when

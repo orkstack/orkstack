@@ -64,6 +64,7 @@ func TestChainAdmission(t *testing.T) {
 		{"submitted", RunPlan{Identity: &IdentityPlan{AdmissionSHA256: sha}, Origin: &RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT.String()}}, sha},
 		{"no origin", RunPlan{Identity: &IdentityPlan{AdmissionSHA256: sha}}, sha},
 		{"a child", RunPlan{Identity: &IdentityPlan{AdmissionSHA256: sha}, Origin: &RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN.String()}}, ""},
+		{"a message's", RunPlan{Identity: &IdentityPlan{AdmissionSHA256: sha}, Origin: &RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE.String()}}, sha},
 		{"fired", RunPlan{Identity: &IdentityPlan{AdmissionSHA256: sha}, Origin: &RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE.String()}}, ""},
 	} {
 		if got := (&runState{plan: c.plan}).chainAdmission(); got != c.wanted {

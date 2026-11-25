@@ -4392,9 +4392,9 @@ in OrkStack reads it to decide anything.
 | Field | Type | Description |
 |---|---|---|
 | `kind` | [`RunOriginKind`](#runoriginkind) |  |
-| `id` | `string` | id names the originating object for the kinds that have one — a trigger id, a schedule id, a parent run id, a source run id — and is empty for SUBMIT. Opaque: nothing parses it or derives anything from its shape (AGENTS.md §7). |
-| `reference` | `string` | reference is caller-supplied correlation text — a CI job URL, a ticket key, a partner event id — carried through from SubmitRunRequest.origin_reference or the Ork-Origin-Reference header on the trigger door. At most 256 bytes and no control characters, VALIDATED at the request boundary and never sanitized (AGENTS.md §7): an over-long or malformed reference is INVALID_ARGUMENT and starts no run. Opaque to OrkStack: it is never an expression, a selector or a routing key. A client renders it as a link only when it parses as an http(s) URL, and as text otherwise. |
-| `description` | `string` | description is the originating object's own human label at the moment of submit — Trigger.description for TRIGGER, the schedule's name for SCHEDULE — copied so a run stays explainable after the trigger is deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256 bytes by truncation. |
+| `id` | `string` | id names the originating object for the kinds that have one — a trigger id, a schedule id, a parent run id, a source run id, an event source's id — and is empty for SUBMIT. Opaque: nothing parses it or derives anything from its shape (AGENTS.md §7). |
+| `reference` | `string` | reference is caller-supplied correlation text — a CI job URL, a ticket key, a partner event id — carried through from SubmitRunRequest.origin_reference or the Ork-Origin-Reference header on the trigger door. At most 256 bytes and no control characters, VALIDATED at the request boundary and never sanitized (AGENTS.md §7): an over-long or malformed reference is INVALID_ARGUMENT and starts no run. Opaque to OrkStack: it is never an expression, a selector or a routing key. For EVENT_SOURCE it is the message's identity as its source image reported it, text a publisher chose, and a client never renders it as a link. For SUBMIT, TRIGGER and RUN_AGAIN a client renders it as a link only when it parses as an http(s) URL, and as text otherwise. |
+| `description` | `string` | description is the originating object's own human label at the moment of submit — Trigger.description for TRIGGER, the schedule's name for SCHEDULE, the source's name for EVENT_SOURCE — copied so a run stays explainable after that object is deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256 bytes by truncation. |
 | `principal` | `string` | principal is what the deployment's gateway asserted in the Ork-Principal request header on the submitting request — the trigger invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes by truncation, and NEVER authenticated: it is the same assertion, on the same terms, as AuditRecord.principal. Empty when no header was present; a client then omits the line entirely rather than showing a blank that could be mistaken for a name. |
 | `root_run_id` | `string` | root_run_id is the id of the run at the top of this run's composed chain: the run that started the chain, which id names only for a direct child. Set on a PARENT_RUN origin and empty on every other kind, so a run-again of a child, a new top-level run, has none. An empty value names no root. Opaque, like id. |
 | `schedule` | [`RunScheduleFire`](#runschedulefire) | schedule is set from E86; unset until it lands (v0.4.0 proto batch). |
@@ -4915,7 +4915,7 @@ reading of the inventory at most five seconds old, never a record.
 | `orkflow_name` | `string` | orkflow name |
 | `orkflow_version` | `string` | orkflow version; empty = latest |
 | `input` | [`Payload`](#payload) |  |
-| `idempotency_key` | `string` | idempotency_key, optional, makes a retry safe: a repeat under the same key, in the same namespace, is answered with the run the key names instead of starting a second one, even when the first answer was lost. A key belongs to one submission: the same key with another orkflow_name, orkflow_version as written, source_run_id or input is refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference are not part of that comparison. A key stays bound for engine.idempotency_ttl (24h by default). |
+| `idempotency_key` | `string` | idempotency_key, optional, makes a retry safe: a repeat under the same key, in the same namespace and, with auth.mode enforce, by the same caller, is answered with the run the key names instead of starting a second one, even when the first answer was lost. A key belongs to one submission: the same key with another orkflow_name, orkflow_version as written, source_run_id or input is refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference are not part of that comparison. A key stays bound for engine.idempotency_ttl (24h by default). |
 | `namespace` | `string` | namespace selects which namespace's orkflow_name is submitted. Empty is the default namespace. A name is unique WITHIN a namespace, so this is half of the orkflow's address, not a filter. |
 | `allow_empty_pool` | `bool` | allow_empty_pool submits even when a task's resolved pool has no live Orkers. Default false: an empty pool is an error at submit, not a run that reaches RUNNING and stays there because nothing will ever pick its tasks up. Setting it is logged with the pool it overrode. |
 | `origin_reference` | `string` | origin_reference is caller-supplied correlation text recorded as RunOrigin.reference: a CI job URL, a ticket key, an event id. Optional. At most 256 bytes and no control characters (INVALID_ARGUMENT otherwise, before a run id is minted). Opaque to OrkStack. On the trigger door the same value arrives as the Ork-Origin-Reference header, so a CI job sets one header and the body stays exactly the run's input. |
@@ -6409,7 +6409,7 @@ accepted the submission and is never accepted from a client: the public
 SubmitRun RPC produces SUBMIT, or RUN_AGAIN when the request names a
 source run the server confirms exists; the trigger door produces TRIGGER
 from its stored record; schedule and composition code produce SCHEDULE
-and PARENT_RUN. A caller who could claim "trigger" would be claiming an
+and PARENT_RUN, and an event source's engine code EVENT_SOURCE. A caller who could claim "trigger" would be claiming an
 audit fact, so no request field carries a kind.
 
 | Value | Number | Description |
@@ -6420,6 +6420,7 @@ audit fact, so no request field carries a kind.
 | `RUN_ORIGIN_KIND_SCHEDULE` | 3 | SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined here so orkflow-schedules stamps it without touching Run; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_PARENT_RUN` | 4 | PARENT_RUN: a child run started by a composing parent. id is the PARENT run's id. Defined here so composed-orkflows adds no Run field of its own; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_RUN_AGAIN` | 5 | RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the SOURCE run's id, which the server confirmed exists in this namespace. |
+| `RUN_ORIGIN_KIND_EVENT_SOURCE` | 6 | EVENT_SOURCE: a message an event source accepted. id is the source's id (evs-…). Only the engine stamps it; no request can. |
 
 ### ScopeKind
 

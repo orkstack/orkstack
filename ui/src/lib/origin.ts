@@ -3,7 +3,7 @@ import { RunOriginKind, RunOriginKindSchema, type RunOrigin } from './gen/orksta
 
 // The user-facing spelling of an origin kind in a rendered row: the proto
 // value's name after RUN_ORIGIN_KIND_, lowercased, "_" as "-" — "submit",
-// "trigger", "schedule", "parent-run", "run-again". It is the one rule
+// "trigger", "schedule", "parent-run", "run-again", "event-source". It is the one rule
 // pkg/artifacts.OriginKindSlug and cmd/orkctl's originKindSlug apply too, so
 // the CLI's ORIGIN column, the archive key and this page all spell a kind the
 // same way. A filter names a kind by its enum short name (origin.kind=TRIGGER,
@@ -33,14 +33,23 @@ export function originLabel(origin?: RunOrigin): string {
 }
 
 /**
- * originReferenceURL returns the reference as a URL only when it provably is
- * an http(s) one. A reference is caller-supplied text; anything else is shown
- * as text and never interpreted.
+ * originReferenceURL returns an origin's reference as a URL only when a caller
+ * of the API supplied it and it provably is an http(s) one. Anything else is
+ * shown as text and never interpreted: an event source's reference is text a
+ * publisher chose.
  */
-export function originReferenceURL(reference: string): string | null {
-	if (!reference) return null;
+export function originReferenceURL(origin: RunOrigin | undefined): string | null {
+	if (!origin?.reference) return null;
+	switch (origin.kind) {
+		case RunOriginKind.SUBMIT:
+		case RunOriginKind.TRIGGER:
+		case RunOriginKind.RUN_AGAIN:
+			break;
+		default:
+			return null;
+	}
 	try {
-		const url = new URL(reference);
+		const url = new URL(origin.reference);
 		return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
 	} catch {
 		return null;

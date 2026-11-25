@@ -385,6 +385,10 @@ digest. An Orkflow one of whose composed Orkflows is not there cannot say
 what it asks for: it is saved with no consent, and a consent given to it is
 refused.
 
+An event source's message starts no run that holds an identity in this
+release: a source records no binding, and such a run is refused
+`IDENTITY_STARTER_NOT_RECORDED`.
+
 A run a schedule or a trigger starts holds an identity only while three
 things hold, each checked at the run's start: the object records a verified
 binder with the binding that let it bind (recorded at the save that made

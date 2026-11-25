@@ -35,6 +35,19 @@ func TestSubmit_ArtifactInputRefusedBeforeMint(t *testing.T) {
 	}
 }
 
+// A message's start is refused like any other until the engine binds what
+// it staged, and is named for what it is, never as a submit.
+func TestSubmit_ArtifactInputRefusedOfAnEventSource(t *testing.T) {
+	f := newComposeFixture(t)
+	f.mustApply(t, artifactChildYAML)
+	err := api.SubmitFrom(context.Background(), f.svc, &orkstackv1.SubmitRunRequest{Namespace: "team-a", OrkflowName: "train"},
+		&orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE, Id: "evs-0123456789abcdef", Description: "orders"})
+	requireArtifactInputRefusal(t, "a message's start", err)
+	if !strings.Contains(err.Error(), "so an event source's message cannot start it") {
+		t.Fatalf("%v names another start", err)
+	}
+}
+
 func TestCreateSchedule_ArtifactInputRefused(t *testing.T) {
 	f := newComposeFixture(t, func(cfg *api.Config) { cfg.Schedules = newFakeSchedules() })
 	f.mustApply(t, artifactChildYAML)

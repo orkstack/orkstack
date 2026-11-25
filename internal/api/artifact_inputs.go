@@ -17,9 +17,8 @@ import (
 // that declares an artifact input (docs/DSL.md, "Passing artifacts to a
 // child run"): such a run is started only by a composing task, which binds
 // every artifact input to an object a run recorded. No other start has a
-// way to name one, so every top-level origin kind is refused; a kind that
-// gains one (an event source whose payload the engine writes) is the one
-// place this answer changes.
+// way to name one, so every top-level origin kind is refused, an event
+// source's message included until the engine binds what its Orker staged.
 func artifactInputsAllowed(kind orkstackv1.RunOriginKind) bool {
 	return kind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN
 }
@@ -49,13 +48,15 @@ func refuseArtifactInputs(wf *orkstackv1.Orkflow, kind orkstackv1.RunOriginKind,
 func originNoun(kind orkstackv1.RunOriginKind) string {
 	switch kind {
 	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER:
-		return "trigger"
+		return "a trigger"
 	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE:
-		return "schedule's fire"
+		return "a schedule's fire"
 	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN:
-		return "run again"
+		return "a run again"
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE:
+		return "an event source's message"
 	default:
-		return "submit"
+		return "a submit"
 	}
 }
 

@@ -141,6 +141,9 @@ type InstanceAttempt struct {
 	Attempt  int
 }
 
+// Valid refuses an attempt no key of an instance's can hold.
+func (a InstanceAttempt) Valid() error { return a.valid() }
+
 func (a InstanceAttempt) valid() error {
 	if !eventsources.ValidID(a.SourceID) {
 		return fmt.Errorf("artifacts: instance: %q is not an event source id", a.SourceID)

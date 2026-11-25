@@ -15,6 +15,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // reasonStoreUnscoped refuses a run that would hold an identity while a
@@ -228,8 +229,8 @@ type starter struct {
 	consent    consentRecord
 }
 
-// checkStarter holds a run a schedule or a trigger starts, that would hold
-// an identity, to the three checks of workload-identity §3.2: a verified
+// checkStarter holds a run a schedule, a trigger or an event source starts,
+// that would hold an identity, to the three checks of workload-identity §3.2: a verified
 // binder is recorded with the binding that let it bind; that binding still
 // grants it run.submit on the Orkflow (no group or claim is read again);
 // and its consent is to what the version the run resolves asks for now.
@@ -250,6 +251,12 @@ func (s *Service) checkedBinder(ctx context.Context, ns *orkstackv1.Namespace, m
 	}
 	orkflow := msg.GetOrkflowName()
 	if !st.verified || st.binder == "" || st.binding == nil {
+		if origin.GetKind() == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE {
+			// No save of a source records a binding yet, so no rebind helps.
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"%s: event source %s records no binding that let it bind, so a run it starts of Orkflow %s holds no identity in this release",
+				reasonStarterNotRecorded, st.name, orkflow))
+		}
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"%s: %s %s has no verified binder recorded with the binding that let it bind; rebind it as a principal who may submit Orkflow %s: `orkctl %s update %s --rebind`",
 			reasonStarterNotRecorded, st.kind, st.name, orkflow, st.kind, st.name))
@@ -318,17 +325,45 @@ func (s *Service) readStarter(ctx context.Context, ns string, msg *orkstackv1.Su
 			st.binding = &artifacts.BinderBinding{Name: b.BinderBindingName, Selector: b.BinderBindingSelector, Role: b.BinderBindingRole, Scope: b.BinderBindingScope}
 		}
 		return st, nil
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE:
+		return s.readSourceStarter(ctx, ns, msg, origin)
 	}
 	return starter{}, unknownStart(origin)
 }
 
-// startedByAnObject reports a run a schedule or a trigger starts: the
-// runs nobody submitted that checkStarter judges. A start that is neither
+// readSourceStarter reads the event source whose message starts the run. A
+// source of another id under the name, or one that binds another Orkflow or
+// version than the run submits, is not what its binder bound: a starter with
+// no binder. A source records no binding yet, so until it does checkedBinder
+// refuses every run it would give an identity.
+func (s *Service) readSourceStarter(ctx context.Context, ns string, msg *orkstackv1.SubmitRunRequest, origin *orkstackv1.RunOrigin) (starter, error) {
+	st := starter{kind: "event-source", name: origin.GetDescription()}
+	if s.eventSources == nil || st.name == "" || origin.GetId() == "" {
+		return st, nil
+	}
+	src, err := s.eventSources.Get(ctx, ns, st.name)
+	if errors.Is(err, eventsources.ErrNotFound) {
+		return st, nil
+	}
+	if err != nil {
+		return st, connect.NewError(connect.CodeUnavailable, fmt.Errorf("event source %s's record could not be read: %w", st.name, err))
+	}
+	pinned := src.GetOrkflowVersion()
+	if src.GetId() != origin.GetId() || src.GetOrkflowName() != msg.GetOrkflowName() || (pinned != "" && pinned != msg.GetOrkflowVersion()) {
+		return st, nil
+	}
+	st.binder, st.verified, st.consent = src.GetBoundBy(), src.GetBoundByVerified(), consentFromView(src.GetConsented())
+	return st, nil
+}
+
+// startedByAnObject reports a run a schedule, a trigger or an event source
+// starts: the runs nobody submitted that checkStarter judges. A start that is neither
 // that nor a person's is refused: a kind this function does not name must
 // never pass for a submit.
 func startedByAnObject(origin *orkstackv1.RunOrigin) (bool, error) {
 	switch origin.GetKind() {
-	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER:
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER,
+		orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE:
 		return true, nil
 	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN:
 		return false, nil

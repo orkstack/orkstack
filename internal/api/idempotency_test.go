@@ -21,9 +21,9 @@ import (
 )
 
 // claimKeyIn is the coordinate one idempotency key occupies at the claim
-// authority: the caller's key, scoped by the namespace the submission resolved
-// to (api.submission.claimKey). Two tenants use the same words for their own
-// submissions, so the key alone names no single run.
+// authority where a key is shared (api.sharedClaimKey): the caller's key,
+// scoped by the namespace the submission resolved to. Two tenants use the same
+// words for their own submissions, so the key alone names no single run.
 //
 // Every replica below submits without naming a namespace, which resolves to
 // the default one. A binding another replica made is therefore written under
@@ -48,6 +48,7 @@ type sharedClaimer struct {
 	// answer lost after the claim landed); claimedAt is what ClaimedAt
 	// reports, now when zero.
 	lookupErr         error
+	lookupErrAt       map[string]error // fails the Lookup of one coordinate
 	claimFailures     int
 	claimFailuresLand bool
 	claimedAt         time.Time
@@ -71,6 +72,9 @@ func (c *sharedClaimer) Lookup(_ context.Context, key string) (engine.Claim, boo
 	defer c.mu.Unlock()
 	if c.lookupErr != nil {
 		return engine.Claim{}, false, c.lookupErr
+	}
+	if err := c.lookupErrAt[key]; err != nil {
+		return engine.Claim{}, false, err
 	}
 	held, seen := c.claims[key]
 	return held, seen, nil
