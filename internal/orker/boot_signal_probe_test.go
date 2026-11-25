@@ -107,7 +107,7 @@ func TestBoot_RefusesARuntimeThatDoesNotDeliverSIGTERM(t *testing.T) {
 			activities := NewActivitiesWithOptions(nil, Options{
 				OrkerID:  fmt.Sprintf("orker-sigprobe-%d-%d", os.Getpid(), i),
 				WorkRoot: t.TempDir(),
-				Runtime:  &DockerRuntime{Bin: fake.bin, BindProbeTimeout: budget},
+				Runtime:  fake.slow(&DockerRuntime{Bin: fake.bin, BindProbeTimeout: budget}),
 			})
 			t.Cleanup(activities.Close)
 			activities.dispatcher.signalProbeGrace = 300 * time.Millisecond

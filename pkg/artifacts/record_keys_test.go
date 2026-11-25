@@ -81,3 +81,27 @@ func TestRecordKeys_RefuseWhatCannotBeAddressed(t *testing.T) {
 		}
 	}
 }
+
+// TestAttestedCommitURI: a commit uri's attested twin keeps its root and
+// maps its key; a uri that holds no commit key is refused.
+func TestAttestedCommitURI(t *testing.T) {
+	for in, want := range map[string]string{
+		"s3://bucket/metadata/commits/ns/ork-1/build/commit.json":       "s3://bucket/metadata/attested/ns/ork-1/build/commit.json",
+		"s3://bucket/metadata/commits/ns/ork-1/build/00003/commit.json": "s3://bucket/metadata/attested/ns/ork-1/build/00003/commit.json",
+		"file:///var/ork/metadata/commits/ns/ork-1/build/commit.json":   "file:///var/ork/metadata/attested/ns/ork-1/build/commit.json",
+	} {
+		if got, err := AttestedCommitURI(in); err != nil || got != want {
+			t.Errorf("AttestedCommitURI(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "s3://bucket/metadata/attested/ns/ork-1/build/commit.json", "s3://bucket/metadata/commits/ns/ork-1/build/values.json",
+		"s3://bucket/x/metadata/commits/../ns/build/commit.json",
+		// A root that lies under what an Orker writes: its twin would be the
+		// Orker's object, not an engine's.
+		"s3://bucket/metadata/commits/ns/ork-1/x/metadata/commits/ns/ork-1/build/commit.json",
+		"s3://bucket/metadata/attested/ns/ork-1/x/metadata/commits/ns/ork-1/build/commit.json"} {
+		if got, err := AttestedCommitURI(in); !errors.Is(err, ErrInvalidRecordKey) {
+			t.Errorf("AttestedCommitURI(%q) = %q, %v; want ErrInvalidRecordKey", in, got, err)
+		}
+	}
+}

@@ -67,7 +67,7 @@ func BuildClaims(in ClaimsInput) (map[string]any, error) {
 		"ork_orkflow":           adm.Orkflow,
 		"ork_orkflow_id":        adm.OrkflowID,
 		"ork_orkflow_version":   adm.OrkflowVersion,
-		"ork_definition_digest": adm.DefinitionDigest,
+		"ork_definition_digest": "sha256:" + adm.DefinitionDigest,
 		"ork_run_id":            adm.RunID,
 		"ork_task":              in.TaskID,
 		"ork_attempt":           in.Attempt,

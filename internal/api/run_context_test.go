@@ -6,15 +6,14 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-func childPlan(t *testing.T, name, runID string, plan engine.RunPlan) *engine.ChildRunPlan {
+func childPlan(t *testing.T, owner, name, runID string, plan engine.RunPlan) *engine.ChildRunPlan {
 	t.Helper()
-	cp, err := engine.NewChildRunPlan(&orkstackv1.Orkflow{Name: name, Version: "1", DefinitionDigest: "sha256:" + strings.Repeat("c", 64)},
-		plan, false, false)
+	cp, err := engine.NewChildRunPlan(&orkstackv1.Orkflow{Name: name, Version: "1", Namespace: "team", DefinitionNamespace: owner,
+		DefinitionDigest: "sha256:" + strings.Repeat("c", 64)}, plan, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,9 +25,9 @@ func childPlan(t *testing.T, name, runID string, plan engine.RunPlan) *engine.Ch
 // "a" composing "x", and "b" an Orkflow another namespace shared.
 func runContextTree(t *testing.T) (*orkstackv1.Orkflow, engine.RunPlan) {
 	t.Helper()
-	grandchild := childPlan(t, "leaf", "ork-child-x", engine.RunPlan{})
-	a := childPlan(t, "mid", "ork-child-a", engine.RunPlan{Children: map[string]*engine.ChildRunPlan{"x": grandchild}})
-	b := childPlan(t, "shared", "ork-child-b", engine.RunPlan{Shared: &authz.Decision{}})
+	grandchild := childPlan(t, "", "leaf", "ork-child-x", engine.RunPlan{})
+	a := childPlan(t, "", "mid", "ork-child-a", engine.RunPlan{Children: map[string]*engine.ChildRunPlan{"x": grandchild}})
+	b := childPlan(t, "platform", "shared", "ork-child-b", engine.RunPlan{})
 	root := &orkstackv1.Orkflow{Name: "load", Version: "7", Namespace: "team", DefinitionDigest: "sha256:" + strings.Repeat("a", 64)}
 	plan := engine.RunPlan{
 		Origin: &engine.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER.String(), ID: "trg-1",

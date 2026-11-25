@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -192,12 +193,13 @@ func (s *runState) passChildArtifacts(ctx workflow.Context, id string) ([]NamedA
 
 // claimReceived is a child's own claim of what it received, before its
 // first dispatch, in its first generation only: markers persist across a
-// continuation. It first checks that every artifact input a task names was
-// received, so no task is dispatched without a file its definition names.
+// continuation. It first checks that every artifact input a task names, in a
+// template or as the source a fan-out reads the lines of, was received, so no
+// task is dispatched without a file its definition names.
 // nil when the run received nothing and no task names anything.
 func (s *runState) claimReceived(ctx workflow.Context) error {
 	for _, task := range s.wf.GetTasks() {
-		for _, name := range task.GetInputArtifacts() {
+		for _, name := range namedInputs(task) {
 			if _, ok := s.receivedArtifact(name); !ok {
 				return runLevelError(ChildInputArtifactMissingCode, fmt.Sprintf(
 					"task %q names artifact input %q, which this run did not receive; no task was started",
@@ -228,6 +230,16 @@ func (s *runState) claimReceived(ctx workflow.Context) error {
 	return runLevelError(ChildInputUnavailableCode, fmt.Sprintf(
 		"the %d artifacts this run received could not be claimed in object storage before its first task: %v",
 		len(s.plan.InputArtifacts), err))
+}
+
+// namedInputs are the artifact inputs a task's definition names: the ones its
+// templates read, and the one its fan-out reads the lines of.
+func namedInputs(task *orkstackv1.Task) []string {
+	names := task.GetInputArtifacts()
+	if art := task.GetEach().GetSource().GetArtifact(); art.GetProducer() == dsl.InputsProducer {
+		names = append(slices.Clone(names), art.GetName())
+	}
+	return names
 }
 
 // claimContext is the local-activity context of a claim, bounded by the

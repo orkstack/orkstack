@@ -152,7 +152,12 @@ func TestIntegration_IdentityEndToEnd_ARealMintThroughTheDispatcher(t *testing.T
 		Now:            time.Now,
 		NewJTI:         typeid.New,
 	}
-	svc := NewService(Config{AuditStore: artifacts.NewMemoryAuditStore(), Minter: minter})
+	// The engine records the run's results (docs/TASK_IDENTITY.md, "Results
+	// the engine records"): its real CommitResult, writing to the same store.
+	recorder := &identity.Recorder{Stores: records, Starts: starts, Describe: minter.Describe,
+		PinnedImage: func(context.Context, artifacts.Admission, string) (string, error) { return indexDigest, nil },
+		EngineBuild: "e2e-test", Now: time.Now}
+	svc := NewService(Config{AuditStore: artifacts.NewMemoryAuditStore(), Minter: minter, Recorder: recorder, Artifacts: cfg})
 	access, _ := accessFor(t, authn.ModeEnforce,
 		[]*orkstackv1.Role{{Name: "mints", Permissions: []string{"identity.token.mint", "task.result.commit"}}},
 		&orkstackv1.Binding{Name: "orker", Role: "mints", Scope: "pool:main", Subjects: []string{"serviceaccount:" + orkerID}})
@@ -172,8 +177,20 @@ func TestIntegration_IdentityEndToEnd_ARealMintThroughTheDispatcher(t *testing.T
 		t.Fatal(err)
 	}
 	policy := orker.DefaultSecurityPolicy()
+	commits, err := artifacts.NewCommitStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("commit store: %v", err)
+	}
+	commitRoot, err := artifacts.CommitRoot(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitKey, err := artifacts.CommitKey(artifacts.DefaultNamespace, runID, mintTask)
+	if err != nil {
+		t.Fatal(err)
+	}
 	acts := orker.NewActivitiesWithOptions(store, orker.Options{
-		WorkRoot: workRoot, Commits: artifacts.NewMemoryCommitStore(), Refs: artifacts.MemoryRefPredictor{},
+		WorkRoot: workRoot, Commits: commits, Refs: artifacts.MemoryRefPredictor{},
 		Runtime: orker.NewDockerRuntime(), Policy: &policy, OrkerID: orkerID, BuildID: "e2e-test",
 		Pool: "main", Identity: &idCfg,
 	})
@@ -192,11 +209,19 @@ func TestIntegration_IdentityEndToEnd_ARealMintThroughTheDispatcher(t *testing.T
 		}
 		return resp.Msg, nil
 	})
+	dispatcher.SetResultCommit(func(ctx context.Context, req *orkstackv1.CommitResultRequest) (*orkstackv1.CommitResultResponse, error) {
+		resp, err := svc.CommitResult(asOrker(ctx), connect.NewRequest(req))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	})
 
 	in := &orkstackv1.ExecuteTaskInput{RunId: runID, OrkflowName: "deploy", OrkflowVersion: "1", Namespace: artifacts.DefaultNamespace,
 		Pool: "main", TaskId: mintTask, IdempotencyKey: artifacts.DefaultNamespace + "/" + runID + "/" + mintTask,
-		CommitUri: "mem://commits/" + runID + "/" + mintTask + "/commit.json",
-		Image:     tk.GetImage(), Command: tk.GetCommand(), Network: tk.GetNetwork(),
+		OrkflowDefinitionDigest: "sha256:" + strings.Repeat("d", 64),
+		CommitUri:               strings.TrimSuffix(commitRoot, "/") + "/" + commitKey,
+		Image:                   tk.GetImage(), Command: tk.GetCommand(), Network: tk.GetNetwork(),
 		TimeoutSeconds: 120, CancellationGracePeriodSeconds: 2,
 		Limits: &orkstackv1.WorkspaceLimits{ValuesMaxBytes: 262144, ArtifactMaxCount: 256, ArtifactMaxBytes: 1 << 30,
 			LogMaxBytes: 16 << 20, CommitMaxBytes: 4 << 20},
@@ -279,6 +304,18 @@ func TestIntegration_IdentityEndToEnd_ARealMintThroughTheDispatcher(t *testing.T
 		}
 		return nil
 	})
+	// The result is the engine's record, under the attested prefix and
+	// naming the Orker; nothing was written under metadata/commits/.
+	attested, err := artifacts.AttestedCommitURI(in.GetCommitUri())
+	if err != nil || got.result.GetCommit().GetUri() != attested {
+		t.Fatalf("the result's commit = %v, want the engine's record at %s (%v)", got.result.GetCommit(), attested, err)
+	}
+	if rec, err := commits.Get(ctx, attested); err != nil || rec.Commit.GetRecorded().GetOrkerId() != orkerID {
+		t.Fatalf("the engine's record = %v, %v", rec.Commit, err)
+	}
+	if _, err := commits.Get(ctx, in.GetCommitUri()); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Fatalf("a commit under metadata/commits/: %v", err)
+	}
 	// The engine's own record of what it issued names the Orker.
 	page, _, err := records.ListIssued(ctx, artifacts.IssuedQuery{Namespace: artifacts.DefaultNamespace, RunID: runID, TaskID: mintTask})
 	if err != nil || len(page) != 1 || page[0].Value.OrkerID != orkerID {

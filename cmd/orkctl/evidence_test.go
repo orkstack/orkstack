@@ -532,3 +532,40 @@ func TestRunEvidence_ErrorsAreActionable(t *testing.T) {
 		t.Fatalf("old engine: exit %d stderr %q", code, stderr.String())
 	}
 }
+
+// A member one of the two exporters may not read moved nowhere: it is a
+// finding of its own, never "reclaimed" or "restored since export".
+func TestCompareWithStore_WithheldIsNotAMove(t *testing.T) {
+	manifest := func(state evidence.State) *evidence.Manifest {
+		return &evidence.Manifest{Members: []evidence.Member{{Path: "orkflow/source.yaml", Kind: evidence.KindSource, State: state}}}
+	}
+	for _, tc := range []struct{ file, live evidence.State }{
+		{evidence.StateWithheld, evidence.StatePresent},
+		{evidence.StatePresent, evidence.StateWithheld},
+		{evidence.StateWithheld, evidence.StateReclaimed},
+	} {
+		c := compareWithStore(manifest(tc.file), manifest(tc.live))
+		if len(c.Failures) != 0 || len(c.Findings) != 1 || c.Findings[0].Reason != "readable to only one of the exporter and this caller" {
+			t.Errorf("%s against %s = %+v", tc.file, tc.live, c)
+		}
+	}
+	if c := compareWithStore(manifest(evidence.StateWithheld), manifest(evidence.StateWithheld)); len(c.Findings)+len(c.Failures) != 0 {
+		t.Errorf("withheld in both = %+v, want agreement", c)
+	}
+}
+
+// verify reports a withheld member as its own state, with its reason, and
+// never among the verified ones.
+func TestRenderVerifyReport_WithheldIsItsOwnState(t *testing.T) {
+	member := evidence.Member{Path: "orkflow/source.yaml", Kind: evidence.KindSource, State: evidence.StateWithheld,
+		Reason: evidence.ReasonDefinitionNotReadable}
+	out := renderVerifyReport(&evidence.Report{Withheld: []evidence.Member{member}, Manifest: &evidence.Manifest{
+		Namespace: "payments", OrkflowNamespace: "platform", OrkflowName: "build", OrkflowVersion: "1.0.0",
+		Definition: evidence.Definition{State: evidence.StateWithheld, Reason: evidence.ReasonDefinitionNotReadable}}})
+	for _, want := range []string{"verified 0 present members", "platform/build@1.0.0 (source.yaml withheld: ",
+		"withheld        orkflow/source.yaml (definition_not_readable)", "definition_not_readable: the exporter may not read"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}

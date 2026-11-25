@@ -87,13 +87,13 @@ var narrowerOrkers = []narrowerOrker{
 	{
 		name:   "no engine to issue an identity",
 		reason: ReasonIdentityNotConfigured,
-		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{} },
+		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1} },
 		narrow: func(d *OCIDispatcher) { d.identity.Store(nil) },
 	},
 	{
 		name:   "an Orker that does not serve task identity",
 		reason: ReasonIdentityNotServed,
-		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{} },
+		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1} },
 		narrow: func(d *OCIDispatcher) { d.identity.Store(identitySupportOf(false)) },
 	},
 	{
@@ -116,6 +116,10 @@ func policyOrderHarness(t *testing.T) *cacheHarness {
 	h := newCacheHarness(t)
 	h.dispatcher.Policy.SecretAllow = []string{"env:" + orderSecretVar}
 	h.dispatcher.identity.Store(identitySupportOf(true))
+	// A row's identity context makes its run one whose results the engine
+	// records, so the Orker hands its results to an engine.
+	engine := &recordingEngine{store: h.commits.MemoryCommitStore, root: cacheRoot + "/"}
+	h.dispatcher.SetResultCommit(engine.commit)
 	return h
 }
 
@@ -310,6 +314,11 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 				ref := h.put(t, "data.csv", []byte("x"))
 				ref.Sha256 = ""
 				in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{ref}}}
+				// A ref with artifacts and no commit is a failed need's, given
+				// to a failure handler: the only such ref a run whose results
+				// the engine records stages.
+				in.Join = &orkstackv1.JoinContext{Policy: orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE,
+					Needs: []*orkstackv1.NeedOutcome{{TaskId: "fetch", Status: orkstackv1.Status_STATUS_FAILED}}}
 			},
 			outcome:    orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS,
 			missReason: MemoMissInputUnhashed,

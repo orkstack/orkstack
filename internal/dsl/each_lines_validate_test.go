@@ -44,8 +44,8 @@ func TestValidateEach_OverArtifact(t *testing.T) {
 			refusal: "sleeping"},
 		{name: "producer a fan-out", each: "      over_artifact: fan/a.jsonl\n      format: jsonl\n      max_items: 1\n",
 			refusal: "not in its needs:"},
-		{name: "inputs refused", each: "      over_artifact: _inputs/a.jsonl\n      format: jsonl\n      max_items: 1\n",
-			refusal: "run input artifact"},
+		{name: "an input this Orkflow does not declare", each: "      over_artifact: _inputs/a\n      format: jsonl\n      max_items: 1\n",
+			refusal: "names no artifact input of this Orkflow (declared: none)"},
 		{name: "path in name", each: "      over_artifact: list/a/b\n      format: jsonl\n      max_items: 1\n",
 			refusal: "holds a \"/\""},
 		{name: "template reads the source", each: "      over_artifact: list/a.jsonl\n      format: jsonl\n      max_items: 1\n",
@@ -204,5 +204,67 @@ func TestEachSourceLabel(t *testing.T) {
 		if got := EachSourceLabel(tc.spec); got != tc.want {
 			t.Errorf("EachSourceLabel(%v) = %q; want %q", tc.spec, got, tc.want)
 		}
+	}
+}
+
+// inputsFanOut is an Orkflow with one artifact input, rows, and one value
+// input, n, whose only task fans out over source.
+func inputsFanOut(source, with string) string {
+	doc := "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\ninputs:\n" +
+		"  rows:\n    type: artifact\n    required: true\n  label:\n    type: string\n" +
+		"tasks:\n  - id: convert\n    uses: busybox:1\n    each:\n" +
+		"      over_artifact: " + source + "\n      format: jsonl\n      max_items: 4\n"
+	if with != "" {
+		doc += "    with:\n" + with
+	}
+	return doc
+}
+
+// TestValidateEach_OverAnArtifactInput: a fan-out runs over the lines of an
+// artifact input this Orkflow declares, with no needs: of its own; a name
+// that is no artifact input, and a template that reads the source, are
+// refused, and the source is never in the fan-out's delivery set.
+func TestValidateEach_OverAnArtifactInput(t *testing.T) {
+	for _, tc := range []struct{ name, source, with, refusal string }{
+		{"a declared artifact input", "_inputs/rows", "      v: '{{ .each.item.n }}'\n", ""},
+		{"an undeclared name", "_inputs/other", "", "names no artifact input of this Orkflow (declared: rows)"},
+		{"a value input", "_inputs/label", "", "names no artifact input of this Orkflow (declared: rows)"},
+		{"another reserved producer", "_runs/rows", "", "reserved"},
+		{"a template reads the source", "_inputs/rows", "      f: '{{ artifact \"_inputs/rows\" }}'\n", "the fan-out's own source"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wf, err := Compile([]byte(inputsFanOut(tc.source, tc.with)))
+			if tc.refusal != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+					t.Fatalf("Compile = %v; want a refusal containing %q", err, tc.refusal)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			got := wf.GetTasks()[0]
+			art := got.GetEach().GetSource().GetArtifact()
+			if art.GetProducer() != InputsProducer || art.GetName() != "rows" || len(got.GetInputArtifacts()) != 0 {
+				t.Fatalf("source = %v, input_artifacts = %v; want _inputs/rows and none delivered", art, got.GetInputArtifacts())
+			}
+		})
+	}
+}
+
+// TestValidateEach_OverAComposedTasksArtifact: a composed task is a producer
+// of the artifacts its child returns, needed directly as any other.
+func TestValidateEach_OverAComposedTasksArtifact(t *testing.T) {
+	doc := func(needs string) string {
+		return "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\ntasks:\n" +
+			"  - id: train\n    uses: orkflow:train@1.0.0\n" +
+			"  - id: convert\n    uses: busybox:1\n" + needs +
+			"    each:\n      over_artifact: train/rows\n      format: jsonl\n      max_items: 4\n"
+	}
+	if _, err := Compile([]byte(doc("    needs: [train]\n"))); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if _, err := Compile([]byte(doc(""))); err == nil || !strings.Contains(err.Error(), "not in its needs:") {
+		t.Fatalf("Compile without the need = %v", err)
 	}
 }

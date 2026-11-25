@@ -4,17 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -493,7 +496,7 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		// with err still nil, and is a failure.
 		succeeded := false
 		defer func() { i.a.oweReport(ctx, info, err, succeeded) }()
-		admission, err := i.a.admit(info.TaskQueue, executeTaskRequest(i.a.dispatcher.Policy, in))
+		admission, err := i.a.admitTask(info.TaskQueue, in)
 		if err != nil {
 			return nil, err
 		}
@@ -626,22 +629,78 @@ func (a *Activities) admit(queue string, request amount) (*Admission, error) {
 		return nil, nil
 	}
 	admission, err := a.capacity.admit(queue == a.taskQueue, request)
-	if err != nil {
-		var failure *Failure
-		if errors.As(err, &failure) {
-			return nil, failure.TemporalError()
-		}
-		return nil, err
-	}
-	return admission, nil
+	return admission, a.refusedBeforeRead(err)
 }
 
-// executeTaskRequest is what an ExecuteTask attempt reserves: its resolved
-// request, or nothing for a request the policy refuses, because such an
-// attempt starts no container here: it adopts a committed result, reuses a
-// memo hit, or fails RESOURCE_REQUEST_REFUSED before any container exists.
-// An input this cannot read keeps the whole per-task cap: unknown is never
-// nothing.
+// admitTask is admit for an ExecuteTask attempt: its resolved request, where
+// the interceptor can read it. An input it cannot read (a sealed run's, which
+// only ExecuteTaskRaw opens, or one that will not decode) is admitted unknown.
+func (a *Activities) admitTask(queue string, in *interceptor.ExecuteActivityInput) (*Admission, error) {
+	if a.capacity == nil {
+		return nil, nil
+	}
+	if input := readTaskInput(in); input != nil {
+		return a.admit(queue, executeTaskRequest(a.dispatcher.Policy, input))
+	}
+	if len(in.Args) != 1 || !isRawValue(in.Args[0]) {
+		// Nothing in this release: the registration and this reader disagree,
+		// and every task would hold its whole poll until it is resolved.
+		a.dispatcher.logger().Error("a task's input reached the interceptor in a form it does not read; its whole poll is reserved",
+			"arguments", len(in.Args), "type", fmt.Sprintf("%T", slices.Concat(in.Args, []any{nil})[0]))
+	}
+	admission, err := a.capacity.admitUnknown(queue == a.taskQueue)
+	return admission, a.refusedBeforeRead(err)
+}
+
+// refusedBeforeRead is a refusal of the interceptor's own, which holds
+// nothing of the run: an Orker that seals marks it as such, so its converter
+// writes it as it is (payloadFailure).
+func (a *Activities) refusedBeforeRead(err error) error {
+	err = admissionError(err)
+	if err == nil || a.taskKeys == nil {
+		return err
+	}
+	return payloadcrypt.Keyless(err)
+}
+
+// admissionError is the ledger's refusal as the engine reads an attempt's
+// failure.
+func admissionError(err error) error {
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return failure.TemporalError()
+	}
+	return err
+}
+
+func isRawValue(arg any) bool {
+	_, ok := arg.(converter.RawValue)
+	return ok
+}
+
+// readTaskInput is the attempt's input where it needs no key to read, nil
+// otherwise. The activity is registered with its argument raw
+// (RegisterTaskActivities), so the SDK decodes nothing.
+func readTaskInput(in *interceptor.ExecuteActivityInput) *orkstackv1.ExecuteTaskInput {
+	if len(in.Args) == 0 {
+		return nil
+	}
+	switch arg := in.Args[0].(type) {
+	case *orkstackv1.ExecuteTaskInput:
+		return arg
+	case converter.RawValue:
+		if arg.Payload() == nil || payloadcrypt.IsSealed(arg.Payload()) {
+			return nil
+		}
+		input, err := decodeTaskInput(arg.Payload())
+		if err != nil {
+			return nil
+		}
+		return input
+	}
+	return nil
+}
+
 // indexEachLinesReservation is the line indexer's fixed request: one core and
 // 64 MiB, its read buffer and one line many times over (docs/DEPLOY.md, "The
 // line indexer").
@@ -663,15 +722,11 @@ func indexEachLinesRequest(policy SecurityPolicy) amount {
 	return request
 }
 
-func executeTaskRequest(policy SecurityPolicy, in *interceptor.ExecuteActivityInput) amount {
-	var input *orkstackv1.ExecuteTaskInput
-	if len(in.Args) > 0 {
-		input, _ = in.Args[0].(*orkstackv1.ExecuteTaskInput)
-	}
-	if input == nil {
-		ceiling, _ := policy.ceiling()
-		return ceiling
-	}
+// executeTaskRequest is what an ExecuteTask attempt reserves: its resolved
+// request, or nothing for a request the policy refuses, because such an
+// attempt starts no container here: it adopts a committed result, reuses a
+// memo hit, or fails RESOURCE_REQUEST_REFUSED before any container exists.
+func executeTaskRequest(policy SecurityPolicy, input *orkstackv1.ExecuteTaskInput) amount {
 	return amountFromProto(policy.ReservedResources(input.GetResources()))
 }
 

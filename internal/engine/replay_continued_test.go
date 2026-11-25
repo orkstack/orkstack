@@ -90,7 +90,7 @@ func replayAs(t *testing.T, recorded *historypb.History, runID string) error {
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
-		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
+		OriginalExecution: replayExecution(runID, recorded),
 	})
 }
 
@@ -635,4 +635,16 @@ func TestContinuedHistory_CatchesAChangedPinnedBatchSize(t *testing.T) {
 	if err := replayAs(t, g1, continuedRunID(t)); err == nil {
 		t.Fatal("generation 1 replayed with 4 chunks per task: the fixture cannot see its pinned batch size")
 	}
+}
+
+// replayExecution is the execution a recorded history replays as: runID,
+// under the run id its started event names as its own. A run never reset
+// names itself there, so it replays as no reset run (E85 §30.2); any other
+// run id would make every recorded history look like one.
+func replayExecution(runID string, recorded *historypb.History) workflow.Execution {
+	own := recorded.GetEvents()[0].GetWorkflowExecutionStartedEventAttributes().GetOriginalExecutionRunId()
+	if own == "" {
+		own = "replay"
+	}
+	return workflow.Execution{ID: runID, RunID: own}
 }

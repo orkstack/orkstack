@@ -169,16 +169,18 @@ func (s *source) exchange(seq int64) error {
 	if err := say(lane+"/message.json", map[string]any{"schemaVersion": 1, "seq": seq, "id": "dir:" + id, "bodyBytes": len(body), "deliveryCount": n}); err != nil {
 		return err
 	}
-	heldAt, action := time.Now(), ""
+	heldAt, action, vid := time.Now(), "", ""
 	for action == "" {
 		if err := s.tick(); err != nil {
 			return err
 		}
-		switch v := verdict(seq); {
+		switch v, named := verdict(seq); {
 		case v != "":
-			action = v
+			action, vid = v, named
 		case stopping.Load() || s.orphaned:
-			action = "release"
+			// No verdict to settle: the message goes back, and the exit ends
+			// the exchange.
+			return giveBack(id, n)
 		case time.Since(heldAt) >= time.Duration(s.lim.HoldSeconds)*time.Second:
 			action = "hold_expired"
 		default:
@@ -186,6 +188,10 @@ func (s *source) exchange(seq int64) error {
 		}
 	}
 	settled := map[string]any{"schemaVersion": 1, "seq": seq, "ok": true}
+	if vid != "" {
+		// The settle names the verdict it answers.
+		settled["verdictId"] = vid
+	}
 	switch action {
 	case "ack":
 		err = os.Rename(broker+"/held/"+id, broker+"/done/"+id)
@@ -228,17 +234,19 @@ func readCount(id string) int {
 	return n
 }
 
-// verdict is the Orker's action for this exchange, "" while there is none.
-func verdict(seq int64) string {
+// verdict is the Orker's action for this exchange and the id that names
+// it, "" while there is none.
+func verdict(seq int64) (string, string) {
 	var v struct {
-		Seq    int64  `json:"seq"`
-		Action string `json:"action"`
+		Seq       int64  `json:"seq"`
+		VerdictID string `json:"verdictId"`
+		Action    string `json:"action"`
 	}
 	b, err := os.ReadFile(ask + "/" + lane + "/verdict.json")
 	if err != nil || json.Unmarshal(b, &v) != nil || v.Seq != seq {
-		return ""
+		return "", ""
 	}
-	return v.Action
+	return v.Action, v.VerdictID
 }
 
 // readJSON reads one of the Orker's files; a file not yet there, or caught

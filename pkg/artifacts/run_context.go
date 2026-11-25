@@ -79,7 +79,8 @@ type RunContextEntry struct {
 	ParentTaskID string             `json:"parentTaskId,omitzero"`
 	Orkflow      *RunContextOrkflow `json:"orkflow,omitzero"`
 	// Shared says the child's Orkflow is another namespace's, shared through
-	// composition: its tasks read OriginShared as the root's origin.
+	// composition, or runs below one that is: its tasks read OriginShared as
+	// the root's origin.
 	Shared bool `json:"shared,omitzero"`
 }
 

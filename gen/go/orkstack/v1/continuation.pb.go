@@ -1006,10 +1006,15 @@ func (x *OpenLossEvent) GetFirstAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
-// batch).
+// RunResumeCarry is a resumed run's resume, carried across a continuation.
 type RunResumeCarry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// seq_base is the resume's RUN_RESUMED sequence.
+	SeqBase uint64 `protobuf:"varint,1,opt,name=seq_base,json=seqBase,proto3" json:"seq_base,omitempty"`
+	// resumed_after is the sequence of the ending the resume set aside.
+	ResumedAfter int64 `protobuf:"varint,2,opt,name=resumed_after,json=resumedAfter,proto3" json:"resumed_after,omitempty"`
+	// resume_count is how many resumes of the run got going.
+	ResumeCount   int32 `protobuf:"varint,3,opt,name=resume_count,json=resumeCount,proto3" json:"resume_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1042,6 +1047,27 @@ func (x *RunResumeCarry) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RunResumeCarry.ProtoReflect.Descriptor instead.
 func (*RunResumeCarry) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *RunResumeCarry) GetSeqBase() uint64 {
+	if x != nil {
+		return x.SeqBase
+	}
+	return 0
+}
+
+func (x *RunResumeCarry) GetResumedAfter() int64 {
+	if x != nil {
+		return x.ResumedAfter
+	}
+	return 0
+}
+
+func (x *RunResumeCarry) GetResumeCount() int32 {
+	if x != nil {
+		return x.ResumeCount
+	}
+	return 0
 }
 
 // ResumeBlock is one resume's plan as the reset run executes it (E85 §4.1,
@@ -1723,8 +1749,11 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\x04open\x18\x02 \x03(\v2\x1a.orkstack.v1.OpenLossEventR\x04open\"a\n" +
 	"\rOpenLossEvent\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x125\n" +
-	"\bfirst_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\afirstAt\"\x10\n" +
-	"\x0eRunResumeCarry\"\xc4\x03\n" +
+	"\bfirst_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\afirstAt\"s\n" +
+	"\x0eRunResumeCarry\x12\x19\n" +
+	"\bseq_base\x18\x01 \x01(\x04R\aseqBase\x12#\n" +
+	"\rresumed_after\x18\x02 \x01(\x03R\fresumedAfter\x12!\n" +
+	"\fresume_count\x18\x03 \x01(\x05R\vresumeCount\"\xc4\x03\n" +
 	"\vResumeBlock\x12\x19\n" +
 	"\bseq_base\x18\x01 \x01(\x04R\aseqBase\x12\x14\n" +
 	"\x05scope\x18\x02 \x01(\x04R\x05scope\x122\n" +

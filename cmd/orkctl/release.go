@@ -234,8 +234,15 @@ func releaseRuns(r *orkstackv1.Release) string {
 	if r.GetRunsUnavailableReason() != "" {
 		return "unknown"
 	}
+	var notes []string
 	if paused := r.GetPausedRuns(); paused > 0 {
-		return fmt.Sprintf("%d (%d paused)", r.GetRunsInFlight(), paused)
+		notes = append(notes, fmt.Sprintf("%d paused", paused))
+	}
+	if queued := r.GetQueuedRuns(); queued > 0 {
+		notes = append(notes, fmt.Sprintf("%d queued", queued))
+	}
+	if len(notes) > 0 {
+		return fmt.Sprintf("%d (%s)", r.GetRunsInFlight(), strings.Join(notes, ", "))
 	}
 	return strconv.Itoa(int(r.GetRunsInFlight()))
 }
@@ -376,6 +383,10 @@ func renderReleases(out io.Writer, resp *orkstackv1.ListReleasesResponse, now ti
 		if paused := r.GetPausedRuns(); paused > 0 {
 			fmt.Fprintf(out, "  %s paused: each holds this release until its pause ends; unpause it (orkctl run unpause) or cancel it\n",
 				orkerPlural(int(paused), "run is", "runs are"))
+		}
+		if queued := r.GetQueuedRuns(); queued > 0 {
+			fmt.Fprintf(out, "  %s queued for a concurrency slot: each holds this release until it starts or its queue timeout passes; list them with orkctl run list -F queued=true\n",
+				orkerPlural(int(queued), "run is", "runs are"))
 		}
 		if len(pins) > 0 {
 			label := "  " + orkerPlural(len(pins), "open pin", "open pins") + ":  "

@@ -125,7 +125,7 @@ func TestStagingCache_ConcurrentFetchesOfOneDigestDownloadOnce(t *testing.T) {
 		}(i)
 	}
 	// Both are in: one downloading (held at the gate), one waiting on it.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		d.stagingCache().mu.Lock()
 		entry := d.stagingCache().entries[ref.GetSha256()]

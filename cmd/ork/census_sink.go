@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"maps"
 
 	"github.com/orkstack/orkstack/internal/engine"
@@ -30,4 +31,13 @@ func (s censusSink) RecordConcurrencyCensus(snap engine.CensusSnapshot) {
 		c.Rebuilding = append(c.Rebuilding, telemetry.ConcurrencyRebuilding{Namespace: key[0], State: key[1], Gates: gates})
 	}
 	s.gauges.Record(c)
+}
+
+// arrivalObserver hands the gates' answered acquires to the arrivals
+// metric (E88 §9.9.2).
+type arrivalObserver struct{ m *telemetry.ConcurrencyMetrics }
+
+func (o arrivalObserver) ObserveArrival(ctx context.Context, namespace, orkflow, limit, level, strategy, outcome string) {
+	o.m.Arrival(ctx, telemetry.ConcurrencyArrival{Namespace: namespace, Orkflow: orkflow, Limit: limit, Level: level,
+		Strategy: strategy, Outcome: outcome})
 }

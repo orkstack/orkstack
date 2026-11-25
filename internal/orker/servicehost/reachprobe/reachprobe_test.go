@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -223,6 +224,80 @@ func TestAsk_MutualTLSPortIsClosed(t *testing.T) {
 	}
 }
 
+// A name that does not resolve is told apart from an address that refuses or
+// does not answer: the first was never asked. The name is one no resolver
+// answers (RFC 6761, .invalid).
+func TestAsk_UnresolvedName(t *testing.T) {
+	for _, q := range []int{1, 2, 3} {
+		got := Ask(context.Background(), []Target{{q, "address", "tcp", "ork-probe.invalid:80"}, {q, "address", "tcp", closedAddr(t)}}, 5*time.Second)
+		if !got[0].Unresolved || got[0].Connected || got[1].Unresolved {
+			t.Errorf("question %d: %+v; want the name unresolved and the closed port not", q, got)
+		}
+	}
+	// A name that leads back to the probe itself, or, for question 1, to an
+	// address a name is not dialled at, gave nothing to ask.
+	_, port, _ := net.SplitHostPort(closedAddr(t))
+	for _, q := range []int{1, 2, 3} {
+		if got := Ask(context.Background(), []Target{{q, "address", "tcp", net.JoinHostPort("localhost", port)}}, 5*time.Second); !got[0].Unresolved || got[0].Connected {
+			t.Errorf("question %d, a name that leads to loopback: %+v", q, got[0])
+		}
+	}
+}
+
+// A name's addresses are each asked, so one that answers is found, and one
+// the probe may not ask (its own loopback) is left out.
+func TestAskable(t *testing.T) {
+	ips := func(ss ...string) (out []net.IPAddr) {
+		for _, s := range ss {
+			out = append(out, net.IPAddr{IP: net.ParseIP(s)})
+		}
+		return out
+	}
+	tests := []struct {
+		name     string
+		question int
+		ips      []net.IPAddr
+		listed   map[string]bool
+		want     []string
+	}{
+		{"every address", 3, ips("10.0.0.1", "fd00::1"), nil, []string{"10.0.0.1:80", "[fd00::1]:80"}},
+		{"loopback and unspecified are the probe's own", 2, ips("127.0.0.1", "127.0.1.1", "::1", "0.0.0.0", "::", "10.0.0.1"), nil, []string{"10.0.0.1:80"}},
+		{"nothing left", 2, ips("127.0.0.1"), nil, nil},
+		{"question 1 asks link-local", 1, ips("169.254.169.254", "10.0.0.1"), nil, []string{"169.254.169.254:80"}},
+		{"and what the run lists", 1, ips("10.0.0.1"), map[string]bool{"10.0.0.1": true}, []string{"10.0.0.1:80"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := askable(tt.question, tt.ips, "80", tt.listed); !slices.Equal(got, tt.want) {
+				t.Fatalf("askable = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A name that leads somewhere askable is tried by its name, which a TLS
+// server may need to be shown; question 1's is tried at its addresses; one
+// that leads nowhere askable is tried nowhere.
+func TestNameAddrs(t *testing.T) {
+	ip := func(s string) []net.IPAddr { return []net.IPAddr{{IP: net.ParseIP(s)}} }
+	for _, tt := range []struct {
+		question int
+		ips      []net.IPAddr
+		want     []string
+	}{
+		{2, ip("10.0.0.1"), []string{"name:80"}},
+		{3, ip("10.0.0.1"), []string{"name:80"}},
+		{4, ip("10.0.0.1"), []string{"name:80"}},
+		{3, ip("127.0.0.1"), nil},
+		{1, ip("169.254.169.254"), []string{"169.254.169.254:80"}},
+		{1, ip("10.0.0.1"), nil},
+	} {
+		if got := nameAddrs(Target{tt.question, "address", "tcp", "name:80"}, tt.ips, "80", nil); !slices.Equal(got, tt.want) {
+			t.Errorf("question %d at %v: %q; want %q", tt.question, tt.ips, got, tt.want)
+		}
+	}
+}
+
 // A metadata name is dialled only where it resolves to a link-local address
 // or one of the literal metadata addresses the same run lists: a resolver
 // that answers every name must not make a host unfit (14 §7, question 1).
@@ -256,12 +331,6 @@ func TestAsk_MetadataNameDialledOnlyWhenLinkLocalOrListed(t *testing.T) {
 	got = Ask(context.Background(), []Target{literal, byName}, 2*time.Second)
 	if !got[1].Connected {
 		t.Fatalf("a name resolving to a listed address was not dialled: %+v", got[1])
-	}
-	// A name for another question is dialled whatever it resolves to.
-	other := Target{2, "address", "tcp", net.JoinHostPort("localhost", port)}
-	got = Ask(context.Background(), []Target{other}, 2*time.Second)
-	if !got[0].Connected {
-		t.Fatalf("a question-2 name was not dialled: %+v", got[0])
 	}
 }
 

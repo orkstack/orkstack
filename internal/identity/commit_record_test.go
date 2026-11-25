@@ -306,6 +306,28 @@ func TestPinnedImageFrom(t *testing.T) {
 	}
 }
 
+// TestPinnedImageFrom_ASharedChildsPinIsItsOwners: a run of another
+// namespace's Orkflow is held to what that namespace's version pins, though
+// the running namespace has an Orkflow of the same name, version and content,
+// and the two are kept apart.
+func TestPinnedImageFrom_ASharedChildsPinIsItsOwners(t *testing.T) {
+	mine, _ := admitted(t, "ork-1", artifacts.Starter{Kind: artifacts.StarterEngine}, nil)
+	shared := mine
+	shared.OrkflowNamespace = "platform"
+	pins := map[string]string{"ns": "sha256:" + strings.Repeat("e", 64), "platform": "sha256:" + strings.Repeat("f", 64)}
+	pin := PinnedImageFrom(func(_ context.Context, ns, _, _ string) (*orkstackv1.Orkflow, error) {
+		return &orkstackv1.Orkflow{Name: "deploy", Version: "1", Namespace: ns, DefinitionDigest: "sha256:" + mine.DefinitionDigest,
+			Tasks: []*orkstackv1.Task{{Id: "build", Image: &orkstackv1.ImageRef{IndexDigest: pins[ns]}}}}, nil
+	})
+	for range 2 {
+		for adm, ns := range map[*artifacts.Admission]string{&mine: "ns", &shared: "platform"} {
+			if got, err := pin(context.Background(), *adm, "build"); err != nil || got != pins[ns] {
+				t.Fatalf("the pin of %q's = %q, %v; want %q", ns, got, err, pins[ns])
+			}
+		}
+	}
+}
+
 // TestPinnedImageFrom_ReadsADefinitionOnce: the stored version is
 // immutable, so a run's commits read it once; a failed read is not kept.
 func TestPinnedImageFrom_ReadsADefinitionOnce(t *testing.T) {
@@ -332,5 +354,83 @@ func TestPinnedImageFrom_ReadsADefinitionOnce(t *testing.T) {
 	}
 	if reads != 2 {
 		t.Fatalf("reads = %d, want 2: the failure, then one read kept", reads)
+	}
+}
+
+// TestRecord_ASharedChildIsHeldToItsOwnersDefinition: a run of an Orkflow
+// another namespace shared is recorded in the namespace it runs in, and its
+// image is the one its owner's stored version pins, never that of the
+// running namespace's own Orkflow of the same name and version.
+func TestRecord_ASharedChildIsHeldToItsOwnersDefinition(t *testing.T) {
+	const ownersImage, runnersImage = "sha256:" + "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		"sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	newWorld := func(t *testing.T) (*recordWorld, *[]string) {
+		w := newRecordWorld(t)
+		var read []string
+		// A stored definition's digest covers its namespace, so the two
+		// really differ there too; one digest here leaves the namespace
+		// alone to tell them apart.
+		w.recorder.PinnedImage = PinnedImageFrom(func(_ context.Context, ns, name, version string) (*orkstackv1.Orkflow, error) {
+			read = append(read, ns+"/"+name+"@"+version)
+			image := runnersImage
+			if ns == "platform" {
+				image = ownersImage
+			}
+			return &orkstackv1.Orkflow{Namespace: ns, Name: name, Version: version, DefinitionDigest: "sha256:" + w.adm.DefinitionDigest,
+				Tasks: []*orkstackv1.Task{{Id: "build", Image: &orkstackv1.ImageRef{IndexDigest: image}}}}, nil
+		})
+		return w, &read
+	}
+	share := func(w *recordWorld) {
+		w.adm.OrkflowNamespace = "platform"
+		w.sha = w.write(w.adm)
+		w.starts.chains["ork-1"] = found(artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: w.sha})
+	}
+
+	w, read := newWorld(t)
+	share(w)
+	req := w.commitRequest()
+	got, err := w.record(req)
+	if err != nil || !got.Created || got.Key != "metadata/attested/ns/ork-1/build/commit.json" {
+		t.Fatalf("record = created %v at %q, %v; want one in the running namespace", got.Created, got.Key, err)
+	}
+	if len(*read) != 1 || (*read)[0] != "platform/deploy@1" {
+		t.Fatalf("the pin was read from %v, want the owner's definition alone", *read)
+	}
+
+	// The same recorder, then, for the running namespace's own Orkflow of
+	// that name: its pin is its own, not the one kept for the owner's.
+	own := w.adm
+	own.OrkflowNamespace = ""
+	if pinned, err := w.recorder.PinnedImage(context.Background(), own, "build"); err != nil || pinned != runnersImage {
+		t.Fatalf("the running namespace's own Orkflow pins %q, %v; want %q", pinned, err, runnersImage)
+	}
+
+	for name, edit := range map[string]func(*recordWorld, *CommitRequest){
+		"the running namespace's image": func(_ *recordWorld, r *CommitRequest) { r.Commit.Image.IndexDigest = runnersImage },
+		"the owner in the document":     func(_ *recordWorld, r *CommitRequest) { r.Commit.Namespace = "platform" },
+		"the owner's commit key": func(w *recordWorld, r *CommitRequest) {
+			key, err := artifacts.CommitKey("platform", "ork-1", "build")
+			if err != nil {
+				w.t.Fatal(err)
+			}
+			r.CommitKey = key
+		},
+		"the owner's idempotency key": func(_ *recordWorld, r *CommitRequest) {
+			r.Commit.IdempotencyKey = task.IdempotencyKeyFor("platform", "ork-1", "build")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, _ := newWorld(t)
+			share(w)
+			req := w.commitRequest()
+			edit(w, &req)
+			if got, err := w.record(req); got.Created || reasonOf(err) != ReasonCommitIdentityMismatch {
+				t.Fatalf("record = %+v, %v; want %s", got, err, ReasonCommitIdentityMismatch)
+			}
+			if _, ok := w.recordedAt(w.commitRequest()); ok {
+				t.Fatal("a refused commit left a record")
+			}
+		})
 	}
 }

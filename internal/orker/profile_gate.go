@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -61,6 +62,10 @@ type profileAudit struct {
 	// digests, re-hashed at 3c and before create. Nil for a devices profile,
 	// and for a gpu profile whose spec was absent at boot.
 	gpu *gpuSpecAudit
+	// hookUnknown is why a gpu profile has no spec audit though its specs
+	// were found: the hook binary behind them is a build the table lacks
+	// (HOOK_BUILD_UNKNOWN). The profile is held unavailable for it alone.
+	hookUnknown string
 	// gpuNodes are a gpu profile's unit nodes, stat'ed as devices are; they
 	// reach a container through CDI (dispatch_units.go), never as a mapping.
 	gpuNodes []auditedDevice
@@ -99,8 +104,18 @@ func (s *profileState) gate(refs []*orkstackv1.ProfileRef, inspect func(string) 
 }
 
 // recheck is the device comparison again, just before the container is
-// created, and again just before it is started.
-func (s *profileState) recheck(refs []*orkstackv1.ProfileRef, inspect func(string) (hostDevice, error), now time.Time) *Failure {
+// created (beforeCreate) and again just before it is started. The two checks
+// that cost a call to the host's engine or a read of every spec file run once
+// per attempt, in the first only: the engine's default runtime, asked with the
+// attempt's context, and the spec directories rescanned for a spec of a gpu
+// profile's kind that the audit did not read. The runtime not being able to say
+// is a never-started RUNTIME_STATE_UNKNOWN, the fault an attempt that could not
+// read the runtime's state is already given, so the task runs again without
+// spending its own attempt; a spec file that cannot be read or parsed is a
+// never-started PROFILE_NOT_OFFERED with nothing latched, the file being
+// settled by the next attempt.
+func (s *profileState) recheck(ctx context.Context, refs []*orkstackv1.ProfileRef, inspect func(string) (hostDevice, error), now time.Time, beforeCreate bool) *Failure {
+	names := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		audit, ok := s.audit(ref.GetName())
 		if !ok {
@@ -108,6 +123,19 @@ func (s *profileState) recheck(refs []*orkstackv1.ProfileRef, inspect func(strin
 		}
 		if failure := s.checkDevices(ref.GetName(), audit, inspect, now); failure != nil {
 			return failure
+		}
+		names = append(names, ref.GetName())
+	}
+	if !beforeCreate {
+		return nil
+	}
+	if failure := s.checkRuntime(ctx, names, now); failure != nil {
+		return neverStarted(failure)
+	}
+	for _, name := range names {
+		audit, _ := s.audit(name)
+		if failure := s.checkSpecDirs(name, audit, now); failure != nil {
+			return neverStarted(failure)
 		}
 	}
 	return nil
@@ -143,13 +171,21 @@ func (s *profileState) compareDevices(name string, audit profileAudit, inspect f
 	return s.statDevices(name, audit, inspect, now)
 }
 
-// checkSpecBytes re-hashes a gpu profile's audit set (design §4.11, at 3c and
+// checkSpecBytes re-checks a gpu profile's audit set (design §4.11, at 3c and
 // just before create): a file that is gone, or that cannot be read, holds the
 // profile unavailable (SPEC_ABSENT); one whose bytes differ latches a drift
-// (SPEC_CHANGED).
+// (SPEC_CHANGED). So does a mount source that is no longer the file the audit
+// found (MOUNT_SOURCE_CHANGED, in the drift's detail), before the hook
+// binaries are hashed again. (A spec file of the kind that appeared is
+// checkSpecDirs's, once per attempt.)
 func (s *profileState) checkSpecBytes(name string, audit profileAudit, now time.Time) *Failure {
 	if audit.gpu == nil {
 		return nil
+	}
+	drifted := func(detail, what string) *Failure {
+		s.setDrift(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED, detail, now)
+		return Fail(ReasonProfileDrifted,
+			"profile %q drifted on this Orker: %s; it stays out of service until the Orker restarts", name, what)
 	}
 	for _, path := range slices.Sorted(maps.Keys(audit.gpu.files)) {
 		raw, err := os.ReadFile(path)
@@ -162,12 +198,173 @@ func (s *profileState) checkSpecBytes(name string, audit profileAudit, now time.
 		}
 		sum := sha256.Sum256(raw)
 		if hex.EncodeToString(sum[:]) != audit.gpu.files[path] {
+			return drifted(path+" differs from the bytes this Orker audited", "a CDI spec it was audited from changed")
+		}
+	}
+	inspect := s.inspectMount
+	if inspect == nil {
+		inspect = inspectHostMount
+	}
+	for _, src := range slices.Sorted(maps.Keys(audit.gpu.mounts)) {
+		want := audit.gpu.mounts[src]
+		if src == nvidiaVoidSource && want.Resolved == nvidiaVoidSource {
+			continue // the placeholder, fixed by the grammar
+		}
+		got, err := inspect(src)
+		switch {
+		case err != nil:
+			return drifted("MOUNT_SOURCE_CHANGED: "+src+" cannot be inspected again: "+err.Error(), "a mount source it was audited with changed")
+		case got.Resolved != want.Resolved || got.Kind != want.Kind:
+			return drifted(fmt.Sprintf("MOUNT_SOURCE_CHANGED: %s is now %s %s, not %s %s", src, got.Kind, got.Resolved, want.Kind, want.Resolved),
+				"a mount source it was audited with changed")
+		case got.Untrusted != "":
+			return drifted("MOUNT_SOURCE_CHANGED: "+src+" is no longer root's: "+got.Untrusted, "a mount source it was audited with changed")
+		}
+	}
+	return s.checkHookBinaries(name, audit, now)
+}
+
+// checkSpecDirs rescans the spec directories before create for a spec of the
+// profile's kind that the audit did not read. A successfully parsed one latches
+// drift (SPEC_CHANGED). A file that cannot be read or parsed is only reported
+// (never-started PROFILE_NOT_OFFERED, nothing latched): it may be another
+// vendor's half-written file, and it cannot be resolved until it is whole, when
+// the next attempt reads it again.
+func (s *profileState) checkSpecDirs(name string, audit profileAudit, now time.Time) *Failure {
+	kind := s.gpuKind(name)
+	if audit.gpu == nil || kind == "" {
+		return nil
+	}
+	found, err := specFilesOfKind(s.cdiDirs, kind)
+	if err != nil {
+		return Fail(ReasonProfileNotOffered,
+			"profile %q cannot be checked now: a CDI spec file could not be read; the task runs again, "+
+				"and on an Orker of its pool that offers the profile", name)
+	}
+	for _, path := range slices.Sorted(maps.Keys(found)) {
+		if _, audited := audit.gpu.files[path]; !audited {
 			s.setDrift(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED,
-				path+" differs from the bytes this Orker audited", now)
+				path+" declares "+kind+" and was not in the audit set", now)
 			return Fail(ReasonProfileDrifted,
-				"profile %q drifted on this Orker: a CDI spec it was audited from changed; "+
+				"profile %q drifted on this Orker: a CDI spec of its kind appeared after the audit; "+
 					"it stays out of service until the Orker restarts", name)
 		}
+	}
+	return nil
+}
+
+// gpuKind is the CDI kind of a declared gpu profile, or "".
+func (s *profileState) gpuKind(name string) string {
+	for _, p := range s.declared.List {
+		if p.Name == name && p.Kind == orkstackv1.ProfileKind_PROFILE_KIND_GPU && p.GPU != nil {
+			return p.GPU.CDIKind
+		}
+	}
+	return ""
+}
+
+// useRuntime gives the state the engine's default-runtime question and what it
+// answered at boot, which every later answer is compared with.
+func (s *profileState) useRuntime(asker defaultRuntimeAsker, boot runtimeFacts) {
+	s.runtime, s.bootRuntime = asker, boot
+}
+
+// runtimeDrift asks the engine's default runtime again and says how it differs
+// from boot, or why it cannot say. changed is false for a question that could
+// not be answered: that is no drift, an engine that did not answer.
+func (s *profileState) runtimeDrift(ctx context.Context) (detail string, changed bool, err error) {
+	if s.runtime == nil {
+		return "", false, nil
+	}
+	now, err := s.runtime.DefaultRuntime(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	if err := checkDefaultRuntime(now); err != nil {
+		return DetailDefaultRuntimeRefused + ": " + err.Error(), true, nil
+	}
+	if now != s.bootRuntime {
+		return fmt.Sprintf("%s: the default runtime is now %q at %q, not %q at %q", DetailDefaultRuntimeRefused,
+			now.Name, now.Path, s.bootRuntime.Name, s.bootRuntime.Path), true, nil
+	}
+	return "", false, nil
+}
+
+// checkRuntime is the pre-create default-runtime check, once for the attempt's
+// profiles: a runtime that is not what the boot audit found latches a drift on
+// each (HOST_VIEW_CHANGED, the runtime being part of the host's view); one that
+// cannot be asked is RUNTIME_STATE_UNKNOWN, with nothing latched.
+func (s *profileState) checkRuntime(ctx context.Context, names []string, now time.Time) *Failure {
+	ctx, cancel := context.WithTimeout(ctx, controlTimeout)
+	defer cancel()
+	detail, changed, err := s.runtimeDrift(ctx)
+	switch {
+	case err != nil:
+		return FailCause(ReasonRuntimeStateUnknown, err,
+			"the container engine did not say which runtime it uses, so the profiles %v cannot be held to runc or crun: %v", names, err)
+	case changed:
+		for _, name := range names {
+			s.setDrift(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_HOST_VIEW_CHANGED, detail, now)
+		}
+		return Fail(ReasonProfileDrifted,
+			"profiles %v drifted on this Orker: its container engine's default runtime changed; "+
+				"they stay out of service until the Orker restarts", names)
+	}
+	return nil
+}
+
+// auditRuntimeOnce is the periodic default-runtime check: every profile that
+// has not drifted latches when the runtime changed.
+//
+// An engine that cannot answer is no drift, but it is not silent either: the
+// error is returned for the caller to log, so a daemon that stops answering
+// shows in the Orker's log at every audit.
+func (s *profileState) auditRuntimeOnce(ctx context.Context, now time.Time) (map[string]string, error) {
+	detail, changed, err := s.runtimeDrift(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return nil, nil
+	}
+	drifted := map[string]string{}
+	for _, p := range s.declared.List {
+		if s.drifted(p.Name) {
+			continue
+		}
+		drifted[p.Name] = detail
+		s.setDrift(p.Name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_HOST_VIEW_CHANGED, detail, now)
+	}
+	return drifted, nil
+}
+
+// checkHookBinaries hashes a gpu profile's hook binaries again, at 3c and just
+// before create: a binary that is another build than the audited one, or that
+// cannot be read, latches drift (HOOK_BINARY_CHANGED).
+//
+// This reads and hashes the whole file where the design (§4.11) compares dev,
+// inode, size and ctime of a descriptor held for the Orker's life. It is
+// deliberately the stricter of the two: the binary is small (about 7 MiB, a
+// few milliseconds to hash), and a full hash cannot be fooled by an edit that
+// keeps the size and restores the ctime, which the stat comparison cannot see.
+func (s *profileState) checkHookBinaries(name string, audit profileAudit, now time.Time) *Failure {
+	hash := s.hookBinary
+	if hash == nil {
+		hash = hashHostHook
+	}
+	for _, p := range slices.Sorted(maps.Keys(audit.gpu.hooks)) {
+		bin, err := hash(p)
+		if err == nil && bin.SHA256 == audit.gpu.hooks[p] {
+			continue
+		}
+		detail := p + " is not the build this Orker audited"
+		if err != nil {
+			detail = p + " cannot be audited again: " + err.Error()
+		}
+		s.setDrift(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED, detail, now)
+		return Fail(ReasonProfileDrifted,
+			"profile %q drifted on this Orker: a hook binary it was audited with changed; "+
+				"it stays out of service until the Orker restarts", name)
 	}
 	return nil
 }

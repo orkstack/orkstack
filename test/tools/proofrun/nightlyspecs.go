@@ -116,6 +116,13 @@ func parseNightlySpecs(r io.Reader, name string) ([]nightlySpecEntry, error) {
 // a listed file and not itself on the list; the nightly tier lists only the
 // specs it runs, so there the covering specs are not checked.
 func nightlySpecProblems(entries []nightlySpecEntry, listed map[string]bool, complete bool) []string {
+	return specListProblems("nightly spec list", entries, listed, complete, nil)
+}
+
+// specListProblems is nightlySpecProblems for any spec list, named label in
+// its lines. elsewhere maps the specs of the twin lists (spec path -> that
+// list's label): a covering spec on one never runs in the merge gate either.
+func specListProblems(label string, entries []nightlySpecEntry, listed map[string]bool, complete bool, elsewhere map[string]string) []string {
 	var problems []string
 	on := map[string]bool{}
 	for _, e := range entries {
@@ -123,7 +130,7 @@ func nightlySpecProblems(entries []nightlySpecEntry, listed map[string]bool, com
 	}
 	for _, e := range entries {
 		if !listed[e.file()] {
-			problems = append(problems, fmt.Sprintf("nightly spec list line %d names %s, which the listing does not hold: remove the stale entry", e.Line, e.Spec))
+			problems = append(problems, fmt.Sprintf("%s line %d names %s, which the listing does not hold: remove the stale entry", label, e.Line, e.Spec))
 		}
 		if !complete {
 			continue
@@ -131,9 +138,11 @@ func nightlySpecProblems(entries []nightlySpecEntry, listed map[string]bool, com
 		for _, c := range e.Covering {
 			switch {
 			case on[c]:
-				problems = append(problems, fmt.Sprintf("nightly spec list line %d: covering spec %s is itself on the nightly spec list", e.Line, c))
+				problems = append(problems, fmt.Sprintf("%s line %d: covering spec %s is itself on the %s", label, e.Line, c, label))
+			case elsewhere[c] != "":
+				problems = append(problems, fmt.Sprintf("%s line %d: covering spec %s is on the %s", label, e.Line, c, elsewhere[c]))
 			case !listed[strings.TrimPrefix(c, "ui/e2e/")]:
-				problems = append(problems, fmt.Sprintf("nightly spec list line %d: covering spec %s is not a listed spec file", e.Line, c))
+				problems = append(problems, fmt.Sprintf("%s line %d: covering spec %s is not a listed spec file", label, e.Line, c))
 			}
 		}
 	}

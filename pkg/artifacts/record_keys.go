@@ -104,6 +104,27 @@ func AttestedCommitKey(commitKey string) (string, error) {
 	return AttestedPrefix + "/" + rest, nil
 }
 
+// AttestedCommitURI maps a commit uri, a store root then a commit key as a
+// task's input names it, to the uri of its attested twin: the same root and
+// the key AttestedCommitKey maps it to. A uri that holds no commit key, or
+// whose root lies under a commit or an attested prefix, so that its twin would
+// be an object an Orker may write and no record, is ErrInvalidRecordKey.
+func AttestedCommitURI(uri string) (string, error) {
+	i := strings.LastIndex(uri, "/"+CommitPrefix+"/")
+	if i < 0 {
+		return "", fmt.Errorf("artifacts: attested uri: %q holds no commit key: %w", uri, ErrInvalidRecordKey)
+	}
+	root := uri[:i+1]
+	if strings.Contains(root, "/"+CommitPrefix+"/") || strings.Contains(root, "/"+AttestedPrefix+"/") {
+		return "", fmt.Errorf("artifacts: attested uri: the root of %q is no store's: %w", uri, ErrInvalidRecordKey)
+	}
+	key, err := AttestedCommitKey(uri[i+1:])
+	if err != nil {
+		return "", err
+	}
+	return root + key, nil
+}
+
 // RecordKey renders the key of a task's record of kind:
 // metadata/attested/{namespace}/{encoded-run-id}/{task-id}/[r{scope:020}/]{resolution,composed}.json.
 // scope is the root's resume scope; zero, a run never resumed or a run

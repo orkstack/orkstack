@@ -26,6 +26,17 @@ func (noLiveIssuer) PublishedKeyIDs(context.Context) (map[string]bool, error) { 
 
 func testIssuer(t testing.TB, trustDomain string) *identity.Issuer {
 	t.Helper()
+	i := unreadIssuer(t, trustDomain)
+	if err := i.Publish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return i
+}
+
+// unreadIssuer is testIssuer before it has read what is published: it serves
+// no keys.
+func unreadIssuer(t testing.TB, trustDomain string) *identity.Issuer {
+	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -41,9 +52,6 @@ func testIssuer(t testing.TB, trustDomain string) *identity.Issuer {
 	i, err := identity.New(identity.Config{URL: "https://ork-id.acme.dev", Keys: []*jwt.Signer{signer}, Algorithm: jwt.ES256,
 		ActivationDelay: time.Hour, VerifyPublished: true, TrustDomain: trustDomain, Engine: "e1"}, store, noLiveIssuer{}, nil)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := i.Publish(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return i

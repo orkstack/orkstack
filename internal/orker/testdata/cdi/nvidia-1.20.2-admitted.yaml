@@ -1,0 +1,75 @@
+# Captured with NVIDIA Container Toolkit 1.20.2 (nvidia-ctk, commit adbd28c39b60f8eb7e03115b5ac61e58703f0ce7), amd64 deb,
+# fetched through the signed chain: go run ./internal/orker/cmd/gencdihooks -fetch 1.20.2 -arch amd64 -packaging deb -out DIR -extra usr/bin/nvidia-ctk
+# Command, unprivileged (a container with only CAP_MKNOD, no network), over NVIDIA's own mock driver root
+# (testdata/lookup/rootfs-1 of the v1.20.2 source tarball, commit-id checked) mounted at /mock/driver, with the
+# character nodes nvidiactl (195:255), nvidia0 (195:0), nvidia-uvm (511:0), nvidia-uvm-tools (511:1) made by mknod under /mock/dev:
+#   nvidia-ctk cdi generate --mode=management --driver-root /mock/driver --dev-root /mock --disable-hook update-ldcache --disable-hook enable-cuda-compat
+# The admitted shape: the hooks update-ldcache and enable-cuda-compat disabled, and no modeset node.
+# Not captured from a GPU host: management mode writes the one device "all", with no per-GPU rows.
+---
+cdiVersion: 0.5.0
+kind: nvidia.com/gpu
+devices:
+    - name: all
+      containerEdits:
+        deviceNodes:
+            - path: /dev/nvidia-uvm
+              hostPath: /mock/dev/nvidia-uvm
+              major: 511
+              fileMode: 420
+              permissions: rwm
+            - path: /dev/nvidia-uvm-tools
+              hostPath: /mock/dev/nvidia-uvm-tools
+              major: 511
+              minor: 1
+              fileMode: 420
+              permissions: rwm
+            - path: /dev/nvidia0
+              hostPath: /mock/dev/nvidia0
+              major: 195
+              fileMode: 420
+              permissions: rwm
+            - path: /dev/nvidiactl
+              hostPath: /mock/dev/nvidiactl
+              major: 195
+              minor: 255
+              fileMode: 420
+              permissions: rwm
+containerEdits:
+    env:
+        - NVIDIA_CTK_LIBCUDA_DIR=/lib/x86_64-linux-gnu
+        - NVIDIA_VISIBLE_DEVICES=void
+    hooks:
+        - hookName: createContainer
+          path: /usr/bin/nvidia-cdi-hook
+          args:
+            - nvidia-cdi-hook
+            - create-symlinks
+            - --link
+            - libcuda.so.1::/lib/x86_64-linux-gnu/libcuda.so
+          env:
+            - NVIDIA_CTK_DEBUG=false
+    mounts:
+        - hostPath: /mock/driver/lib/x86_64-linux-gnu/libcuda.so.999.88.77
+          containerPath: /lib/x86_64-linux-gnu/libcuda.so.999.88.77
+          options:
+            - ro
+            - nosuid
+            - nodev
+            - rbind
+            - rprivate
+        - hostPath: /mock/driver/lib/x86_64-linux-gnu/vdpau/libvdpau_nvidia.so.999.88.77
+          containerPath: /lib/x86_64-linux-gnu/vdpau/libvdpau_nvidia.so.999.88.77
+          options:
+            - ro
+            - nosuid
+            - nodev
+            - rbind
+            - rprivate
+        - hostPath: /dev/null
+          containerPath: /var/run/nvidia-container-devices/void
+          options:
+            - ro
+            - nosuid
+            - nodev
+            - bind

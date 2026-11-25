@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,14 +159,23 @@ func TestIntegration_ServiceNetwork_ReachesOutNotSideways(t *testing.T) {
 		t.Fatalf("positive control: %s does not answer from its own network:\n%s", controlAddr, control)
 	}
 	script := probe(hostIP, brokerPort) + probe(hostIP, hostPort) + probe(brokerContainer, "8080") + probe(theirAddr, "8080")
+	ways := []string{hostIP + ":" + brokerPort + " open", hostIP + ":" + hostPort + " open"}
+	// The runtime's own name for the host: where it gives a container the
+	// host's address (rootless), that name is the one way to the host.
+	alias, err := rt.HostAlias(ctx)
+	must.OKf(t, err, "the runtime's name for the host")
+	if alias != "" {
+		script += probe(alias, hostPort)
+		ways = append(ways, alias+":"+hostPort+" open")
+	}
 	closed := []string{brokerContainer + ":8080 closed", theirAddr + ":8080 closed"}
 	if defaultAddr != "" {
 		script += probe(defaultAddr, "8080")
 		closed = append(closed, defaultAddr+":8080 closed")
 	}
 	seen := ask("service", orker.NetworkService, mine, script)
-	if !strings.Contains(seen, hostIP+":"+brokerPort+" open") && !strings.Contains(seen, hostIP+":"+hostPort+" open") {
-		t.Errorf("from a service network: no way out answered, neither the broker's published port nor the host's address:\n%s", seen)
+	if !slices.ContainsFunc(ways, func(w string) bool { return strings.Contains(seen, w) }) {
+		t.Errorf("from a service network: no way out answered (%q):\n%s", ways, seen)
 	}
 	for _, want := range closed {
 		if !strings.Contains(seen, want) {

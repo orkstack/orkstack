@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
@@ -29,6 +30,15 @@ func (s KeyState) Namespace() string { return s.memo.Namespace }
 
 // Sealed reports whether the run has a key this process opened.
 func (s KeyState) Sealed() bool { return s.scope.Sealed() }
+
+// Key is the run's key, nil where Sealed is false. It is for a reader that
+// opens the run's payloads outside workflow code (an engine's RunKeys).
+func (s KeyState) Key() *Key {
+	if !s.Sealed() {
+		return nil
+	}
+	return s.scope.key
+}
 
 // Scope is the run's key and own context: Unsealed() for a run that is not
 // sealed, nil where Err is set (a miss, or a keyless run).
@@ -89,6 +99,23 @@ type Converter struct {
 	inner converter.DataConverter
 	keys  *EngineKeys
 	run   *KeyState // the workflow face's run; nil on the root face
+	// readerKeys is how the root face gets a run's key, for the context a
+	// sealed payload names: an engine's RunKeys (rule 5), an Orker's source.
+	// Nil opens nothing. The workflow face never calls it.
+	readerKeys func(ctx context.Context, c Context) (*Key, error)
+}
+
+// readerKeyTimeout bounds one ask of the reader's key source from a decode,
+// which carries no context of its own.
+const readerKeyTimeout = 30 * time.Second
+
+// WithReaderKeys is c whose root face opens a sealed payload with the key
+// keys gives for the context the payload names. It is for code outside a
+// run's workflow code (an engine's activities and reads), which may wait.
+func (c *Converter) WithReaderKeys(keys func(ctx context.Context, c Context) (*Key, error)) *Converter {
+	out := *c
+	out.readerKeys = keys
+	return &out
 }
 
 var _ converter.DataConverter = (*Converter)(nil)
@@ -115,7 +142,7 @@ func (c *Converter) ToPayload(v any) (*commonpb.Payload, error) {
 			return nil, errors.New("payloadcrypt: a value sealed under no key: its run's key was lost")
 		}
 		switch x.v.(type) {
-		case sealedValue, plainBinary:
+		case sealedValue, plainBinary, plainValue:
 			return nil, fmt.Errorf("payloadcrypt: a %T inside a sealed value", x.v)
 		}
 		p, err := c.inner.ToPayload(x.v)
@@ -131,11 +158,25 @@ func (c *Converter) ToPayload(v any) (*commonpb.Payload, error) {
 			return nil, err
 		}
 		return out[0], nil
+	case plainValue:
+		switch x.v.(type) {
+		case sealedValue, plainBinary:
+			return nil, fmt.Errorf("payloadcrypt: a %T inside a Plain value", x.v)
+		}
+		return c.inner.ToPayload(x.v)
+	case converter.RawValue:
+		return c.inner.ToPayload(v)
 	case plainBinary:
 		if x.m == nil {
 			return nil, errors.New("payloadcrypt: PlainBinary of no message")
 		}
 		return converter.NewProtoPayloadConverter().ToPayload(x.m)
+	}
+	// Fail closed: in a sealed run's workflow code a value nobody marked is
+	// sealed under the run's own key.
+	// A nil value carries nothing to seal (and, in a memo, removes its key).
+	if c.run != nil && c.run.Sealed() && v != nil {
+		return c.ToPayload(Seal(c.run.scope, v))
 	}
 	return c.inner.ToPayload(v)
 }
@@ -178,7 +219,7 @@ func (c *Converter) FromPayload(p *commonpb.Payload, valuePtr any) error {
 		return c.inner.FromPayload(p, valuePtr)
 	}
 	if c.run == nil {
-		return unreadable("a sealed payload outside a run's workflow code")
+		return c.readerOpen(p, valuePtr)
 	}
 	if !c.run.Sealed() {
 		if c.run.err != nil {
@@ -187,6 +228,29 @@ func (c *Converter) FromPayload(p *commonpb.Payload, valuePtr any) error {
 		return unreadable("a sealed payload in a run that carries no key")
 	}
 	opened, err := c.run.scope.Open(p)
+	if err != nil {
+		return err
+	}
+	return c.inner.FromPayload(opened, valuePtr)
+}
+
+// readerOpen is the root face's open of a sealed payload, through the
+// reader's key source for the context it names.
+func (c *Converter) readerOpen(p *commonpb.Payload, valuePtr any) error {
+	if c.readerKeys == nil {
+		return unreadable("a sealed payload outside a run's workflow code")
+	}
+	ctxName, err := ParseContext(string(p.GetMetadata()[MetaContext]))
+	if err != nil {
+		return unreadable("a sealed payload names no context")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readerKeyTimeout)
+	defer cancel()
+	key, err := c.readerKeys(ctx, ctxName)
+	if err != nil {
+		return fmt.Errorf("payloadcrypt: the key of %s: %w", ctxName, err)
+	}
+	opened, err := OpenPayload(key, ctxName, p)
 	if err != nil {
 		return err
 	}
@@ -244,7 +308,7 @@ func (c *Converter) WithWorkflowContext(ctx workflow.Context) converter.DataConv
 	if aware, ok := inner.(converter.ContextAware); ok {
 		inner = aware.WithWorkflowContext(ctx)
 	}
-	return &Converter{inner: inner, keys: c.keys, run: &st}
+	return &Converter{inner: inner, keys: c.keys, run: &st, readerKeys: c.readerKeys}
 }
 
 // WithContext is the root face, for an activity worker and the client.
@@ -253,5 +317,5 @@ func (c *Converter) WithContext(ctx context.Context) converter.DataConverter {
 	if aware, ok := inner.(converter.ContextAware); ok {
 		inner = aware.WithContext(ctx)
 	}
-	return &Converter{inner: inner, keys: c.keys}
+	return &Converter{inner: inner, keys: c.keys, readerKeys: c.readerKeys}
 }

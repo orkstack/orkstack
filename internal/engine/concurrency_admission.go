@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -69,6 +70,18 @@ type ConcurrencyAdmissionReader interface {
 	// runs holding or waiting, or lingering empty. A release refuses a
 	// target whose engines cannot hold limits while it is above zero.
 	OpenGates(ctx context.Context) (int64, error)
+	// ClosedRuns is those of runs the cluster reports ended, or no longer
+	// has: holders a full key still counts that free it once the gate
+	// checks them.
+	ClosedRuns(ctx context.Context, runs []string) ([]string, error)
+	// Verify asks the gate to check its holders now.
+	Verify(ctx context.Context, gateID string) error
+	// Gates lists a namespace's open gates a page at a time, each read
+	// from its own state; a gate that does not answer is listed, not
+	// answering (ConcurrencyService).
+	Gates(ctx context.Context, namespace string, pageSize int, token []byte) ([]GateView, []byte, error)
+	// Gate reads one gate; present is false when no gate runs for it.
+	Gate(ctx context.Context, gateID string) (view GateView, present bool, err error)
 }
 
 // TemporalConcurrencyReader reads the cluster for submit's checks.
@@ -128,6 +141,39 @@ func (r *TemporalConcurrencyReader) count(ctx context.Context, query string) (in
 		return 0, fmt.Errorf("engine: count the cluster's index for a concurrency limit: %w", err)
 	}
 	return response.GetCount(), nil
+}
+
+// ClosedRuns describes each run, within one query timeout for them all; a
+// run the cluster no longer has is closed.
+func (r *TemporalConcurrencyReader) ClosedRuns(ctx context.Context, runs []string) ([]string, error) {
+	dctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+	var closed []string
+	for _, run := range runs {
+		described, err := r.client.DescribeWorkflow(dctx, run, "")
+		var missing *serviceerror.NotFound
+		switch {
+		case errors.As(err, &missing):
+			closed = append(closed, run)
+		case err != nil:
+			return nil, fmt.Errorf("engine: describe run %s, which holds a concurrency slot: %w", run, err)
+		case described == nil || described.RawResponse.GetWorkflowExecutionInfo() == nil:
+			return nil, fmt.Errorf("engine: describe run %s, which holds a concurrency slot: the cluster returned no execution", run)
+		case described.RawResponse.GetWorkflowExecutionInfo().GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING:
+			closed = append(closed, run)
+		}
+	}
+	return closed, nil
+}
+
+// Verify signals the gate to run a check pass.
+func (r *TemporalConcurrencyReader) Verify(ctx context.Context, gateID string) error {
+	sctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+	if err := r.client.SignalWorkflow(sctx, gateID, "", GateSignalVerify, nil); err != nil {
+		return fmt.Errorf("engine: ask the concurrency limit %s to check its holders: %w", gateID, err)
+	}
+	return nil
 }
 
 // GateLine queries the gate's state; a gate id with no execution is no

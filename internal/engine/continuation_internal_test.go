@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -325,7 +326,7 @@ func TestEndUnrestorable_CanceledRunEndsCanceled(t *testing.T) {
 		return nil
 	}, activity.RegisterOptions{Name: ActivityPublishEvent})
 	env.RegisterWorkflowWithOptions(func(ctx workflow.Context) error {
-		s := &runState{runID: "ork-c", wf: refusalOrkflow()}
+		s := &runState{runID: "ork-c", wf: refusalOrkflow(), scope: payloadcrypt.Unsealed()}
 		_, err := s.endUnrestorable(ctx, &orkstackv1.RunContinuation{EventSequence: 3}, "RUN_CANCELED", "run canceled")
 		return err
 	}, workflow.RegisterOptions{Name: "cancel-probe"})
@@ -365,7 +366,7 @@ func TestEndUnrestorable_CategoryIsTheReadersForEveryCode(t *testing.T) {
 				activity.RegisterOptions{Name: ActivityPublishEvent})
 			var ended *orkstackv1.Run
 			env.RegisterWorkflowWithOptions(func(ctx workflow.Context) error {
-				s := &runState{runID: "ork-c", wf: refusalOrkflow()}
+				s := &runState{runID: "ork-c", wf: refusalOrkflow(), scope: payloadcrypt.Unsealed()}
 				run, err := s.endUnrestorable(ctx, &orkstackv1.RunContinuation{Generation: 1, EventSequence: 3},
 					tc.code, "the run has stopped")
 				ended = run

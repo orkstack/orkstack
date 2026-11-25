@@ -26,13 +26,13 @@ const ActivityAdoptRecorded = "AdoptRecorded"
 // the call's retry policy, and the workflow fails the first unread entry
 // COMMIT_READ_FAILED once the phase's deadline passes.
 const (
-	reasonCommitMissing = "COMMIT_MISSING"
-	// reasonCommitIdentity: a commit is there and is another activity's,
+	ReasonCommitMissing = "COMMIT_MISSING"
+	// ReasonCommitIdentity: a commit is there and is another activity's,
 	// as the Orker's retry-start check names it.
-	reasonCommitIdentity    = "COMMIT_IDENTITY_MISMATCH"
-	reasonCommitUndecodable = "COMMIT_UNDECODABLE"
-	reasonCommitReadFailed  = "COMMIT_READ_FAILED"
-	reasonValuesMissing     = "VALUES_MISSING"
+	ReasonCommitIdentity    = "COMMIT_IDENTITY_MISMATCH"
+	ReasonCommitUndecodable = "COMMIT_UNDECODABLE"
+	ReasonCommitReadFailed  = "COMMIT_READ_FAILED"
+	ReasonValuesMissing     = "VALUES_MISSING"
 )
 
 // adoptInlineValuesLimit is the largest values.json an adopted result
@@ -63,6 +63,7 @@ type ResumeActivities struct {
 	history           historyReader
 	temporalNamespace string
 	records           resumePlanSource
+	observer          ResumeObserver
 }
 
 // NewResumeActivities builds them over the deployment's commit and
@@ -83,7 +84,7 @@ func (a *ResumeActivities) AdoptRecorded(ctx context.Context, in *orkstackv1.Ado
 	if why := adoptInputFault(in); why != "" {
 		// The workflow pins every bound; an input without them is a fault of
 		// the build that made it, and reading on unbounded would hide it.
-		return nil, temporal.NewNonRetryableApplicationError("read-back input: "+why, reasonCommitReadFailed, nil)
+		return nil, temporal.NewNonRetryableApplicationError("read-back input: "+why, ReasonCommitReadFailed, nil)
 	}
 	entries := in.GetEntries()
 	out := &orkstackv1.AdoptRecordedResult{Entries: make([]*orkstackv1.AdoptedEntry, len(entries))}
@@ -126,7 +127,7 @@ func (a *ResumeActivities) AdoptRecorded(ctx context.Context, in *orkstackv1.Ado
 			// resume: commits are create-only, so it never fits on a retry.
 			return nil, temporal.NewNonRetryableApplicationError(fmt.Sprintf(
 				"the read-back of %d entries encodes to %d bytes, over its %d-byte call", len(entries), size, budget),
-				reasonCommitReadFailed, nil)
+				ReasonCommitReadFailed, nil)
 		}
 	}
 	return out, nil
@@ -157,11 +158,11 @@ func isFinal(err error) bool { return categoryOf(err).nonRetryable() }
 func (a *ResumeActivities) adoptOne(ctx context.Context, e *orkstackv1.AdoptEntry, getTimeout time.Duration, tries int) (*orkstackv1.ExecuteTaskResult, error) {
 	if e.GetKind() != orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_COMMIT {
 		return nil, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("%s: read-back entry kind %v is not one this build reads", unitLabel(e), e.GetKind()), reasonCommitReadFailed, nil)
+			fmt.Sprintf("%s: read-back entry kind %v is not one this build reads", unitLabel(e), e.GetKind()), ReasonCommitReadFailed, nil)
 	}
 	if a.commits == nil || e.GetCommitUri() == "" {
 		return nil, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("%s: no commit to read back (no commit store, or no commit uri)", unitLabel(e)), reasonCommitMissing, nil)
+			fmt.Sprintf("%s: no commit to read back (no commit store, or no commit uri)", unitLabel(e)), ReasonCommitMissing, nil)
 	}
 	tctx := ctx
 	if getTimeout > 0 {
@@ -177,10 +178,10 @@ func (a *ResumeActivities) adoptOne(ctx context.Context, e *orkstackv1.AdoptEntr
 			return a.resultOf(tctx, e, record)
 		case artifacts.CommitAbsent:
 			return nil, temporal.NewNonRetryableApplicationError(
-				fmt.Sprintf("%s: its kept result is gone: %v", unitLabel(e), err), reasonCommitMissing, err)
+				fmt.Sprintf("%s: its kept result is gone: %v", unitLabel(e), err), ReasonCommitMissing, err)
 		case artifacts.CommitUndecodable:
 			return nil, temporal.NewNonRetryableApplicationError(
-				fmt.Sprintf("%s: %v", unitLabel(e), err), reasonCommitUndecodable, err)
+				fmt.Sprintf("%s: %v", unitLabel(e), err), ReasonCommitUndecodable, err)
 		}
 		last = err
 		if tctx.Err() != nil || try == max(1, tries)-1 {
@@ -196,7 +197,7 @@ func (a *ResumeActivities) adoptOne(ctx context.Context, e *orkstackv1.AdoptEntr
 		}
 	}
 	return nil, temporal.NewApplicationErrorWithCause(
-		fmt.Sprintf("%s: the commit store did not answer: %v", unitLabel(e), last), reasonCommitReadFailed, last)
+		fmt.Sprintf("%s: the commit store did not answer: %v", unitLabel(e), last), ReasonCommitReadFailed, last)
 }
 
 // resultOf is the result an adopting Orker returns for record: identity
@@ -214,7 +215,7 @@ func (a *ResumeActivities) resultOf(ctx context.Context, e *orkstackv1.AdoptEntr
 	if mismatch := want.Mismatch(commit); mismatch != "" {
 		return nil, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("%s: the commit at %s is for a different activity: %s", unitLabel(e), e.GetCommitUri(), mismatch),
-			reasonCommitIdentity, nil)
+			ReasonCommitIdentity, nil)
 	}
 	result := &orkstackv1.ExecuteTaskResult{
 		TaskId:          e.GetTaskId(),
@@ -248,28 +249,28 @@ func (a *ResumeActivities) resultOf(ctx context.Context, e *orkstackv1.AdoptEntr
 func (a *ResumeActivities) readValues(ctx context.Context, e *orkstackv1.AdoptEntry, ref *orkstackv1.ArtifactRef) ([]byte, error) {
 	if a.values == nil {
 		return nil, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("%s: no artifact store to read its values from", unitLabel(e)), reasonValuesMissing, nil)
+			fmt.Sprintf("%s: no artifact store to read its values from", unitLabel(e)), ReasonValuesMissing, nil)
 	}
 	reader, err := a.values.Get(ctx, ref.GetUri())
 	if errors.Is(err, artifacts.ErrNotFound) {
 		return nil, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("%s: its values.json at %s is gone", unitLabel(e), ref.GetUri()), reasonValuesMissing, err)
+			fmt.Sprintf("%s: its values.json at %s is gone", unitLabel(e), ref.GetUri()), ReasonValuesMissing, err)
 	}
 	if err != nil {
 		return nil, temporal.NewApplicationErrorWithCause(
-			fmt.Sprintf("%s: read its values.json at %s: %v", unitLabel(e), ref.GetUri(), err), reasonCommitReadFailed, err)
+			fmt.Sprintf("%s: read its values.json at %s: %v", unitLabel(e), ref.GetUri(), err), ReasonCommitReadFailed, err)
 	}
 	defer func() { _ = reader.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(reader, adoptInlineValuesLimit+1))
 	if err != nil {
 		return nil, temporal.NewApplicationErrorWithCause(
-			fmt.Sprintf("%s: read its values.json at %s: %v", unitLabel(e), ref.GetUri(), err), reasonCommitReadFailed, err)
+			fmt.Sprintf("%s: read its values.json at %s: %v", unitLabel(e), ref.GetUri(), err), ReasonCommitReadFailed, err)
 	}
 	sum := sha256.Sum256(raw)
 	if got := hex.EncodeToString(sum[:]); got != ref.GetSha256() {
 		return nil, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("%s: its values.json at %s hashes to %s, the commit records %s", unitLabel(e), ref.GetUri(), got, ref.GetSha256()),
-			reasonValuesMissing, nil)
+			ReasonValuesMissing, nil)
 	}
 	return raw, nil
 }

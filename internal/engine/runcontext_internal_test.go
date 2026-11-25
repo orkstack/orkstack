@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -25,6 +26,7 @@ func runContextState(t *testing.T, retry *orkstackv1.RetryPolicy) (*runState, *o
 	created := time.Date(2026, 11, 19, 5, 0, 0, 412_000_000, time.UTC)
 	s := &runState{
 		runID: "ork-rc",
+		scope: payloadcrypt.Unsealed(),
 		wf:    &orkstackv1.Orkflow{Name: "load", Version: "7", Namespace: "default", Tasks: []*orkstackv1.Task{tk}},
 		plan: RunPlan{
 			RunContextSHA256:   testRunContextSHA,

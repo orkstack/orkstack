@@ -50,22 +50,24 @@ while :; do
   n=$(( $(cat "$broker/count/$id" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$broker/count/$id"
   cp "$broker/held/$id" "$ans/tmp/b" && mv "$ans/tmp/b" "$ans/$lane/body"
   say "$lane/message.json" "{\"schemaVersion\":1,\"seq\":$seq,\"id\":\"dir:$id\",\"bodyBytes\":$(stat -c %s "$ans/$lane/body"),\"deliveryCount\":$n}"
-  held_at=$(date +%s) action=''
+  held_at=$(date +%s) action='' v='' vid=''
   while [ -z "$action" ]; do
     tick                                                                  # status, checks and the beat while holding
-    v=$(jq -r "select(.seq==$seq) | .action" "$ask/$lane/verdict.json" 2>/dev/null || true)
+    # One read: the action and the id are one verdict's.
+    read -r v vid < <(jq -r "select(.seq==$seq) | \"\(.action) \(.verdictId)\"" "$ask/$lane/verdict.json" 2>/dev/null) || v='' vid=''
     if [ -n "$v" ]; then action=$v
-    elif [ "$stop" = 1 ] || [ "$orphaned" = 1 ]; then action=release
+    elif [ "$stop" = 1 ] || [ "$orphaned" = 1 ]; then action=stopped
     elif [ $(( $(date +%s) - held_at )) -ge "$hold" ]; then action=hold_expired
     else sleep 0.2; fi
   done
   case $action in
     ack) mv "$broker/held/$id" "$broker/done/$id"
-         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":true}" ;;
+         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"verdictId\":\"$vid\",\"ok\":true}" ;;
     hold_expired) give_back "$id"
          say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":false,\"error\":{\"kind\":\"hold_expired\"}}" ;;
+    stopped) give_back "$id" ;;                                        # no verdict to settle: ended by the exit
     *)   give_back "$id"
-         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"ok\":true}" ;;
+         say "$lane/settled.json" "{\"schemaVersion\":1,\"seq\":$seq,\"verdictId\":\"$vid\",\"ok\":true}" ;;
   esac
   answered=$seq
   if [ "$orphaned" = 1 ]; then exit 3; fi

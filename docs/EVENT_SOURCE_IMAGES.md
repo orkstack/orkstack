@@ -191,8 +191,13 @@ the broker: three in a row on a lane end the attempt `SERVICE_UNRESPONSIVE`.
 ### `verdict.json`
 
 ```json
-{ "schemaVersion": 1, "seq": 42, "action": "ack", "delaySeconds": 0 }
+{ "schemaVersion": 1, "seq": 42, "verdictId": "42-9f3c01ab7d2e4c58a1b0e6f3d9c27a14", "action": "ack", "delaySeconds": 0 }
 ```
+
+`verdictId` names this verdict: fresh for each one, with 128 random bits, so
+no image can make it up without reading it. The `settled.json` that answers
+it carries it back, so a settle the Orker did not ask for is recognised
+whenever it lands.
 
 | `action` | The container must |
 |---|---|
@@ -205,12 +210,21 @@ For an at-most-once image `release` and `reject` both mean "forget it".
 ### `settled.json`
 
 ```json
-{ "schemaVersion": 1, "seq": 42, "ok": true }
+{ "schemaVersion": 1, "seq": 42, "verdictId": "42-9f3c01ab7d2e4c58a1b0e6f3d9c27a14", "ok": true }
 ```
 
 ```json
-{ "schemaVersion": 1, "seq": 42, "ok": false, "error": { "kind": "refused", "code": "AccessDenied" } }
+{ "schemaVersion": 1, "seq": 42, "verdictId": "42-9f3c01ab7d2e4c58a1b0e6f3d9c27a14", "ok": false, "error": { "kind": "refused", "code": "AccessDenied" } }
 ```
+
+A settle that answers a verdict carries that verdict's `verdictId`, exactly
+as written. Only the container's own close at the hold bound
+(`hold_expired`) carries none, and it is taken only once `holdSeconds` have
+passed. A settle of the exchange with another id, with none, or closing it
+before its bound ends the attempt `SERVICE_CONTRACT_VIOLATION`: the Orker
+never records it as the verdict's outcome. The id proves that the container
+read the verdict before it settled, and nothing of what the broker did: that
+stays the image's word.
 
 | `error.kind` | Means |
 |---|---|
@@ -272,9 +286,12 @@ that object storage refuses — 15 minutes by default. `holdSeconds` is that
 plus a minute (960). Past `holdSeconds` without a verdict the container
 releases the message itself and writes `settled.json` with `hold_expired`,
 which closes the exchange; a verdict written at the same moment is ignored by
-both sides. An Orker that hangs therefore cannot keep a message leased for
-ever, and a container that keeps the bound is never called a violator for
-it.
+both sides, and the receipt says `MESSAGE_RELEASED_HOLD_EXPIRED` unless a run
+was already started for the message, which keeps its accepted receipt. A
+receipt is written before its verdict, so a close that crosses one leaves the
+decided receipt and this one, and this one says what happened. An Orker that
+hangs therefore cannot keep a message leased for ever, and a container that
+keeps the bound is never called a violator for it.
 
 ## Stopping, and a lost beat
 
@@ -287,17 +304,19 @@ it.
      lost and counted in the last status's `broker.dropped`.
 2. On SIGTERM the container answers a pending poll with `empty.json`,
    releases a message it receives in that instant, applies every verdict
-   already written, releases every message still without one, lets
-   settlements in flight finish, and exits `0`.
+   already written, releases every message still without one at the broker
+   and writes no `settled.json` for it (there is no verdict to name; the exit
+   ends the exchange), lets settlements in flight finish, and exits `0`.
 3. After a SIGKILL, what the container held returns when its leases expire.
 
 Each release spends one delivery count at the broker.
 
 **A lost beat** is a stop nobody will finish: when `ask/alive.json` has not
-changed for `orphanSeconds`, the container releases what it holds, stops
-taking messages and exits. It is what keeps a container whose Orker was
-killed from holding a share of a queue and dropping it in silence, and it is
-the image's duty: nothing of OrkStack is left on the host to end it.
+changed for `orphanSeconds`, the container releases what it holds, with no
+`settled.json` either, stops taking messages and exits. It is what keeps a
+container whose Orker was killed from holding a share of a queue and dropping
+it in silence, and it is the image's duty: nothing of OrkStack is left on the
+host to end it.
 
 ## Limits
 
@@ -369,8 +388,8 @@ true but whose `broker` block has no accepted `maxDeliveries` (2 to 100) or
 no `messageLimitBytes` reads as `OBJECT_INVALID` or `MESSAGE_LIMIT`, and a
 status that is still not ready and healthy when the startup bound ends
 fails the status check with its reason. A `settled.json` written before the
-Orker gave a verdict fails the message check: an image never acknowledges
-on its own.
+Orker gave a verdict, or one that does not name the verdict it answers,
+fails the message check: an image never acknowledges on its own.
 
 It cannot prove an image's behaviour at a real broker: a message check runs
 against whatever `--publish-exec` reaches.
@@ -408,7 +427,7 @@ and passes the same checks. Beside them,
 is the Bash source with one thing a contract-keeping image never does,
 chosen by `--build-arg MODE=`: it hands over a symbolic link, never answers
 a poll, ignores SIGTERM or the beat, reports a delivery limit of a billion,
-or settles before a verdict, and fails the check about it; or it fills its
+or settles before a verdict or without naming one, and fails the check about it; or it fills its
 answer filesystem, or nests directories in it, until "no space", and then
 passes every check, which shows the filesystem's bound held.
 

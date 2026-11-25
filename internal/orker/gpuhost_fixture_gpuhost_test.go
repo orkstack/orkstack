@@ -26,13 +26,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"go.temporal.io/sdk/activity"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -260,7 +264,10 @@ func newGPUOrker(ctx context.Context, t *testing.T, spec gpuHostSpec, o gpuOrker
 	}
 	c := newCapacity(amount{}, ceiling.cpuMemory(), o.slots)
 	c.useUnits(gpuHostProfile, len(o.units), int(o.maxGPU), unitHealthReporter(s, gpuHostProfile, time.Now))
-	a := &Activities{dispatcher: d, profiles: s, capacity: c}
+	a := &Activities{
+		dispatcher: d, profiles: s, capacity: c, cordon: NewCordon(), pins: newOpenPins(),
+		stops: newStopRegistry(), taskQueue: "default-test-taskqueue",
+	}
 	if err := a.bootGPU(ctx); err != nil {
 		t.Fatalf("bootGPU: %v", err)
 	}
@@ -327,14 +334,57 @@ func (g *gpuOrker) task(t *testing.T, id string, n int32, command ...string) *or
 	}
 }
 
-// poll is a polled task's admission, as the cordon interceptor makes it:
-// the poll granted, then trimmed to the task's resolved request. done ends
-// the activity and releases the poll's permit, as the SDK does.
+// registeredActivities is what RegisterTaskActivities registers, by name.
+type registeredActivities map[string]any
+
+func (r registeredActivities) RegisterActivityWithOptions(fn any, o activity.RegisterOptions) {
+	r[o.Name] = fn
+}
+
+// poll is a polled task's admission, made by the Orker's own interceptor: the
+// poll granted, and in delivered to an activity of the very type the Orker
+// registers ExecuteTask with, since what the interceptor reads of a task is what
+// that function takes. The activity hands over its admission and holds until
+// done, which ends it and releases the poll's permit, as the SDK does.
 func (g *gpuOrker) poll(t *testing.T, in *orkstackv1.ExecuteTaskInput) (*Admission, func()) {
 	t.Helper()
-	a, release := pollTask(t, g.c, amountFromProto(g.d.Policy.ReservedResources(in.GetResources())))
+	permit := g.c.tryReserve()
+	if permit == nil {
+		t.Fatal("the poll was not granted")
+	}
+	g.c.markUsed(permit)
+	registered := registeredActivities{}
+	g.a.RegisterTaskActivities(registered)
+	typ := reflect.TypeOf(registered[task.ActivityExecuteTask])
+	admitted, end, ended := make(chan *Admission, 1), make(chan struct{}), make(chan error, 1)
+	held := reflect.MakeFunc(typ, func(args []reflect.Value) []reflect.Value {
+		admitted <- admissionFrom(args[0].Interface().(context.Context))
+		<-end
+		return []reflect.Value{reflect.Zero(typ.Out(0)), reflect.Zero(typ.Out(1))}
+	})
+	env := activityEnv(g.a)
+	env.RegisterActivityWithOptions(held.Interface(), activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	go func() {
+		_, err := env.ExecuteActivity(task.ActivityExecuteTask, in)
+		ended <- err
+	}()
+	var a *Admission
+	select {
+	case a = <-admitted:
+	case err := <-ended:
+		g.c.release(permit)
+		t.Fatalf("the interceptor did not admit the task: %v", err)
+	}
 	var once sync.Once
-	return a, func() { once.Do(func() { a.Done(); release() }) }
+	done := func() {
+		once.Do(func() {
+			close(end)
+			<-ended
+			g.c.release(permit)
+		})
+	}
+	t.Cleanup(done)
+	return a, done
 }
 
 // run is one polled attempt of in through the real dispatcher, under a.
@@ -463,7 +513,8 @@ func (g *gpuOrker) probeOnce(ctx context.Context, t *testing.T, image string, i 
 	if err != nil {
 		t.Fatalf("probeUnit(%d): %v", i, err)
 	}
-	healthy, detail, err := g.d.probeGPUUnit(ctx, g.d.Runtime.(bootProber), g.d.WorkRoot, image, offer, i, audit.unitNodes[i])
+	out, err := g.d.probeGPUUnit(ctx, g.d.Runtime.(bootProber), g.d.WorkRoot, image, offer, i, audit.unitNodes[i])
+	healthy, detail := out.verdict == unitIsHealthy, out.detail
 	if err != nil {
 		g.c.abandonProbe(probe)
 		t.Fatalf("probe unit %d: %v", i, err)

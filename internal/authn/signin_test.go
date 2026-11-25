@@ -3,6 +3,7 @@ package authn
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/cookiejar"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -199,6 +201,146 @@ func TestSignin_TheCodeFlowSignsAPersonIn(t *testing.T) {
 	if got := f.signIn(t, "//evil.example/x"); got.Path != "/" || got.Host != f.engine.Listener.Addr().String() {
 		t.Errorf("an unsafe return path returned to %s", got)
 	}
+}
+
+// A browser drops a cookie over its limit, and the sign-in it was for then
+// fails. So the login cookie always fits: a return path that would push it
+// over is dropped, and the sign-in lands on "/".
+func TestSignin_TheLoginCookieAlwaysFitsABrowser(t *testing.T) {
+	f := newSigninFixture(t, oidctest.Options{})
+	noFollow := *f.browser
+	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	for _, tt := range []struct {
+		name, ret string
+		kept      bool
+	}{
+		{"a path at its bound", "/" + strings.Repeat("a", MaxReturnPathBytes-1), true},
+		{"ampersands, which are kept as they are", "/?" + strings.Repeat("&", MaxReturnPathBytes-2), true},
+		{"quotes, which double in the sealed state", "/?" + strings.Repeat(`"`, MaxReturnPathBytes-2), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SafeReturnPath(tt.ret); got != tt.ret {
+				t.Fatalf("SafeReturnPath refuses the path itself (%d bytes)", len(tt.ret))
+			}
+			resp, err := noFollow.Get(f.engine.URL + "/v1/auth/login/dev?return=" + url.QueryEscape(tt.ret))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusFound || len(resp.Cookies()) != 1 {
+				t.Fatalf("login answered %d with %d cookies", resp.StatusCode, len(resp.Cookies()))
+			}
+			if n := len(resp.Header.Get("Set-Cookie")); n > maxCookieBytes {
+				t.Errorf("the login cookie is %d bytes; a browser keeps at most %d", n, maxCookieBytes)
+			}
+			want := "/"
+			if tt.kept {
+				want = tt.ret
+			}
+			if got := f.openLogin(t, resp.Cookies()[0].Value).Return; got != want {
+				t.Errorf("the sign-in returns to a path of %d bytes; want %d", len(got), len(want))
+			}
+		})
+	}
+	// And the sign-in itself succeeds, on the default page.
+	if got := f.signIn(t, "/?"+strings.Repeat(`"`, MaxReturnPathBytes-2)); got.Path != "/" || got.RawQuery != "" {
+		t.Fatalf("returned to %.80s; want /", got)
+	}
+	if _, _, err := f.signins.Authenticate(context.Background(), f.cookieRequest(t)); err != nil {
+		t.Fatalf("the sign-in did not happen: %v", err)
+	}
+}
+
+// At the limit: the longest path that fits is kept, one byte more is dropped,
+// and what is dropped would not have fitted.
+func TestSignins_LoginCookieBound(t *testing.T) {
+	f := newSigninFixture(t, oidctest.Options{})
+	state := func(quotes int) loginState {
+		return loginState{Issuer: "dev", State: strings.Repeat("s", 43), Nonce: strings.Repeat("n", 43),
+			Verifier: strings.Repeat("v", 43), Return: "/?" + strings.Repeat(`"`, quotes), Expires: f.clock.Now().Add(loginLifetime)}
+	}
+	kept := func(quotes int) bool {
+		c, err := f.signins.loginCookie(state(quotes))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := len(c.String()); n > maxCookieBytes {
+			t.Fatalf("%d quotes: a cookie of %d bytes", quotes, n)
+		}
+		switch got := f.openLogin(t, c.Value).Return; got {
+		case state(quotes).Return:
+			return true
+		case "/":
+			return false
+		default:
+			t.Fatalf("%d quotes: the return path became %.40q", quotes, got)
+			return false
+		}
+	}
+	last := sort.Search(MaxReturnPathBytes, func(n int) bool { return !kept(n) }) - 1
+	if last < 1 || last >= MaxReturnPathBytes-1 {
+		t.Fatalf("the bound is at %d quotes; want one inside the path's own bound", last)
+	}
+	c, err := f.signins.sealLogin(state(last + 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(c.String()); n <= maxCookieBytes {
+		t.Fatalf("a path that fits, in a cookie of %d bytes, was dropped", n)
+	}
+}
+
+// A state too big even without its path is refused, never sent to be lost.
+func TestSignins_ALoginCookieThatCannotFitIsAnError(t *testing.T) {
+	f := newSigninFixture(t, oidctest.Options{})
+	if c, err := f.signins.loginCookie(loginState{Issuer: strings.Repeat("i", maxCookieBytes), Return: "/runs"}); err == nil {
+		t.Fatalf("a cookie of %d bytes was made", len(c.String()))
+	}
+}
+
+// The callback checks the path again rather than trusting what it sealed.
+func TestSignin_TheCallbackChecksTheReturnPathAgain(t *testing.T) {
+	f := newSigninFixture(t, oidctest.Options{})
+	noFollow := *f.browser
+	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := noFollow.Get(f.engine.URL + "/v1/auth/login/dev?return=/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	ls := f.openLogin(t, resp.Cookies()[0].Value)
+	ls.Return = "//evil.example/x"
+	planted, err := f.signins.loginCookie(ls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := url.Parse(f.engine.URL)
+	f.browser.Jar.SetCookies(engine, []*http.Cookie{planted})
+	if resp, err = noFollow.Get(resp.Header.Get("Location")); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp, err = noFollow.Get(resp.Header.Get("Location")); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if got := resp.Header.Get("Location"); resp.StatusCode != http.StatusFound || got != "/" {
+		t.Fatalf("the callback answered %d to %q; want a redirect to /", resp.StatusCode, got)
+	}
+}
+
+// openLogin is a login cookie's plaintext.
+func (f *signinFixture) openLogin(t *testing.T, value string) loginState {
+	t.Helper()
+	plain, err := f.signins.Sealer.Open(PurposeLogin, "", []byte(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ls loginState
+	if err := json.Unmarshal(plain, &ls); err != nil {
+		t.Fatal(err)
+	}
+	return ls
 }
 
 func TestSignin_CallbackRefusals(t *testing.T) {

@@ -463,8 +463,12 @@ func (s *serviceSuite) converse(ctx context.Context, r *serviceRun) {
 	}
 	if err == nil {
 		vctx, cancel := context.WithTimeout(ctx, time.Minute)
-		_, err = driver.Verdict(vctx, held.Message, sourcehost.Decision{Disposition: sourcehost.Wait, Action: sourcehost.ActionRelease})
+		var released sourcehost.Exchange
+		released, err = driver.Verdict(vctx, held.Message, sourcehost.Decision{Disposition: sourcehost.Wait, Action: sourcehost.ActionRelease})
 		cancel()
+		if err == nil && released.Kind != sourcehost.ExchangeSettled {
+			err = fmt.Errorf("the release ended kind %d, not settled", released.Kind)
+		}
 	}
 	if err == nil {
 		door.setWait(false)

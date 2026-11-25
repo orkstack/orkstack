@@ -134,6 +134,7 @@ var profileReasonWords = map[orkstackv1.ProfileCordonReason]string{
 	orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD:      "containers it did not start hold its units",
 	orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_ABSENT:           "a device is not there",
 	orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_UNITS_BELOW_CEILING:     "fewer of its units are usable than the per-task gpu cap (max_request.gpu), so the Orker polls for no task",
+	orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_NOT_STARTED:       "the container engine does not start its unit probes",
 }
 
 // profileCauses are an Orker's profile causes, those that take it out of its

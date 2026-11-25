@@ -54,7 +54,7 @@ type pinHarness struct {
 func newPinHarness(t *testing.T, steps map[string]step) *pinHarness {
 	t.Helper()
 	h := &pinHarness{timeoutHarness: newTimeoutHarness(t)}
-	h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true})
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{EnableSessionWorker: true}))
 	h.env.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.ReleasePinInput) error {
 		h.mu.Lock()
 		defer h.mu.Unlock()

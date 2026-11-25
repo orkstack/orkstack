@@ -610,6 +610,10 @@ const (
 	// for no task. The profile is unavailable, and its pool stays live, until
 	// enough units are usable again.
 	ProfileCordonReason_PROFILE_CORDON_REASON_UNITS_BELOW_CEILING ProfileCordonReason = 14
+	// PROBE_NOT_STARTED: the container engine started none of a gpu profile's
+	// unit probes in three passes in a row, which says nothing of the units.
+	// The profile is unavailable, and its pool stays live, until one starts.
+	ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_NOT_STARTED ProfileCordonReason = 15
 )
 
 // Enum value maps for ProfileCordonReason.
@@ -630,6 +634,7 @@ var (
 		12: "PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD",
 		13: "PROFILE_CORDON_REASON_DEVICE_ABSENT",
 		14: "PROFILE_CORDON_REASON_UNITS_BELOW_CEILING",
+		15: "PROFILE_CORDON_REASON_PROBE_NOT_STARTED",
 	}
 	ProfileCordonReason_value = map[string]int32{
 		"PROFILE_CORDON_REASON_UNSPECIFIED":             0,
@@ -647,6 +652,7 @@ var (
 		"PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD":      12,
 		"PROFILE_CORDON_REASON_DEVICE_ABSENT":           13,
 		"PROFILE_CORDON_REASON_UNITS_BELOW_CEILING":     14,
+		"PROFILE_CORDON_REASON_PROBE_NOT_STARTED":       15,
 	}
 )
 
@@ -5358,9 +5364,10 @@ func (x *Orker) GetMetadataProbes() []*MetadataProbe {
 // "<producer>/<name>" of EachSpec.over_artifact, split on the first "/".
 type EachArtifactSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// producer is a task in the fan-out's own needs:.
+	// producer is a task in the fan-out's own needs:, or "_inputs" for an
+	// artifact input of the run.
 	Producer string `protobuf:"bytes,1,opt,name=producer,proto3" json:"producer,omitempty"`
-	// name is the artifact's name as its producer wrote it.
+	// name is the artifact's name as its producer recorded it, or the input's.
 	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -7663,7 +7670,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\"METADATA_PROBE_OUTCOME_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fMETADATA_PROBE_OUTCOME_ANSWERED\x10\x01\x12$\n" +
 	" METADATA_PROBE_OUTCOME_NO_ANSWER\x10\x02\x12'\n" +
-	"#METADATA_PROBE_OUTCOME_PROBE_FAILED\x10\x03*\xb3\x05\n" +
+	"#METADATA_PROBE_OUTCOME_PROBE_FAILED\x10\x03*\xe0\x05\n" +
 	"\x13ProfileCordonReason\x12%\n" +
 	"!PROFILE_CORDON_REASON_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"PROFILE_CORDON_REASON_SPEC_CHANGED\x10\x01\x12(\n" +
@@ -7680,7 +7687,8 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"(PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN\x10\v\x12,\n" +
 	"(PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD\x10\f\x12'\n" +
 	"#PROFILE_CORDON_REASON_DEVICE_ABSENT\x10\r\x12-\n" +
-	")PROFILE_CORDON_REASON_UNITS_BELOW_CEILING\x10\x0e*[\n" +
+	")PROFILE_CORDON_REASON_UNITS_BELOW_CEILING\x10\x0e\x12+\n" +
+	"'PROFILE_CORDON_REASON_PROBE_NOT_STARTED\x10\x0f*[\n" +
 	"\vProfileKind\x12\x1c\n" +
 	"\x18PROFILE_KIND_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14PROFILE_KIND_DEVICES\x10\x01\x12\x14\n" +

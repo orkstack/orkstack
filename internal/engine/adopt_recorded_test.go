@@ -103,11 +103,11 @@ func TestAdoptRecorded_FailsEachCaseWithItsReason(t *testing.T) {
 		reason    string
 		retryable bool
 	}{
-		{"no commit", func(*adoptFixture) {}, entry("mem://c/build", adoptExpected), reasonCommitMissing, false},
-		{"another activity's commit", nil, entry("mem://c/build", other), reasonCommitIdentity, false},
-		{"undecodable", func(f *adoptFixture) { f.commits.PutRaw("mem://c/build", []byte("x")) }, entry("mem://c/build", adoptExpected), reasonCommitUndecodable, false},
-		{"no commit uri", func(*adoptFixture) {}, entry("", adoptExpected), reasonCommitMissing, false},
-		{"the store does not answer", func(f *adoptFixture) { f.acts.commits = unansweringCommits{} }, entry("mem://c/build", adoptExpected), reasonCommitReadFailed, true},
+		{"no commit", func(*adoptFixture) {}, entry("mem://c/build", adoptExpected), ReasonCommitMissing, false},
+		{"another activity's commit", nil, entry("mem://c/build", other), ReasonCommitIdentity, false},
+		{"undecodable", func(f *adoptFixture) { f.commits.PutRaw("mem://c/build", []byte("x")) }, entry("mem://c/build", adoptExpected), ReasonCommitUndecodable, false},
+		{"no commit uri", func(*adoptFixture) {}, entry("", adoptExpected), ReasonCommitMissing, false},
+		{"the store does not answer", func(f *adoptFixture) { f.acts.commits = unansweringCommits{} }, entry("mem://c/build", adoptExpected), ReasonCommitReadFailed, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAdoptFixture(t)
@@ -133,7 +133,7 @@ func TestAdoptRecorded_AFinalFailureWinsOverARetryableOne(t *testing.T) {
 	gone := entry("mem://c/gone", adoptExpected)
 	_, err := f.acts.AdoptRecorded(context.Background(), adoptInput(entry("mem://c/build", adoptExpected), gone))
 	var app *temporal.ApplicationError
-	if !errors.As(err, &app) || app.Type() != reasonCommitMissing {
+	if !errors.As(err, &app) || app.Type() != ReasonCommitMissing {
 		t.Fatalf("error = %v, want COMMIT_MISSING", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestAdoptRecorded_RefusesAnAnswerOverItsBudget(t *testing.T) {
 	in.Budget = 64
 	_, err := f.acts.AdoptRecorded(context.Background(), in)
 	var app *temporal.ApplicationError
-	if !errors.As(err, &app) || app.Type() != reasonCommitReadFailed || !app.NonRetryable() {
+	if !errors.As(err, &app) || app.Type() != ReasonCommitReadFailed || !app.NonRetryable() {
 		t.Fatalf("error = %v, want a final COMMIT_READ_FAILED", err)
 	}
 }
@@ -205,7 +205,7 @@ func TestAdoptRecorded_ReadsValuesOnlyWhenTheyAreWhatTheCommitRecords(t *testing
 			if err := os.Remove(strings.TrimPrefix(rec.Commit.GetValues().GetUri(), "file://")); err != nil {
 				t.Fatal(err)
 			}
-		}, reasonValuesMissing, false},
+		}, ReasonValuesMissing, false},
 		{"values that hash otherwise", func(t *testing.T, f *adoptFixture) {
 			rec, _ := f.commits.Get(ctx, "mem://c/build")
 			rec.Commit.Values.Sha256 = strings.Repeat("0", 64)
@@ -214,8 +214,8 @@ func TestAdoptRecorded_ReadsValuesOnlyWhenTheyAreWhatTheCommitRecords(t *testing
 			if _, err := f.commits.Create(ctx, "mem://c/build", rec.Commit); err != nil {
 				t.Fatal(err)
 			}
-		}, reasonValuesMissing, false},
-		{"a values store that does not answer", func(_ *testing.T, f *adoptFixture) { f.acts.values = failingValues{} }, reasonCommitReadFailed, true},
+		}, ReasonValuesMissing, false},
+		{"a values store that does not answer", func(_ *testing.T, f *adoptFixture) { f.acts.values = failingValues{} }, ReasonCommitReadFailed, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAdoptFixture(t)
@@ -268,7 +268,7 @@ func TestAdoptRecorded_ACanceledCallIsRetryable(t *testing.T) {
 	}
 	_, err := f.acts.AdoptRecorded(ctx, adoptInput(entries...))
 	var app *temporal.ApplicationError
-	if !errors.As(err, &app) || app.NonRetryable() || app.Type() != reasonCommitReadFailed {
+	if !errors.As(err, &app) || app.NonRetryable() || app.Type() != ReasonCommitReadFailed {
 		t.Fatalf("error = %v, want a retryable COMMIT_READ_FAILED", err)
 	}
 }

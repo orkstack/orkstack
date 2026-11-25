@@ -17,13 +17,14 @@ const (
 // groupTitles are the runbook sections, one per rule group, in the order
 // the groups first appear.
 var groupTitles = map[string]string{
-	"pipeline":  "Telemetry pipeline and liveness",
-	"pools":     "Pools, Orkers and usage",
-	"runs":      "Runs, admission and integrity",
-	"storage":   "Archive, object store, API and identity",
-	"temporal":  "Temporal",
-	"schedules": "Schedules, webhooks and triggers",
-	"cleanup":   "Retention cleanup and artifact GC",
+	"pipeline":    "Telemetry pipeline and liveness",
+	"pools":       "Pools, Orkers and usage",
+	"runs":        "Runs, admission and integrity",
+	"storage":     "Archive, object store, API and identity",
+	"temporal":    "Temporal",
+	"schedules":   "Schedules, webhooks and triggers",
+	"concurrency": "Concurrency limits",
+	"cleanup":     "Retention cleanup and artifact GC",
 }
 
 var severityWords = map[Severity]string{Critical: "critical", Warning: "warning", Info: "info", None: "none (always firing)"}

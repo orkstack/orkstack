@@ -45,6 +45,9 @@
 
 	const counts = $derived(stats?.runsByStatus ?? {});
 	const running = $derived(stats?.running ?? []);
+	// Of the running runs, those waiting for a concurrency slot, as `orkctl
+	// stats` counts them: a note only when there are some.
+	const queuedNote = $derived(stats && stats.queued > 0n ? `${fmtCount(stats.queued)} queued` : undefined);
 	const pools = $derived(stats?.pools ?? []);
 	const failures = $derived(stats?.mostFailing ?? []);
 
@@ -280,7 +283,7 @@
 		row of hero numbers. Figures are ink at their own small size; a status
 		count carries its drawn mark, not a coloured number. -->
 	<section aria-label="Run counts" data-testid="dashboard-counts" class="card mb-5 grid grid-cols-12 px-4 py-2.5 lg:grid-cols-7">
-		<CountCell label="Running" value={fmtCount(counts['running'])} testid="stat-running" status={Status.RUNNING} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6" />
+		<CountCell label="Running" value={fmtCount(counts['running'])} note={queuedNote} testid="stat-running" status={Status.RUNNING} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6" />
 		<CountCell label="Succeeded" value={fmtCount(counts['succeeded'])} testid="stat-succeeded" status={Status.SUCCEEDED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6" />
 		<CountCell label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" status={Status.FAILED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6 max-[400px]:border-t max-[400px]:border-l-0 max-[400px]:pl-0" />
 		<CountCell label="Canceled" value={fmtCount(counts['canceled'])} testid="stat-canceled" status={Status.CANCELED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6 max-[400px]:border-t" />

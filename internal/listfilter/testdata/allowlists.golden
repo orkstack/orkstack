@@ -22,6 +22,13 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
+== ListConcurrencyLimits (orkstack.v1.ConcurrencyLimit)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD   OPERATORS       VALUES
+  key     = != =a,b ~ ^   text
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
 == ListDeliveries (orkstack.v1.Delivery)
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD        OPERATORS       VALUES

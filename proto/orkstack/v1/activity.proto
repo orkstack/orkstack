@@ -1222,9 +1222,10 @@ enum EachLineFormat {
 // EachArtifactSource is the artifact a fan-out runs over the lines of:
 // "<producer>/<name>" of EachSpec.over_artifact, split on the first "/".
 message EachArtifactSource {
-  // producer is a task in the fan-out's own needs:.
+  // producer is a task in the fan-out's own needs:, or "_inputs" for an
+  // artifact input of the run.
   string producer = 1;
-  // name is the artifact's name as its producer wrote it.
+  // name is the artifact's name as its producer recorded it, or the input's.
   string name = 2;
 }
 
@@ -1493,6 +1494,10 @@ enum ProfileCordonReason {
   // for no task. The profile is unavailable, and its pool stays live, until
   // enough units are usable again.
   PROFILE_CORDON_REASON_UNITS_BELOW_CEILING = 14;
+  // PROBE_NOT_STARTED: the container engine started none of a gpu profile's
+  // unit probes in three passes in a row, which says nothing of the units.
+  // The profile is unavailable, and its pool stays live, until one starts.
+  PROFILE_CORDON_REASON_PROBE_NOT_STARTED = 15;
 }
 
 // ProfileKind is the closed set of profile kinds compiled into the Orker

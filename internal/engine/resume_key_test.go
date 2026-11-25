@@ -92,7 +92,7 @@ func TestFindResetEvent_IsThisRunsReset(t *testing.T) {
 	own := resetEvent(20, 18, 19, "run-2", "run-1", "ork-resume:v1:30.001:"+testDigest, enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW)
 
 	got, ok := findResetEvent([]*historypb.HistoryEvent{other, timeout, baseReset, own}, "run-2")
-	want := resetFacts{BaseRunID: "run-1", Reason: "ork-resume:v1:30.001:" + testDigest, ScheduledEventID: 18, StartedEventID: 19}
+	want := ResetFacts{BaseRunID: "run-1", Reason: "ork-resume:v1:30.001:" + testDigest, ScheduledEventID: 18, StartedEventID: 19}
 	if !ok || got != want {
 		t.Fatalf("findResetEvent = %+v, %v; want %+v", got, ok, want)
 	}

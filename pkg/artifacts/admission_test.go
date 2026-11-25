@@ -140,6 +140,25 @@ func TestAdmission_ReadAnswers(t *testing.T) {
 	}
 }
 
+// TestAdmission_OfARunThatRunsNoContainer: a run whose tasks all compose,
+// wait or sleep is admitted with no task of its own: its children name its
+// record.
+func TestAdmission_OfARunThatRunsNoContainer(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newFastRecordStoreDown(t)
+	a := testAdmission()
+	a.Tasks, a.Sets, a.Follows, a.Grants = map[string]AdmittedTask{}, nil, nil, nil
+	a.Children = map[string]string{"ship": "ork-2"}
+	sha, _, err := s.WriteAdmission(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadAdmission(ctx, a.Namespace, a.RunID, sha)
+	if err != nil || got.Answer != RecordFound || len(got.Value.Tasks) != 0 || got.Value.Children["ship"] != "ork-2" || got.Value.SetOf("ship") != nil {
+		t.Fatalf("read back %+v, %v", got, err)
+	}
+}
+
 // TestAdmission_RefusesWhatItCannotTrust: a record that would mislead the
 // mint is refused by the encoder, so it is never written, and read back it
 // is invalid.
@@ -162,6 +181,7 @@ func TestAdmission_RefusesWhatItCannotTrust(t *testing.T) {
 		"no spec version":            func(a *Admission) { a.SpecVersion = 0 },
 		"extra over 16":              func(a *Admission) { a.AttemptsExtra = 17 },
 		"no tasks":                   func(a *Admission) { a.Tasks = nil },
+		"a set no task could use":    func(a *Admission) { a.Tasks, a.Follows = map[string]AdmittedTask{}, nil },
 		"a task id":                  func(a *Admission) { a.Tasks["Bad"] = a.Tasks["build"] },
 		"a pool":                     func(a *Admission) { t := a.Tasks["build"]; t.Pool = "P"; a.Tasks["build"] = t },
 		"a spec digest":              func(a *Admission) { t := a.Tasks["build"]; t.SpecSHA256 = ""; a.Tasks["build"] = t },

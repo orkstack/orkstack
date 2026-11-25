@@ -1472,7 +1472,7 @@ export type DiffRunsResponse = Message<"orkstack.v1.DiffRunsResponse"> & {
   to?: Run | undefined;
 
   /**
-   * orkflow_name equal (namespace is equal by construction)
+   * orkflow_name equal, and the namespace that owns it (a shared Orkflow's child run)
    *
    * @generated from field: bool same_orkflow = 3;
    */

@@ -6,16 +6,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
-	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -386,19 +385,20 @@ func TestWorkerOptions_APinHostOnAVersionedDeploymentIsAcceptedByTheSDK(t *testi
 	must.OKf(t, err, "lazy client")
 	defer c.Close()
 
-	// run()'s own registrations, in run()'s order: a pin host registers
-	// ReleasePin beside ExecuteTask, and registration is another panic path.
-	w := worker.New(c, task.DefaultQueue, options)
-	w.RegisterActivityWithOptions(
-		func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-			return nil, nil
-		},
-		activity.RegisterOptions{Name: task.ActivityExecuteTask},
-	)
-	w.RegisterActivityWithOptions(
-		func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
-		activity.RegisterOptions{Name: task.ActivityReleasePin},
-	)
+	// run()'s own registrations: a pin host registers ReleasePin beside
+	// ExecuteTask, and registration is another panic path.
+	(&orker.Activities{}).RegisterTaskActivities(worker.New(c, task.DefaultQueue, options))
+}
+
+// The task worker runs what orker.Activities.RegisterTaskActivities registers
+// and nothing else, so the tests that drive the interceptor through it are
+// handed the arguments production's is.
+func TestRun_RegistersTheTaskWorkersActivitiesInOnePlace(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	must.OKf(t, err, "read main.go")
+	if strings.Count(string(src), "activities.RegisterTaskActivities(taskWorker)") != 1 || strings.Contains(string(src), "taskWorker.Register") {
+		t.Fatal("main.go registers the task worker's activities another way than activities.RegisterTaskActivities(taskWorker)")
+	}
 }
 
 // TestLoadConfig_RefusesAPinCapItCannotRead applies the same rule as the

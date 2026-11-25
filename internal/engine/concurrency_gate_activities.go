@@ -22,11 +22,18 @@ import (
 // §5.1.8): reads of the cluster whose answers the gate's history records,
 // so the gate decides from recorded bytes. Neither writes anything.
 type GateActivities struct {
-	client client.Client
+	client   client.Client
+	arrivals ArrivalObserver
 }
 
 // NewGateActivities returns the gate's activities over c.
 func NewGateActivities(c client.Client) *GateActivities { return &GateActivities{client: c} }
+
+// WithArrivalObserver counts each answered acquire on o; nil counts none.
+func (a *GateActivities) WithArrivalObserver(o ArrivalObserver) *GateActivities {
+	a.arrivals = o
+	return a
+}
 
 // RegisterGateActivities registers them on the engine worker, which runs
 // them as local activities only.

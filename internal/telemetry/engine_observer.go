@@ -40,6 +40,17 @@ type EngineObserver struct {
 	// policy routes the namespaced records no run selection names (a
 	// continuation); nil routes them only when there is one sink.
 	policy *PolicyCache
+	// concurrency counts the waits in line an event ends (Event.wait_end).
+	concurrency *ConcurrencyMetrics
+}
+
+// WithConcurrencyMetrics counts, on m, each wait in a concurrency limit's
+// line that a published event ends. It returns o.
+func (o *EngineObserver) WithConcurrencyMetrics(m *ConcurrencyMetrics) *EngineObserver {
+	if o != nil {
+		o.concurrency = m
+	}
+	return o
 }
 
 // WithPolicyCache makes c the destination of o's namespaced records that no
@@ -143,6 +154,9 @@ func (o *EngineObserver) ObserveEvent(ctx context.Context, event *orkstackv1.Eve
 }
 
 func (o *EngineObserver) recordMetric(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run) {
+	if end := event.GetWaitEnd(); end != nil && run != nil {
+		o.concurrency.Exit(ctx, waitEndArrival(end, run), end.GetWaited().AsDuration())
+	}
 	if event.GetPauseTransition() != orkstackv1.PauseTransition_PAUSE_TRANSITION_UNSPECIFIED && run != nil {
 		if p, ok := o.sinkFor(run); ok {
 			o.recordPause(ctx, event, run, o.instrumentsOf(ctx, p))

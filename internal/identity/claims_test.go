@@ -10,7 +10,7 @@ import (
 
 func claimsAdmission() artifacts.Admission {
 	return artifacts.Admission{
-		RunID: "ork-run", Namespace: "payments", Orkflow: "deploy", OrkflowVersion: "3", DefinitionDigest: "sha256:abc",
+		RunID: "ork-run", Namespace: "payments", Orkflow: "deploy", OrkflowVersion: "3", DefinitionDigest: "abc",
 		Starter: artifacts.Starter{Kind: artifacts.StarterEngine}, Origin: artifacts.AdmittedOrigin{Kind: "submit", Principal: "user:corp:alice", Verified: true},
 		SubjectFormat: string(FormatOrk), NamespaceID: "ns_1", OrkflowID: "of_1",
 	}

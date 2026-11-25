@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,7 +74,13 @@ type OCIDispatcher struct {
 	// identityMint asks the engine for an attempt's identity tokens, and
 	// identityConfig is the Orker's identity settings; both nil for an Orker
 	// that reaches no engine.
-	identityMint   identityMintFunc
+	identityMint identityMintFunc
+	// resultCommit is the engine's CommitResult, for a run whose results the
+	// engine records (recorded_results.go); recordClockFor and recordDrawFor
+	// replace the host's clocks and the retry rule's draw in tests.
+	resultCommit   resultCommitFunc
+	recordClockFor identityClock
+	recordDrawFor  func() float64
 	identityConfig *IdentityConfig
 	// identityDirMu serialises the making of this Orker's own identity
 	// directory by its attempts, should the host have cleared it.
@@ -1096,6 +1103,18 @@ func (d *OCIDispatcher) execute(
 		return nil, failure
 	}
 
+	// STEP 3d. The preflight (recorded_results.go): an attempt of a run
+	// whose results the engine records asks the engine whether it may
+	// commit before anything of it is made, so an attempt the engine would
+	// refuse runs nothing. A task that holds an identity is asked the same
+	// at its mint (step 6a).
+	if recordedRun(in) && !holdsIdentity(in) {
+		beat.Phase("commit-preflight")
+		if failure := d.preflightCommit(ctx, in, attempt); failure != nil {
+			return nil, failure
+		}
+	}
+
 	// STEP 4. The workspace.
 	beat.Phase("workspace")
 	root, err := d.makeAttemptDir(in, attempt)
@@ -1294,6 +1313,7 @@ func (d *OCIDispatcher) execute(
 	if failure != nil {
 		return nil, failure
 	}
+	beat.setUnits(units.profile, units.indices)
 
 	// STEP 6a. The task's identity tokens, for a task that declares one:
 	// after the commit check and the memo step, so neither a committed result
@@ -1416,7 +1436,7 @@ func (d *OCIDispatcher) execute(
 		return nil, beforeClaimStopped(context.Cause(ctx))
 	}
 	// The devices again, just before create (profile_gate.go).
-	if failure := d.profileRecheck(in); failure != nil {
+	if failure := d.profileRecheck(ctx, in, true); failure != nil {
 		return nil, failure
 	}
 	// The ordinal is held from before the create: a create that failed may
@@ -1601,8 +1621,23 @@ func (d *OCIDispatcher) adopt(
 	attempt int32,
 ) (*orkstackv1.ExecuteTaskResult, *Failure) {
 	uri := in.GetCommitUri()
+	if recordedRun(in) && (uri == "" || d.Commits == nil) {
+		return nil, Fail(ReasonCommitIdentity, "task %q is of a run whose results the engine records, and its input names no commit key or this Orker has no commit store", in.GetTaskId())
+	}
 	if uri == "" || d.Commits == nil {
 		return nil, nil
+	}
+	// A run whose results the engine records reads its engine's record and
+	// nothing under metadata/commits/: a commit there, whoever wrote it, is
+	// not this task's result (docs/TASK_IDENTITY.md, "Results the engine
+	// records").
+	recorded := recordedRun(in)
+	if recorded {
+		attested, err := artifacts.AttestedCommitURI(uri)
+		if err != nil {
+			return nil, FailCause(ReasonCommitIdentity, err, "the task's commit uri %s names no commit key: %v", uri, err)
+		}
+		uri = attested
 	}
 	record, err := d.Commits.Get(ctx, uri)
 	switch {
@@ -1648,6 +1683,10 @@ func (d *OCIDispatcher) adopt(
 	if mismatch := commitIdentityMismatch(commit, in); mismatch != "" {
 		return nil, Fail(ReasonCommitIdentity,
 			"the commit at %s is for a different activity: %s", uri, mismatch)
+	}
+	if recorded && commit.GetRecorded() == nil {
+		return nil, Fail(ReasonCommitIdentity,
+			"the record at %s carries no engine's recording, so no engine wrote it", uri)
 	}
 
 	d.logger().Info("adopted durable activity commit",
@@ -1910,6 +1949,17 @@ func (d *OCIDispatcher) stageInputs(
 			}
 			continue
 		}
+		// A run whose results the engine records stages a container
+		// upstream only from its engine record (recorded_results.go). A ref
+		// with no commit uri is a failed need's, given to a failure handler
+		// (it has no result, so no record); an awaited or a composed
+		// upstream is staged from its own record (record_uri), which is
+		// workload-identity §3.6's.
+		if recordedRun(in) {
+			if failure := d.checkUpstreamRecord(ctx, in, up); failure != nil {
+				return nil, failure
+			}
+		}
 		staged.upstreamArtifacts[producer] = up.GetArtifacts()
 
 		for _, ref := range up.GetArtifacts() {
@@ -2133,6 +2183,12 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 // created.
 const ReasonProfileDeclarationMismatch = "PROFILE_DECLARATION_MISMATCH"
 
+// ReasonGPUCountRequired: the task names this Orker's gpu profile and asks
+// for no unit (resources.gpu unset). A gpu profile passes a task nothing but
+// its units, so the definition does not hold: a ContractViolation, never
+// retried, found at step 3c before any container.
+const ReasonGPUCountRequired = "GPU_COUNT_REQUIRED"
+
 // profileGate is execute's STEP 3c (profile_gate.go, profile_contracts.go):
 // each profile the task names offered here, its devices as audited, and the
 // contract that serves the run. It returns that contract's devices, and
@@ -2143,6 +2199,17 @@ func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heart
 		return nil, nil
 	}
 	beat.Phase("profiles")
+	// A gpu profile passes a task only its units, so a task naming the
+	// declared one with no count is a definition that cannot hold, whatever
+	// the profile's state on this Orker (offered, waiting for the host lock,
+	// drifted): checked before the drift check and the contract.
+	if d.profiles != nil && in.GetResources().GetGpu() == 0 {
+		if p, ok := gpuProfileOf(d.profiles.declared); ok &&
+			slices.ContainsFunc(in.GetDevices(), func(r *orkstackv1.ProfileRef) bool { return r.GetName() == p.Name }) {
+			return nil, Fail(ReasonGPUCountRequired,
+				"task %q names the gpu profile %q and asks for no unit; set resources.gpu to the units it needs", in.GetTaskId(), p.Name)
+		}
+	}
 	if d.profiles == nil {
 		return nil, Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
 	}
@@ -2155,15 +2222,16 @@ func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heart
 }
 
 // profileRecheck is the device comparison just before the container is
-// created, and again just before it is started.
-func (d *OCIDispatcher) profileRecheck(in *orkstackv1.ExecuteTaskInput) *Failure {
+// created (beforeCreate, which also asks the engine's runtime once and rescans
+// the spec directories) and again just before it is started.
+func (d *OCIDispatcher) profileRecheck(ctx context.Context, in *orkstackv1.ExecuteTaskInput, beforeCreate bool) *Failure {
 	if len(in.GetDevices()) == 0 {
 		return nil
 	}
 	if d.profiles == nil {
 		return Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
 	}
-	return d.profiles.recheck(in.GetDevices(), d.deviceInspector(), time.Now())
+	return d.profiles.recheck(ctx, in.GetDevices(), d.deviceInspector(), time.Now(), beforeCreate)
 }
 
 // effectiveProfiles is what the attempt record says each profile ran under:
@@ -2520,7 +2588,7 @@ func (d *OCIDispatcher) runContainer(
 	// creates it (design Q18), so a spec or node changed since the create is
 	// drift here. Start is never called, so the attempt never started; the
 	// deferred removal frees the container and its units.
-	if failure := d.profileRecheck(in); failure != nil {
+	if failure := d.profileRecheck(ctx, in, false); failure != nil {
 		beat.setUsage(unmeasuredSampler(reasonNotRun))
 		return capture, failure
 	}
@@ -2858,9 +2926,16 @@ func (d *OCIDispatcher) commit(
 		result.LineIndexes = d.buildLineIndexes(ctx, in, produced)
 	}
 
+	if recordedRun(in) && (d.Commits == nil || in.GetCommitUri() == "") {
+		// Never success without an engine's record.
+		return nil, Fail(ReasonCommitIdentity, "task %q is of a run whose results the engine records, and its input names no commit key or this Orker has no commit store", in.GetTaskId())
+	}
 	if d.Commits == nil || in.GetCommitUri() == "" {
 		result.Cache = resultCache(trace.decision())
 		return result, nil
+	}
+	if recordedRun(in) {
+		return d.recordThroughEngine(ctx, in, attempt, commit, result, trace)
 	}
 	record, err := d.Commits.Create(ctx, in.GetCommitUri(), commit)
 	switch {
@@ -3580,4 +3655,15 @@ func containerLabels(in *orkstackv1.ExecuteTaskInput, ordinal int32, orkerID str
 		labels["ork.item"] = fmt.Sprintf("%d", each.GetIndex())
 	}
 	return labels
+}
+
+// recordedRun reports whether in is a task of a run whose results the
+// engine records: a run tree that holds a task identity, whose every
+// container task's input carries its identity context.
+func recordedRun(in *orkstackv1.ExecuteTaskInput) bool { return in.GetIdentity() != nil }
+
+// holdsIdentity reports whether in's task declares an identity or a
+// credential, which its mint asks for.
+func holdsIdentity(in *orkstackv1.ExecuteTaskInput) bool {
+	return len(in.GetIdentity().GetIdentities()) > 0 || len(in.GetIdentity().GetCredentials()) > 0
 }

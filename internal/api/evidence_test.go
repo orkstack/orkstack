@@ -631,6 +631,57 @@ func TestExportRunEvidence_DefinitionDeletedAndMismatchAreDistinct(t *testing.T)
 }
 
 // H7
+// A child run of another namespace's shared Orkflow pinned its owner's
+// document: the bundle holds that one, never the running namespace's own
+// Orkflow of the same name, and says it is deleted only when the owner's is.
+func TestExportRunEvidence_SharedChildHoldsItsOwnersDefinition(t *testing.T) {
+	setUp := func(t *testing.T, runID string) (*evidenceFixture, string) {
+		f := newEvidenceFixture(t)
+		store := func(namespace, uses string) string {
+			wf := &orkstackv1.Orkflow{Namespace: namespace, Name: "build", Version: "1.0.0", SourceYaml: "# of " + namespace + "\n",
+				Tasks: []*orkstackv1.Task{{Id: "t", Uses: uses}}}
+			digest, err := dsl.DefinitionDigest(wf)
+			must.OK(t, err)
+			wf.DefinitionDigest = digest
+			_, _, err = f.orkflows.Put(context.Background(), wf, artifacts.NoHeadExpectation())
+			must.OK(t, err)
+			return digest
+		}
+		owners, own := store("platform", "shell"), store("payments", "http")
+		if owners == own {
+			t.Fatal("the two documents hash alike: the test would prove nothing")
+		}
+		s := f.succeeded(runID)
+		s.run.Namespace, s.run.OrkflowNamespace = "payments", "platform"
+		s.run.OrkflowName, s.run.OrkflowVersion, s.run.OrkflowDefinitionDigest = "build", "1.0.0", owners
+		s.run.Id = runID + "-child"
+		f.finish(s.run)
+		return f, s.run.GetId()
+	}
+	t.Run("present", func(t *testing.T) {
+		f, id := setUp(t, "ork-ev-s1")
+		r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: id, Namespace: "payments"})
+		if got := string(tarMembers(t, r.data)["orkflow/source.yaml"]); got != "# of platform\n" || r.manifest.Definition.State != evidence.StatePresent {
+			t.Fatalf("source = %q, definition = %+v; want the owner's document", got, r.manifest.Definition)
+		}
+		if r.manifest.OrkflowNamespace != "platform" || r.manifest.Namespace != "payments" {
+			t.Fatalf("manifest names %s's Orkflow run in %s", r.manifest.OrkflowNamespace, r.manifest.Namespace)
+		}
+		if m := memberAt(t, r.manifest, "orkflow/source.yaml"); m.Origin != "metadata/orkflows/platform/build/1.0.0.json#source_yaml" {
+			t.Fatalf("origin = %q, want the owner's document", m.Origin)
+		}
+		verifyBundle(t, r.data)
+	})
+	t.Run("deleted by its owner", func(t *testing.T) {
+		f, id := setUp(t, "ork-ev-s2")
+		must.OK(t, f.orkflows.Delete(context.Background(), "platform", "build"))
+		r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: id, Namespace: "payments"})
+		if r.manifest.Definition.Reason != evidence.ReasonDefinitionDeleted {
+			t.Fatalf("definition = %+v, want definition_deleted", r.manifest.Definition)
+		}
+	})
+}
+
 func TestExportRunEvidence_MismatchedBytesAbortWithoutLast(t *testing.T) {
 	t.Run("artifact", func(t *testing.T) {
 		f := newEvidenceFixture(t)
@@ -1017,5 +1068,152 @@ func TestEvidence_RunTimeoutRoundTrips(t *testing.T) {
 	}
 	if r.manifest.RunStatus != "FAILED" {
 		t.Fatalf("manifest run_status = %q, want FAILED", r.manifest.RunStatus)
+	}
+}
+
+// A child's bundle lists what it received as artifact members of the
+// reserved producer _inputs, with their source, and adds no task entry for
+// it; a parent's composed task lists the artifacts its child returned like
+// any task's, with their source too. --no-artifacts drops both.
+func TestExport_ReceivedAndReturnedArtifactMembers(t *testing.T) {
+	f := newEvidenceFixture(t)
+	dataBytes := []byte("dataset\n")
+	data := f.put("dataset.tar", dataBytes)
+	source := func(ref *orkstackv1.ArtifactRef, name string) *orkstackv1.ArtifactRef {
+		c := proto.Clone(ref).(*orkstackv1.ArtifactRef)
+		c.Name = name
+		c.Metadata = map[string]string{engine.ArtifactSourceRunKey: "ork-parent", engine.ArtifactSourceTaskKey: "build",
+			engine.ArtifactSourceNameKey: "dataset.tar"}
+		return c
+	}
+	f.finish(&orkstackv1.Run{Id: "ork-child",
+		InputArtifacts: []*orkstackv1.NamedArtifact{{Name: "dataset", RunId: "ork-parent", TaskId: "build",
+			Artifact: source(data, "dataset")}}})
+	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-child"})
+	member := memberAt(t, r.manifest, "tasks/_inputs/artifacts/dataset")
+	if member.Kind != evidence.KindArtifact || member.TaskID != "_inputs" || member.Name != "dataset" ||
+		member.Origin != data.GetUri() || member.State != evidence.StatePresent ||
+		member.SourceRunID != "ork-parent" || member.SourceTaskID != "build" || member.SourceName != "dataset.tar" {
+		t.Fatalf("received member = %+v", member)
+	}
+	for _, task := range r.manifest.Tasks {
+		if task.TaskID == "_inputs" {
+			t.Fatal("_inputs has a task entry")
+		}
+	}
+	if !bytes.Equal(tarMembers(t, r.data)["tasks/_inputs/artifacts/dataset"], dataBytes) {
+		t.Fatal("the received member's bytes differ")
+	}
+	verifyBundle(t, r.data)
+
+	f.finish(&orkstackv1.Run{Id: "ork-parent", TaskRuns: []*orkstackv1.TaskRun{{
+		TaskId: "train", Status: orkstackv1.Status_STATUS_SUCCEEDED, Child: &orkstackv1.TaskChild{RunId: "ork-child"},
+		Artifacts: []*orkstackv1.ArtifactRef{source(data, "model")}}}})
+	p := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-parent"})
+	returned := memberAt(t, p.manifest, "tasks/train/artifacts/model")
+	if returned.TaskID != "train" || returned.Name != "model" || returned.Origin != data.GetUri() ||
+		returned.SourceRunID != "ork-parent" || returned.SourceName != "dataset.tar" {
+		t.Fatalf("returned member = %+v", returned)
+	}
+
+	none := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-child", ExcludeArtifacts: true})
+	for _, m := range none.manifest.Members {
+		if m.Kind == evidence.KindArtifact {
+			t.Fatalf("--no-artifacts kept %s", m.Path)
+		}
+	}
+}
+
+// A child's received artifacts are listed and read as the reserved task
+// _inputs, resolved from the run's own record, never a caller URI.
+func TestReadArtifact_ReceivedArtifactUnderInputs(t *testing.T) {
+	f := newEvidenceFixture(t)
+	payload := []byte("dataset\n")
+	data := f.put("dataset.tar", payload)
+	f.finish(&orkstackv1.Run{Id: "ork-child-read", InputArtifacts: []*orkstackv1.NamedArtifact{{Name: "dataset",
+		RunId: "ork-parent", TaskId: "build", Artifact: data}}})
+	list, err := f.client.ListRunArtifacts(context.Background(), connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{
+		RunId: "ork-child-read"}))
+	must.OKf(t, err, "ListRunArtifacts")
+	var listed *orkstackv1.RunArtifact
+	for _, a := range list.Msg.GetArtifacts() {
+		if a.GetTaskId() == "_inputs" {
+			listed = a
+		}
+	}
+	if listed == nil || listed.GetArtifact().GetName() != "dataset" || listed.GetKind() != orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT {
+		t.Fatalf("listed = %v", list.Msg.GetArtifacts())
+	}
+	stream, err := f.client.ReadArtifact(context.Background(), connect.NewRequest(&orkstackv1.ReadArtifactRequest{
+		RunId: "ork-child-read", TaskId: "_inputs", Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "dataset"}))
+	must.OKf(t, err, "ReadArtifact")
+	var got []byte
+	for stream.Receive() {
+		got = append(got, stream.Msg().GetData()...)
+	}
+	must.OKf(t, stream.Err(), "ReadArtifact stream")
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("read %q, want %q", got, payload)
+	}
+}
+
+// A child's received artifacts are listed and exported by their reserved
+// task, as every other task's are: --task _inputs on either narrows to them.
+// A run that received nothing has no such task, and an item selects none.
+func TestInputsTask_NarrowsTheListAndTheExport(t *testing.T) {
+	f := newEvidenceFixture(t)
+	ctx := context.Background()
+	data := f.put("dataset.tar", []byte("dataset\n"))
+	report := f.put("report.txt", []byte("report\n"))
+	f.finish(&orkstackv1.Run{Id: "ork-inputs",
+		InputArtifacts: []*orkstackv1.NamedArtifact{{Name: "dataset", RunId: "ork-parent", TaskId: "build", Artifact: data}},
+		TaskRuns: []*orkstackv1.TaskRun{{TaskId: "fit", Status: orkstackv1.Status_STATUS_SUCCEEDED,
+			Artifacts: []*orkstackv1.ArtifactRef{report}}}})
+	f.finish(&orkstackv1.Run{Id: "ork-plain", TaskRuns: []*orkstackv1.TaskRun{{TaskId: "fit",
+		Status: orkstackv1.Status_STATUS_SUCCEEDED}}})
+
+	list, err := f.client.ListRunArtifacts(ctx, connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{
+		RunId: "ork-inputs", TaskId: "_inputs"}))
+	must.OKf(t, err, "ListRunArtifacts of _inputs")
+	if got := list.Msg.GetArtifacts(); len(got) != 1 || got[0].GetTaskId() != "_inputs" || got[0].GetArtifact().GetName() != "dataset" {
+		t.Fatalf("listed %v, want the dataset alone", got)
+	}
+	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-inputs", TaskId: "_inputs"})
+	memberAt(t, r.manifest, "tasks/_inputs/artifacts/dataset")
+	for _, m := range r.manifest.Members {
+		if m.TaskID == "fit" {
+			t.Fatalf("an export of _inputs carries %s", m.Path)
+		}
+	}
+	verifyBundle(t, r.data)
+	scoped := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-inputs", TaskId: "fit"})
+	for _, m := range scoped.manifest.Members {
+		if m.TaskID == "_inputs" {
+			t.Fatalf("an export of fit carries %s", m.Path)
+		}
+	}
+
+	if _, err := f.client.ListRunArtifacts(ctx, connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{
+		RunId: "ork-plain", TaskId: "_inputs"})); connect.CodeOf(err) != connect.CodeNotFound ||
+		!strings.Contains(err.Error(), `run "ork-plain" received no artifacts`) {
+		t.Fatalf("a run that received nothing = %v", err)
+	}
+	if res := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-plain", TaskId: "_inputs"}); res.code() != connect.CodeNotFound {
+		t.Fatalf("an export of a run that received nothing = %v", res.err)
+	}
+	if _, err := f.client.ListRunArtifacts(ctx, connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{
+		RunId: "ork-inputs", TaskId: "_inputs", Item: proto.Int32(0)})); err == nil {
+		t.Fatal("an item of _inputs was listed")
+	}
+}
+
+// A record whose received artifact holds no reference is damaged data, said
+// so: never a panic, and never an artifact that is not there.
+func TestInputsTask_ADamagedRecordIsDataLoss(t *testing.T) {
+	f := newEvidenceFixture(t)
+	f.finish(&orkstackv1.Run{Id: "ork-damaged", InputArtifacts: []*orkstackv1.NamedArtifact{{Name: "dataset"}}})
+	_, err := f.client.ListRunArtifacts(context.Background(), connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{RunId: "ork-damaged"}))
+	if connect.CodeOf(err) != connect.CodeDataLoss || !strings.Contains(err.Error(), `artifact input "dataset"`) {
+		t.Fatalf("ListRunArtifacts = %v, want data_loss naming the input", err)
 	}
 }

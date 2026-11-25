@@ -159,6 +159,20 @@ Defined in `proto/orkstack/v1/cache.proto`.
 | `GetCacheStats` | [`GetCacheStatsRequest`](#getcachestatsrequest) | [`GetCacheStatsResponse`](#getcachestatsresponse) | GetCacheStats reports one namespace's memo inventory, as the store lists it now, and how its cached tasks fared over one window of finished runs, derived on read from the run archive. Nothing is counted or stored. |
 | `PurgeCache` | [`PurgeCacheRequest`](#purgecacherequest) | [`PurgeCacheResponse`](#purgecacheresponse) | PurgeCache deletes memos. It never touches a commit, run, attempt, log or artifact. |
 
+### ConcurrencyService
+
+ConcurrencyService reads a namespace's concurrency limits as they stand:
+for each key with runs holding or waiting for its slots, who holds them
+and who waits, read from the limit itself at the moment of the call. It
+writes nothing (docs/DSL.md, "Concurrency limits").
+
+Defined in `proto/orkstack/v1/concurrency_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `ListConcurrencyLimits` | [`ListConcurrencyLimitsRequest`](#listconcurrencylimitsrequest) | [`ListConcurrencyLimitsResponse`](#listconcurrencylimitsresponse) | ListConcurrencyLimits lists the namespace's keys in use: those with runs holding or waiting, and those just emptied and not yet closed, narrowed by filters on the key. A limit that does not answer is still listed, with answering false and why, unless its key is known and a filter excludes it. |
+| `GetConcurrencyLimit` | [`GetConcurrencyLimitRequest`](#getconcurrencylimitrequest) | [`GetConcurrencyLimitResponse`](#getconcurrencylimitresponse) | GetConcurrencyLimit reads one key. A key nothing holds or waits for is NOT_FOUND. |
+
 ### EventSourceService
 
 EventSourceService stores and evaluates event sources: objects that bind
@@ -1059,6 +1073,37 @@ sibling read, field for field.
 | `from_version` | `string` | resolved |
 | `to_version` | `string` | resolved |
 
+### ConcurrencyLimit
+
+ConcurrencyLimit is one key's slots and line.
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `key` | `string` | key is the rendered key. |
+| `answering` | `bool` | answering is false when the limit could not be read; then not_answering_reason says why, and nothing below is set. |
+| `not_answering_reason` | `string` |  |
+| `epoch` | `int64` | epoch counts the limit's operator resets; it changes only on one. |
+| `holders` | repeated [`ConcurrencySlotHolder`](#concurrencyslotholder) | holders are the runs and tasks holding a slot, earliest granted first, and line those waiting, in the order they will be granted; each at most engine.concurrency.api_holders_shown long. The counts are the totals, in entries: a run holding its own slot and a task's is two. |
+| `line` | repeated [`ConcurrencyLineEntry`](#concurrencylineentry) |  |
+| `holders_count` | `int32` |  |
+| `queued_count` | `int32` |  |
+| `rebuild` | [`ConcurrencyRebuild`](#concurrencyrebuild) |  |
+| `rebuild_failing_since` | `google.protobuf.Timestamp` | rebuild_failing_since is when the limit's reading of which runs hold it began failing; set only when rebuild is FAILING. |
+
+### ConcurrencyLineEntry
+
+ConcurrencyLineEntry is a run, or one of its tasks, waiting for a slot.
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `task_level` | `bool` |  |
+| `arrived_at` | `google.protobuf.Timestamp` |  |
+| `times_out_at` | `google.protobuf.Timestamp` | times_out_at is when its wait ends if it is not granted first. |
+| `strategy` | [`ConcurrencyStrategy`](#concurrencystrategy) |  |
+| `limit` | `int32` |  |
+
 ### ConcurrencyQueued
 
 ConcurrencyQueued is a run waiting in line for a slot of a concurrency
@@ -1081,6 +1126,19 @@ limit's key.
 | `note` | `string` |  |
 | `cause` | [`ConcurrencyQueueCause`](#concurrencyqueuecause) | cause is why the run waits: it arrived, or it waits again after an unpause or a resume. |
 
+### ConcurrencySlotHolder
+
+ConcurrencySlotHolder is a run, or one of its tasks, holding a slot.
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `task_level` | `bool` | task_level is a task's slot, not the run's own. |
+| `granted_at` | `google.protobuf.Timestamp` |  |
+| `stalled` | `bool` | stalled is a holder the limit found making no progress: an operator must end it. |
+| `strategy` | [`ConcurrencyStrategy`](#concurrencystrategy) |  |
+| `limit` | `int32` | limit is the limit its declaration asked for. |
+
 ### ConcurrencySpec
 
 ConcurrencySpec is one declared concurrency limit (docs/DSL.md
@@ -1095,6 +1153,18 @@ slots and its line.
 | `on_limit` | [`ConcurrencyStrategy`](#concurrencystrategy) | on_limit is what a run does when every slot of its key is held. |
 | `queue_timeout_seconds` | `int64` | queue_timeout_seconds is how long a run waits in line for a slot before it ends; 0 is the deployment's default. |
 | `max_queued` | `int32` | max_queued is how many runs may wait in line for the key, checked at submit, best-effort; 0 sets no bound of its own. |
+
+### ConcurrencyWaitEnd
+
+ConcurrencyWaitEnd is how a wait in a concurrency limit's line ended.
+
+| Field | Type | Description |
+|---|---|---|
+| `outcome` | [`ConcurrencyWaitOutcome`](#concurrencywaitoutcome) |  |
+| `waited` | `google.protobuf.Duration` |  |
+| `strategy` | [`ConcurrencyStrategy`](#concurrencystrategy) |  |
+| `limit_label` | `string` | limit_label is the limit's template, cut to 64 bytes, then "#" and eight hex digits of its SHA-256: never a rendered key. |
+| `task_level` | `bool` |  |
 
 ### ConsentView
 
@@ -1488,7 +1558,7 @@ is alive by answering DescribeOrker (§6.5).
 |---|---|---|
 | `from` | [`Run`](#run) | from / to are the two runs, SHALLOW: task_runs, input and output are cleared, because the differences below and input_unified_diff already carry what a client needs of them, and a run's input may be large. Every other Run field (id, orkflow, version, status, error, times, namespace, definition digest, telemetry, and any field a later contract adds) is carried as GetRun would carry it. |
 | `to` | [`Run`](#run) |  |
-| `same_orkflow` | `bool` | orkflow_name equal (namespace is equal by construction) |
+| `same_orkflow` | `bool` | orkflow_name equal, and the namespace that owns it (a shared Orkflow's child run) |
 | `same_definition_digest` | `bool` | orkflow_definition_digest equal |
 | `input_unified_diff` | `string` | input_unified_diff is dsl.Unified over the canonical, indented JSON of the two inputs (keys sorted, integers without fraction), labelled "&lt;run id>/input.json" on each side. Empty when the inputs are identical under that canonical form, or when "input" was excluded by `only`. |
 | `differences` | repeated [`RunFieldDiff`](#runfielddiff) | differences is ordered: run-level rows first, then the from-run's tasks in its task_runs order, then tasks present only in the to-run in that run's order; within a task, fields in the order the field comment on RunFieldDiff lists them. The order is the contract; clients render it as given. |
@@ -1504,8 +1574,8 @@ EachArtifactSource is the artifact a fan-out runs over the lines of:
 
 | Field | Type | Description |
 |---|---|---|
-| `producer` | `string` | producer is a task in the fan-out's own needs:. |
-| `name` | `string` | name is the artifact's name as its producer wrote it. |
+| `producer` | `string` | producer is a task in the fan-out's own needs:, or "_inputs" for an artifact input of the run. |
+| `name` | `string` | name is the artifact's name as its producer recorded it, or the input's. |
 
 ### EachLines
 
@@ -1549,7 +1619,7 @@ Task.pin).
 | `max_items` | `int32` | max_items is the author's bound, 1..10000; the sum over every fan-out of one Orkflow is at most 10000, and at most the deployment's ORK_EACH_MAX_ITEMS (1000 unless the deployment raises it). An array longer than this fails the task EACH_TOO_MANY_ITEMS before any item runs. |
 | `max_parallel` | `int32` | max_parallel bounds how many items are in flight at once; 0 means no bound of the task's own. |
 | `source` | [`EachSource`](#eachsource) | source is over, compiled at apply (EachSource). |
-| `over_artifact` | `string` | over_artifact names an artifact of a task in this task's own needs:, "&lt;task>/&lt;name>", and makes the fan-out run one item per non-empty line of it (or per batch of lines). Exactly one of over and over_artifact is set. Part of canonicalOrkflow only when set, so a definition without it keeps its digest. |
+| `over_artifact` | `string` | over_artifact names an artifact of a task in this task's own needs:, "&lt;task>/&lt;name>", or an artifact input of this Orkflow, "_inputs/&lt;name>", and makes the fan-out run one item per non-empty line of it (or per batch of lines). Exactly one of over and over_artifact is set. Part of canonicalOrkflow only when set, so a definition without it keeps its digest. |
 | `format` | [`EachLineFormat`](#eachlineformat) | format is how the lines of over_artifact are read: JSONL (each line one JSON value) or LINES (each line a string). Required with over_artifact, refused with over. |
 | `batch` | `int32` | batch makes one item of every batch consecutive non-empty lines of over_artifact, 2..10000; the last item may hold fewer. Unset (or 1, which the compiler normalises to unset) is one line per item. Refused with over. max_items counts items, so the line ceiling is max_items x batch. |
 | `on_item_failure` | [`EachItemFailure`](#eachitemfailure) | on_item_failure is what an item that fails for good does to the rest of the fan-out: FAIL_FAST (the default, which the compiler normalises to unset) stops it at the first such item; CONTINUE runs every other item, and the fan-out then fails with its lowest-index failed item's reason. |
@@ -1638,6 +1708,8 @@ server-streaming RPC and the WebSocket bridge.
 | `interruption` | [`TaskInterruption`](#taskinterruption) | interruption is set from E92; unset until it lands (v0.4.0 proto batch). |
 | `request_id` | `string` | request_id is the pause or unpause request's id on RUN_PAUSED and RUN_UNPAUSED from the API; unset on every other event. |
 | `pause_transition` | [`PauseTransition`](#pausetransition) | pause_transition says what a RUN_PAUSED or RUN_UNPAUSED, or a terminal event that ended a pause, did to it; unset on every other event. |
+| `wait_end` | [`ConcurrencyWaitEnd`](#concurrencywaitend) | wait_end is set on the one event that ends a run's wait in a concurrency limit's line, unset on every other event: how the wait ended and how long it took. |
+| `results_kept` | [`RunResultsKept`](#runresultskept) | results_kept is set on RUN_RESULTS_KEPT. |
 
 ### EventSource
 
@@ -1993,6 +2065,19 @@ No fields.
 | `window_since` | `google.protobuf.Timestamp` |  |
 | `window_until` | `google.protobuf.Timestamp` |  |
 | `computed_at` | `google.protobuf.Timestamp` |  |
+
+### GetConcurrencyLimitRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | empty = the default namespace |
+| `key` | `string` |  |
+
+### GetConcurrencyLimitResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `limit` | [`ConcurrencyLimit`](#concurrencylimit) |  |
 
 ### GetDeliveryRequest
 
@@ -2542,6 +2627,22 @@ end is not after its start is INVALID_ARGUMENT.
 | `next_page_token` | `string` | empty when the window is exhausted |
 | `since` | `google.protobuf.Timestamp` | since and until are the window the answer covers, resolved — what a client prints so a reader knows what "the last week" meant on the engine's clock. |
 | `until` | `google.protobuf.Timestamp` |  |
+
+### ListConcurrencyLimitsRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | empty = the default namespace |
+| `filters` | repeated [`FieldFilter`](#fieldfilter) | filters narrow the list (docs/UI_CLI_PARITY.md "Filtering lists"); one key=VALUE reads that one key's limit. |
+| `page_size` | `int32` | page_size is at most 50; zero is 50. |
+| `page_token` | `string` |  |
+
+### ListConcurrencyLimitsResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `limits` | repeated [`ConcurrencyLimit`](#concurrencylimit) |  |
+| `next_page_token` | `string` | next_page_token is empty on the last page. A page narrowed by filters may hold fewer than page_size keys, or none, and still have a next: only an empty token ends the list. |
 
 ### ListDeliveriesRequest
 
@@ -4186,6 +4287,17 @@ observe or enforce), and otherwise what the gateway asserted.
 | `paused_by_verified` | `bool` | paused_by_verified says paused_by is a principal OrkStack authenticated. |
 | `ended_by_verified` | `bool` | ended_by_verified says ended_by is a principal OrkStack authenticated. |
 
+### RunResultsKept
+
+RunResultsKept is what a resumed run read back, carried by
+RUN_RESULTS_KEPT.
+
+| Field | Type | Description |
+|---|---|---|
+| `kept_count` | `int32` | kept_count is the results read back from their commits. |
+| `settled_count` | `int32` | settled_count is the awaited and composed tasks kept from their records. |
+| `read_back_seconds` | `double` | read_back_seconds is how long the read-back took. |
+
 ### RunResume
 
 RunResume is E85's; it is empty until E85 lands (v0.4.0 proto
@@ -4195,10 +4307,20 @@ No fields.
 
 ### RunResumed
 
-RunResumed is E85's; it is empty until E85 lands (v0.4.0 proto
-batch).
+RunResumed is how a run was resumed, carried by RUN_RESUMED.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `action` | [`ResumeAction`](#resumeaction) |  |
+| `from_task_id` | `string` | from_task_id is the task Retry from here chose; empty for Resume. |
+| `resumed_after_sequence` | `int64` | resumed_after_sequence is the sequence of the ending set aside. |
+| `rerun_count` | `int32` |  |
+| `kept_count` | `int32` |  |
+| `principal` | `string` | principal is who confirmed the resume, as recorded: asserted unless principal_verified (AGENTS.md §7). |
+| `principal_verified` | `bool` |  |
+| `reason` | `string` |  |
+| `superseded_reason` | `string` | superseded_reason is the ending's reason, set aside. |
+| `resume_count` | `int32` | resume_count is how many resumes of the run got going, this one included. |
 
 ### RunScheduleFire
 
@@ -5390,6 +5512,19 @@ ConcurrencyQueueCause is why a run waits in line.
 | `CONCURRENCY_QUEUE_CAUSE_UNPAUSE` | 3 | UNPAUSE: the run gave its slot back while paused and waits for it again. |
 | `CONCURRENCY_QUEUE_CAUSE_FAILING` | 4 | FAILING: the failing run gave its slot back while paused and waits for it again so its failure handlers run inside the limit. |
 
+### ConcurrencyRebuild
+
+ConcurrencyRebuild is whether a limit is reading which runs hold its key,
+after its record was lost or on its first use.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_REBUILD_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_REBUILD_NONE` | 1 | NONE: the limit knows its holders. |
+| `CONCURRENCY_REBUILD_READING` | 2 | READING: it is reading which runs hold the key. |
+| `CONCURRENCY_REBUILD_SETTLING` | 3 | SETTLING: it has read them, and waits a moment before it grants. |
+| `CONCURRENCY_REBUILD_FAILING` | 4 | FAILING: the reading has failed for longer than its bound, and it keeps trying. |
+
 ### ConcurrencyStrategy
 
 ConcurrencyStrategy is what a run does when every slot of its key is held.
@@ -5402,6 +5537,22 @@ ConcurrencyStrategy is what a run does when every slot of its key is held.
 | `CONCURRENCY_STRATEGY_SKIP` | 3 | SKIP: the run is not started. |
 | `CONCURRENCY_STRATEGY_CANCEL_OLDEST` | 4 | CANCEL_OLDEST: the oldest holder is canceled to make room. |
 | `CONCURRENCY_STRATEGY_REPLACE` | 5 | REPLACE: the runs waiting in line are replaced by this one. |
+
+### ConcurrencyWaitOutcome
+
+ConcurrencyWaitOutcome is how a wait in line ended.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_WAIT_OUTCOME_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_WAIT_OUTCOME_STARTED` | 1 | STARTED: it was granted its slot. |
+| `CONCURRENCY_WAIT_OUTCOME_CANCELED` | 2 | CANCELED: the run ended, or left the line, for its own reason. |
+| `CONCURRENCY_WAIT_OUTCOME_TIMED_OUT` | 3 | TIMED_OUT: its queue_timeout passed. |
+| `CONCURRENCY_WAIT_OUTCOME_SUPERSEDED` | 4 | SUPERSEDED: a newer run replaced it. |
+| `CONCURRENCY_WAIT_OUTCOME_FULL` | 5 | FULL: the line was full. |
+| `CONCURRENCY_WAIT_OUTCOME_UNAVAILABLE` | 6 | UNAVAILABLE: the limit did not answer. |
+| `CONCURRENCY_WAIT_OUTCOME_UNSUPPORTED` | 7 | UNSUPPORTED: the limit could not take its request. |
+| `CONCURRENCY_WAIT_OUTCOME_FENCED` | 8 | FENCED: the limit refused a stale request. |
 
 ### DeliveryClass
 
@@ -5486,6 +5637,8 @@ EventType classifies a run event on the realtime stream.
 | `EVENT_TYPE_TASK_SLEEPING` | 14 | TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING; the message names the wake-up time. TASK_SUCCEEDED follows when it wakes; a run that ends first records the task CANCELED. |
 | `EVENT_TYPE_RUN_QUEUED` | 15 | RUN_QUEUED: the run waits in line for a slot of its concurrency limit's key. Status PENDING, or RUNNING for a run that waits again; the message names the key and its place in line. Not in a webhook's default events. |
 | `EVENT_TYPE_TASK_QUEUED` | 16 | TASK_QUEUED: a task waits in line for a slot of its concurrency limit's key. Not in a webhook's default events. |
+| `EVENT_TYPE_RUN_RESUMED` | 17 | RUN_RESUMED: a failed run was resumed (orkctl run resume); resumed says how. It is the first event after the ending it sets aside, and the run is RUNNING again. |
+| `EVENT_TYPE_RUN_RESULTS_KEPT` | 18 | RUN_RESULTS_KEPT: a resumed run read back every result it keeps (results_kept); only then does anything run again. |
 | `EVENT_TYPE_RUN_PAUSED` | 19 | RUN_PAUSED: the run became paused, or is still paused with its causes changed (pause_transition says which). Status PAUSED. |
 | `EVENT_TYPE_RUN_UNPAUSED` | 20 | RUN_UNPAUSED: no pause cause remains, or the run was not paused (pause_transition NOT_PAUSED). Status RUNNING. |
 
@@ -5860,6 +6013,7 @@ ProfileCordonReason is the machine-readable reason of a ProfileCordon.
 | `PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD` | 12 |  |
 | `PROFILE_CORDON_REASON_DEVICE_ABSENT` | 13 | DEVICE_ABSENT: a device of the profile is not there after the boot audit. The profile is unavailable until it is back unchanged. |
 | `PROFILE_CORDON_REASON_UNITS_BELOW_CEILING` | 14 | UNITS_BELOW_CEILING: fewer of a gpu profile's units are usable than the per-task cap every poll reserves (max_request.gpu), so the Orker polls for no task. The profile is unavailable, and its pool stays live, until enough units are usable again. |
+| `PROFILE_CORDON_REASON_PROBE_NOT_STARTED` | 15 | PROBE_NOT_STARTED: the container engine started none of a gpu profile's unit probes in three passes in a row, which says nothing of the units. The profile is unavailable, and its pool stays live, until one starts. |
 
 ### ProfileKind
 
@@ -5942,6 +6096,16 @@ results: every namespace's, or only named namespaces'.
 | `RESULTS_SCOPE_UNSPECIFIED` | 0 |  |
 | `RESULTS_SCOPE_EVERY_NAMESPACE` | 1 |  |
 | `RESULTS_SCOPE_BY_NAMESPACE` | 2 |  |
+
+### ResumeAction
+
+ResumeAction is what a resume was asked to do.
+
+| Value | Number | Description |
+|---|---|---|
+| `RESUME_ACTION_UNSPECIFIED` | 0 |  |
+| `RESUME_ACTION_RESUME` | 1 | RESUME reruns the failed tasks and everything downstream of them. |
+| `RESUME_ACTION_RETRY_FROM` | 2 | RETRY_FROM also reruns the chosen task and everything downstream of it. |
 
 ### ResumeDisposition
 

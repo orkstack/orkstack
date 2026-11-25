@@ -2,10 +2,12 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"connectrpc.com/connect"
 
@@ -27,6 +29,27 @@ const (
 // awaitRejectBodyLimit bounds a rejection envelope: one reason of at most
 // awaitReasonMaxBytes, JSON-escaped.
 const awaitRejectBodyLimit = 4096
+
+// maxDoorRunIDBytes is longer than any run id the engine mints or kept from
+// an earlier release.
+const maxDoorRunIDBytes = 200
+
+// namesNoRun reports an id no run has: empty, longer than any, or holding a
+// byte that is not printable ASCII, which the cluster would refuse.
+func namesNoRun(id string) bool {
+	return id == "" || len(id) > maxDoorRunIDBytes ||
+		strings.ContainsFunc(id, func(r rune) bool { return r <= ' ' || r > '~' })
+}
+
+// doorFault logs why a door anyone may call could not answer, for the
+// operator: at most one line a second, so no caller fills the log, and none
+// for a caller that left.
+func (s *Service) doorFault(ctx context.Context, msg string, args ...any) {
+	if ctx.Err() != nil {
+		return
+	}
+	s.doorFaults.Do(func() { s.logger.Warn(msg, args...) })
+}
 
 // NewAwaitHandler serves both routes against svc.
 func NewAwaitHandler(svc *Service) http.Handler {
@@ -64,8 +87,9 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 	runID, taskID := r.PathValue("run_id"), r.PathValue("task_id")
 	notFound := fmt.Sprintf("run %q has no callback await %q", runID, taskID)
 
-	// 2. A task id that is not a slug names nothing.
-	if err := dsl.ValidSlug("task id", taskID); err != nil || runID == "" {
+	// 2. A task id that is not a slug names nothing, nor does a run id no run
+	//    has.
+	if err := dsl.ValidSlug("task id", taskID); err != nil || namesNoRun(runID) {
 		writeTriggerError(w, http.StatusNotFound, "not_found", notFound)
 		return
 	}
@@ -87,7 +111,10 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 			writeTriggerError(w, http.StatusNotFound, "not_found", notFound)
 			return
 		}
-		writeTriggerError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
+		// The caller has shown no token yet: what the cluster, or a run's key,
+		// answered is the log's.
+		svc.doorFault(ctx, "the await door could not read a run's start", "run_id", runID, "error", err)
+		writeTriggerError(w, http.StatusServiceUnavailable, "unavailable", "the run could not be read; try again")
 		return
 	}
 

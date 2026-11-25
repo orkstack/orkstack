@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -119,11 +120,11 @@ func TestProfileGate_Step3c(t *testing.T) {
 func TestProfileGate_RecheckBeforeCreate(t *testing.T) {
 	s, c := gateState(t)
 	now := time.Unix(1_800_000_000, 0)
-	if failure := s.recheck(sensorRef(gateIdentity), sameNode, now); failure != nil {
+	if failure := s.recheck(context.Background(), sensorRef(gateIdentity), sameNode, now, false); failure != nil {
 		t.Fatalf("recheck: %v", failure)
 	}
 	gone := func(string) (hostDevice, error) { return hostDevice{}, errors.New("gone") }
-	failure := s.recheck(sensorRef(gateIdentity), gone, now)
+	failure := s.recheck(context.Background(), sensorRef(gateIdentity), gone, now, false)
 	if failure == nil || failure.Reason != ReasonProfileDrifted {
 		t.Fatalf("recheck = %v", failure)
 	}

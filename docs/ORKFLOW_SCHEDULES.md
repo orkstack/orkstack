@@ -174,9 +174,31 @@ start by `orkctl run list -F origin.kind=SCHEDULE -F
 origin.id=<id>`.
 
 A recent fire reads one of: a run id, `refused` with its reason, `preparing`
-(it has not prepared yet), or `unavailable` (the fire retired past the
-cluster's execution retention, or the cluster did not answer). It is never
-blank.
+(it has not prepared yet), `skipped` with its code and reason (below), or
+`unavailable` (the fire retired past the cluster's execution retention, or
+the cluster did not answer). It is never blank.
+
+## A fire a concurrency limit keeps from starting
+
+A fire whose Orkflow declares `concurrency:` ([DSL.md](DSL.md#concurrency-limits-concurrency))
+may start no run, or its run may never begin, because of the limit. Such a
+fire **completes**, so it never pauses the schedule, and records why as its
+`skip_code` and `skip_message`, shown in the NOTE column of `orkctl schedule
+get` and in `--json`:
+
+| `skip_code` | When |
+|---|---|
+| `FIRE_SKIPPED_CONCURRENCY` | `on_limit: skip`, and the key was full, at the fire's preparation or when its run asked for the slot |
+| `FIRE_NOT_STARTED_CONCURRENCY` | the line was full (`CONCURRENCY_QUEUE_FULL`, `CONCURRENCY_KEYS_EXHAUSTED`), `max_running` was full of queued runs, or the run waited in line and ended before it began (`RUN_QUEUE_TIMEOUT`, `RUN_CONCURRENCY_FULL`, `RUN_CONCURRENCY_UNAVAILABLE`, `_FENCED`, `_UNSUPPORTED`) |
+| `FIRE_CONCURRENCY_UNAVAILABLE` | the limit could not be checked (`CONCURRENCY_CHECK_UNAVAILABLE`), or a rollout to one release is not finished (`CONCURRENCY_UNSUPPORTED`, `cause=fleet` only): the fire asks again for `engine.concurrency.fire_unavailable_retry` (5m), then completes |
+
+Under `on_limit: refuse` a full key refuses the fire, as any submit refusal
+does, and `pause_on_failure` reads it. So does a cluster that does not index
+concurrency limits (`CONCURRENCY_UNSUPPORTED`, `cause=index`), which no
+retry would change. A run that started and then ended on a limit's reason
+(it lost its slot after a pause) fails its fire as any failed run does. Under overlap `skip` a fire due while
+the previous run still waits in line is skipped by the cluster and counted in
+`fires_skipped_overlap`, as a fire due while it runs is.
 
 ## Surfaces
 

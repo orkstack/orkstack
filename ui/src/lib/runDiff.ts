@@ -32,6 +32,7 @@ export const DIFF_FIELDS = [
 // docs/UI_CLI_PARITY.md "Run diff"; cmd/orkctl/run_diff.go carries the same table.
 const REASON_TEXT: Record<string, string> = {
 	definition_unavailable: 'the pinned definition is no longer stored',
+	definition_not_readable: "this caller may not read the shared Orkflow in its owner's namespace",
 	definition_digest_mismatch: 'the stored definition does not hash to the digest this run pinned',
 	task_not_in_definition: 'the pinned definition has no task of this id',
 	no_attempt_store: 'this engine has no task attempt store configured',
