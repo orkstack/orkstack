@@ -10,7 +10,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -497,7 +496,7 @@ func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTa
 	source := memo.GetSource()
 	// A run whose results the engine records takes a hit only from an
 	// engine's record, before anything of it is read.
-	if recordedRun(in) && !isAttestedURI(source.GetCommitUri()) {
+	if recordedRun(in) && !artifacts.IsAttestedURI(source.GetCommitUri()) {
 		trace.miss(key, MemoMissSourceNotRecorded, "the memo's source %s is not a result an engine recorded", source.GetCommitUri())
 		return nil
 	}
@@ -961,16 +960,4 @@ func memoSourceURI(in *orkstackv1.ExecuteTaskInput) string {
 		}
 	}
 	return in.GetCommitUri()
-}
-
-// isAttestedURI reports whether uri is a store root then an attested
-// commit key: the twin of a well-formed commit key, and nothing that only
-// holds the prefix somewhere in its path.
-func isAttestedURI(uri string) bool {
-	i := strings.LastIndex(uri, "/"+artifacts.AttestedPrefix+"/")
-	if i < 0 {
-		return false
-	}
-	twin, err := artifacts.AttestedCommitURI(uri[:i+1] + artifacts.CommitPrefix + uri[i+1+len(artifacts.AttestedPrefix):])
-	return err == nil && twin == uri
 }

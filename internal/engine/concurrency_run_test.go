@@ -63,6 +63,7 @@ func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concR
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
 	h.env.RegisterWorkflowWithOptions(RunWorkflowRaw, workflow.RegisterOptions{Name: "raw"})
 	h.env.RegisterWorkflowWithOptions(resumedConcWorkflow, workflow.RegisterOptions{Name: "resumed"})
+	h.env.RegisterWorkflowWithOptions(carriedResetWorkflow, workflow.RegisterOptions{Name: "carried-reset"})
 	h.env.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		h.mu.Lock()
 		h.ran++

@@ -64,8 +64,11 @@ type AwaitRecords interface {
 // follows; identity.FollowsCheck is the one implementation.
 type AwaitChecks interface {
 	Establish(ctx context.Context, adm artifacts.Admission, scopes identity.Scopes) (artifacts.ResumeRecord, error)
+	DecidingScope(ctx context.Context, adm artifacts.Admission, taskID string, scopes identity.Scopes) (uint64, error)
 	CheckFollows(ctx context.Context, adm artifacts.Admission, admissionSHA256, taskID string, rootScope uint64) ([]identity.FollowedRecord, error)
 }
+
+var _ AwaitChecks = (*identity.FollowsCheck)(nil)
 
 // awaitTellings remembers, in this replica's memory, when it last had the
 // cluster take a Signal for an await's record.
@@ -111,6 +114,7 @@ type awaitDoor struct {
 	adm       artifacts.Admission
 	sha       string
 	scopes    identity.Scopes
+	scope     uint64 // the row's own
 	deadline  time.Time
 	valuesSHA string
 	key       string
@@ -254,6 +258,9 @@ func (d *awaitDoor) admit(ctx context.Context, row *orkstackv1.TaskRun) error {
 	}
 	d.deadline = at.AsTime()
 	d.sha = d.r.start.Plan.Identity.AdmissionSHA256
+	// What the run's state says of its resumes; establish believes none of it.
+	d.scope = uint64(max(row.GetResultEpoch(), 0))
+	d.scopes = identity.Scopes{Resume: stateNewestScope(d.r.run), Root: d.r.start.Plan.Identity.RootScope}
 	ns, runID := artifacts.ResolveNamespace(d.r.run.GetNamespace()), d.r.run.GetId()
 	read, err := d.s.awaitRecords.ReadAdmission(ctx, ns, runID, d.sha)
 	switch {
@@ -270,17 +277,35 @@ func (d *awaitDoor) admit(ctx context.Context, row *orkstackv1.TaskRun) error {
 	return nil
 }
 
-// establish settles the scope. The run's state names no resume in this
-// build, so a run resumed since answers unavailable until it does.
+// stateNewestScope is the newest resume run's state says ran one of its tasks
+// again: every resume runs at least one. 0 for none, and in a run below a root.
+func stateNewestScope(run *orkstackv1.Run) uint64 {
+	newest := int64(0)
+	for _, row := range run.GetTaskRuns() {
+		newest = max(newest, row.GetResultEpoch())
+		for _, item := range row.GetItems() {
+			newest = max(newest, item.GetResultEpoch())
+		}
+	}
+	return uint64(newest)
+}
+
+// establish settles the scope by the run's resume records: the newest resume
+// the run's state names must be the newest there is, and the await's row must be
+// of the resume that decides for it, which is where its run reads its answer.
+// A run whose state does not say so answers unavailable until it does.
 func (d *awaitDoor) establish(ctx context.Context) error {
-	if _, err := d.s.awaitChecks.Establish(ctx, d.adm, d.scopes); err != nil {
+	scope, err := d.s.awaitChecks.DecidingScope(ctx, d.adm, d.r.taskID, d.scopes)
+	if err == nil && scope != d.scope {
+		err = &identity.MintError{Reason: identity.ReasonNotAdmitted}
+	}
+	if err != nil {
 		var m *identity.MintError
 		if errors.As(err, &m) && !m.Unavailable {
 			return awaitUnavailable("run %q was resumed, and its state does not say under which resume yet; try again", d.r.run.GetId())
 		}
 		return awaitUnavailable("run %q's resumes could not be read; try again", d.r.run.GetId())
 	}
-	scope := d.scopes.Resume
 	d.want = artifacts.RecordWant{Kind: orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_RESOLUTION, Namespace: d.adm.Namespace,
 		RunID: d.adm.RunID, TaskID: d.r.taskID, Scope: scope, AdmissionSHA256: d.sha}
 	key, err := artifacts.RecordKey(artifacts.RecordResolution, d.adm.Namespace, d.adm.RunID, d.r.taskID, scope)

@@ -22,3 +22,12 @@ func ResetRunWorkflow(limitUnbuilt bool) func(workflow.Context, string, *orkstac
 		return runWorkflowReleasing(ctx, deps, runID, wf, input, plan, carry)
 	}
 }
+
+// ResumeAdmittedRunsForTest has this build resume runs that hold an identity
+// until the test ends: what a reset run of one does is built, and what
+// ResumeRun checks before it is not (ResumePartAdmittedRun).
+func ResumeAdmittedRunsForTest(t interface{ Cleanup(func()) }) {
+	why := resumePartsUnbuilt[ResumePartAdmittedRun]
+	delete(resumePartsUnbuilt, ResumePartAdmittedRun)
+	t.Cleanup(func() { resumePartsUnbuilt[ResumePartAdmittedRun] = why })
+}

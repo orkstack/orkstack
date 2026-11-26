@@ -105,3 +105,55 @@ func TestAttestedCommitURI(t *testing.T) {
 		}
 	}
 }
+
+// TestCommitKeyScope reads the resume scope a commit key lies under from each
+// shape a key has, and refuses what is no commit key.
+func TestCommitKeyScope(t *testing.T) {
+	plain, err := ScopedCommitKey("ns", "ork-1", "build", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := ScopedCommitKey("ns", "ork-1", "build", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := ScopedItemCommitKey("ns", "ork-1", "build", 3, 1<<53-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainItem, err := ScopedItemCommitKey("ns", "ork-1", "build", 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]uint64{plain: 0, scoped: 5, item: 1<<53 - 1, plainItem: 0} {
+		if got, err := CommitKeyScope(key); err != nil || got != want {
+			t.Errorf("CommitKeyScope(%q) = %d, %v; want %d", key, got, err, want)
+		}
+	}
+	for _, key := range []string{"", "metadata/attested/ns/ork-1/build/commit.json", "metadata/commits/ns/ork-1/build/r00000000000000000000/commit.json",
+		"metadata/commits/ns/ork-1/build/r5/commit.json", "metadata/commits/ns/ork-1/commit.json"} {
+		if got, err := CommitKeyScope(key); !errors.Is(err, ErrInvalidRecordKey) {
+			t.Errorf("CommitKeyScope(%q) = %d, %v; want ErrInvalidRecordKey", key, got, err)
+		}
+	}
+}
+
+// TestRecordKeyScope reads the resume scope a record's key spells.
+func TestRecordKeyScope(t *testing.T) {
+	for _, kind := range []RecordKind{RecordResolution, RecordComposed} {
+		for _, want := range []uint64{0, 5, 1<<53 - 1} {
+			key, err := RecordKey(kind, "ns", "ork-1", "gate", want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := RecordKeyScope(key); got != want {
+				t.Errorf("RecordKeyScope(%q) = %d, want %d", key, got, want)
+			}
+		}
+	}
+	for _, key := range []string{"", "x", "metadata/attested/ns/ork-1/gate/r5/resolution.json", "metadata/commits/ns/ork-1/gate/r00000000000000000005/resolution.json"} {
+		if got := RecordKeyScope(key); got != 0 {
+			t.Errorf("RecordKeyScope(%q) = %d, want 0", key, got)
+		}
+	}
+}

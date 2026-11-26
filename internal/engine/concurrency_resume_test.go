@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -296,4 +297,42 @@ func TestResumeConcurrency_ClearsWhatThePrefixHeld(t *testing.T) {
 	if want := fmt.Sprint((*heldSlot)(nil), false, int64(0), (*orkstackv1.ConcurrencyQueued)(nil), (*requeueWait)(nil), int64(42), true); got != want {
 		t.Fatalf("after a resume whose key was full: %s; want %s", got, want)
 	}
+}
+
+// TestResumedRun_ACarriedRunWhosePlanCannotBeLoadedReleasesItsResumedSlot: a
+// carried generation of a resumed run whose next reset cannot be read ends
+// before anything runs, and still gives up, at every gate its carry names,
+// every slot up to the resume's incarnation, never only its plan's.
+func TestResumedRun_ACarriedRunWhosePlanCannotBeLoadedReleasesItsResumedSlot(t *testing.T) {
+	h := newConcRunHarness(t)
+	h.env.RegisterActivityWithOptions(func(context.Context, ReadResetFactsInput) (ResetFacts, error) {
+		// Shaped like a plan key and not one: the plan is never loaded.
+		return ResetFacts{Reason: "ork-resume:v9:42.000:" + strings.Repeat("ab", 32)}, nil
+	}, activity.RegisterOptions{Name: ActivityReadResetFacts})
+	carry := &orkstackv1.RunContinuation{
+		EventSequence: 50,
+		Resume:        &orkstackv1.RunResumeCarry{SeqBase: 42},
+		Concurrency:   &orkstackv1.RunConcurrencyCarry{Held: []*orkstackv1.HeldSlot{{GateId: "ork-conc-test"}}},
+	}
+	h.env.ExecuteWorkflow("carried-reset", concPlan(), carry)
+	if !h.env.IsWorkflowCompleted() {
+		t.Fatal("the run did not end")
+	}
+	var app *temporal.ApplicationError
+	if err := h.env.GetWorkflowError(); !errors.As(err, &app) || app.Type() != ReasonResumePlanInvalid {
+		t.Fatalf("error = %v, want %s", err, ReasonResumePlanInvalid)
+	}
+	if h.ran != 0 || len(h.acquires) != 0 {
+		t.Fatalf("ran %d tasks and asked %d times before its plan was read", h.ran, len(h.acquires))
+	}
+	if want := (GateReleaseAll{Run: concRunID, Below: 43}); len(h.releases) != 1 || h.releases[0] != want {
+		t.Fatalf("released %+v, want %+v", h.releases, want)
+	}
+}
+
+// carriedResetWorkflow is a carried generation of concOrkflow as a reset run
+// executes it.
+func carriedResetWorkflow(ctx workflow.Context, plan RunPlan, carry *orkstackv1.RunContinuation) (*orkstackv1.Run, error) {
+	deps := workflowDeps{isResetRun: func(*workflow.Info) bool { return true }, limitUnbuilt: ResumeLimitUnbuilt}
+	return runWorkflowReleasing(ctx, deps, "", concOrkflow(), &orkstackv1.Payload{}, plan, carry)
 }

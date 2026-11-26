@@ -43,9 +43,6 @@ func (s *Service) MintAttemptTokens(ctx context.Context, req *connect.Request[or
 	case caller.OrkerID == "":
 		return nil, s.mintRefused(ctx, msg, caller, &identity.MintError{Reason: identity.ReasonEngineRefused, Audit: true,
 			Message: fmt.Sprintf("the credential of %q names no Orker", caller.ID)})
-	case msg.GetResumeScope() != 0 || msg.GetRootScope() != 0:
-		return nil, s.mintRefused(ctx, msg, caller, &identity.MintError{Reason: identity.ReasonNotAdmitted, Audit: true,
-			Message: "a resumed run's scope is not admitted in this build"})
 	}
 	if err := checkMintRequest(msg); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -103,7 +100,8 @@ func (s *Service) MintAttemptTokens(ctx context.Context, req *connect.Request[or
 
 func mintRequestOf(msg *orkstackv1.MintAttemptTokensRequest) identity.MintRequest {
 	r := identity.MintRequest{Namespace: artifacts.ResolveNamespace(msg.GetNamespace()), RunID: msg.GetRunId(), TaskID: msg.GetTaskId(),
-		Attempt: msg.GetAttempt(), TaskSpecSHA256: msg.GetTaskSpecSha256(), AdmissionSHA256: msg.GetAdmissionSha256()}
+		Attempt: msg.GetAttempt(), TaskSpecSHA256: msg.GetTaskSpecSha256(), AdmissionSHA256: msg.GetAdmissionSha256(),
+		Scopes: identity.Scopes{Resume: msg.GetResumeScope(), Root: msg.GetRootScope()}}
 	if msg.Item != nil {
 		r.Item = artifacts.Item{Index: msg.GetItem(), Set: true}
 	}
@@ -283,7 +281,8 @@ func (s *Service) countMint(err error) {
 }
 
 // attemptKey names one attempt's budget by value: namespace, run, task,
-// item ("-" for none) and attempt.
+// item ("-" for none) and attempt. The resume scope is not part of it: it is
+// the request's word until step 6a, and no budget opens on that.
 func attemptKey(r identity.MintRequest) string {
 	item := "-"
 	if r.Item.Set {

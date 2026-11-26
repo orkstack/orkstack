@@ -150,14 +150,19 @@ type resolutionAnswer struct {
 	canceled   bool
 }
 
+// resolutionRequest names await id's record: under the resume that opened it.
+func (s *runState) resolutionRequest(id string) ResolutionReadRequest {
+	return ResolutionReadRequest{
+		Namespace: artifacts.ResolveNamespace(s.wf.GetNamespace()), RunID: s.runID, TaskID: id, ResumeScope: s.resumeScope(id),
+		AdmissionSHA256: s.plan.Identity.AdmissionSHA256, Deadline: s.awaits[id].deadlineAt, Spacings: s.plan.Identity.RecordBudget.Spacings(),
+	}
+}
+
 // readResolution reads await id's record. It changes nothing of the run.
 func (s *runState) readResolution(ctx workflow.Context, id string) resolutionAnswer {
 	var got ResolutionRead
 	readCtx := s.resolutionReadContext(ctx)
-	err := s.getLocal(readCtx, workflow.ExecuteLocalActivity(readCtx, ActivityReadResolution, ResolutionReadRequest{
-		Namespace: artifacts.ResolveNamespace(s.wf.GetNamespace()), RunID: s.runID, TaskID: id,
-		AdmissionSHA256: s.plan.Identity.AdmissionSHA256, Deadline: s.awaits[id].deadlineAt, Spacings: s.plan.Identity.RecordBudget.Spacings(),
-	}), &got)
+	err := s.getLocal(readCtx, workflow.ExecuteLocalActivity(readCtx, ActivityReadResolution, s.resolutionRequest(id)), &got)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		return resolutionAnswer{canceled: true, err: temporal.NewCanceledError()}

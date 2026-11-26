@@ -522,9 +522,10 @@ this order:
    replica (`resource_exhausted`, `429` at the callback route), before it
    reads anything, and one that makes a record or could not be asked to none;
    then reads the run's admission and the await's deadline, and settles the
-   run's resume scope by its resume records. A run's state names no resume in
-   this release, so the doors of a resumed run answer `unavailable` and record
-   nothing;
+   run's resume scope by its resume records: an await the newest resume ran or
+   opened again is resolved under that resume. What the run's state says of its
+   resumes is believed of none of it, so while it does not say the newest the
+   doors answer `unavailable` and record nothing;
 2. reads the record there. The same resolution, from the caller on record,
    from the same callback or from a reader of the run, is a repeat; anything
    else is refused `AWAIT_ALREADY_RESOLVED`, and only a reader of the run is
@@ -863,6 +864,20 @@ nowhere else, so an approval that resume opened again and nobody has given
 since is a miss. An approval or a composed result left standing by a later
 resume must still follow what is current: one given on a result since
 replaced by a different one is a miss too.
+
+No run that holds an identity is resumed in this release: the check of what a
+resume would keep reads no record yet, so it is refused (`admitted_run`). What
+the attempts of a resumed run are held to is this.
+
+A resume opens a new set of the attempts that may hold a task's identities,
+and nothing else does: an attempt's slot, its commit key and its idempotency
+key are its scope's, and the record its task had before is neither answered
+nor touched. A result a resume keeps is read back from the engine's record,
+and a dependent stages it at the scope it was made in, never past its own
+attempt's. What an Orker does not check is that the scope is the one that
+decides: whoever writes the cluster can have an honest Orker stage an earlier
+resume's record of a task, which is a real record of that task, once a newer
+one exists.
 
 The check asks whether a resolution is on record, not whether the run took
 it: an approval someone gave that the store finished writing after the

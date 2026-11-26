@@ -75,6 +75,9 @@ var recordReadSites = map[string]string{
 	// A composed task's record takes its child's outputs', which nothing is
 	// due by: it adopts no resolution.
 	"internal/identity/values_record.go": "answer",
+	// What a resume reads of an admitted run: an answer's values only through
+	// InTime; a composed task's, which nothing is due by, from its record.
+	"internal/engine/resume_records.go": "adopt",
 }
 
 // TestRecordReader_AdoptionSitesHoldRecordedInTime: every production file

@@ -338,6 +338,102 @@ func TestResetRun_KeepsWhatSucceededAndRunsTheRestAgain(t *testing.T) {
 	}
 }
 
+// recordBuild is keepBuildRerunDeploy for a run whose results the engine
+// records: build's record, as edit leaves it, at its attested key or where
+// place says.
+func (h *resetHarness) recordBuild(t *testing.T, edit func(*orkstackv1.ActivityCommit), place func(uri string) string) string {
+	t.Helper()
+	engine.ResumeAdmittedRunsForTest(t)
+	h.identity = recordedPlan().Identity
+	h.keepBuildRerunDeploy(t, false)
+	wf := compile(t, resumeTwoTaskDocument)
+	identity, err := engine.ExpectedCommitIdentity(wf, "ork-reset-1", wf.GetTasks()[0], -1, 0)
+	must.OK(t, err)
+	uri, err := artifacts.AttestedCommitURI("mem://commits/" + identity.Key)
+	must.OK(t, err)
+	c := &orkstackv1.ActivityCommit{
+		SchemaVersion: artifacts.CommitSchemaVersion, Namespace: identity.Namespace, RunId: identity.RunID, TaskId: "build",
+		OrkflowDefinitionDigest: identity.DefinitionDigest, IdempotencyKey: identity.IdempotencyKey,
+		Image: wf.GetTasks()[0].GetImage(), Attempt: 2, OrkerId: "orker-a", Recorded: &orkstackv1.CommitRecording{Pool: "main"},
+	}
+	if edit != nil {
+		edit(c)
+	}
+	doc, err := artifacts.MarshalCommit(c)
+	must.OK(t, err)
+	if place == nil {
+		place = func(uri string) string { return uri }
+	}
+	h.commits.PutRaw(place(uri), doc)
+	return uri
+}
+
+// A resumed run whose results the engine records keeps what its records say
+// and names the resume to whoever asks for an attempt it dispatches: build is
+// read back from its record, deploy is dispatched under the scope with that
+// record's own uri, and nothing under metadata/commits/ counts.
+func TestResetRun_ARecordedRunKeepsItsRecordsAndNamesItsScope(t *testing.T) {
+	h := newResetHarness(t)
+	uri := h.recordBuild(t, nil, nil)
+	must.OKf(t, h.runResetOf(t, resumeTwoTaskDocument), "the resumed run")
+	if calls := h.taskCalls("build"); len(calls) != 0 {
+		t.Fatalf("the kept task ran again %d times", len(calls))
+	}
+	deploys := h.taskCalls("deploy")
+	if len(deploys) != 1 {
+		t.Fatalf("deploy dispatched %d times, want once", len(deploys))
+	}
+	d := deploys[0]
+	if d.GetIdentity().GetResumeScope() != 42 || d.GetIdentity().GetRootScope() != 0 || d.GetIdempotencyKey() != "default/ork-reset-1/deploy@r42" {
+		t.Fatalf("deploy's identity = %v, key %q; want scope 42", d.GetIdentity(), d.GetIdempotencyKey())
+	}
+	if len(d.GetUpstream()) != 1 || d.GetUpstream()[0].GetCommitUri() != uri {
+		t.Fatalf("deploy's upstream = %v, want build's record %s", d.GetUpstream(), uri)
+	}
+	run, _ := h.store.Get("ork-reset-1")
+	for _, row := range run.GetTaskRuns() {
+		if row.GetTaskId() == "build" && row.GetCommit().GetUri() != uri {
+			t.Fatalf("build's commit = %v, want its record %s", row.GetCommit(), uri)
+		}
+	}
+}
+
+// A recorded run's result is kept only from its engine's record: a commit
+// where an Orker writes is no result, and a record with no engine's recording
+// is not its own. Nothing runs again.
+func TestResetRun_ARecordedRunKeepsNothingElse(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit   func(*orkstackv1.ActivityCommit)
+		place  func(string) string
+		reason string
+	}{
+		"a commit an Orker wrote": {nil, func(uri string) string {
+			return strings.Replace(uri, artifacts.AttestedPrefix, artifacts.CommitPrefix, 1)
+		}, "COMMIT_MISSING"},
+		"a record with no recording": {func(c *orkstackv1.ActivityCommit) { c.Recorded = nil }, nil, "COMMIT_IDENTITY_MISMATCH"},
+		"another scope's record": {nil, func(uri string) string {
+			return strings.Replace(uri, "/commit.json", "/r00000000000000000007/commit.json", 1)
+		}, "COMMIT_MISSING"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newResetHarness(t)
+			h.recordBuild(t, tc.edit, tc.place)
+			if err := h.runResetOf(t, resumeTwoTaskDocument); err == nil {
+				t.Fatal("the run succeeded without its kept record")
+			}
+			if n := len(h.taskCalls("deploy")) + len(h.taskCalls("build")); n != 0 {
+				t.Fatalf("%d tasks ran", n)
+			}
+			run, _ := h.store.Get("ork-reset-1")
+			for _, row := range run.GetTaskRuns() {
+				if row.GetTaskId() == "build" && row.GetError().GetCode() != tc.reason {
+					t.Fatalf("build row = %v, want %s", row.GetError(), tc.reason)
+				}
+			}
+		})
+	}
+}
+
 // A kept result that is gone fails its task with its reason, and nothing
 // runs again: the run ends FAILED, and can be resumed.
 func TestResetRun_AKeptResultThatIsGoneFailsBeforeAnythingRunsAgain(t *testing.T) {

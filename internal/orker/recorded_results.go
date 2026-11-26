@@ -411,13 +411,10 @@ func (d *OCIDispatcher) checkUpstreamRecord(ctx context.Context, in *orkstackv1.
 	}
 	// The record is the producer's own, in this run, in this Orker's store:
 	// the uri its result reported is exactly the attested twin of its commit
-	// key, or nothing is read.
-	uri, err := d.upstreamRecordURI(in, producer)
+	// key, under the resume scope the result was made in, or nothing is read.
+	uri, scope, err := d.upstreamRecordURI(in, producer, up.GetCommitUri())
 	if err != nil {
-		return notRecorded("this run has no record key for it: %v", err)
-	}
-	if up.GetCommitUri() != uri {
-		return notRecorded("its commit uri %s is not its own record's in this run, %s", up.GetCommitUri(), uri)
+		return notRecorded("its commit uri %s is not its own record's in this run: %v", up.GetCommitUri(), err)
 	}
 	if d.Commits == nil {
 		return notRecorded("this Orker has no commit store to read its record from")
@@ -442,7 +439,7 @@ func (d *OCIDispatcher) checkUpstreamRecord(ctx context.Context, in *orkstackv1.
 		return notRecorded("the record at %s is of %s/%s/%s", uri, rec.GetNamespace(), rec.GetRunId(), rec.GetTaskId())
 	case rec.GetOrkflowDefinitionDigest() != in.GetOrkflowDefinitionDigest():
 		return notRecorded("the record at %s is of definition %q, not this run's", uri, rec.GetOrkflowDefinitionDigest())
-	case rec.GetIdempotencyKey() != task.IdempotencyKeyFor(in.GetNamespace(), in.GetRunId(), producer):
+	case rec.GetIdempotencyKey() != task.ScopedIdempotencyKeyFor(in.GetNamespace(), in.GetRunId(), producer, scope):
 		return notRecorded("the record at %s is of another activity (idempotency key %q)", uri, rec.GetIdempotencyKey())
 	case rec.GetExitCode() != 0:
 		return notRecorded("the record at %s is of an exit %d, not a success", uri, rec.GetExitCode())
@@ -472,8 +469,15 @@ func (d *OCIDispatcher) checkUpstreamValues(ctx context.Context, in *orkstackv1.
 	if err != nil {
 		return notRecorded("this run has no record key for it: %v", err)
 	}
+	// The scope it was made in: the base's, or a resume's up to the attempt's
+	// own. That it is the one that decides is not held here; upstreamRecordURI
+	// says who can offer an earlier one, and what that gets them.
+	scope := artifacts.RecordKeyScope(strings.TrimPrefix(up.GetRecordUri(), root+"/"))
+	if own := in.GetIdentity().GetResumeScope(); scope > own {
+		return notRecorded("its record uri %s is of resume %d, and this attempt is of resume %d", up.GetRecordUri(), scope, own)
+	}
 	want := artifacts.RecordWant{Namespace: artifacts.ResolveNamespace(in.GetNamespace()), RunID: in.GetRunId(), TaskID: producer,
-		AdmissionSHA256: in.GetIdentity().GetAdmissionSha256()}
+		Scope: scope, AdmissionSHA256: in.GetIdentity().GetAdmissionSha256()}
 	key := ""
 	for _, k := range []struct {
 		kind artifacts.RecordKind
@@ -482,7 +486,7 @@ func (d *OCIDispatcher) checkUpstreamValues(ctx context.Context, in *orkstackv1.
 		{artifacts.RecordResolution, orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_RESOLUTION},
 		{artifacts.RecordComposed, orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_COMPOSED},
 	} {
-		if at, err := artifacts.RecordKey(k.kind, want.Namespace, want.RunID, producer, 0); err == nil && up.GetRecordUri() == root+"/"+at {
+		if at, err := artifacts.RecordKey(k.kind, want.Namespace, want.RunID, producer, scope); err == nil && up.GetRecordUri() == root+"/"+at {
 			key, want.Kind = at, k.of
 		}
 	}
@@ -572,18 +576,49 @@ func unrecorded(a *orkstackv1.ArtifactRef) bool {
 	return a.GetUri() == "" && a.GetSha256() == "" && a.GetSizeBytes() == 0
 }
 
-// upstreamRecordURI is the uri of producer's engine record in in's run, from
-// the run's coordinates alone.
-func (d *OCIDispatcher) upstreamRecordURI(in *orkstackv1.ExecuteTaskInput, producer string) (string, error) {
-	key, err := artifacts.CommitKey(in.GetNamespace(), in.GetRunId(), producer)
-	if err != nil {
-		return "", err
-	}
+// upstreamRecordURI is the uri of producer's engine record in in's run, and
+// the resume scope it lies under: reported when it is exactly that, and an
+// error otherwise. Everything but the scope is the run's coordinates; a scope
+// is the base's or a resume's up to the attempt's own.
+//
+// What it does not hold is that the scope is the one that decides for the
+// producer, which only the engine's resume records say. So a party that writes
+// the cluster (a holder of its write access, as an Orker's own cluster
+// credential is unless the deployment narrows it) can give an honest Orker the
+// uri of an earlier resume's record once a newer one exists. What it gets is
+// that record staged: a result this task really had in this run, under this
+// definition, that a resume has replaced. It gets no record no engine wrote,
+// none of another run or task, and no start: the engine answers the attempt's
+// preflight only when every task it follows is on record at the scope that
+// decides. docs/SECURITY_MODEL.md states it.
+func (d *OCIDispatcher) upstreamRecordURI(in *orkstackv1.ExecuteTaskInput, producer, reported string) (string, uint64, error) {
 	root, err := d.recordRoot(in)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return artifacts.AttestedCommitURI(root + "/" + key)
+	key, under := strings.CutPrefix(reported, root+"/"+artifacts.AttestedPrefix+"/")
+	if !under {
+		return "", 0, errors.New("it is not under this run's records")
+	}
+	scope, err := artifacts.CommitKeyScope(artifacts.CommitPrefix + "/" + key)
+	if err != nil {
+		return "", 0, err
+	}
+	if own := in.GetIdentity().GetResumeScope(); scope > own {
+		return "", 0, fmt.Errorf("it is of resume %d, and this attempt is of resume %d", scope, own)
+	}
+	want, err := artifacts.ScopedCommitKey(in.GetNamespace(), in.GetRunId(), producer, scope)
+	if err != nil {
+		return "", 0, err
+	}
+	uri, err := artifacts.AttestedCommitURI(root + "/" + want)
+	if err != nil {
+		return "", 0, err
+	}
+	if reported != uri {
+		return "", 0, fmt.Errorf("that is %s", uri)
+	}
+	return uri, scope, nil
 }
 
 // recordRoot is the root of the store in's records lie in: this Orker's commit

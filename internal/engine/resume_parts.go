@@ -16,10 +16,11 @@ import (
 type ResumePart string
 
 const (
-	// ResumePartAdmittedRun: a run of a tree that holds an identity. Its attested
-	// commit keys carry no resume scope yet, so a resume could adopt an
-	// earlier attempt's attested commit; identity's P14r-2 (resumed admitted
-	// runs) adds the scope segment and deletes this row.
+	// ResumePartAdmittedRun: a run of a tree that holds an identity. The scopes
+	// its attempts name are held to its resumes, but ResumeRun does not yet
+	// check what it would keep against what the engine recorded (identity's
+	// P14r-3, which deletes this row with
+	// TestResumeVerifier_AnAdmittedRunIsRefusedUntilItsRecordsAreRead).
 	ResumePartAdmittedRun ResumePart = "admitted_run"
 )
 

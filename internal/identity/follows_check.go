@@ -98,20 +98,46 @@ func (f *FollowsCheck) CheckScope(ctx context.Context, adm artifacts.Admission, 
 // newest, which no link leads from, and answers its record, the one the link
 // to it names and the reset was made with. Zero is a run never resumed.
 func (f *FollowsCheck) Establish(ctx context.Context, adm artifacts.Admission, scopes Scopes) (artifacts.ResumeRecord, error) {
-	none := artifacts.ResumeRecord{}
+	chain, err := f.established(ctx, adm, scopes)
+	if err != nil || len(chain) == 0 {
+		return artifacts.ResumeRecord{}, err
+	}
+	return chain[0], nil
+}
+
+// DecidingScope is Establish, and the scope at which taskID's record of adm's
+// run counts, by the same rule as a followed task's.
+func (f *FollowsCheck) DecidingScope(ctx context.Context, adm artifacts.Admission, taskID string, scopes Scopes) (uint64, error) {
+	chain, err := f.established(ctx, adm, scopes)
+	if err != nil || adm.RootRunID != "" {
+		return 0, err
+	}
+	return DecidingScope(chain, taskID), nil
+}
+
+// DecidingScope is the newest resume of chain, newest first, that ran the task
+// again or reopened it; the base when none did.
+func DecidingScope(chain []artifacts.ResumeRecord, taskID string) uint64 {
+	for _, r := range chain {
+		if slices.Contains(r.Tasks, taskID) || slices.Contains(r.ReopenedAwaits, taskID) {
+			return r.Scope
+		}
+	}
+	return 0
+}
+
+// established is the resumes of adm's root, newest first, once the scope named
+// is held to be the newest.
+func (f *FollowsCheck) established(ctx context.Context, adm artifacts.Admission, scopes Scopes) ([]artifacts.ResumeRecord, error) {
 	below := adm.RootRunID != ""
 	root, scope := adm.RunID, scopes.Resume
 	if below {
 		root, scope = adm.RootRunID, scopes.Root
 	}
 	if (below && scopes.Resume != 0) || (!below && scopes.Root != 0) {
-		return none, refuse(ReasonNotAdmitted, true, "run %q names a resume scope that is not its own", adm.RunID)
+		return nil, refuse(ReasonNotAdmitted, true, "run %q names a resume scope that is not its own", adm.RunID)
 	}
-	chain, err := f.resumeChain(ctx, adm.Namespace, root, scope)
-	if err != nil || len(chain) == 0 {
-		return none, err
-	}
-	return chain[0], nil
+	return f.resumeChain(ctx, adm.Namespace, root, scope)
 }
 
 // resumeChain is root's resumes from the newest back, whose scope is newest.
@@ -323,12 +349,7 @@ func (c *followsRead) decides(run, taskID string) uint64 {
 	if run != c.root {
 		return 0
 	}
-	for _, r := range c.resumes {
-		if slices.Contains(r.Tasks, taskID) || slices.Contains(r.ReopenedAwaits, taskID) {
-			return r.Scope
-		}
-	}
-	return 0
+	return DecidingScope(c.resumes, taskID)
 }
 
 // standing is ref's record, where it counts: a success, and, where a later

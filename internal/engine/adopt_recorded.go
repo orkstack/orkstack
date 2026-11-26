@@ -272,6 +272,11 @@ func (a *ResumeActivities) resultOf(ctx context.Context, e *orkstackv1.AdoptEntr
 			fmt.Sprintf("%s: the commit at %s is for a different activity: %s", unitLabel(e), e.GetCommitUri(), mismatch),
 			ReasonCommitIdentity, nil)
 	}
+	if commit.GetRecorded() == nil && artifacts.IsAttestedURI(e.GetCommitUri()) {
+		return nil, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("%s: the record at %s carries no engine's recording, so no engine wrote it", unitLabel(e), e.GetCommitUri()),
+			ReasonCommitIdentity, nil)
+	}
 	result := &orkstackv1.ExecuteTaskResult{
 		TaskId:          e.GetTaskId(),
 		ExitCode:        commit.GetExitCode(),

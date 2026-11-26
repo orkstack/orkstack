@@ -521,8 +521,8 @@ func TestRecordedDoor_Faults(t *testing.T) {
 		}
 	})
 	t.Run("resumed before", func(t *testing.T) {
-		// The run's state names no resume in this build, so a resumed run's
-		// doors answer unavailable, and record and tell nothing.
+		// The run's state does not say the resume yet, so its doors answer
+		// unavailable, and record and tell nothing.
 		d := newRecordedDoor(t)
 		d.resumed()
 		for _, req := range []*orkstackv1.ResolveAwaitRequest{{RunId: recordedRun, TaskId: "gate", ValuesJson: approved}, {RunId: recordedRun, TaskId: "gate", Redeliver: true}} {
@@ -531,6 +531,141 @@ func TestRecordedDoor_Faults(t *testing.T) {
 		}
 		if d.onRecord() != nil || len(d.starter.delivered()) != 0 {
 			t.Fatal("recorded or told")
+		}
+	})
+}
+
+// atScope is the record of gate at scope, or nil.
+func (d *recordedDoor) atScope(scope uint64) *artifacts.RecordedFound {
+	d.t.Helper()
+	key, err := artifacts.RecordKey(artifacts.RecordResolution, "default", recordedRun, "gate", scope)
+	must.OK(d.t, err)
+	_, want := d.want()
+	want.Scope = scope
+	read, err := d.records.RecordStore.ReadRecordedValues(context.Background(), artifacts.SlotDoor,
+		&artifacts.RecordSpacings{MissConfirm: time.Millisecond, ReaskInitial: time.Millisecond, ReaskMax: time.Millisecond}, key, want)
+	must.OK(d.t, err)
+	if read.Answer != artifacts.RecordFound {
+		return nil
+	}
+	return read.Value
+}
+
+// says sets the resume scope the run's state says gate is of.
+func (d *recordedDoor) says(scope int64) {
+	d.t.Helper()
+	taskRunFor(d.seeded, "gate").ResultEpoch = scope
+	d.reader.setRun(d.seeded)
+}
+
+// TestRecordedDoor_AResumedAwait: an await a resume opened again is resolved
+// under that resume, whatever was on record before it, which is neither
+// repeated nor touched; the run's state is believed of neither: a scope that
+// is not the newest, or an await the newest resume opened that its row does
+// not say so of, is unavailable and records nothing.
+func TestRecordedDoor_AResumedAwait(t *testing.T) {
+	t.Run("resolved again", func(t *testing.T) {
+		d := newRecordedDoor(t)
+		_, err := d.approve(approved, "alice")
+		must.OK(t, err)
+		base := d.atScope(0)
+		d.resumed()
+		d.says(5)
+		resp, err := d.resolve(&orkstackv1.ResolveAwaitRequest{RunId: recordedRun, TaskId: "gate", Reject: true, Reason: "not this time"}, "bob")
+		if err != nil || resp.GetRepeat() {
+			t.Fatalf("the resumed await = %v, %v; want a new answer", resp, err)
+		}
+		again := d.atScope(5)
+		if again == nil || d.atScope(0) == nil || d.atScope(0).RecordSHA256() != base.RecordSHA256() {
+			t.Fatal("the resumed await's answer is not on record beside the base's")
+		}
+		if rejected, _, _ := again.Standing(); !rejected {
+			t.Fatal("the base's approval was answered")
+		}
+		resp, err = d.resolve(&orkstackv1.ResolveAwaitRequest{RunId: recordedRun, TaskId: "gate", Reject: true, Reason: "not this time"}, "bob")
+		if err != nil || !resp.GetRepeat() {
+			t.Fatalf("a repeat = %v, %v", resp, err)
+		}
+	})
+	for name, tc := range map[string]struct {
+		state int64
+		other int64 // another row's
+	}{
+		"its row says no resume":              {0, 0},
+		"its row says none, and another does": {0, 5},
+		"its row says one no resume opened":   {7, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newRecordedDoor(t)
+			d.resumed()
+			for _, row := range d.seeded.GetTaskRuns() {
+				if row.GetTaskId() != "gate" {
+					row.ResultEpoch = tc.other
+				}
+			}
+			d.says(tc.state)
+			_, err := d.approve(approved, "alice")
+			d.refused(err, connect.CodeUnavailable, "was resumed")
+			if d.atScope(0) != nil || d.atScope(5) != nil || d.atScope(7) != nil || len(d.starter.delivered()) != 0 {
+				t.Fatal("recorded or told")
+			}
+		})
+	}
+	t.Run("an earlier resume opened it again, and a later one left it", func(t *testing.T) {
+		for _, says := range []int64{0, 5, 7, 9} {
+			d := newRecordedDoor(t)
+			_, err := d.approve(approved, "alice")
+			must.OK(t, err)
+			d.resumed()
+			must.OK(t, d.records.WriteResume(context.Background(), artifacts.ResumeRecord{Namespace: "default", RunID: recordedRun, Scope: 9,
+				PreviousScope: 5, Tasks: []string{"deploy"}}))
+			d.seeded.TaskRuns = append(d.seeded.TaskRuns, &orkstackv1.TaskRun{TaskId: "deploy", ResultEpoch: 9})
+			d.says(says)
+			told := len(d.starter.delivered())
+			resp, err := d.approve(approved, "bob")
+			if says != 5 {
+				// Not where it counts: the base's approval least of all.
+				d.refused(err, connect.CodeUnavailable, "was resumed")
+				if d.atScope(5) != nil || d.atScope(7) != nil || d.atScope(9) != nil || len(d.starter.delivered()) != told {
+					t.Fatalf("a row that says %d: recorded or told", says)
+				}
+				continue
+			}
+			if err != nil || resp.GetRepeat() || d.atScope(5) == nil {
+				t.Fatalf("the await at the resume that opened it = %v, %v; want a new answer there", resp, err)
+			}
+		}
+	})
+	t.Run("a resume that kept it", func(t *testing.T) {
+		d := newRecordedDoor(t)
+		_, err := d.approve(approved, "alice")
+		must.OK(t, err)
+		must.OK(t, d.records.WriteResume(context.Background(), artifacts.ResumeRecord{Namespace: "default", RunID: recordedRun, Scope: 5, Tasks: []string{"deploy"}}))
+		d.seeded.TaskRuns = append(d.seeded.TaskRuns, &orkstackv1.TaskRun{TaskId: "deploy", ResultEpoch: 5})
+		d.says(0)
+		resp, err := d.approve(approved, "alice")
+		if err != nil || !resp.GetRepeat() {
+			t.Fatalf("a repeat of a kept answer = %v, %v", resp, err)
+		}
+	})
+	t.Run("a run below a resumed root", func(t *testing.T) {
+		for _, scope := range []uint64{0, 5} {
+			d := newRecordedDoor(t)
+			d.adm.RootRunID = "ork-root"
+			d.adm.Starter = artifacts.Starter{Kind: artifacts.StarterParentRun, RunID: "ork-root", AdmissionSHA256: strings.Repeat("e", 64), TaskID: "ship"}
+			d.seed(time.Hour)
+			must.OK(t, d.records.WriteResume(context.Background(), artifacts.ResumeRecord{Namespace: "default", RunID: "ork-root", Scope: 5, Tasks: []string{"ship"}}))
+			d.reader.setStart(recordedRun, &engine.RunStartRecord{Orkflow: d.wf, Plan: engine.RunPlan{Namespace: "default",
+				Identity: &engine.IdentityPlan{AdmissionSHA256: d.sha, RootScope: scope},
+				Awaits:   map[string]engine.AwaitCredential{"gate": credentialFor(d.t, awaitToken)}}})
+			_, err := d.approve(approved, "alice")
+			if scope == 0 {
+				d.refused(err, connect.CodeUnavailable, "was resumed")
+				continue
+			}
+			if err != nil || d.atScope(0) == nil {
+				t.Fatalf("a child started under the newest resume = %v", err)
+			}
 		}
 	})
 }

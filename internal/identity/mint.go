@@ -54,10 +54,12 @@ const MaxMintTokens = 16
 type MintRequest struct {
 	Namespace, RunID, TaskID string
 	Item                     artifacts.Item
-	Attempt                  int32
-	TaskSpecSHA256           string
-	AdmissionSHA256          string
-	Tokens                   []TokenAsk
+	// Scopes are the resume scopes the attempt says it was dispatched under.
+	Scopes          Scopes
+	Attempt         int32
+	TaskSpecSHA256  string
+	AdmissionSHA256 string
+	Tokens          []TokenAsk
 }
 
 // TokenAsk is one token asked for: an identity's name and audience, or
@@ -215,7 +217,7 @@ func (m *Minter) Admit(ctx context.Context, req MintRequest) (Admitted, error) {
 	if len(req.Tokens) == 0 || len(req.Tokens) > MaxMintTokens {
 		return Admitted{}, refuse(ReasonNotAdmitted, false, "a mint asks for 1 to %d tokens, not %d", MaxMintTokens, len(req.Tokens))
 	}
-	adm, row, err := admitTask(ctx, m.Stores, attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item))
+	adm, row, err := admitTask(ctx, m.Stores, attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item, req.Scopes))
 	if err != nil {
 		return Admitted{}, err
 	}
@@ -272,7 +274,7 @@ func (m *Minter) Issue(ctx context.Context, a Admitted, req MintRequest, caller 
 	}
 	// Steps 4 to 6a: the attempt, the start, the binding, what it follows.
 	held, err := checkAttempt(ctx, attemptChecks{Describe: m.Describe, Starts: m.Starts, Follows: m.Follows}, adm,
-		attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item), req.Attempt, req.TaskSpecSHA256, caller)
+		attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item, req.Scopes), req.Attempt, req.TaskSpecSHA256, caller)
 	if err != nil {
 		return Issued{}, err
 	}
@@ -311,7 +313,7 @@ func (m *Minter) Issue(ctx context.Context, a Admitted, req MintRequest, caller 
 
 func (m *Minter) takeSlot(ctx context.Context, a Admitted, req MintRequest, pending PendingAttempt, now time.Time) error {
 	slot, err := m.Stores.TakeAttemptSlot(ctx, artifacts.AttemptSlotRequest{
-		Namespace: req.Namespace, RunID: req.RunID, TaskID: req.TaskID, Item: req.Item,
+		Namespace: req.Namespace, RunID: req.RunID, TaskID: req.TaskID, Item: req.Item, Scope: req.Scopes.Resume,
 		Slots: int(max(1, a.Task.IdentitySlots)), Holder: artifacts.SlotHolder{Attempt: req.Attempt, StartedAt: pending.StartedAt}, Now: now,
 	})
 	if err != nil {

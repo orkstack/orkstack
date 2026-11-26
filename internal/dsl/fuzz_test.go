@@ -806,33 +806,50 @@ func holdsReplacement(value any) bool {
 	return false
 }
 
-// rootBlockScalarHoldsMarker reports whether the parser read a document marker
-// line into a block scalar at a document's root (">\n---"). YAML ends the
-// document at the marker, as yaml.v3 did, and SecondDocumentLine finds the
-// second document there; go-yaml v4 reads the marker as the scalar's text, so
-// on such a file the parser is no oracle.
-func rootBlockScalarHoldsMarker(doc *yaml.Node) bool {
+// yamlBreak is every line break the parser counts.
+var yamlBreak = regexp.MustCompile("\r\n|\r|\n|\u0085|\u2028|\u2029")
+
+// rootBlockScalarSecondDocument is, for a block scalar at a document's root
+// whose text runs to the file's end, the line YAML begins a second document on
+// (">\n0\n---" is line 3): a start marker after the scalar's header, or
+// content after an end marker, as yaml.v3 read it. go-yaml v4 reads either as
+// the scalar's text. It is read from the source, not the scalar's value, in
+// which folding and the breaks the parser keeps hide a marker ("0 ---",
+// "0\u2028---"). ended reports an end marker with nothing after it, which
+// YAML reads as no second document and v4 as more text: there the parser is
+// no oracle.
+func rootBlockScalarSecondDocument(doc *yaml.Node, source []byte) (line int, ended bool) {
 	if len(doc.Content) != 1 {
-		return false
+		return 0, false
 	}
 	root := doc.Content[0]
-	if root.Kind != yaml.ScalarNode || root.Style&(yaml.LiteralStyle|yaml.FoldedStyle) == 0 {
-		return false
+	if root.Kind != yaml.ScalarNode || root.Style&(yaml.LiteralStyle|yaml.FoldedStyle) == 0 || root.Line < 1 {
+		return 0, false
 	}
-	for _, line := range strings.Split(root.Value, "\n") {
-		for _, marker := range []string{"---", "..."} {
-			if rest, ok := strings.CutPrefix(line, marker); ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
-				return true
-			}
+	marker := func(text, m string) bool {
+		rest, ok := strings.CutPrefix(text, m)
+		return ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t')
+	}
+	lines := yamlBreak.Split(string(source), -1)
+	for i := root.Line; i < len(lines); i++ {
+		text := strings.TrimLeft(lines[i], " \t")
+		switch {
+		case marker(lines[i], "---"):
+			return i + 1, false
+		case marker(lines[i], "..."):
+			ended = true
+		case ended && text != "" && text[0] != '#' && lines[i][0] != '%':
+			return i + 1, false
 		}
 	}
-	return false
+	return 0, ended
 }
 
 // FuzzSecondDocumentLine: the parser and SecondDocumentLine agree on every file
 // whose first document parses, and a line it reports stands in the file — but
 // for a block scalar at the root that the parser reads a marker into
-// (rootBlockScalarHoldsMarker).
+// (rootBlockScalarSecondDocument): there the second document is YAML's, on its
+// line, and an end marker with nothing after it has no oracle.
 func FuzzSecondDocumentLine(f *testing.F) {
 	for _, tc := range secondDocumentCases {
 		f.Add([]byte(tc.source))
@@ -840,7 +857,7 @@ func FuzzSecondDocumentLine(f *testing.F) {
 	for _, tc := range singleDocumentCases {
 		f.Add([]byte(tc.source))
 	}
-	for _, source := range []string{"", "---", "---\n---\n", "...\n", "...\na: 1\n", "a: 1\r---\rb: 2\r", "a: 1\u2028---\u2028b: 2", "%YAML 1.1\n---\na: 1\n...\n%YAML 1.1\n---\nb: 2\n"} {
+	for _, source := range []string{"", "---", "---\n---\n", "...\n", "...\na: 1\n", "a: 1\r---\rb: 2\r", "a: 1\u2028---\u2028b: 2", "%YAML 1.1\n---\na: 1\n...\n%YAML 1.1\n---\nb: 2\n", ">\n0\n...\n0\n---", ">\n0\n...\n# c\n%YAML 1.1\nx\n", ">\n0\n...\n"} {
 		f.Add([]byte(source))
 	}
 	f.Fuzz(func(t *testing.T, source []byte) {
@@ -850,10 +867,19 @@ func FuzzSecondDocumentLine(f *testing.F) {
 		}
 		decoder := yaml.NewDecoder(bytes.NewReader(source))
 		var first, second yaml.Node
-		if err := decoder.Decode(&first); err != nil || rootBlockScalarHoldsMarker(&first) {
+		if err := decoder.Decode(&first); err != nil {
 			return
 		}
 		err := decoder.Decode(&second)
+		if errors.Is(err, io.EOF) {
+			at, ended := rootBlockScalarSecondDocument(&first, source)
+			if at > 0 && (!found || line != at) {
+				t.Fatalf("SecondDocumentLine(%q) = %d, %v; YAML begins a second document on line %d, which the parser read into the root's block scalar", source, line, found, at)
+			}
+			if at > 0 || ended {
+				return
+			}
+		}
 		if holds := !errors.Is(err, io.EOF); holds != found {
 			t.Fatalf("SecondDocumentLine(%q) = %d, %v, and the parser's second read says %v", source, line, found, err)
 		}

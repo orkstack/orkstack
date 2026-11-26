@@ -736,6 +736,7 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 	input.Devices = devices
 	input.IdempotencyKey = key
 	input.CommitUri = commitURI
+	s.nameScope(input, item.GetResultEpoch())
 	input.Limits.ArtifactMaxCount = s.itemArtifactMax
 	input.Each = &orkstackv1.EachContext{
 		Index:  index,

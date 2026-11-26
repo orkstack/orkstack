@@ -540,6 +540,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	// the run-tree limits copied (childStartPlan), then its concurrency slot,
 	// asked before any artifact is claimed for a child a refusal never starts.
 	childPlan := s.childStartPlan(id, c.plan)
+	s.nameRootScope(&childPlan, id)
 	if err := s.limitChild(ctx, id, c, childInput, &childPlan); err != nil {
 		return nil, err
 	}

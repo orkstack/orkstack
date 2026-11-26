@@ -960,10 +960,15 @@ compile and store. For each distinct `uses` the resolver:
    unpullable pin.
 5. Stamps `Task.image`.
 6. Reads the image's interface label (`docs/ACTIVITY_IMAGES.md`, "Declaring
-   the interface"; the label is the contract, whatever wrote it): for an index, the **first entry in index order whose
-   `platform.os` is present and not `unknown`** (buildx attestation manifests
-   are skipped), fetched and digest-checked; then its config blob, bounded at
-   4 MiB and digest-checked. A registry that serves a manifest but not its
+   the interface"; the label is the contract, whatever wrote it): for an index, the **first runnable entry in index order**,
+   fetched and digest-checked; then its config blob, bounded at
+   4 MiB and digest-checked.
+   An entry is runnable when its `platform.os` is a name other than `unknown`
+   (buildx attestation manifests carry `unknown` and are skipped), and its
+   architecture and variant, where given, are names: a letter or digit, then
+   letters, digits, `.`, `_` and `-`. An entry whose platform holds any other
+   character, or that gives a variant without an architecture, is skipped.
+   A registry that serves a manifest but not its
    config cannot serve a pull either, so a failure here fails the creation with
    the codes below. A malformed **label** never does: the image is still
    pinned and runnable, and the reason is reported as an interface warning.
