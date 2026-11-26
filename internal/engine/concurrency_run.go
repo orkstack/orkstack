@@ -46,6 +46,9 @@ type concRunState struct {
 	plan *ConcurrencyPlan
 	// runID is the run's id, for its releases.
 	runID string
+	// seqBase is the run's incarnation at its gates: the plan's for a run
+	// that was never resumed, and after that its last resume's seq_base.
+	seqBase int64
 	// attempted is every gate the run asked, in order: what the release
 	// covers.
 	attempted []string
@@ -78,7 +81,7 @@ func newConcRunState(plan *ConcurrencyPlan) *concRunState {
 		// No run-level limit (task-level limits come with E88 P7).
 		return nil
 	}
-	c := &concRunState{plan: plan}
+	c := &concRunState{plan: plan, seqBase: plan.SeqBase}
 	if plan.runSlot() == nil {
 		// A plan that names a run-level slot it does not have: refused at
 		// the acquire, never run unlimited.
@@ -92,6 +95,11 @@ func newConcRunState(plan *ConcurrencyPlan) *concRunState {
 // run-level error for every ending the limit decides, and a canceled error
 // when the run is canceled while it waits.
 func (s *runState) acquireRunSlot(ctx workflow.Context) error {
+	return s.askRunSlot(ctx, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL)
+}
+
+// askRunSlot is acquireRunSlot for a run that waits for cause.
+func (s *runState) askRunSlot(ctx workflow.Context, cause orkstackv1.ConcurrencyQueueCause) error {
 	c := s.conc
 	if c.invalid != "" {
 		return runLevelError(RunConcurrencyUnsupportedCode, c.invalid)
@@ -100,7 +108,7 @@ func (s *runState) acquireRunSlot(ctx workflow.Context) error {
 	now := workflow.Now(ctx)
 	timeout := time.Duration(slot.QueueTimeoutSeconds) * time.Second
 	req := gateAcquire{
-		Proto: gateProtoLegacy, Run: s.runID, SeqBase: c.plan.SeqBase, TaskIx: gateRunLevel,
+		Proto: gateProtoLegacy, Run: s.runID, SeqBase: c.seqBase, TaskIx: gateRunLevel,
 		Limit: slot.Limit, Strategy: slot.Strategy, Label: slot.Label,
 		WaitUntil: now.Add(timeout), IssuedAt: now,
 	}
@@ -116,7 +124,7 @@ func (s *runState) acquireRunSlot(ctx workflow.Context) error {
 	case gateAnswerGranted:
 		return s.recordRunSlot(ctx, slot, res.Answer, true)
 	case gateAnswerQueued:
-		return s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL, nil)
+		return s.waitForRunSlot(ctx, slot, req, res.Answer, cause, nil)
 	}
 	return runLevelError(RunConcurrencyUnsupportedCode, fmt.Sprintf("the limit on key %s answered %q, which this release does not know", slot.Key, res.Answer.Answer))
 }
@@ -191,7 +199,8 @@ func concEnding(res AcquireConcurrencyResult, slot *ConcurrencySlotPlan) error {
 // then a grant, a re-assert, its deadline or its cancel, whichever comes
 // first.
 //
-// cause says why the run waits: it arrived (PENDING), or, failing, it asks
+// cause says why the run waits: it arrived (PENDING), it was resumed
+// (RESUME, RUNNING), or, failing, it asks
 // again for the slot it gave back while paused so its failure handlers run
 // inside the limit (FAILING, RUNNING; failingRegain). abort, when set, ends
 // the wait with errWaitAborted when it is ready: the run timeout's hard end
@@ -212,7 +221,10 @@ func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPla
 		return err
 	}
 	status, text := orkstackv1.Status_STATUS_PENDING, "queued for key %s (limit %d): position %d behind %d running; times out at %s"
-	if cause == orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING {
+	switch cause {
+	case orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_RESUME:
+		status, text = s.status, "resumed, and waiting for key %s (limit %d): position %d behind %d running; times out at %s"
+	case orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING:
 		status, text = s.status, "waiting again for key %s (limit %d) to run its failure handlers: position %d behind %d running; times out at %s"
 	}
 	message := fmt.Sprintf(text, slot.Key, slot.Limit, ans.Position, ans.HoldersAhead, req.WaitUntil.UTC().Format(time.RFC3339))
@@ -352,7 +364,7 @@ func (s *runState) grantRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan,
 func (s *runState) recordRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan, ans gateAnswer, held bool) error {
 	c := s.conc
 	entry := gateMemoEntry{Proto: gateProtoLegacy, Held: held, Limit: slot.Limit, Strategy: slot.Strategy, Label: slot.Label,
-		ArrivedAt: ans.ArrivedAt, Seq: ans.Seq, SeqBase: c.plan.SeqBase}
+		ArrivedAt: ans.ArrivedAt, Seq: ans.Seq, SeqBase: c.seqBase}
 	if c.ordinal > 0 {
 		// A slot asked for again after a give-back: a rebuilding gate
 		// restores the entry with its ordinal (§22.15).
@@ -363,7 +375,7 @@ func (s *runState) recordRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan
 	}
 	memo := map[string]any{gateMemoKey(slot.GateID, gateRunLevel): entry}
 	if !c.seqWritten {
-		memo[gateMemoSeqKey] = c.plan.SeqBase
+		memo[gateMemoSeqKey] = c.seqBase
 	}
 	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, memo)); err != nil {
 		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the run could not record its slot on key %s: %v", slot.Key, err))
@@ -410,7 +422,7 @@ func (s *runState) restoreConcRecords(ctx workflow.Context) error {
 	slot := c.plan.runSlot()
 	memo := map[string]any{
 		gateMemoKey(c.held.gate, gateRunLevel): c.heldMemoEntry(slot),
-		gateMemoSeqKey:                         c.plan.SeqBase,
+		gateMemoSeqKey:                         c.seqBase,
 	}
 	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, memo)); err != nil {
 		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the run could not record its carried slot: %v", err))
@@ -422,7 +434,7 @@ func (s *runState) restoreConcRecords(ctx workflow.Context) error {
 // heldMemoEntry is the memo entry of the run-level slot the run holds.
 func (c *concRunState) heldMemoEntry(slot *ConcurrencySlotPlan) gateMemoEntry {
 	entry := gateMemoEntry{Proto: gateProtoLegacy, Held: true, Limit: slot.Limit,
-		Strategy: slot.Strategy, Label: slot.Label, Seq: c.held.seq, SeqBase: c.plan.SeqBase}
+		Strategy: slot.Strategy, Label: slot.Label, Seq: c.held.seq, SeqBase: c.seqBase}
 	if c.ordinal > 0 {
 		entry.Proto, entry.N, entry.Strategy = gateProtoOrdinal, c.ordinal, gateStrategyQueue
 	}
@@ -445,7 +457,7 @@ func releaseSlots(ctx workflow.Context, c *concRunState) {
 	for _, gate := range c.attempted {
 		futures = append(futures, workflow.SignalExternalWorkflow(dctx, gate, "", GateSignalReleaseAll,
 			// The gate is no run and holds no key: ids and a sequence only.
-			payloadcrypt.PlainIn(scope, GateReleaseAll{Run: runID, Below: c.plan.SeqBase + 1})))
+			payloadcrypt.PlainIn(scope, GateReleaseAll{Run: runID, Below: c.seqBase + 1})))
 	}
 	for i, f := range futures {
 		if err := f.Get(dctx, nil); err != nil && !categoryOf(err).unknownRun {
@@ -494,9 +506,13 @@ func (c *concRunState) carry() *orkstackv1.RunConcurrencyCarry {
 
 // seedAttempted takes the gates a predecessor asked, at once, so every exit
 // of this generation releases them, a failed restore's included.
-func (c *concRunState) seedAttempted(in *orkstackv1.RunConcurrencyCarry) {
+func (c *concRunState) seedAttempted(carry *orkstackv1.RunContinuation) {
+	in := carry.GetConcurrency()
 	if c == nil || in == nil {
 		return
+	}
+	if resumed := carry.GetResume().GetSeqBase(); resumed > 0 {
+		c.seqBase = int64(resumed)
 	}
 	for _, g := range in.GetAttempted() {
 		c.noteAttempted(g)

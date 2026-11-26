@@ -30,7 +30,7 @@ func newAdminCommand(g *globalFlags) *cobra.Command {
 	cmd.AddCommand(newAdminRestoreCommand(g))
 	cmd.AddCommand(newAdminAuthCommand(g), newAdminRoleCommand(g), newAdminBindingCommand(g),
 		newAdminServiceAccountCommand(g), newAdminPrincipalCommand(g), newAdminAccessCommand(g),
-		newAdminIdentityCommand(g))
+		newAdminIdentityCommand(g), newAdminConcurrencyCommand(g))
 	return cmd
 }
 

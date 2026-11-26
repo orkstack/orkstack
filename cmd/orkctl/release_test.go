@@ -36,13 +36,15 @@ var releaseClockStart = time.Date(2026, 9, 24, 9, 15, 40, 0, time.UTC)
 
 // releaseStep is what the cluster says at one ListReleases.
 type releaseStep struct {
-	obs     engine.ReleaseObservation
-	obsErr  error
-	counts  map[string]int64
-	paused  map[string]int64
-	runs    map[string][]*orkstackv1.Run
-	runErr  map[string]error
-	running int64
+	obs    engine.ReleaseObservation
+	obsErr error
+	counts map[string]int64
+	paused map[string]int64
+	// resumable is each release's failed runs that can be resumed.
+	resumable map[string]int64
+	runs      map[string][]*orkstackv1.Run
+	runErr    map[string]error
+	running   int64
 }
 
 // scriptedReleases is the CLI fixture's engine.ReleaseCluster: a script of
@@ -109,6 +111,12 @@ func (s *scriptedReleases) ReleasePausedRuns(_ context.Context, build string) (i
 
 func (s *scriptedReleases) ReleaseQueuedRuns(context.Context, string) (int64, bool, error) {
 	return 0, false, nil
+}
+
+func (s *scriptedReleases) ReleaseResumableRuns(_ context.Context, build string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.current.resumable[build], nil
 }
 
 func (s *scriptedReleases) RunningRuns(context.Context) (int64, error) {
@@ -774,5 +782,42 @@ func TestReleaseStatus_NamesAReleasesPausedRuns(t *testing.T) {
 	}
 	if !strings.Contains(out.stdout, "(1 paused)") {
 		t.Fatalf("release status's runs column lacks the paused count:\n%s", out.stdout)
+	}
+}
+
+// resumingEngine is an engine that resumes runs; a release report asks it
+// nothing more.
+type resumingEngine struct{ engine.ResumeCluster }
+
+// A release's failed runs that can still be resumed are named, and a drained
+// release's once more before it is said it may be stopped.
+func TestRelease_NamesWhatStoppingItEnds(t *testing.T) {
+	useReleaseClock(t, releaseClockStart)
+	run := func(resumable int64, args ...string) string {
+		t.Helper()
+		step := rolloutStep()
+		step.resumable = map[string]int64{relP: resumable}
+		f := newFixtureWith(t, func(cfg *api.Config) {
+			cfg.Releases, cfg.Fleet, cfg.Resume = newScriptedReleases(step), releaseFleetFor(), resumingEngine{}
+		})
+		return f.run(args...).requireExit(t, exitOK).stdout
+	}
+	if out := run(1, "release", "status"); !strings.Contains(out, "up to 1 failed run can be resumed, and only while this release runs") {
+		t.Fatalf("release status lacks the resumable line:\n%s", out)
+	}
+	if out := run(0, "release", "status"); strings.Contains(out, "resumed") {
+		t.Fatalf("release status names no runs to resume:\n%s", out)
+	}
+	releaseWaitEvery = 10 * time.Second
+	steps, fleet := waitSteps()
+	for i := range steps {
+		steps[i].resumable = map[string]int64{relP: 2}
+	}
+	f := newFixtureWith(t, func(cfg *api.Config) {
+		cfg.Releases, cfg.Fleet, cfg.Resume = newScriptedReleases(steps...), fleet, resumingEngine{}
+	})
+	out := f.run("release", "wait", relP, "--timeout", "2h").requireExit(t, exitOK).stdout
+	if !strings.Contains(out, "up to 2 failed runs can be resumed, and only while release "+relP+" runs; stopping it ends that.\nrelease "+relP+" is drained") {
+		t.Fatalf("release wait does not say what stopping it ends:\n%s", out)
 	}
 }

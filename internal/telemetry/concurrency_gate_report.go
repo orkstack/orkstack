@@ -19,17 +19,24 @@ const (
 	ConcurrencyVerifyErrorsMetric = "ork.concurrency.verify_errors"
 	ConcurrencyRebuiltMetric      = "ork.concurrency.rebuilt"
 	ConcurrencyGatesStartedMetric = "ork.concurrency.gates_started"
+	ConcurrencyResetsMetric       = "ork.concurrency.resets"
+
+	AttrConcurrencyForced = "ork.concurrency.forced"
 )
 
 var (
 	concurrencyReclaimOutcomes = []string{"closed", "not_found", "stale", "missing_slot", "expired"}
 	concurrencyRebuiltOutcomes = []string{"skipped", "ok", "failed_attempt"}
+	concurrencyResetOutcomes   = []string{"started", "applied", "completed", "failed"}
 )
 
 // ConcurrencyReclaimOutcomes and ConcurrencyRebuiltOutcomes are the closed
 // sets, each a fresh copy.
 func ConcurrencyReclaimOutcomes() []string { return slices.Clone(concurrencyReclaimOutcomes) }
 func ConcurrencyRebuiltOutcomes() []string { return slices.Clone(concurrencyRebuiltOutcomes) }
+
+// ConcurrencyResetOutcomes is the closed set of a reset's outcomes, a fresh copy.
+func ConcurrencyResetOutcomes() []string { return slices.Clone(concurrencyResetOutcomes) }
 
 // ConcurrencyGateReport is one report of a namespace's gate. A limit is its
 // label (CensusLimitLabel's form: never the rendered key).
@@ -73,7 +80,28 @@ func (inst *concurrencyInstruments) buildGateReport(meter metric.Meter) error {
 	inst.gates, err = meter.Int64Counter(ConcurrencyGatesStartedMetric, metric.WithUnit("{gate}"),
 		metric.WithDescription("Concurrency keys that became active."))
 	errs = append(errs, err)
+	inst.resets, err = meter.Int64Counter(ConcurrencyResetsMetric, metric.WithUnit("{reset}"),
+		metric.WithDescription("Resets of a concurrency limit, by outcome."))
+	errs = append(errs, err)
 	return errors.Join(errs...)
+}
+
+// Reset counts one outcome of a reset; forced is one of a limit that did not
+// answer. An outcome outside its closed set is not recorded.
+func (m *ConcurrencyMetrics) Reset(ctx context.Context, namespace, outcome string, forced bool) {
+	if m == nil {
+		return
+	}
+	inst, ok := m.sinks.forNamespace(ctx, namespace)
+	if !ok {
+		return
+	}
+	if !slices.Contains(concurrencyResetOutcomes, outcome) {
+		m.sinks.warnOnce("report outcome:"+outcome, "a concurrency outcome outside the metric contract is not recorded", "outcome", outcome)
+		return
+	}
+	inst.resets.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrNamespace, namespace),
+		attribute.String(AttrConcurrencyOutcome, outcome), attribute.Bool(AttrConcurrencyForced, forced)))
 }
 
 // Report counts what a gate reported. An outcome outside its closed set, or

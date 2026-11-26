@@ -379,6 +379,11 @@ var continuedStackFixtureNames = []string{
 	"concurrency-run-queue-timeout-rebuilding-v1.json", "concurrency-run-emit-failure-releases-v1.json",
 	"concurrency-run-holds-across-continue-g0-v1.json", "concurrency-run-holds-across-continue-g1-v1.json",
 	"concurrency-run-continue-gate-rebuild-v1.json",
+	// TestIntegration_ConcurrencyResumedRunAcquiresAfterResultsKept, the same.
+	"concurrency-resume-commands-before-acquire-v1.json",
+	// TestIntegration_ConcurrencyChildKeepsItsOwnLimit, the same.
+	"concurrency-child-keyed-v1.json", "concurrency-child-unkeyed-v1.json",
+	"concurrency-child-shared-default-key-v1.json", "concurrency-child-key-conflict-v1.json",
 }
 
 // TestCommittedFixtures_StartWithFourArgumentsAndNoCarry: every committed

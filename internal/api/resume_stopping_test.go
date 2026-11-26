@@ -158,8 +158,9 @@ func TestResumeRun_NoChildRunsAsksNothing(t *testing.T) {
 }
 
 // TestResumeRun_PinLeasesHeld: a pin that runs again waits for its run's own
-// old lease only while every pin host of its pool is full and one is held by
-// that lease.
+// old pin only while every pin host of its pool is full and one is held by
+// it, and is asked to try again shortly: a host frees a closed run's slot at
+// its next answered heartbeat, long before the lease ends.
 func TestResumeRun_PinLeasesHeld(t *testing.T) {
 	now := resumeEpoch.Add(24 * time.Hour)
 	lease := func(run string, left time.Duration) *orkstackv1.OpenPin {
@@ -174,12 +175,14 @@ func TestResumeRun_PinLeasesHeld(t *testing.T) {
 		hosts []*orkstackv1.DescribeOrkerResult
 		retry int64
 	}{
-		"its own lease holds the only host": {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", 90*time.Second))}, 90},
-		"the earliest of its leases":        {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", 90*time.Second)), host(lease("ork-r", 30*time.Second))}, 30},
-		"others hold every host":            {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-z", time.Minute))}, 0},
-		"another host is free":              {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", time.Minute)), host()}, 0},
-		"the free host is cordoned":         {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", time.Minute)), cordoned}, 60},
-		"its lease has expired":             {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", -time.Minute))}, 0},
+		"its own lease holds the only host":  {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", 90*time.Second))}, 15},
+		"its lease ends just past the retry": {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", 16*time.Second))}, 15},
+		"its lease ends just before it":      {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", 14*time.Second))}, 14},
+		"the earliest of its leases":         {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", 90*time.Second)), host(lease("ork-r", 5*time.Second))}, 5},
+		"others hold every host":             {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-z", time.Minute))}, 0},
+		"another host is free":               {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", time.Minute)), host()}, 0},
+		"the free host is cordoned":          {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", time.Minute)), cordoned}, 15},
+		"its lease has expired":              {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", -time.Minute))}, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newResumeFixture(t, func(f *resumeFixture) {
@@ -199,7 +202,8 @@ func TestResumeRun_PinLeasesHeld(t *testing.T) {
 				}
 				return
 			}
-			if r := refusalOf(t, err); r.GetReason() != "STILL_STOPPING" || r.GetCause() != "pin_leases_held" || r.GetRetryAfterSeconds() != tc.retry {
+			if r := refusalOf(t, err); r.GetReason() != "STILL_STOPPING" || r.GetCause() != "pin_leases_held" || r.GetRetryAfterSeconds() != tc.retry ||
+				!strings.Contains(r.GetMessage(), "frees it shortly") || strings.Contains(r.GetMessage(), "until") {
 				t.Fatalf("refusal = %v, want pin_leases_held in %d s", r, tc.retry)
 			}
 		})

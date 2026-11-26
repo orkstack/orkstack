@@ -84,7 +84,7 @@ func (s *Service) ExportRunEvidence(
 		return connect.NewError(connect.CodeFailedPrecondition,
 			fmt.Errorf("run %q is %s; evidence is exported for finished runs only", run.GetId(), shortStatus(run.GetStatus())))
 	}
-	export := &evidenceExport{s: s, small: map[string][]byte{}}
+	export := &evidenceExport{s: s, small: map[string][]byte{}, earlier: map[string]uint64{}, runID: run.GetId()}
 	manifest, err := export.build(ctx, run, bodies, documents, msg)
 	if err != nil {
 		return err
@@ -119,6 +119,11 @@ func (s *Service) ExportRunEvidence(
 type evidenceExport struct {
 	s     *Service
 	small map[string][]byte
+	// earlier are the scopes of the earlier endings' bodies, by path: read
+	// again, and held to the manifest's digest, as they are streamed.
+	earlier map[string]uint64
+	bodies  runEndingReader
+	runID   string
 }
 
 // build is steps 6 to 9: every member, from the archived snapshot.
@@ -132,7 +137,7 @@ func (e *evidenceExport) build(
 	namespace := artifacts.ResolveNamespace(run.GetNamespace())
 	// 6. The archived body is the snapshot every member is resolved from: it
 	// is the run the body attests.
-	body, err := bodies.LoadRunBody(ctx, run.GetId())
+	endings, body, err := e.newestBody(ctx, run.GetId(), bodies)
 	switch {
 	case errors.Is(err, artifacts.ErrNotFound):
 		return nil, connect.NewError(connect.CodeFailedPrecondition,
@@ -142,7 +147,7 @@ func (e *evidenceExport) build(
 	case err != nil:
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read archive of run %q: %w", run.GetId(), err))
 	}
-	archived, _, err := engine.UnmarshalRunArchive(body)
+	archived, events, err := engine.UnmarshalRunArchive(body)
 	if err != nil || archived.GetId() != run.GetId() {
 		return nil, connect.NewError(connect.CodeDataLoss,
 			fmt.Errorf("archive body of run %q does not decode as that run", run.GetId()))
@@ -156,7 +161,7 @@ func (e *evidenceExport) build(
 		return nil, connect.NewError(connect.CodeDataLoss,
 			fmt.Errorf("archive body of run %q records an unreadable gap: %w", run.GetId(), err))
 	}
-	runKey, err := artifacts.RunArchiveKey(run.GetId())
+	runKey, err := artifacts.RunEndingKey(run.GetId(), newestScope(endings))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -189,6 +194,9 @@ func (e *evidenceExport) build(
 		Members: []evidence.Member{},
 	}
 	m.Members = append(m.Members, e.smallMember("run.jsonl", evidence.KindRun, "", 0, runKey, body))
+	if err := e.endings(ctx, m, archived, events, endings); err != nil {
+		return nil, err
+	}
 
 	// 7. The definition, addressed by the digest the run pinned.
 	if err := e.definition(ctx, m, archived); err != nil {
@@ -516,6 +524,13 @@ func (e *evidenceExport) smallMember(memberPath string, kind evidence.Kind, task
 func (e *evidenceExport) Open(ctx context.Context, m evidence.Member) (io.ReadCloser, error) {
 	if content, ok := e.small[m.Path]; ok {
 		return io.NopCloser(bytes.NewReader(content)), nil
+	}
+	if scope, ok := e.earlier[m.Path]; ok {
+		body, err := e.bodies.LoadEnding(ctx, e.runID, scope)
+		if err != nil {
+			return nil, err
+		}
+		return io.NopCloser(bytes.NewReader(body)), nil
 	}
 	return e.s.artifactStore.Get(ctx, m.Origin)
 }

@@ -59,6 +59,11 @@ type ResumeHistory struct {
 	// Continued: the execution started from a carry, so it is a continued
 	// generation.
 	Continued bool
+	// Carry is the saved state a continued generation started from; nil for
+	// generation 0. EndedBefore names the tasks that had ended in it
+	// (ReadSavedState).
+	Carry       *orkstackv1.RunContinuation
+	EndedBefore map[string]bool
 	// Dispatches is D in scheduling order; Dispatched indexes it by unit.
 	Dispatches []ResumeDispatch
 	Dispatched map[ResumeUnit]bool
@@ -77,6 +82,23 @@ type ResumeHistory struct {
 	// CloseTime is the closing event's time. A base is always closed: a
 	// history without a closing event is refused as truncated.
 	CloseTime time.Time
+	// NeverRan: it ended as a resume whose plan could not be run, so it
+	// dispatched nothing past its reset point, which ResetFrom, the execution
+	// it was reset from, did (AddEarlier).
+	NeverRan  bool
+	ResetFrom string
+	// DispatchedBefore is what the executions it was reset from dispatched.
+	DispatchedBefore map[ResumeUnit]bool
+}
+
+// AddEarlier takes what earlier, the history h's execution was reset from,
+// dispatched: a resume whose plan could not be run dispatched nothing itself.
+func (h *ResumeHistory) AddEarlier(earlier *ResumeHistory) {
+	if h.DispatchedBefore == nil {
+		h.DispatchedBefore = map[ResumeUnit]bool{}
+	}
+	maps.Copy(h.DispatchedBefore, earlier.Dispatched)
+	maps.Copy(h.DispatchedBefore, earlier.DispatchedBefore)
 }
 
 // ScanResumeBase scans one base execution's history, oldest event first.
@@ -95,15 +117,17 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 	if started == nil {
 		return nil, fmt.Errorf("engine: scan resume base: event %d is not the execution's start", events[0].GetEventId())
 	}
-	continued, err := startCarries(dc, started)
+	carry, err := startCarry(dc, started)
 	if err != nil {
 		return nil, err
 	}
+	continued := carry != nil
 	if continued && started.GetContinuedExecutionRunId() == "" {
 		return nil, errors.New("engine: scan resume base: the start carries saved state but names no predecessor")
 	}
 	h := &ResumeHistory{
 		Continued:  continued,
+		Carry:      carry,
 		Dispatched: map[ResumeUnit]bool{},
 		Published:  map[string]bool{},
 
@@ -117,6 +141,8 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 	open := map[int64]int{}     // scheduled event id -> index in Dispatches
 	children := map[int64]int{} // initiated event id -> index in Children
 	last := int64(0)
+	var closeCode string
+	resumed := false
 	for _, ev := range events {
 		if !h.ResetPoint.Found() {
 			h.PrefixBytes += int64(proto.Size(ev))
@@ -142,6 +168,7 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 					return nil, fmt.Errorf("engine: scan resume base: the event published at event %d has no type", ev.GetEventId())
 				}
 				h.MaxPublishedSequence = max(h.MaxPublishedSequence, event.GetSequence())
+				resumed = resumed || event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED
 				if event.GetTaskId() != "" {
 					h.Published[event.GetTaskId()] = true
 				}
@@ -221,8 +248,19 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 				return nil, fmt.Errorf("engine: scan resume base: the closing event %d has no time", ev.GetEventId())
 			}
 			h.CloseTime = ev.GetEventTime().AsTime()
+			failure := ev.GetWorkflowExecutionFailedEventAttributes().GetFailure()
+			closeCode = failure.GetApplicationFailureInfo().GetType()
+		case enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED:
+			// The newest reset is the one that made this execution.
+			if a := ev.GetWorkflowTaskFailedEventAttributes(); a.GetCause() == enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW {
+				h.ResetFrom = a.GetBaseRunId()
+			}
 		}
 	}
+	// A reset run that could not take its limit back ended as one whose plan
+	// could not be run, before RUN_RESUMED; one that ended so later had run.
+	h.NeverRan = ResumePlanNeverRan(closeCode) ||
+		closeCode == RunConcurrencyUnsupportedCode && h.ResetFrom != "" && !resumed
 	if !h.ResetPoint.Found() {
 		h.PrefixBytes = 0
 	}
@@ -232,19 +270,30 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 	return h, nil
 }
 
-// startCarries reports whether an execution's start carries a continuation:
+// startCarry is the continuation an execution's start carries, nil for none:
 // its fifth argument decodes to a RunContinuation, exactly as the reader's
 // decodeCarry reads it (reader_chain.go).
-func startCarries(dc converter.DataConverter, attrs *historypb.WorkflowExecutionStartedEventAttributes) (bool, error) {
+func startCarry(dc converter.DataConverter, attrs *historypb.WorkflowExecutionStartedEventAttributes) (*orkstackv1.RunContinuation, error) {
 	payloads := attrs.GetInput().GetPayloads()
 	if len(payloads) < 5 {
-		return false, nil
+		return nil, nil
 	}
 	var carry *orkstackv1.RunContinuation
 	if err := dc.FromPayload(payloads[4], &carry); err != nil {
-		return false, fmt.Errorf("engine: scan resume base: decode the saved-state reference of its start: %w", err)
+		return nil, fmt.Errorf("engine: scan resume base: decode the saved-state reference of its start: %w", err)
 	}
-	return carry != nil, nil
+	return carry, nil
+}
+
+// ReadSavedState records which tasks had ended in saved, the saved state h's
+// execution started from.
+func (h *ResumeHistory) ReadSavedState(saved *orkstackv1.Run) {
+	h.EndedBefore = map[string]bool{}
+	for _, r := range saved.GetTaskRuns() {
+		if isTerminalStatus(r.GetStatus()) {
+			h.EndedBefore[r.GetTaskId()] = true
+		}
+	}
 }
 
 func activityScheduledID(ev *historypb.HistoryEvent) int64 {
@@ -322,12 +371,10 @@ func decodeDispatch(dc converter.DataConverter, ev *historypb.HistoryEvent) (Res
 
 // Facts turns a scan into the planner's history facts for a base whose
 // terminal state is run. It leaves OpenPins unset: a force-cancelled base's
-// caller sets it from OpenPinsAt, and the planner refuses to plan without. In a continued generation a task that ended but
-// published nothing in it ended in an earlier generation.
-//
-// A task's ending is published by the generation that ended it (a canceled
-// row by its TASK_LOG), so a terminal row with no publish here was carried
-// in from the checkpoint.
+// caller sets it from OpenPinsAt, and the planner refuses to plan without. In a
+// continued generation, what had ended in the saved state it started from
+// (ReadSavedState) ended in an earlier one: never what it published, because
+// a task a resume keeps publishes nothing.
 func (h *ResumeHistory) Facts(run *orkstackv1.Run) (ResumeBaseFacts, error) {
 	if run == nil {
 		return ResumeBaseFacts{}, errors.New("engine: resume facts: no base state")
@@ -338,10 +385,13 @@ func (h *ResumeHistory) Facts(run *orkstackv1.Run) (ResumeBaseFacts, error) {
 		Dispatched: h.Dispatched,
 		Earlier:    map[string]bool{},
 	}
-	if ResumePlanNeverRan(run.GetError().GetCode()) {
+	if h.NeverRan || ResumePlanNeverRan(run.GetError().GetCode()) {
 		// This execution dispatched nothing: its rows are those of the run it
-		// was to resume, and one with an attempt was dispatched there.
+		// was to resume, whose own execution dispatched them (AddEarlier). A
+		// row with an attempt was dispatched there too, but a failed task's
+		// row holds none, so the rows alone never say what was.
 		f.Dispatched = maps.Clone(h.Dispatched)
+		maps.Copy(f.Dispatched, h.DispatchedBefore)
 		for _, r := range run.GetTaskRuns() {
 			if r.GetAttempt() > 0 {
 				f.Dispatched[nodeUnit(r.GetTaskId())] = true
@@ -354,11 +404,10 @@ func (h *ResumeHistory) Facts(run *orkstackv1.Run) (ResumeBaseFacts, error) {
 		}
 	}
 	if h.Continued {
-		for _, r := range run.GetTaskRuns() {
-			if isTerminalStatus(r.GetStatus()) && !h.Published[r.GetTaskId()] {
-				f.Earlier[r.GetTaskId()] = true
-			}
+		if h.EndedBefore == nil {
+			return ResumeBaseFacts{}, errors.New("engine: resume facts: the saved state the run carried on from was not read")
 		}
+		f.Earlier = maps.Clone(h.EndedBefore)
 	}
 	return f, nil
 }

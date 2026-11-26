@@ -93,6 +93,15 @@ func (p *ConcurrencyPlan) runSlot() *ConcurrencySlotPlan {
 	return &p.Slots[*p.Run]
 }
 
+// RunConcurrencySlot is the plan's run-level slot, false for a plan without.
+func (p RunPlan) RunConcurrencySlot() (ConcurrencySlotPlan, bool) {
+	slot := p.Concurrency.runSlot()
+	if slot == nil {
+		return ConcurrencySlotPlan{}, false
+	}
+	return *slot, true
+}
+
 // ActivityAcquireConcurrency is the run's local activity that asks a gate
 // for a slot (§5.2.2). It runs on the engine worker, never on ork-tasks.
 const ActivityAcquireConcurrency = "AcquireConcurrency"
@@ -272,19 +281,23 @@ func (a *GateActivities) acquireOnce(ctx context.Context, in AcquireConcurrencyI
 			return ans, perr
 		}
 		start := in.Start
-		start.Previous = previous
-		op := a.client.NewWithStartWorkflowOperation(client.StartWorkflowOptions{
+		start.Previous, start.Resets = previous.ended, previous.resets.inherited(start.Tunables.ResetWindow, time.Now())
+		options := client.StartWorkflowOptions{
 			ID: in.GateID, TaskQueue: in.GateQueue,
 			WorkflowIDConflictPolicy: enumspb.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING,
 			WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			TypedSearchAttributes: temporal.NewSearchAttributes(
 				task.SearchKeyOrkflowNamespace.ValueSet(start.Namespace),
 				task.SearchKeyOrkflowGatePhase.ValueSet(gatePhaseActive)),
-		}, ConcurrencyGateWorkflowType, start)
+		}
+		if start.Resets != nil {
+			options.Memo = map[string]any{gateResetsMemoKey: *start.Resets}
+		}
+		op := a.client.NewWithStartWorkflowOperation(options, ConcurrencyGateWorkflowType, start)
 		update.WorkflowID = ""
 		h, err = a.client.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{StartWorkflowOperation: op, UpdateOptions: update})
 		if err == nil {
-			a.observeStart(ctx, start.Namespace, previous)
+			a.observeStart(ctx, start.Namespace, previous.ended)
 		}
 	}
 	if err != nil {
@@ -293,23 +306,42 @@ func (a *GateActivities) acquireOnce(ctx context.Context, in AcquireConcurrencyI
 	return ans, h.Get(ctx, &ans)
 }
 
-// previousExecution is how the gate id's latest execution ended, for a
-// start's Previous (§5.1.1): completed is clean, none is absent, anything
-// else unclean. One started meanwhile is joined under USE_EXISTING, and the
-// input is then moot.
-func (a *GateActivities) previousExecution(ctx context.Context, gateID string) (string, error) {
+// gatePrevious is a gate id's latest execution, for the start that follows it.
+type gatePrevious struct {
+	// ended is the start's Previous (§5.1.1): completed is clean, none is
+	// absent, anything else unclean.
+	ended string
+	// open: it is still running.
+	open bool
+	// runID is the execution itself, "" when absent.
+	runID string
+	// resets is what its memo says of the key's resets (CR-1).
+	resets *gateResetMemo
+	// closedAt is when it closed, zero while it is open or when absent.
+	closedAt time.Time
+}
+
+// previousExecution reads the gate id's latest execution. One started
+// meanwhile is joined under USE_EXISTING, and the start's input is then moot.
+func (a *GateActivities) previousExecution(ctx context.Context, gateID string) (gatePrevious, error) {
 	described, err := a.client.DescribeWorkflow(ctx, gateID, "")
 	var missing *serviceerror.NotFound
 	switch {
 	case errors.As(err, &missing):
-		return GatePreviousAbsent, nil
+		return gatePrevious{ended: GatePreviousAbsent}, nil
 	case err != nil:
-		return "", fmt.Errorf("describe gate %s: %w", gateID, err)
+		return gatePrevious{}, fmt.Errorf("describe gate %s: %w", gateID, err)
 	case described == nil || described.RawResponse == nil:
-		return "", fmt.Errorf("describe gate %s: no response", gateID)
+		return gatePrevious{}, fmt.Errorf("describe gate %s: no response", gateID)
 	}
-	if described.RawResponse.GetWorkflowExecutionInfo().GetStatus() == enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED {
-		return GatePreviousClean, nil
+	info := described.RawResponse.GetWorkflowExecutionInfo()
+	out := gatePrevious{ended: GatePreviousUnclean, open: info.GetStatus() == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+		runID: info.GetExecution().GetRunId(), resets: resetMemoOf(info.GetMemo())}
+	if info.GetStatus() == enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED {
+		out.ended = GatePreviousClean
 	}
-	return GatePreviousUnclean, nil
+	if !out.open && info.GetCloseTime() != nil {
+		out.closedAt = info.GetCloseTime().AsTime()
+	}
+	return out, nil
 }

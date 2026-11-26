@@ -466,7 +466,7 @@ func (w *world) reclaimer(mode ReclaimMode) *Reclaimer {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		return w.now.Add(w.skew)
-	}).WithAcceptedRuns(w).WithResumes(NoResumes{})
+	}).WithAcceptedRuns(w).WithResumes(NewEndingRecords(&endingStore{}))
 }
 
 // warm runs the first pass after boot, which never deletes, and fails the

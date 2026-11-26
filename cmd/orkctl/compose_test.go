@@ -279,3 +279,17 @@ func TestRenderRunTree_AReadWithNoServerAnswerSaysSo(t *testing.T) {
 		t.Fatalf("tree still says unknown:\n%s", out.String())
 	}
 }
+
+// TestRunGet_SaysWhereAWaitingChildStands: a composed task whose child run
+// waits for its concurrency slot says so under the child's line.
+func TestRunGet_SaysWhereAWaitingChildStands(t *testing.T) {
+	parent, child, grand := composedRuns("team-a")
+	parent.Status, parent.FinishedAt = orkstackv1.Status_STATUS_RUNNING, nil
+	row := parent.TaskRuns[1]
+	row.Status, row.FinishedAt = orkstackv1.Status_STATUS_RUNNING, nil
+	row.Queued = &orkstackv1.ConcurrencyQueued{Key: "db", Limit: 1, Position: 2, PositionKnown: true,
+		HoldersAhead: []string{"ork-01"}, HoldersCount: 1, QueuedSince: composedTS(5 * time.Second), TimesOutAt: composedTS(time.Hour)}
+	f := newComposedCLIFixture(t, "team-a", parent, child, grand)
+	f.run("-n", "team-a", "run", "get", composedParentID).requireExit(t, exitOK).requireContains(t,
+		"run get "+composedChildID+"\nrelease: its child run is queued for key db (limit 1, 2nd in line) behind ork-01; since ")
+}

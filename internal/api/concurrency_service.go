@@ -32,10 +32,16 @@ func (s *Service) ListConcurrencyLimits(ctx context.Context, req *connect.Reques
 	if msg.GetPageSize() < 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size is %d; it must be 0 to %d", msg.GetPageSize(), concurrencyPageMax))
 	}
+	// The namespace is looked up before the key, so a namespace that does not
+	// exist is refused whatever the filters, never listed as holding nothing.
+	ns, err := s.namespace(ctx, msg.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
 	// One key=VALUE is that key's own limit, read directly; every other
 	// filter is decided on each listed row.
 	if key, ok := set.Equality("key"); ok {
-		limit, err := s.concurrencyLimit(ctx, msg.GetNamespace(), key)
+		limit, err := s.concurrencyLimit(ctx, ns, key)
 		switch {
 		case connect.CodeOf(err) == connect.CodeNotFound:
 			return connect.NewResponse(&orkstackv1.ListConcurrencyLimitsResponse{}), nil
@@ -47,10 +53,6 @@ func (s *Service) ListConcurrencyLimits(ctx context.Context, req *connect.Reques
 			out.Limits = []*orkstackv1.ConcurrencyLimit{limit}
 		}
 		return connect.NewResponse(out), nil
-	}
-	ns, err := s.namespace(ctx, msg.GetNamespace())
-	if err != nil {
-		return nil, err
 	}
 	reader, err := s.limitsReader()
 	if err != nil {
@@ -104,7 +106,11 @@ func (s *Service) ListConcurrencyLimits(ctx context.Context, req *connect.Reques
 
 // GetConcurrencyLimit reads one key's limit.
 func (s *Service) GetConcurrencyLimit(ctx context.Context, req *connect.Request[orkstackv1.GetConcurrencyLimitRequest]) (*connect.Response[orkstackv1.GetConcurrencyLimitResponse], error) {
-	limit, err := s.concurrencyLimit(ctx, req.Msg.GetNamespace(), req.Msg.GetKey())
+	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
+	limit, err := s.concurrencyLimit(ctx, ns, req.Msg.GetKey())
 	if err != nil {
 		return nil, err
 	}
@@ -112,13 +118,9 @@ func (s *Service) GetConcurrencyLimit(ctx context.Context, req *connect.Request[
 }
 
 // concurrencyLimit reads the limit of key in the namespace's incarnation.
-func (s *Service) concurrencyLimit(ctx context.Context, namespace, key string) (*orkstackv1.ConcurrencyLimit, error) {
-	if err := dsl.CheckStoredConcurrencyKey(key); err != nil {
+func (s *Service) concurrencyLimit(ctx context.Context, ns *orkstackv1.Namespace, key string) (*orkstackv1.ConcurrencyLimit, error) {
+	if err := dsl.CheckConcurrencyKey(key, dsl.KeyPlanned); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("key: %w", err))
-	}
-	ns, err := s.namespace(ctx, namespace)
-	if err != nil {
-		return nil, err
 	}
 	reader, err := s.limitsReader()
 	if err != nil {
@@ -137,7 +139,7 @@ func (s *Service) concurrencyLimit(ctx context.Context, namespace, key string) (
 		view = engine.GateView{Namespace: ns.GetName(), Key: key, NotAnswering: engine.GateNotAnswering}
 	case !present:
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
-			"no run holds or waits for concurrency key %s in namespace %q", key, ns.GetName()))
+			"%s: no run holds or waits for concurrency key %s in namespace %q", engine.ConcurrencyKeyUnusedCode, key, ns.GetName()))
 	}
 	if view.Key == "" {
 		view.Key = key
@@ -188,6 +190,10 @@ func (s *Service) concurrencyLimitProto(view engine.GateView) *orkstackv1.Concur
 	case engine.GateRebuildFailing:
 		out.Rebuild = orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_FAILING
 		out.RebuildFailingSince = timestampOrNil(view.RebuildFailingSince)
+	default:
+		// Every state but none is a rebuild not yet done, so one a newer
+		// release's limit reports reads as one, never as fine.
+		out.Rebuild = orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_READING
 	}
 	return out
 }

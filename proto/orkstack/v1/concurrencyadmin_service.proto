@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// ConcurrencyAdminService changes a concurrency limit's own record: an
+// operator's remedy for a limit that does not answer, or holds what it should
+// not (docs/RUNBOOKS.md). Reading limits is ConcurrencyService.
+service ConcurrencyAdminService {
+  // ResetConcurrencyLimit rebuilds one key's record from the runs that hold
+  // or wait for it. A limit that answers keeps every run that is still
+  // running: no run is stopped, restarted or moved in line. The request is
+  // named by request_id and issued_at together and acts once: the same
+  // request asked again answers how the reset stands, which is how a client
+  // waits for it. Refused with FAILED_PRECONDITION
+  // (CONCURRENCY_RESET_CONFLICT, _UNANSWERED or _REFUSED), and with
+  // UNAVAILABLE when the same request may be asked again as it is.
+  rpc ResetConcurrencyLimit(ResetConcurrencyLimitRequest) returns (ResetConcurrencyLimitResponse);
+}
+
+message ResetConcurrencyLimitRequest {
+  string namespace = 1; // empty = the default namespace
+  string key = 2;
+  // request_id names the request, with issued_at; at most 48 bytes. Required
+  // unless dry_run.
+  string request_id = 3;
+  // expected_epoch refuses the reset of a limit that has been rebuilt since
+  // the epoch was read; 0 expects a key with no record.
+  optional int64 expected_epoch = 4;
+  // dry_run answers what a reset would do, and changes nothing.
+  bool dry_run = 5;
+  // force_unanswered resets a limit that does not answer, accepting that
+  // more runs than the limit may hold the key until every run that holds it
+  // is found.
+  bool force_unanswered = 6;
+  // issued_at is when the client issued the request; the same value on every
+  // repeat of it. One older than the reset window
+  // (engine.concurrency.reset_audit_window), or more than five minutes in
+  // the future, is refused. Required unless dry_run.
+  google.protobuf.Timestamp issued_at = 7;
+}
+
+message ResetConcurrencyLimitResponse {
+  string request_id = 1;
+  ConcurrencyResetState state = 2;
+  // epoch is the limit's epoch as the reset read it; new_epoch the one it
+  // starts.
+  int64 epoch = 3;
+  int64 new_epoch = 4;
+  // holders and queued are the entries the reset keeps; dropped are those
+  // whose run has ended or moved to a newer execution; adopted are the kept
+  // holders whose own record could not be read.
+  int32 holders = 5;
+  int32 queued = 6;
+  int32 dropped = 7;
+  int32 adopted = 8;
+  // seeded is how many entries the new record begins with, before the runs'
+  // own records add to it.
+  int32 seeded = 9;
+  // consequence_code and consequence say what the reset does; clients show
+  // consequence as it is.
+  ConcurrencyResetConsequence consequence_code = 10;
+  string consequence = 11;
+  // reason_code and reason say why a reset ended otherwise than completed.
+  string reason_code = 12;
+  string reason = 13;
+  // note says what else is worth knowing while it runs.
+  string note = 14;
+}
+
+// ConcurrencyResetState is how a reset stands.
+enum ConcurrencyResetState {
+  CONCURRENCY_RESET_STATE_UNSPECIFIED = 0;
+  // DRY_RUN: nothing was changed.
+  CONCURRENCY_RESET_STATE_DRY_RUN = 1;
+  // RUNNING: the reset was applied and the new record is being rebuilt.
+  CONCURRENCY_RESET_STATE_RUNNING = 2;
+  // COMPLETED: the new record is rebuilt.
+  CONCURRENCY_RESET_STATE_COMPLETED = 3;
+  // FAILED: the new record could not be rebuilt in time; the limit keeps
+  // trying, and the same request reports COMPLETED once it has.
+  CONCURRENCY_RESET_STATE_FAILED = 4;
+  // INTERRUPTED: the limit was started again before the reset finished.
+  CONCURRENCY_RESET_STATE_INTERRUPTED = 5;
+  // NOT_APPLIED: the reset never took effect and never will; start a new one.
+  CONCURRENCY_RESET_STATE_NOT_APPLIED = 6;
+}
+
+// ConcurrencyResetConsequence is which consequence a reset has.
+enum ConcurrencyResetConsequence {
+  CONCURRENCY_RESET_CONSEQUENCE_UNSPECIFIED = 0;
+  CONCURRENCY_RESET_CONSEQUENCE_ANSWERING = 1;
+  CONCURRENCY_RESET_CONSEQUENCE_ABSENT = 2;
+  CONCURRENCY_RESET_CONSEQUENCE_UNANSWERED_FORCED = 3;
+}

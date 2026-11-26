@@ -29,6 +29,7 @@ const (
 func unitsOrkflow() *orkstackv1.Orkflow {
 	fan := eachTask("fan", "build", "build")
 	fan.Each.MaxItems = 3
+	fan.Cache = &orkstackv1.CacheSpec{}
 	child := ptask("child", "build")
 	child.Uses = "orkflow:other@1"
 	p1, p2 := ptask("p1"), ptask("p2")
@@ -48,14 +49,40 @@ func unitsPlan() []ResumeUnitPlan {
 		{Task: "build", Item: -1, Disposition: dAdopt, Epoch: 40, EncodedSize: 700},
 		{Task: "fan", Item: -1, Disposition: dRerun},
 		{Task: "fan", Item: 0, Disposition: dAdopt, EncodedSize: 600},
-		{Task: "fan", Item: 1, Disposition: dRerun},
+		{Task: "fan", Item: 1, Disposition: dRerun, Fresh: true},
 		{Task: "fan", Item: 2, Disposition: dAdopt, Epoch: 60, EncodedSize: 650},
-		{Task: "approve", Item: -1, Disposition: dSet, Epoch: 60, Values: &orkstackv1.ArtifactRef{Uri: "mem://v", Sha256: "ab"}},
-		{Task: "nap", Item: -1, Disposition: dSleep, WakeAt: timestamppb.New(time.Unix(1700000000, 0))},
-		{Task: "child", Item: -1, Disposition: dSet}, // no outputs, so no values
+		{Task: "approve", Item: -1, Disposition: dSet, Epoch: 60, EncodedSize: 300, Row: recordedAwait()},
+		{Task: "nap", Item: -1, Disposition: dSleep, Row: recordedSleep()},
+		{Task: "child", Item: -1, Disposition: dSet, EncodedSize: 310, Row: recordedChild()},
 		{Task: "p1", Item: -1, Disposition: dRerun},
 		{Task: "p2", Item: -1, Disposition: dRerun},
 	}
+}
+
+func recordedTimes() *orkstackv1.TaskRun {
+	at := timestamppb.New(time.Unix(1700000000, 0))
+	return &orkstackv1.TaskRun{ScheduledAt: at, StartedAt: at, FinishedAt: timestamppb.New(time.Unix(1700000300, 0))}
+}
+
+func recordedAwait() *orkstackv1.TaskRun {
+	r := recordedTimes()
+	r.ValuesRef = &orkstackv1.ArtifactRef{Uri: "mem://v", Sha256: "ab", SizeBytes: 12}
+	r.Await = &orkstackv1.TaskAwait{Deadline: r.StartedAt, ResolvedVia: orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API, ResolvedBy: "ana@example.com"}
+	return r
+}
+
+func recordedSleep() *orkstackv1.TaskRun {
+	r := recordedTimes()
+	r.Sleep = &orkstackv1.TaskSleep{WakeAt: r.FinishedAt}
+	return r
+}
+
+func recordedChild() *orkstackv1.TaskRun {
+	r := recordedTimes()
+	r.ValuesRef = &orkstackv1.ArtifactRef{Uri: "mem://c", Sha256: "cd", SizeBytes: 2}
+	r.Artifacts = []*orkstackv1.ArtifactRef{{Name: "report", Uri: "mem://report"}}
+	r.Child = &orkstackv1.TaskChild{RunId: "ork-child", InputArtifacts: []*orkstackv1.NamedArtifact{{Name: "in"}}}
+	return r
 }
 
 func sameUnits(a, b []ResumeUnitPlan) bool {
@@ -64,8 +91,8 @@ func sameUnits(a, b []ResumeUnitPlan) bool {
 	}
 	for i := range a {
 		x, y := a[i], b[i]
-		if x.unit() != y.unit() || x.Disposition != y.Disposition || x.Epoch != y.Epoch || x.EncodedSize != y.EncodedSize ||
-			!proto.Equal(x.Values, y.Values) || !proto.Equal(x.WakeAt, y.WakeAt) {
+		if x.unit() != y.unit() || x.Disposition != y.Disposition || x.Epoch != y.Epoch || x.EncodedSize != y.EncodedSize || x.Fresh != y.Fresh ||
+			!proto.Equal(x.Row, y.Row) {
 			return false
 		}
 	}
@@ -130,6 +157,7 @@ func TestResumeUnits_RefusesWhatAUnitCannotHave(t *testing.T) {
 		"a container that settles":         {edit: func(u []ResumeUnitPlan) { u[0] = ResumeUnitPlan{Task: "build", Item: -1, Disposition: dSet} }, want: "cannot have"},
 		"an await run again":               {edit: func(u []ResumeUnitPlan) { u[5] = ResumeUnitPlan{Task: "approve", Item: -1, Disposition: dRerun} }, want: "cannot have"},
 		"an await adopted":                 {edit: func(u []ResumeUnitPlan) { u[5] = ResumeUnitPlan{Task: "approve", Item: -1, Disposition: dAdopt} }, want: "cannot have"},
+		"a composed task run again":        {edit: func(u []ResumeUnitPlan) { u[7] = ResumeUnitPlan{Task: "child", Item: -1, Disposition: dRerun} }, want: "cannot have"},
 		"a composed task that waits":       {edit: func(u []ResumeUnitPlan) { u[7].Disposition = dWait }, want: "cannot have"},
 		"an earlier unit, never carried":   {edit: func(u []ResumeUnitPlan) { u[0] = ResumeUnitPlan{Task: "build", Item: -1, Disposition: dNone} }, want: "cannot have"},
 		"a disposition of no kind":         {edit: func(u []ResumeUnitPlan) { u[0] = ResumeUnitPlan{Task: "build", Item: -1, Disposition: 99} }, want: "cannot have"},
@@ -137,18 +165,29 @@ func TestResumeUnits_RefusesWhatAUnitCannotHave(t *testing.T) {
 		"a scope not below the resume's":   {edit: func(u []ResumeUnitPlan) { u[0].Epoch = 100 }, want: "not below"},
 		"no size":                          {edit: func(u []ResumeUnitPlan) { u[0].EncodedSize = 0 }, want: "0 bytes"},
 		"a block with no read-back budget": {block: func(b *orkstackv1.ResumeBlock) { b.Readback = nil }, edit: func([]ResumeUnitPlan) {}, want: "over its call"},
-		"a pin with a member that was run before": {edit: func(u []ResumeUnitPlan) {
-			u[8] = ResumeUnitPlan{Task: "p1", Item: -1, Disposition: dNone}
+		"a pin half kept, of a run that carried on": {edit: func(u []ResumeUnitPlan) {
+			u[9] = ResumeUnitPlan{Task: "p2", Item: -1, Disposition: dAdopt, EncodedSize: 5}
 		}, want: "pin", earlier: true},
 		"a size over its call":        {edit: func(u []ResumeUnitPlan) { u[0].EncodedSize = 129 << 10 }, want: "over its call"},
-		"a sleep with no wake-up":     {edit: func(u []ResumeUnitPlan) { u[6].WakeAt = nil }, want: "not one of its disposition"},
-		"a settle with a wake-up":     {edit: func(u []ResumeUnitPlan) { u[7].WakeAt = timestamppb.New(time.Unix(1, 0)) }, want: "not one of its disposition"},
-		"a wake-up of no time":        {edit: func(u []ResumeUnitPlan) { u[6].WakeAt = &timestamppb.Timestamp{Nanos: -1} }, want: "not one of its disposition"},
+		"a sleep with no wake-up":     {edit: func(u []ResumeUnitPlan) { u[6].Row.Sleep.WakeAt = nil }, want: "missing or no time"},
+		"a sleep with no record":      {edit: func(u []ResumeUnitPlan) { u[6].Row = nil }, want: "no row"},
+		"a settle with a wake-up":     {edit: func(u []ResumeUnitPlan) { u[7].Row.Sleep = &orkstackv1.TaskSleep{} }, want: "more than a record"},
+		"a wake-up of no time":        {edit: func(u []ResumeUnitPlan) { u[6].Row.Sleep.WakeAt = &timestamppb.Timestamp{Nanos: -1} }, want: "missing or no time"},
+		"an await nobody answered":    {edit: func(u []ResumeUnitPlan) { u[5].Row.Await.ResolvedVia = 0 }, want: "what resolved it"},
+		"an await with a status":      {edit: func(u []ResumeUnitPlan) { u[5].Row.Status = sOK }, want: "more than a record"},
+		"an await with an output":     {edit: func(u []ResumeUnitPlan) { u[5].Row.Output = &orkstackv1.Payload{} }, want: "more than a record"},
+		"an await with a child":       {edit: func(u []ResumeUnitPlan) { u[5].Row.Child = &orkstackv1.TaskChild{RunId: "x"} }, want: "more than a record"},
+		"an await with no values":     {edit: func(u []ResumeUnitPlan) { u[5].Row.ValuesRef, u[5].EncodedSize = nil, 0 }, want: "no values"},
+		"an await with no end":        {edit: func(u []ResumeUnitPlan) { u[5].Row.FinishedAt = nil }, want: "missing or no time"},
+		"a composed task of no run":   {edit: func(u []ResumeUnitPlan) { u[7].Row.Child.RunId = "" }, want: "no child run"},
+		"a settled task of no size":   {edit: func(u []ResumeUnitPlan) { u[7].EncodedSize = 0 }, want: "0 bytes"},
 		"a kept node of a rerun item": {edit: func(u []ResumeUnitPlan) { u[1] = ResumeUnitPlan{Task: "fan", Item: -1, Disposition: dAdopt} }, want: "runs again"},
 		"a pin half kept": {edit: func(u []ResumeUnitPlan) {
 			u[9] = ResumeUnitPlan{Task: "p2", Item: -1, Disposition: dAdopt, EncodedSize: 5}
 		}, want: "pin"},
-		"a pin half skipped": {edit: func(u []ResumeUnitPlan) { u[9] = ResumeUnitPlan{Task: "p2", Item: -1, Disposition: dSkip} }, want: "pin"},
+		"a pin half skipped":                        {edit: func(u []ResumeUnitPlan) { u[9] = ResumeUnitPlan{Task: "p2", Item: -1, Disposition: dSkip} }, want: "pin"},
+		"no memo read of a task that is not cached": {edit: func(u []ResumeUnitPlan) { u[8].Fresh = true }, want: "read no memo"},
+		"no memo read of a kept item":               {edit: func(u []ResumeUnitPlan) { u[2].Fresh = true }, want: "read no memo"},
 		"nothing runs again": {want: "nothing again", edit: func(u []ResumeUnitPlan) {
 			for i := range u {
 				if u[i].Disposition == dRerun {
@@ -181,6 +220,13 @@ func TestResumeUnits_RefusesWhatAUnitCannotHave(t *testing.T) {
 	}
 	if _, err := DecodeResumeUnits(unitsOrkflow(), b, false); err == nil {
 		t.Fatal("a run that never carried on took a unit of an earlier part")
+	}
+	// A pin carries on only unopened, so a member that had ended was skipped,
+	// and the others run again without it.
+	units = unitsPlan()
+	units[8] = ResumeUnitPlan{Task: "p1", Item: -1, Disposition: dNone}
+	if err := EncodeResumeUnits(unitsOrkflow(), unitsBlock(), units, true); err != nil {
+		t.Fatalf("a pin whose skipped member stays as it was saved = %v, want it taken", err)
 	}
 }
 
@@ -252,6 +298,11 @@ func TestDecodeResumeUnits_RefusesMalformedColumns(t *testing.T) {
 		"a disposition this release does not know": func(u *orkstackv1.ResumeUnits) { u.RunDispositions[0] = 99 },
 		"a negative disposition":                   func(u *orkstackv1.ResumeUnits) { u.RunDispositions[0] = -1 },
 		"lengths that wrap to the right sum":       func(u *orkstackv1.ResumeUnits) { wrapLengths(u) },
+		"a fresh run too few":                      func(u *orkstackv1.ResumeUnits) { u.RunFresh = u.RunFresh[1:] },
+		"a fresh run too many":                     func(u *orkstackv1.ResumeUnits) { u.RunFresh = append(u.RunFresh, false) },
+		"no run fresh, spelled out":                func(u *orkstackv1.ResumeUnits) { clear(u.RunFresh) },
+		"a fresh kept task":                        func(u *orkstackv1.ResumeUnits) { u.RunFresh[0] = true },
+		"a fresh rerun of no cached task":          func(u *orkstackv1.ResumeUnits) { u.RunFresh[len(u.RunFresh)-1] = true },
 		"an unknown field":                         func(u *orkstackv1.ResumeUnits) { u.ProtoReflect().SetUnknown([]byte{0x7a, 0x00}) },
 		"an unknown field below":                   func(u *orkstackv1.ResumeUnits) { u.Recorded[0].ProtoReflect().SetUnknown([]byte{0x7a, 0x00}) },
 	} {
@@ -292,6 +343,7 @@ func splitLastRun(u *orkstackv1.ResumeUnits) {
 	u.RunLengths = append(u.RunLengths, 1)
 	u.RunDispositions = append(u.RunDispositions, u.RunDispositions[n])
 	u.RunEpochs = append(u.RunEpochs, u.RunEpochs[n])
+	u.RunFresh = append(u.RunFresh, u.RunFresh[n])
 }
 
 // The largest plans fit: the block its bound, and the record and the
@@ -313,6 +365,9 @@ func TestResumeUnits_TheLargestPlansFit(t *testing.T) {
 			}
 			return ResumeUnitPlan{Disposition: dAdopt, EncodedSize: 20000}
 		}},
+		"4,000 tasks and 10,000 items, run again with a memo and without in turn": {items: items, unit: func(i int) ResumeUnitPlan {
+			return ResumeUnitPlan{Disposition: dRerun, Fresh: i%2 == 0}
+		}},
 		"4,000 tasks and 10,000 items, each unlike the next, 20 resumes before": {items: items, unit: func(i int) ResumeUnitPlan {
 			return ResumeUnitPlan{Disposition: dAdopt, EncodedSize: 20000, Epoch: 1<<52 + uint64(i%20)}
 		}},
@@ -324,8 +379,9 @@ func TestResumeUnits_TheLargestPlansFit(t *testing.T) {
 				u := tc.unit(len(units))
 				u.Task, u.Item = id(i), -1
 				def := ptask(id(i))
+				def.Cache = &orkstackv1.CacheSpec{}
 				if i == tasks-1 {
-					u = ResumeUnitPlan{Task: id(i), Item: -1, Disposition: dRerun}
+					u = ResumeUnitPlan{Task: id(i), Item: -1, Disposition: dRerun, Fresh: true}
 					if tc.items > 0 {
 						def.Each = &orkstackv1.EachSpec{MaxItems: items, Source: &orkstackv1.EachSource{Input: "xs"}}
 					}
@@ -368,7 +424,7 @@ func TestEncodeResumeUnits_OverItsBound(t *testing.T) {
 		id := fmt.Sprintf("a%d", i)
 		wf.Tasks = append(wf.Tasks, awaitTask(id))
 		units = append(units, ResumeUnitPlan{Task: id, Item: -1, Disposition: dSet,
-			Values: &orkstackv1.ArtifactRef{Uri: "s3://bucket/" + strings.Repeat("k", 80), Sha256: strings.Repeat("a", 64)}})
+			EncodedSize: 500, Row: recordedAwait()})
 	}
 	units[0] = ResumeUnitPlan{Task: "a0", Item: -1, Disposition: dWait}
 	if err := EncodeResumeUnits(wf, unitsBlock(), units, false); !errors.Is(err, ErrResumeUnitsTooLarge) {
@@ -403,6 +459,10 @@ func FuzzDecodeResumeUnits(f *testing.F) {
 		func(u *orkstackv1.ResumeUnits) { u.Epochs[0] = 1 },
 		func(u *orkstackv1.ResumeUnits) { u.EncodedSizes[0] = 1 << 40 },
 		func(u *orkstackv1.ResumeUnits) { u.Recorded = u.Recorded[1:] },
+		func(u *orkstackv1.ResumeUnits) { u.RunFresh = nil },
+		func(u *orkstackv1.ResumeUnits) { u.RunFresh[0] = true },
+		func(u *orkstackv1.ResumeUnits) { u.RunFresh = u.RunFresh[:1] },
+		func(u *orkstackv1.ResumeUnits) { clear(u.RunFresh) },
 	} {
 		hostile := proto.Clone(good).(*orkstackv1.ResumeUnits)
 		edit(hostile)
@@ -423,6 +483,9 @@ func FuzzDecodeResumeUnits(f *testing.F) {
 		for _, u := range units {
 			if _, known := orkstackv1.ResumeDisposition_name[int32(u.Disposition)]; !known || u.Disposition == dNone {
 				t.Fatalf("decoded disposition %v of %s", u.Disposition, u.unit())
+			}
+			if u.Fresh && (u.Task != "fan" || u.Disposition != dRerun) {
+				t.Fatalf("decoded %s, %v, as reading no memo", u.unit(), u.Disposition)
 			}
 		}
 		again := unitsBlock()

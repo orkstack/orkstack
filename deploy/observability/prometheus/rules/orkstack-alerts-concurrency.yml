@@ -113,6 +113,17 @@ groups:
       description: In namespace "{{ $labels.ork_namespace }}", the runs the index marks queued and the runs the limits' lines hold have differed for 30 minutes.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyqueuemismatch
       summary: The runs marked queued and the limits' lines disagree.
+  - alert: OrkStackConcurrencyResetIncomplete
+    expr: max by (ork_deployment) (last_over_time(ork_concurrency_resets_incomplete[10m])) > 0
+    for: 5m
+    labels:
+      component: concurrency
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: A reset of a concurrency limit has run longer than engine.concurrency.reset_incomplete_after.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyresetincomplete
+      summary: A concurrency limit's reset does not finish.
   - alert: OrkStackConcurrencyUnavailable
     expr: sum by (ork_deployment, ork_namespace) (rate(ork_concurrency_arrivals_total{ork_concurrency_outcome="unavailable"}[5m])) > 0
     for: 5m

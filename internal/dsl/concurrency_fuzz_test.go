@@ -37,7 +37,7 @@ func FuzzCompileConcurrency(f *testing.F) {
 			t.Fatalf("compiled %q to %v, which ValidateConcurrency refuses: %v", block, spec, err)
 		}
 		if key := spec.GetKey(); key != "" && !strings.Contains(key, "{{") {
-			if err := CheckConcurrencyKey(key); err != nil {
+			if err := CheckConcurrencyKey(key, KeyAuthored); err != nil {
 				t.Fatalf("compiled the literal key %q, which CheckConcurrencyKey refuses: %v", key, err)
 			}
 		}
@@ -52,10 +52,10 @@ func FuzzCheckConcurrencyKey(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, key string) {
-		err := CheckConcurrencyKey(key)
+		err := CheckConcurrencyKey(key, KeyAuthored)
 		// A key read back is an authored one or one of OrkStack's own, and no
 		// other is.
-		stored := CheckStoredConcurrencyKey(key)
+		stored := CheckConcurrencyKey(key, KeyPlanned)
 		if stored != nil && !strings.Contains(stored.Error(), "CONCURRENCY_KEY_INVALID") {
 			t.Fatalf("%q refused without its code: %v", key, stored)
 		}

@@ -28,6 +28,10 @@ const (
 	// Without them such a member would land in no list of the Report.
 	FailureUnknownState    = "unknown state"
 	FailureDuplicateMember = "listed twice in manifest"
+	// The two below are an archive body of a resumed run whose event stream
+	// skips a number it does not account for, or that is not an archive body.
+	FailureEventSequence = "event sequence broken"
+	FailureBadStream     = "not an archive body"
 )
 
 // Report is what Verify found. Every member of the manifest is accounted
@@ -148,7 +152,13 @@ func Verify(r io.Reader) (*Report, error) {
 		}
 		seen[name] = true
 		hash := sha256.New()
-		size, err := io.Copy(hash, tr)
+		into := io.Writer(hash)
+		var stream *streamCheck
+		if len(manifest.Endings) > 0 && (entry.member.Kind == KindRun || entry.member.Kind == KindEnding) {
+			stream = newStreamCheck(manifest, name)
+			into = io.MultiWriter(hash, stream)
+		}
+		size, err := io.Copy(into, tr)
 		if err != nil {
 			return nil, fmt.Errorf("evidence: read %s: %w", name, err)
 		}
@@ -166,6 +176,11 @@ func Verify(r io.Reader) (*Report, error) {
 		case got != entry.member.SHA256:
 			failures = append(failures, Failure{Path: name, Reason: FailureDigestMismatch,
 				Want: entry.member.SHA256, Got: got})
+		case stream != nil:
+			if failure := stream.end(); failure != nil {
+				failure.Path = name
+				failures = append(failures, *failure)
+			}
 		}
 		if len(failures) > 0 {
 			report.Failures = append(report.Failures, failures...)

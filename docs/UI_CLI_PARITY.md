@@ -583,6 +583,27 @@ A child run of another namespace's shared Orkflow is refused by both
 (`SHARED_ORKFLOW_NOT_ROOT`): such an Orkflow runs only as a child, so its root
 run is what runs again.
 
+### Resume and Retry from here
+
+UI **Resume** (the run page's header, and a failed task's panel) and **Retry
+from here** (a task's panel) open a dialog that previews `ResumeRun` with
+`dry_run` and confirms it. CLI `run resume RUN [--from TASK]` does the same.
+Both show one plan in the same sections (what runs again and why, what is
+kept), the same notes, and the resumes used; both confirm with the preview's
+plan digest and the ending it sets aside, so a plan that changed in between is
+refused and never accepted unseen. The dialog is the question the CLI asks
+when work that succeeded before would run again (`--yes` for a script). An
+attempt of unknown outcome needs its own acknowledgement in both: the
+dialog's checkbox, or `--acknowledge-unknown-attempts`. A refusal reads by its class in both:
+permanent (run it again), wait (try again later; exit 75) or replan (preview
+again; exit 76). Both record an optional reason (`--reason`, at most 1 KiB).
+Accepting a gap in a run's stored events needs `run.resume.accept_gap` in both:
+the dialog offers a checkbox, with its consequence, when the preview is refused
+for it and the caller holds the permission (and says who can, when not), and
+the CLI takes `--accept-sequence-gap N`, the highest stored event the refusal
+names. Both send the acceptance with the preview and the confirm. The dialog's copied command is
+`orkctl run resume <run>` with the same `--from`, `--reason` and acceptances.
+
 ### Awaited tasks
 
 A task may declare `await:` instead of `uses:` ([DSL.md](DSL.md), "Awaited
@@ -1231,6 +1252,15 @@ hold or wait than are shown, it says how many and links to `holding=KEY` or
 `queued_on=KEY` on Runs. A key nothing holds or waits for is said to be unused
 (`concurrency get` exits with `NOT_FOUND`), never shown as a failure. The page
 writes nothing.
+
+`orkctl admin concurrency reset KEY` rebuilds one key's record from the runs
+that hold or wait for it and waits until it is rebuilt
+(`ConcurrencyAdminService.ResetConcurrencyLimit`, `concurrency.reset`;
+[RUNBOOKS.md](./RUNBOOKS.md#resetting-a-concurrency-limit)). Every client shows
+the response's `consequence` as it is and writes none of its own. A request is
+named by its `request_id` and `issued_at` together and acts once; asking the
+same request again answers how it stands. Exit status: 0 completed or
+`--dry-run`, 4 still running at `--timeout`, 5 refused, 1 ended otherwise.
 
 ## Webhooks
 

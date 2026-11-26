@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -52,6 +53,12 @@ func resumePreview(base *resumeBase, p *resumePlanned, warnings []*orkstackv1.Re
 			Message: fmt.Sprintf("run %s was paused when it ended; it resumes unpaused", base.run.GetId()),
 		})
 	}
+	if secs := base.run.GetTimeout().GetSeconds(); secs > 0 {
+		out.Warnings = append(out.Warnings, &orkstackv1.ResumeWarning{
+			Kind:    orkstackv1.ResumeWarningKind_RESUME_WARNING_KIND_FRESH_TIMEOUT,
+			Message: fmt.Sprintf("the run gets a fresh timeout of %s when its tasks start again", time.Duration(secs)*time.Second),
+		})
+	}
 	defs := map[string]*orkstackv1.Task{}
 	for _, t := range base.definition.GetTasks() {
 		defs[t.GetId()] = t
@@ -75,10 +82,13 @@ func resumePreview(base *resumeBase, p *resumePlanned, warnings []*orkstackv1.Re
 				row = itemRow(row, item)
 			}
 			t.PreviousOutcome = row.GetStatus()
+			if u.Succeeded {
+				t.PreviousOutcome = orkstackv1.Status_STATUS_SUCCEEDED
+			}
 			def := defs[u.Unit.Task]
 			if u.InRerunSet && def.GetCache() != nil {
 				t.Memo = orkstackv1.ResumeMemoState_RESUME_MEMO_STATE_LOOKED_UP
-				if row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
+				if u.Fresh {
 					t.Memo = orkstackv1.ResumeMemoState_RESUME_MEMO_STATE_BYPASSED
 				}
 			}

@@ -20,6 +20,9 @@ import (
 // the switch snapshot, never a RUN_STATE_* code.
 const restoreCanceled = "RUN_CANCELED"
 
+// runStopped ends the sentence of a run that could not be restored.
+const runStopped = "; the run has stopped"
+
 // corruptStateMessage is RUN_STATE_CORRUPT's sentence, in run vocabulary.
 func corruptStateMessage(what string) string {
 	return fmt.Sprintf("its saved state failed verification (%s) and was not used; the run has stopped", what)
@@ -31,8 +34,7 @@ func unavailableStateMessage(timeout time.Duration, last error) string {
 	if last != nil {
 		cause = last.Error()
 	}
-	return fmt.Sprintf("its saved state could not be read from object storage for %s (last error: %s); "+
-		"the run has stopped", timeout, cause)
+	return fmt.Sprintf("its saved state could not be read from object storage for %s (last error: %s)"+runStopped, timeout, cause)
 }
 
 // restore rebuilds this generation's state from the carry and the saved
@@ -70,7 +72,7 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 
 	// 3. Scalars.
 	s.generation = carry.GetGeneration()
-	s.eventSeq = int(carry.GetEventSequence())
+	s.eventSeq = int(s.resume.sequenceBefore(carry))
 	s.createdAt = carry.GetCreatedAt()
 	s.startedAt = carry.GetStartedAt()
 	s.status = orkstackv1.Status_STATUS_RUNNING
@@ -78,6 +80,7 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 	for change, v := range carry.GetVersionDecisions() {
 		s.versions[change] = workflow.Version(v)
 	}
+	s.adoptResumeCarry(carry)
 	s.segments = carry.GetSegments()
 	s.genFirstSeq = carry.GetEventSequence() + 1
 	if v, ok := s.versions[leanEventPathChange]; ok {
@@ -96,12 +99,27 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 		return RunStateCorruptCode, corruptStateMessage(verificationDetail(err))
 	}
 	// 6–7. Validate the rows, then rebuild.
-	if what := s.adoptRows(ctx, runCtx, run); what != "" {
+	if what := s.checkRows(run); what != "" {
 		return RunStateCorruptCode, corruptStateMessage(what)
+	}
+	if s.resume != nil {
+		if what := s.resumeRows(run); what != "" {
+			return ReasonResumePlanInvalid, what
+		}
+	}
+	s.rebuildRows(ctx, runCtx, run.GetTaskRuns())
+	// A resume says anew what runs again and reads no memo.
+	if s.resume == nil {
+		if what := s.adoptResumeState(parts[0].GetResumeState()); what != "" {
+			return RunStateCorruptCode, corruptStateMessage(what)
+		}
 	}
 	// The pause, its timers re-armed at the main loop's entry.
 	if what := s.adoptPauseCarry(carry, run); what != "" {
 		return RunStateCorruptCode, corruptStateMessage(what)
+	}
+	if s.resume != nil {
+		s.dropCarriedPause(ctx)
 	}
 	// The held concurrency slot, whose records are re-issued before the
 	// first dispatch (§5.2.7). A carry with slots the plan has no limit for
@@ -117,14 +135,18 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 	if err := s.conc.adoptCarry(carry.GetConcurrency()); err != nil {
 		return RunStateCorruptCode, corruptStateMessage(err.Error())
 	}
-	if err := s.restoreConcRecords(ctx); err != nil {
-		// Not corrupt state: the cluster refused the records.
-		return RunConcurrencyUnavailableCode, err.Error()
+	// A resume records its own slot, once it has released this one.
+	if s.resume == nil {
+		if err := s.restoreConcRecords(ctx); err != nil {
+			// Not corrupt state: the cluster refused the records.
+			return RunConcurrencyUnavailableCode, err.Error()
+		}
 	}
 	// The run's loss events, which ride part 0 beside its header (E92), and
 	// every unit an interruption put back, whose not_before is re-armed
-	// toward its original instant.
-	if loss := parts[0].GetLossEvents(); loss != nil {
+	// toward its original instant. A resume starts its budgets again, as one
+	// of a run that never carried on does.
+	if loss := parts[0].GetLossEvents(); loss != nil && s.resume == nil {
 		s.lossEvents = loss
 	}
 	s.restoreInterruptionWaits(ctx)
@@ -390,12 +412,11 @@ func (d *partDecoder) feed(data []byte) error {
 	return nil
 }
 
-// adoptRows validates the checkpoint's rows against this definition and
-// rebuilds the run's state from them. It returns what failed, or "" when
-// the rows were adopted. A switch never happens in the failing phase or
+// checkRows validates the checkpoint's rows against this definition. It
+// returns what failed, or "". A switch never happens in the failing phase or
 // with work in flight, so a RUNNING, FAILED or CANCELED row could only be an
 // orphan, and a row like that is never adopted.
-func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) string {
+func (s *runState) checkRows(run *orkstackv1.Run) string {
 	// 6. Validate.
 	if run.GetId() != s.runID {
 		return "it belongs to another run"
@@ -437,9 +458,12 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 			return fmt.Sprintf("pin %q was left open", p.name)
 		}
 	}
+	return ""
+}
 
-	// 7. Rebuild. Every row was validated above, so nothing here can fail:
-	// a refusal never leaves a recreated await timer behind it.
+// rebuildRows rebuilds the run's state from rows checkRows passed, so nothing
+// here can fail: a refusal never leaves a recreated await timer behind it.
+func (s *runState) rebuildRows(ctx, runCtx workflow.Context, rows []*orkstackv1.TaskRun) {
 	for i, id := range s.order {
 		row := rows[i]
 		s.taskRuns[id] = row
@@ -462,7 +486,11 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 			// Every item of a lines fan-out carries its expansion; nil for an
 			// array's, and for every saved state recorded before lines.
 			e.lines = row.GetEach().GetLines()
-			e.next, e.settled = dispatchedAndSettled(row)
+			if keptFanOut(row) {
+				restoreKeptFanOut(e, row)
+			} else {
+				e.next, e.settled = dispatchedAndSettled(row)
+			}
 			e.inFlight = 0
 			e.limit, e.stride = eachPacing(e.spec, e.count)
 		} else if e != nil && row.GetEach().GetExpanded() {
@@ -507,7 +535,6 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 			}
 		}
 	}
-	return ""
 }
 
 // validRestoredRow checks one restored row's status against its task's kind.
@@ -529,6 +556,18 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 			}
 		default:
 			return fmt.Sprintf("task %q is %s", id, statusWord(status))
+		}
+		if keptFanOut(row) {
+			if !s.resumed {
+				return fmt.Sprintf("fan-out %q keeps items, and the run was never resumed", id)
+			}
+			if row.GetEach().GetExpanded() && int32(len(row.GetItems())) != row.GetEach().GetCount() {
+				return fmt.Sprintf("fan-out %q holds %d of its %d items", id, len(row.GetItems()), row.GetEach().GetCount())
+			}
+			return validKeptItems(id, row)
+		}
+		if len(row.GetItems()) > 0 && !row.GetEach().GetExpanded() {
+			return fmt.Sprintf("fan-out %q holds items, and is neither expanded nor kept in part", id)
 		}
 		if row.GetEach().GetExpanded() {
 			if int32(len(row.GetItems())) != row.GetEach().GetCount() {

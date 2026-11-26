@@ -43,6 +43,7 @@ type Kind string
 // The member kinds, complete.
 const (
 	KindRun      Kind = "run"
+	KindEnding   Kind = "ending"
 	KindSource   Kind = "source"
 	KindCommit   Kind = "commit"
 	KindValues   Kind = "values"
@@ -84,6 +85,8 @@ const (
 	ReasonCommitMissing            = "commit_missing"
 	ReasonAttemptRecordMissing     = "attempt_record_missing"
 	ReasonArtifactReclaimed        = "artifact_reclaimed"
+	ReasonEndingMissing            = "ending_missing"
+	ReasonEndingDamaged            = "ending_damaged"
 )
 
 var reasonSentences = map[string]string{
@@ -93,6 +96,8 @@ var reasonSentences = map[string]string{
 	ReasonCommitMissing:            "the commit record was reclaimed by cleanup; its recorded digest is preserved",
 	ReasonObjectMissing:            "the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved",
 	ReasonAttemptRecordMissing:     "no record: the orker died before filing one, or it was reclaimed",
+	ReasonEndingMissing:            "the archive body of this earlier ending was removed from the store",
+	ReasonEndingDamaged:            "an object is stored for this earlier ending, but it does not decode as an archive body of this run",
 	ReasonArtifactReclaimed:        "the artifact GC deleted the object after its run was retired; its recorded digest is preserved",
 }
 
@@ -135,6 +140,9 @@ type Manifest struct {
 	// object storage before the run was archived, or never published. The
 	// archive body (run.jsonl) records the same ranges as gap lines.
 	EventGaps []EventGap `json:"event_gaps,omitempty"`
+	// Endings is set only for a run that was resumed: each of its endings, the
+	// first first and the one this bundle is of last.
+	Endings []Ending `json:"endings,omitempty"`
 }
 
 // EventGap is one range of a run's event sequence its archive does not hold,
@@ -303,6 +311,9 @@ func ParseManifest(document []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("evidence: decode MANIFEST.json: %w", stablejson.Explained(err))
 	}
 	manifest := Manifest(m)
+	if err := checkEndings(&manifest); err != nil {
+		return nil, err
+	}
 	for _, gap := range manifest.EventGaps {
 		if gap.First < 1 || gap.Last < gap.First {
 			return nil, fmt.Errorf("evidence: MANIFEST.json event gap %d–%d is not a range", gap.First, gap.Last)

@@ -66,8 +66,9 @@ func TestGate_ReadsASealedRunsReleases(t *testing.T) {
 		if err := child.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
 			return err
 		}
-		s := &runState{runID: "ork-held", scope: runScope(ctx), conc: &concRunState{
-			runID: "ork-held", plan: &ConcurrencyPlan{SeqBase: 4, Run: new(int), Slots: []ConcurrencySlotPlan{{GateID: "gate-1"}}}, attempted: []string{"gate-1"}}}
+		conc := newConcRunState(&ConcurrencyPlan{SeqBase: 4, Run: new(int), Slots: []ConcurrencySlotPlan{{GateID: "gate-1"}}})
+		conc.runID, conc.attempted = "ork-held", []string{"gate-1"}
+		s := &runState{runID: "ork-held", scope: runScope(ctx), conc: conc}
 		if err := s.releaseRunEntry(ctx, "gate-1"); err != nil {
 			return err
 		}

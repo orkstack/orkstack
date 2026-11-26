@@ -14,8 +14,11 @@ func TestResumeHintOf(t *testing.T) {
 	resumable, not, none := orkstackv1.ResumeHintState_RESUME_HINT_STATE_RESUMABLE,
 		orkstackv1.ResumeHintState_RESUME_HINT_STATE_NOT_RESUMABLE, orkstackv1.ResumeHintState_RESUME_HINT_STATE_UNSPECIFIED
 	failed := func(code string) *orkstackv1.Run {
-		return &orkstackv1.Run{Id: "ork-x", Status: sFail, Error: &orkstackv1.Error{Code: code}}
+		return &orkstackv1.Run{Id: "ork-x", Status: sFail, Error: &orkstackv1.Error{Code: code},
+			TaskRuns: []*orkstackv1.TaskRun{prow("bad", sFail)}}
 	}
+	rowless := failed("RUN_FAILED")
+	rowless.TaskRuns = nil
 	child := failed("RUN_FAILED")
 	child.Origin = &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-p"}
 	worn := failed("RUN_FAILED")
@@ -34,6 +37,7 @@ func TestResumeHintOf(t *testing.T) {
 		"its timeout":                {failed(RunTimedOutCode), resumable, ""},
 		"a history limit":            {failed(RunHistoryLimitCode), not, RefuseNotATaskFailure},
 		"a reason nobody recorded":   {failed(""), not, RefuseFailureNotRecorded},
+		"its tasks' record is gone":  {rowless, not, RefuseStateUnreadable},
 		"a child run":                {child, not, RefuseChildRun},
 		"a run resumed to its limit": {worn, not, RefuseTooManyResumes},
 	} {

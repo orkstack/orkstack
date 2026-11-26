@@ -179,6 +179,21 @@ func concurrencyRules() []Rule {
 			},
 		},
 		{
+			Name: "ConcurrencyResetIncomplete", Group: g, Component: "concurrency", Severity: Warning, For: "5m",
+			Expr:        "max " + by() + " (last_over_time(ork_concurrency_resets_incomplete[10m])) > 0",
+			Summary:     "A concurrency limit's reset does not finish.",
+			Description: "A reset of a concurrency limit has run longer than engine.concurrency.reset_incomplete_after.",
+			Meaning:     "The limit was reset and still cannot read which runs hold or wait for its key.",
+			Impact:      "The key grants no slot: runs wait in line, and `refuse` and `skip` runs fail `RUN_CONCURRENCY_UNAVAILABLE`.",
+			Confirm:     "`orkctl admin audit -F 'action^concurrency.reset.'` names the key; `orkctl concurrency get KEY` shows the limit reading its holders.",
+			Fix:         "See ConcurrencyRebuildFailing: the limit keeps trying, and the reset completes once it can read its runs.",
+			Related:     []string{"ConcurrencyRebuildFailing", "TemporalUnreachable"},
+			Cases: []Case{
+				fire("incomplete", "30m", out(), s("ork_concurrency_resets_incomplete", ``, "1x40")),
+				quiet("none", "30m", s("ork_concurrency_resets_incomplete", ``, "0x40")),
+			},
+		},
+		{
 			Name: "ConcurrencyUnavailable", Group: g, Component: "concurrency", Severity: Warning, For: "5m",
 			Expr:        "sum " + by("ork_namespace") + ` (rate(ork_concurrency_arrivals_total{ork_concurrency_outcome="unavailable"}[5m])) > 0`,
 			Summary:     "Concurrency limits do not answer.",

@@ -145,6 +145,31 @@ func fuzzPlanInput(data []byte) ResumePlanInput {
 		in.Action = ResumeActionRetryFrom
 		in.FromTask = fmt.Sprintf("t%d", g.n(n))
 	}
+	// What an earlier resume left on a row, last so a seed's bytes still mean
+	// what they did.
+	for i, row := range in.Base.TaskRuns {
+		t := in.Definition.Tasks[i]
+		if t.Await != nil || t.Sleep != nil || strings.HasPrefix(t.Uses, "orkflow:") || in.Facts.Earlier[t.Id] {
+			continue
+		}
+		if t.Pin == "" && g.n(2) == 1 {
+			t.Cache = &orkstackv1.CacheSpec{}
+		}
+		for _, r := range append([]*orkstackv1.TaskRun{row}, row.Items...) {
+			switch g.n(5) {
+			case 1:
+				r.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN
+			case 2:
+				r.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+			case 3:
+				r.Status, r.Error = sFail, &orkstackv1.Error{Code: ReasonCommitReadFailed}
+				r.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+			case 4:
+				r.Status, r.Error = sFail, &orkstackv1.Error{Code: taskOutputInvalidCode}
+				r.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+			}
+		}
+	}
 	return in
 }
 

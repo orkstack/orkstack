@@ -107,6 +107,9 @@ const REASONS: Record<string, string> = {
 	commit_missing: 'the commit record was reclaimed by cleanup; its recorded digest is preserved',
 	object_missing:
 		'the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved',
+	ending_missing: 'the archive body of this earlier ending was removed from the store',
+	ending_damaged:
+		'an object is stored for this earlier ending, but it does not decode as an archive body of this run',
 	attempt_record_missing: 'no record: the orker died before filing one, or it was reclaimed'
 };
 

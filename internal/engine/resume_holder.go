@@ -1,11 +1,11 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
@@ -21,12 +21,12 @@ type workflowDeps struct {
 	// isResetRun says whether this execution is a reset run. A test
 	// environment cannot reset a workflow, so its tests stand in for it.
 	isResetRun func(info *workflow.Info) bool
-	// hasConcurrency is PlanHasConcurrency.
-	hasConcurrency func(RunPlan) bool
+	// limitUnbuilt is ResumeLimitUnbuilt.
+	limitUnbuilt func(RunPlan) bool
 }
 
 // liveDeps are RunWorkflow's own.
-var liveDeps = workflowDeps{isResetRun: isResetRunInfo, hasConcurrency: PlanHasConcurrency}
+var liveDeps = workflowDeps{isResetRun: isResetRunInfo, limitUnbuilt: ResumeLimitUnbuilt}
 
 // isResetRunInfo is the reset-run predicate (§30.9 MEDIUM-1): a fresh
 // start, a continue-as-new, a retry and a cron run each set the original
@@ -59,9 +59,37 @@ type resumeLoadFailure struct {
 
 func (f *resumeLoadFailure) Error() string { return f.code + ": " + f.message }
 
-// errResumeCanceled: the operator canceled the run while it loaded its plan;
-// it ends canceled, as a cancel during a state load does (AGENTS.md §7.3).
-var errResumeCanceled = errors.New("the run was canceled while it loaded its resume plan")
+// resumeCanceled: the operator canceled the run before its resume was carried
+// out; it ends canceled, as a cancel during a state load does (AGENTS.md §7.3),
+// over what it was to set aside, at scope (0 when the key was not read).
+func resumeCanceled(scope uint64) *resumeLoadFailure {
+	return &resumeLoadFailure{code: runCanceledCode, message: "run canceled", scope: scope}
+}
+
+// canceledResetTimeout bounds the one read a canceled run makes of its reset,
+// to end at a sequence its base never used.
+const canceledResetTimeout = 10 * time.Second
+
+// canceledAtReset is what a run canceled while it read its reset is: nil for
+// one reset by hand, which is canceled as any run is. The one read it makes is
+// on a context the cancel does not reach.
+func canceledAtReset(ctx workflow.Context, runID string, in ReadResetFactsInput) error {
+	dctx, cancel := workflow.NewDisconnectedContext(ctx)
+	defer cancel()
+	var facts ResetFacts
+	err := getLocal(dctx, runScope(ctx), workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(dctx, workflow.LocalActivityOptions{
+		StartToCloseTimeout: canceledResetTimeout, ScheduleToCloseTimeout: canceledResetTimeout,
+	}), ActivityReadResetFacts, in), &facts)
+	if err != nil {
+		workflow.GetLogger(ctx).Error("a reset run canceled as it read the reset that made it cannot read it; it ends with no event", "run_id", runID, "error", err)
+		return resumeCanceled(0)
+	}
+	key, isResume, err := planKeyOf(runID, facts.Reason)
+	if err != nil || isResume {
+		return resumeCanceled(key.Scope)
+	}
+	return nil
+}
 
 // resumeLoadTimeout bounds loading a plan: the run's pinned restore timeout,
 // or the AGENTS-fixed resume_plan_load_timeout when its plan pins none.
@@ -123,15 +151,15 @@ func loadResumeAtR(ctx workflow.Context, deps workflowDeps, namespace, runID str
 	var facts ResetFacts
 	opts, ok := resumeLoadOptions(ctx, deadline)
 	if !ok {
-		return nil, &resumeLoadFailure{code: ReasonResumePlanUnreadable, message: "no time is left to read the reset"}
+		return nil, &resumeLoadFailure{code: ReasonResumePlanUnreadable, message: "no time is left to read how this run was resumed"}
 	}
-	err := getLocal(ctx, runScope(ctx), workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityReadResetFacts,
-		ReadResetFactsInput{Namespace: namespace, RunID: runID, ExecutionID: info.WorkflowExecution.RunID}), &facts)
-	if ctx.Err() != nil {
-		return nil, errResumeCanceled
+	reading := ReadResetFactsInput{Namespace: namespace, RunID: runID, ExecutionID: info.WorkflowExecution.RunID}
+	err := getLocal(ctx, runScope(ctx), workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityReadResetFacts, reading), &facts)
+	if err != nil && ctx.Err() != nil {
+		return nil, canceledAtReset(ctx, runID, reading)
 	}
 	if err != nil {
-		return nil, &resumeLoadFailure{code: ReasonResumePlanUnreadable, message: "the reset that made this run could not be read: " + err.Error()}
+		return nil, &resumeLoadFailure{code: ReasonResumePlanUnreadable, message: "how this run was resumed could not be read: " + resumeSentence(err, "it was not answered in time")}
 	}
 	key, isResume, err := planKeyOf(runID, facts.Reason)
 	if err != nil {
@@ -139,6 +167,9 @@ func loadResumeAtR(ctx workflow.Context, deps workflowDeps, namespace, runID str
 	}
 	if !isResume {
 		return nil, nil
+	}
+	if ctx.Err() != nil {
+		return nil, resumeCanceled(key.Scope)
 	}
 
 	var record orkstackv1.ResumePlanRecord
@@ -148,14 +179,14 @@ func loadResumeAtR(ctx workflow.Context, deps workflowDeps, namespace, runID str
 	err = getLocal(ctx, runScope(ctx), workflow.ExecuteLocalActivity(workflow.WithLocalActivityOptions(ctx, opts), ActivityLoadResumePlan,
 		LoadResumePlanInput{Namespace: namespace, RunID: runID, Reset: facts}), &record)
 	if ctx.Err() != nil {
-		return nil, errResumeCanceled
+		return nil, resumeCanceled(key.Scope)
 	}
 	if err != nil {
 		code := ReasonResumePlanUnreadable
 		if reading := categoryOf(err); reading.nonRetryable() && reading.appType() == ReasonResumePlanInvalid {
 			code = ReasonResumePlanInvalid
 		}
-		return nil, &resumeLoadFailure{code: code, message: fmt.Sprintf("the plan %s: %v", key, err), scope: key.Scope}
+		return nil, &resumeLoadFailure{code: code, message: fmt.Sprintf("the plan %s: %s", key, resumeSentence(err, "it was not read in time")), scope: key.Scope}
 	}
 	if record.GetBlock() == nil {
 		return nil, &resumeLoadFailure{code: ReasonResumePlanInvalid, message: "the plan " + key.String() + " holds no block", scope: key.Scope}
@@ -164,29 +195,81 @@ func loadResumeAtR(ctx workflow.Context, deps workflowDeps, namespace, runID str
 }
 
 // PlanHasConcurrency reports whether plan holds the run, or any task of it,
-// to a concurrency limit (E88). A resumed run must retake its slots before
-// anything reruns (§5.3 step 4); while that step is not built
-// (resumeConcurrency), such a run is never resumed: ResumeRun refuses it,
-// and a reset run of one ends explicitly. Any limit counts, a task's alone
-// included: a limit this build cannot retake is refused, never passed.
+// to a concurrency limit (E88).
 func PlanHasConcurrency(plan RunPlan) bool { return plan.Concurrency != nil }
 
-// resumeConcurrencyBuilt is whether resumeConcurrency retakes a resumed
-// run's slots; the change that fills it sets this.
-const resumeConcurrencyBuilt = false
+// ResumeLimitUnbuilt reports whether plan holds the run to a limit a resumed
+// run cannot retake yet: one of its tasks alone (E88 P7). Such a run is never
+// resumed: ResumeRun refuses it, and a reset run of one ends explicitly.
+func ResumeLimitUnbuilt(plan RunPlan) bool {
+	return plan.Concurrency != nil && plan.Concurrency.Run == nil
+}
 
 // resumeConcurrencyUnbuilt is what a person reads of a run that cannot be
 // resumed for its concurrency limit.
-const resumeConcurrencyUnbuilt = "this run is held to a concurrency limit, and this release cannot resume a run that is; run it again"
+const resumeConcurrencyUnbuilt = "this run's tasks are held to a concurrency limit, and this release cannot resume a run whose are; run it again"
 
-// resumeConcurrency is §5.3 step 4 (E88 §18): clear the carried slot flag,
-// release every gate of the plan below seq_base, re-upsert the gate memo
-// and retake the run-level slot. Until it is filled it does nothing for a
-// plan without concurrency and refuses a plan with one, so a resumed run
-// never runs past its limit.
-func (s *runState) resumeConcurrency(_ workflow.Context, hasConcurrency func(RunPlan) bool) error {
-	if hasConcurrency(s.plan) {
-		return runLevelError(RunConcurrencyUnsupportedCode, resumeConcurrencyUnbuilt)
+// resumeConcurrency is §5.3 step 4 (E88 §18): the run's earlier incarnations
+// give up every slot and place they may still hold, its records name the
+// resume's own, and it asks for the run-level slot anew, waiting in line if it
+// must. A run with no run-level limit has none to take.
+//
+// 4.1: what the replayed prefix held is not held: its gate freed it as the
+// base ended. 4.2: release_all below seq_base, to every gate of the plan and
+// not only those the prefix asked, which is before the base's task-level
+// acquires. 4.3: the memo and attributes. 4.4: the acquire, after a workflow
+// task of its own has committed the two before it, so the gate never decides
+// it against a record of the run it has already left (CR-H2).
+func (s *runState) resumeConcurrency(ctx workflow.Context, seqBase int64) error {
+	c := s.conc
+	if c == nil {
+		return nil
 	}
-	return nil
+	c.held, c.queued, c.requeue, c.givenBack, c.ordinal = nil, nil, nil, false, 0
+	c.seqBase = seqBase
+	// On a context the run's own cancel does not reach, as releaseSlots; the
+	// wait for them ends with it.
+	dctx, cancel := workflow.NewDisconnectedContext(ctx)
+	defer cancel()
+	scope := runScope(ctx)
+	var futures []workflow.Future
+	memo := map[string]any{gateMemoSeqKey: seqBase}
+	for _, slot := range c.plan.Slots {
+		futures = append(futures, workflow.SignalExternalWorkflow(dctx, slot.GateID, "", GateSignalReleaseAll,
+			// The gate is no run and holds no key: ids and a sequence only.
+			payloadcrypt.PlainIn(scope, GateReleaseAll{Run: s.runID, Below: seqBase})))
+		memo[gateMemoKey(slot.GateID, gateRunLevel)] = nil
+	}
+	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, memo)); err != nil {
+		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the resumed run could not record its concurrency slots: %v", err))
+	}
+	c.seqWritten = true
+	if err := s.syncConcAttributes(ctx); err != nil {
+		return err
+	}
+	for i, f := range futures {
+		sel := workflow.NewSelector(ctx)
+		sel.AddFuture(f, func(workflow.Future) {})
+		sel.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) {})
+		sel.Select(ctx)
+		if ctx.Err() != nil {
+			return temporal.NewCanceledError()
+		}
+		// A gate that is gone, or that carries its state on, has nothing a
+		// later incarnation's acquire does not settle: never a reason to end.
+		if err := f.Get(dctx, nil); err != nil && !categoryOf(err).unknownRun {
+			workflow.GetLogger(ctx).Warn("a resumed run could not release an earlier concurrency slot; the limit's check pass frees it",
+				"run", s.runID, "gate", c.plan.Slots[i].GateID, "error", err)
+		}
+	}
+	err := s.askRunSlot(ctx, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_RESUME)
+	if err != nil && c.queued != nil {
+		// It leaves the line without a slot.
+		s.noteWaitEnd(ctx, waitOutcomeOf(ctx, err))
+		c.queued = nil
+		if serr := s.syncConcAttributes(ctx); serr != nil {
+			workflow.GetLogger(ctx).Warn("a resumed run that left the line could not update its index", "run_id", s.runID, "error", serr)
+		}
+	}
+	return err
 }

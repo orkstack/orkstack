@@ -60,7 +60,7 @@ func FuzzRenderConcurrencyKey(f *testing.F) {
 			}
 			return
 		}
-		if err := CheckConcurrencyKey(key); err != nil {
+		if err := CheckConcurrencyKey(key, KeyAuthored); err != nil {
 			t.Fatalf("rendered key %q fails the rule: %v", key, err)
 		}
 	})

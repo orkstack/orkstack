@@ -80,8 +80,7 @@ func unavailableDefinitionMessage(timeout time.Duration, last error) string {
 	if last != nil {
 		cause = errorText(last)
 	}
-	return fmt.Sprintf("its definition could not be read from object storage for %s (last error: %s); "+
-		"the run has stopped", timeout, cause)
+	return fmt.Sprintf("its definition could not be read from object storage for %s (last error: %s)"+runStopped, timeout, cause)
 }
 
 // DefinitionStub is what a run whose definition travels by reference starts
@@ -498,6 +497,7 @@ func loadDefinitionArgument(
 	input *orkstackv1.Payload,
 	plan RunPlan,
 	carry *orkstackv1.RunContinuation,
+	resume *resumeHolder,
 ) (loader *runState, loaded *orkstackv1.Orkflow, ended *orkstackv1.Run, end bool, err error) {
 	if plan.Definition == nil {
 		return nil, nil, nil, false, nil
@@ -508,6 +508,7 @@ func loadDefinitionArgument(
 	}
 	loader = newRunState(ctx, runID, stub, input, plan)
 	loader.versions = map[string]workflow.Version{DefinitionByReferenceChange: v}
+	loader.resume = resume
 	if carry != nil {
 		loader.generation = carry.GetGeneration()
 	}
@@ -528,6 +529,12 @@ func loadDefinitionArgument(
 	switch {
 	case code == "":
 		return loader, def, nil, false, nil
+	case resume != nil && (code == restoreCanceled || ctx.Err() != nil):
+		run, err := loader.endResumeUnrunnable(ctx, resumeCanceled(resume.key.Scope))
+		return nil, nil, run, true, err
+	case resume != nil && code == RunDefinitionUnavailableCode:
+		run, err := loader.endResumeUnrunnable(ctx, resume.unread(message))
+		return nil, nil, run, true, err
 	case carry != nil && code == restoreCanceled:
 		run, err := loader.endUnrestorable(ctx, carry, "RUN_CANCELED", "run canceled")
 		return nil, nil, run, true, err

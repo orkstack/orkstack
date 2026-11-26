@@ -12,6 +12,8 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	"go.temporal.io/sdk/converter"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -116,6 +118,9 @@ type fakeResumeCluster struct {
 	onHistory func() ([]*historypb.HistoryEvent, bool)
 	// onReset answers a reset; nil refuses every one.
 	onReset func(engine.ResumeReset) (string, error)
+	// payloadsErr refuses the run's payloads; resetKeyErr the reset key's
+	// read, which opens them too.
+	payloadsErr, resetKeyErr error
 }
 
 func (f *fakeResumeCluster) DescribeResumeExecution(_ context.Context, runID, execution string) (engine.ResumeExecution, error) {
@@ -160,8 +165,18 @@ func (f *fakeResumeCluster) ResumeExecutionHistory(_ context.Context, _, executi
 func (f *fakeResumeCluster) ResetKeyOf(_ context.Context, _, execution string) (string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.resetKeyErr != nil {
+		return "", false, f.resetKeyErr
+	}
 	key, ok := f.resetKeys[execution]
 	return key, ok, nil
+}
+
+func (f *fakeResumeCluster) ExecutionPayloads(context.Context, string, *historypb.HistoryEvent) (converter.DataConverter, error) {
+	if f.payloadsErr != nil {
+		return nil, f.payloadsErr
+	}
+	return engine.DataConverter(), nil
 }
 
 func (f *fakeResumeCluster) ResetForResume(_ context.Context, reset engine.ResumeReset) (string, error) {
@@ -228,6 +243,7 @@ type resumeFixture struct {
 	claims    *resumeClaimer
 	runReader *resumeRunReader
 	attempts  *artifacts.MemoryAttemptStore
+	endings   *fakeResumeEndings
 	// claimsErr is what listing the run's open claims answers, when set.
 	claimsErr error
 	fleet     *stubFleet
@@ -258,11 +274,17 @@ func newResumeFixture(t *testing.T, change func(*resumeFixture)) *resumeFixture 
 		claims:   &resumeClaimer{sharedClaimer: newSharedClaimer()},
 		attempts: artifacts.NewMemoryAttemptStore(),
 		fleet:    &stubFleet{},
+		endings:  &fakeResumeEndings{archived: map[uint64]bool{0: true}},
 		commits:  artifacts.NewMemoryCommitStore(),
 		plan:     engine.RunPlan{CommitRoot: resumeCommitRoot},
 		pools:    livePools{task.DefaultQueue: 1},
 		// Long after everything the run started has stopped.
 		clock: &stepClock{now: resumeEpoch.Add(24 * time.Hour)},
+	}
+	f.endings.body = func() *orkstackv1.Run {
+		f.reader.mu.Lock()
+		defer f.reader.mu.Unlock()
+		return proto.Clone(f.run).(*orkstackv1.Run)
 	}
 	f.store, f.snaps = openResumeStores(t)
 	records, err := artifacts.NewRecordStore(context.Background(), artifacts.Config{Backend: "local", LocalDir: t.TempDir()})
@@ -284,6 +306,7 @@ func newResumeFixture(t *testing.T, change func(*resumeFixture)) *resumeFixture 
 		cfg.Now = f.clock.Now
 		cfg.ResumeSettings = f.settings
 		cfg.ResumeRecords = f.records
+		cfg.ResumeEndings, cfg.ResumeArchiver = f.endings, f.endings
 		cfg.Attempts = f.attempts
 		if f.claimsErr != nil {
 			cfg.Attempts = failingClaims{f.attempts, f.claimsErr}
@@ -457,7 +480,7 @@ func TestResumeRun_NotThisNamespacesRun(t *testing.T) {
 }
 
 // TestResumeRun_ClusterUnavailable: a cluster or store that does not answer
-// is Unavailable or a wait, never a permanent refusal.
+// is a wait, never a permanent refusal.
 func TestResumeRun_ClusterUnavailable(t *testing.T) {
 	for name, change := range map[string]func(*resumeFixture){
 		"describe": func(f *resumeFixture) { f.cluster.err = errors.New("unreachable") },
@@ -465,8 +488,10 @@ func TestResumeRun_ClusterUnavailable(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newResumeFixture(t, change)
-			if _, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true}); connect.CodeOf(err) != connect.CodeUnavailable || strings.Contains(err.Error(), "unreachable") {
-				t.Fatalf("= %v, want Unavailable, with the cluster's own words in the log alone", err)
+			if _, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true}); connect.CodeOf(err) != connect.CodeFailedPrecondition || strings.Contains(err.Error(), "unreachable") {
+				t.Fatalf("= %v, want a refusal, with the cluster's own words in the log alone", err)
+			} else if r := refusalOf(t, err); r.GetReason() != "RESUME_CHECK_UNAVAILABLE" || r.GetRetryAfterSeconds() <= 0 {
+				t.Fatalf("refusal = %v, want RESUME_CHECK_UNAVAILABLE with when to retry: no reset was sent", r)
 			}
 		})
 	}

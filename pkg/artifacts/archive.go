@@ -149,6 +149,8 @@ type RunRecord struct {
 	// it. Empty writes no root row: a run with no root recorded is matched by
 	// no root filter.
 	RootRunID string
+	// Scope is the ending's: 0 for the run's first, else its resume's.
+	Scope uint64
 	// JSONL is the archive body: one JSON record per line.
 	JSONL []byte
 }
@@ -182,6 +184,10 @@ type RunIndexEntry struct {
 	// RootRunID is set by a root-index scan, with OriginKind PARENT_RUN and
 	// OriginID, which that row also holds, and zero from any other scan.
 	RootRunID string
+	// Scope is the ending the row is of: 0 for the run's first.
+	Scope uint64
+	// rowKey is the row to read Scope from, while a scan is being answered.
+	rowKey string
 }
 
 // RunQuery narrows a prefix scan. Zero values mean "no filter".

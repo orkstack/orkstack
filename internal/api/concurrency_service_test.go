@@ -255,3 +255,43 @@ func TestConcurrencyLimits_ReadEveryKeyTheListAnswers(t *testing.T) {
 		}
 	}
 }
+
+// TestConcurrencyLimits_ANamespaceThatDoesNotExistIsRefused: whatever the
+// filters, so a mistyped namespace never reads as a key nothing holds.
+func TestConcurrencyLimits_ANamespaceThatDoesNotExistIsRefused(t *testing.T) {
+	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Namespaces: newFakeRegistry(),
+		Starter:           &concStarter{fakeStarter: &fakeStarter{}, indexed: true},
+		ConcurrencyReader: &fakeConcReader{gates: []engine.GateView{gateView("db:prod", 1, 0)}}})
+	f, err := listfilter.Parse("key=db:prod")
+	must.OK(t, err)
+	for name, filters := range map[string][]*orkstackv1.FieldFilter{"no filter": nil, "one key": {f}} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.ListConcurrencyLimits(context.Background(), connect.NewRequest(
+				&orkstackv1.ListConcurrencyLimitsRequest{Namespace: "typo", Filters: filters}))
+			if connect.CodeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "typo") {
+				t.Fatalf("list in a namespace that does not exist = %v; want not_found naming it", err)
+			}
+		})
+	}
+}
+
+// TestGetConcurrencyLimit_MapsEveryRebuildState: each state goes out as its
+// own, and one this build does not know as a rebuild not yet done.
+func TestGetConcurrencyLimit_MapsEveryRebuildState(t *testing.T) {
+	for state, want := range map[string]orkstackv1.ConcurrencyRebuild{
+		engine.GateRebuildNone:     orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_NONE,
+		engine.GateRebuildReading:  orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_READING,
+		engine.GateRebuildSettling: orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_SETTLING,
+		engine.GateRebuildFailing:  orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_FAILING,
+		"a later release's":        orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_READING,
+	} {
+		v := gateView("db:prod", 1, 0)
+		v.Rebuild = state
+		resp, err := limitsService(t, &fakeConcReader{gates: []engine.GateView{v}}).GetConcurrencyLimit(context.Background(),
+			connect.NewRequest(&orkstackv1.GetConcurrencyLimitRequest{Key: "db:prod"}))
+		must.OK(t, err)
+		if got := resp.Msg.GetLimit().GetRebuild(); got != want {
+			t.Errorf("rebuild state %q = %v; want %v", state, got, want)
+		}
+	}
+}

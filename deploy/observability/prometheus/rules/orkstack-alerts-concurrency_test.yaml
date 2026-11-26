@@ -332,6 +332,33 @@ tests:
   - eval_time: 50m
     alertname: OrkStackConcurrencyQueueMismatch
     exp_alerts: []
+- name: 'OrkStackConcurrencyResetIncomplete: incomplete'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_resets_incomplete{ork_deployment="d"}
+    values: 1x40
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: OrkStackConcurrencyResetIncomplete
+    exp_alerts:
+    - exp_labels:
+        component: concurrency
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A reset of a concurrency limit has run longer than engine.concurrency.reset_incomplete_after.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackconcurrencyresetincomplete
+        summary: A concurrency limit's reset does not finish.
+- name: 'OrkStackConcurrencyResetIncomplete: none'
+  interval: 1m
+  input_series:
+  - series: ork_concurrency_resets_incomplete{ork_deployment="d"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: OrkStackConcurrencyResetIncomplete
+    exp_alerts: []
 - name: 'OrkStackConcurrencyUnavailable: unavailable'
   interval: 1m
   input_series:

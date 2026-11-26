@@ -923,6 +923,15 @@ func (s *Service) mintChildren(planned *orkstackv1.Orkflow, plan *engine.RunPlan
 		references = bindings * int(plan.ArtifactClaims.ReserveBytesPerBind)
 	}
 	reserved := engine.ChildOriginMaxBytes + references
+	limited, err := childDeclaresLimit(planned, plan)
+	if err != nil {
+		return err
+	}
+	if limited || plan.Concurrency != nil {
+		// The slot a child's start adds to its planned limit, and the limits
+		// of the runs above it.
+		reserved += engine.ChildConcurrencyReserveBytes
+	}
 	if len(encoded)+reserved > engine.MaxPlanBytes {
 		what := fmt.Sprintf(", and a child's start reserves %d KiB for its origin,", engine.ChildOriginMaxBytes/1024)
 		if references > 0 {

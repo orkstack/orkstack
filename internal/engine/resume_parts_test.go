@@ -9,47 +9,26 @@ import (
 // Every part the table holds is refused, whichever unit needs it, and a
 // plan of plain tasks needs none of them.
 func TestResumeNeedsUnbuilt_RefusesEveryPartNotYetBuilt(t *testing.T) {
-	wf := &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{{Id: "build"}, {Id: "convert", Each: &orkstackv1.EachSpec{}}}}
-	plain := []ResumeUnitNeed{
-		{Task: "build", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN},
-		{Task: "build", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT},
-		{Task: "build", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_KEEP_SKIPPED},
+	wf := &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{{Id: "build"}, {Id: "child", Uses: "orkflow:signer@1"}}}
+	if part, _, refused := ResumeNeedsUnbuilt(wf, RunPlan{}); refused {
+		t.Fatalf("a run of plain tasks was refused for %q", part)
 	}
-	if part, _, refused := ResumeNeedsUnbuilt(wf, plain, false); refused {
-		t.Fatalf("a plan of plain tasks was refused for %q", part)
+	signs := &orkstackv1.Orkflow{Tasks: append(wf.GetTasks(), &orkstackv1.Task{Id: "signer", Identities: []*orkstackv1.IdentityRef{{}}})}
+	for name, tc := range map[string]struct {
+		wf   *orkstackv1.Orkflow
+		plan RunPlan
+		want ResumePart
+	}{
+		"a task that holds an identity":             {wf: signs, want: ResumePartAdmittedRun},
+		"a root whose child holds one, by its plan": {wf: wf, plan: RunPlan{Identity: &IdentityPlan{}}, want: ResumePartAdmittedRun},
+	} {
+		if got, why, refused := ResumeNeedsUnbuilt(tc.wf, tc.plan); !refused || got != tc.want || why == "" {
+			t.Errorf("%s: refused %v for %q (%q), want %q", name, refused, got, why, tc.want)
+		}
 	}
-	needs := map[ResumePart]func() ([]ResumeUnitNeed, bool){
-		ResumePartFanOutItems: func() ([]ResumeUnitNeed, bool) {
-			return []ResumeUnitNeed{{Task: "convert", Item: 3, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT}}, false
-		},
-		ResumePartSettle: func() ([]ResumeUnitNeed, bool) {
-			return []ResumeUnitNeed{{Task: "build", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_SETTLE}}, false
-		},
-		ResumePartWaitAgain: func() ([]ResumeUnitNeed, bool) {
-			return []ResumeUnitNeed{{Task: "build", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_WAIT}}, false
-		},
-		ResumePartSleepUntil: func() ([]ResumeUnitNeed, bool) {
-			return []ResumeUnitNeed{{Task: "build", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_SLEEP_UNTIL}}, false
-		},
-		ResumePartContinued: func() ([]ResumeUnitNeed, bool) { return plain, true },
-		ResumePartAdmittedRun: func() ([]ResumeUnitNeed, bool) {
-			return []ResumeUnitNeed{{Task: "signer", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT}}, false
-		},
-	}
-	admitted := &orkstackv1.Orkflow{Tasks: append(wf.GetTasks(), &orkstackv1.Task{Id: "signer", Identities: []*orkstackv1.IdentityRef{{}}})}
 	for part := range resumePartsUnbuilt {
-		build, ok := needs[part]
-		if !ok {
-			t.Fatalf("part %q has no case here: add one", part)
-		}
-		units, continued := build()
-		def := wf
-		if part == ResumePartAdmittedRun {
-			def = admitted
-		}
-		got, why, refused := ResumeNeedsUnbuilt(def, units, continued)
-		if !refused || got != part || why == "" {
-			t.Errorf("a plan needing %q: refused %v for %q (%q)", part, refused, got, why)
+		if part != ResumePartAdmittedRun {
+			t.Errorf("part %q has no case here: add one", part)
 		}
 	}
 }

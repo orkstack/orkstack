@@ -270,14 +270,6 @@ type ResumeRecords interface {
 	ResumedAfter(ctx context.Context, runID string, finishedAt time.Time) (bool, error)
 }
 
-// NoResumes is the resume check of a release in which no run can be resumed
-// (before E85): a run's current archive body is always its only one. E85
-// replaces it with its resume records before any resume ships.
-type NoResumes struct{}
-
-// ResumedAfter answers that no run was resumed.
-func (NoResumes) ResumedAfter(context.Context, string, time.Time) (bool, error) { return false, nil }
-
 // AcceptedRuns names this replica's newest accepted run, for the index_stale
 // canary.
 type AcceptedRuns interface {

@@ -363,6 +363,16 @@
 					]
 				},
 				{
+					"route": "docs/run/resume-a-run",
+					"title": "Resume a failed run",
+					"description": "Rerun a failed run's failed tasks, or retry it from a task, and keep every other result.",
+					"parts": [
+						{
+							"source": "site/content/how-to/resume-a-run.md"
+						}
+					]
+				},
+				{
 					"route": "docs/run/compare-runs",
 					"title": "Compare two runs",
 					"description": "See what differs between two runs: version, inputs, images and task outcomes.",

@@ -52,11 +52,14 @@ type CensusSettings struct {
 	Timeout  time.Duration `json:"census_timeout"`
 	MaxGates int           `json:"census_max_gates"`
 	Parallel int           `json:"census_parallel"`
+	// ResetIncompleteAfter is how long a reset may run before it is counted
+	// incomplete.
+	ResetIncompleteAfter time.Duration `json:"reset_incomplete_after"`
 }
 
 // DefaultCensusSettings are §9.6's defaults.
 func DefaultCensusSettings() CensusSettings {
-	return CensusSettings{Interval: time.Minute, Timeout: 5 * time.Minute, MaxGates: 2000, Parallel: 8}
+	return CensusSettings{Interval: time.Minute, Timeout: 5 * time.Minute, MaxGates: 2000, Parallel: 8, ResetIncompleteAfter: 15 * time.Minute}
 }
 
 // Check refuses settings the census could not run on, naming the setting:
@@ -72,6 +75,8 @@ func (s CensusSettings) Check() error {
 		return fmt.Errorf("engine.concurrency.census_max_gates is %d; it must be at least 1", s.MaxGates)
 	case s.Parallel < 1:
 		return fmt.Errorf("engine.concurrency.census_parallel is %d; it must be at least 1", s.Parallel)
+	case s.ResetIncompleteAfter <= 0:
+		return fmt.Errorf("engine.concurrency.reset_incomplete_after is %s; it must be above zero", s.ResetIncompleteAfter)
 	}
 	return nil
 }
@@ -142,6 +147,9 @@ type CensusSnapshot struct {
 	Truncated  bool
 	// Unavailable: the pass could not list the gates, or ran out of time.
 	Unavailable bool
+	// ResetsIncomplete is how many gates began with a reset that has not
+	// finished after reset_incomplete_after.
+	ResetsIncomplete int
 	// QueuedRunsUnknown: the queued runs could not be counted; QueuedRuns
 	// is nil, never a zero.
 	QueuedRunsUnknown bool
@@ -190,7 +198,10 @@ func levelOf(taskIx int) string {
 // arrive, so a pass holds one gate's state at a time, never all of them.
 // It is pure, so its arithmetic is tested apart from the cluster.
 type censusAggregator struct {
-	now  time.Time
+	now time.Time
+	// resetIncompleteAfter is the setting's; zero counts none.
+	resetIncompleteAfter time.Duration
+
 	snap CensusSnapshot
 	rows map[censusRowKey]*CensusRow
 	keys map[censusKeyKey]*CensusKeyRow
@@ -227,6 +238,9 @@ func (c *censusAggregator) add(v GateStateView) {
 			state = "failing"
 		}
 		c.snap.Rebuilding[[2]string{v.Namespace, state}]++
+	}
+	if c.resetIncompleteAfter > 0 && g.resetUnfinished() && now.Sub(g.ResetAt) >= c.resetIncompleteAfter {
+		c.snap.ResetsIncomplete++
 	}
 	// A key is labelled by its first entry's template; every entry of one
 	// key shares the namespace's declaration.
@@ -340,6 +354,7 @@ func (a *CensusActivities) RunConcurrencyCensus(ctx context.Context, in CensusSe
 		return err
 	}
 	agg := newCensusAggregator(a.now())
+	agg.resetIncompleteAfter = in.ResetIncompleteAfter
 	type answer struct {
 		i    int
 		view GateStateView

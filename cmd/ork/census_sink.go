@@ -16,7 +16,7 @@ func (s censusSink) RecordConcurrencyCensus(snap engine.CensusSnapshot) {
 	c := telemetry.ConcurrencyCensus{
 		At: snap.At, Duration: snap.Duration, QueuedRuns: maps.Clone(snap.QueuedRuns), QueuedRunsUnknown: snap.QueuedRunsUnknown,
 		Partial: maps.Clone(snap.Partial), Gates: snap.Gates, Unanswered: snap.Unanswered, Truncated: snap.Truncated,
-		Unavailable: snap.Unavailable,
+		Unavailable: snap.Unavailable, ResetsIncomplete: snap.ResetsIncomplete,
 	}
 	for _, r := range snap.Rows {
 		c.Rows = append(c.Rows, telemetry.ConcurrencyRow{Namespace: r.Namespace, Limit: r.Limit, Level: r.Level,
@@ -40,6 +40,13 @@ type arrivalObserver struct{ m *telemetry.ConcurrencyMetrics }
 func (o arrivalObserver) ObserveArrival(ctx context.Context, namespace, orkflow, limit, level, strategy, outcome string) {
 	o.m.Arrival(ctx, telemetry.ConcurrencyArrival{Namespace: namespace, Orkflow: orkflow, Limit: limit, Level: level,
 		Strategy: strategy, Outcome: outcome})
+}
+
+// resetObserver hands the resets' outcomes to their metric (E88 §9.9.2).
+type resetObserver struct{ m *telemetry.ConcurrencyMetrics }
+
+func (o resetObserver) ObserveConcurrencyReset(ctx context.Context, namespace, outcome string, forced bool) {
+	o.m.Reset(ctx, namespace, outcome, forced)
 }
 
 // gateReportObserver hands what the gates report to their metrics (E88

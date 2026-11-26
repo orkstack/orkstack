@@ -560,7 +560,11 @@ type GetStatsResponse struct {
 	// queued is how many of the running runs wait for a concurrency slot.
 	Queued int64 `protobuf:"varint,19,opt,name=queued,proto3" json:"queued,omitempty"`
 	// executing is how many of the running runs do not: running minus queued.
-	Executing     int64 `protobuf:"varint,20,opt,name=executing,proto3" json:"executing,omitempty"`
+	Executing int64 `protobuf:"varint,20,opt,name=executing,proto3" json:"executing,omitempty"`
+	// resumed_runs is how many of the window's runs were resumed at least once,
+	// finished or running. A resumed run is counted once everywhere in this
+	// answer, as it is now.
+	ResumedRuns   int64 `protobuf:"varint,21,opt,name=resumed_runs,json=resumedRuns,proto3" json:"resumed_runs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -731,6 +735,13 @@ func (x *GetStatsResponse) GetQueued() int64 {
 func (x *GetStatsResponse) GetExecuting() int64 {
 	if x != nil {
 		return x.Executing
+	}
+	return 0
+}
+
+func (x *GetStatsResponse) GetResumedRuns() int64 {
+	if x != nil {
+		return x.ResumedRuns
 	}
 	return 0
 }
@@ -2370,7 +2381,7 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x16\n" +
 	"\x06failed\x18\x02 \x01(\x03R\x06failed\x12\x14\n" +
 	"\x05total\x18\x03 \x01(\x03R\x05total\x12+\n" +
-	"\x11orkflow_namespace\x18\x04 \x01(\tR\x10orkflowNamespace\"\xd2\b\n" +
+	"\x11orkflow_namespace\x18\x04 \x01(\tR\x10orkflowNamespace\"\xf5\b\n" +
 	"\x10GetStatsResponse\x12U\n" +
 	"\x0eruns_by_status\x18\x01 \x03(\v2/.orkstack.v1.GetStatsResponse.RunsByStatusEntryR\frunsByStatus\x12!\n" +
 	"\fsuccess_rate\x18\x02 \x01(\x01R\vsuccessRate\x120\n" +
@@ -2393,7 +2404,8 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\btimezone\x18\x11 \x01(\tR\btimezone\x12\x16\n" +
 	"\x06paused\x18\x12 \x01(\x03R\x06paused\x12\x16\n" +
 	"\x06queued\x18\x13 \x01(\x03R\x06queued\x12\x1c\n" +
-	"\texecuting\x18\x14 \x01(\x03R\texecuting\x1a?\n" +
+	"\texecuting\x18\x14 \x01(\x03R\texecuting\x12!\n" +
+	"\fresumed_runs\x18\x15 \x01(\x03R\vresumedRuns\x1a?\n" +
 	"\x11RunsByStatusEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\x80\x03\n" +

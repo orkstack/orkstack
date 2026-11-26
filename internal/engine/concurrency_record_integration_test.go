@@ -31,6 +31,9 @@ type gateScenario struct {
 	fixture string
 	tune    func(*engine.GateTunables)
 	run     func(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History
+	// anyOrder: the path has two local activities of one workflow task, whose
+	// markers the history holds in the order they happened to end.
+	anyOrder bool
 }
 
 // TestIntegration_RecordConcurrencyGateHistories records E88 P2's gate
@@ -70,6 +73,11 @@ func TestIntegration_RecordConcurrencyGateHistories(t *testing.T) {
 			for repeat := range fixtureRepeats {
 				gate := engine.GateID(gateNamespace, "", sc.fixture+"#"+strconv.Itoa(repeat))
 				h = sc.run(t, s, gate, tun)
+				if sc.anyOrder {
+					// Each repeat's events, in whatever order; the last is kept.
+					shape = requireSameShapeOf(t, sc.fixture, repeat, shape, slices.Sorted(slices.Values(gateHistoryShape(h))))
+					continue
+				}
 				shape = requireSameShape(t, sc.fixture, repeat, shape, h)
 			}
 			recordConcurrencyFixture(t, sc.fixture, h)
@@ -136,7 +144,106 @@ func gateScenarios() []gateScenario {
 			tune: func(t *engine.GateTunables) {
 				t.MaxTombstones, t.TombstoneMargin, t.Linger = 1, 20*time.Second, 26*time.Second
 			}},
+		// E88 P5's reset (§5.1.11).
+		{fixture: "concurrency-gate-freeze-replaced-v1.json", run: gateFreezeReplaced, tune: longFreeze},
+		{fixture: "concurrency-gate-freeze-expired-v1.json", run: gateFreezeExpired,
+			tune: func(t *engine.GateTunables) { t.FreezeTimeout = 3 * time.Second }},
+		{fixture: "concurrency-gate-reset-records-v1.json", run: gateResetRecords, tune: longFreeze, anyOrder: true},
+		{fixture: "concurrency-gate-rebuild-seeded-v1.json", run: gateRebuildSeeded, tune: longFreeze, anyOrder: true},
+		{fixture: "concurrency-gate-reset-lapsed-v1.json", run: gateResetLapsed, tune: longFreeze, anyOrder: true},
 	}
+}
+
+// longFreeze lets a reset be made within its freeze on a loaded host.
+func longFreeze(t *engine.GateTunables) { t.FreezeTimeout = 10 * time.Second }
+
+// resetOnce resets key and returns the gate's new execution once its record is
+// rebuilt and settled.
+func (s *gateStack) resetOnce(t *testing.T, key, gate string, tun engine.GateTunables, replaced string) string {
+	t.Helper()
+	in := resetOf(key, gateRunID("rst"))
+	s.waitReset(t, s.resetter(tun, 2*time.Second), in, engine.ResetStateCompleted)
+	s.poll(t, "its records", func() (bool, error) {
+		return slices.Equal(s.resetRecords(t, in.RequestID), []string{"applied", "completed"}), nil
+	})
+	next := s.waitContinued(t, gate, replaced)
+	s.waitState(t, gate, "settled", func(v engine.GateStateView) bool { return v.State.Rebuild.State == "" })
+	return next
+}
+
+// freeze-replaced: a gate frozen for a reset and replaced by it; the fixture
+// is the execution the reset ends.
+func gateFreezeReplaced(t *testing.T, s *gateStack, _ string, tun engine.GateTunables) *historypb.History {
+	key, gate := resetKey("replaced")
+	first := s.held(t, gate, tun, 1, gateRunID("a"), gateRunID("b"))
+	s.waitIdle(t, gate)
+	s.resetOnce(t, key, gate, tun, first)
+	h := s.history(t, gate, first)
+	if last := h.GetEvents()[len(h.GetEvents())-1].GetEventType(); last != enums.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED {
+		t.Fatalf("the replaced gate ended %s", last)
+	}
+	return h
+}
+
+// freeze-expired: a freeze nothing follows ends by itself, and the head a
+// release freed meanwhile is granted.
+func gateFreezeExpired(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History {
+	a, b := gateRunID("a"), gateRunID("b")
+	first := s.held(t, gate, tun, 1, a, b)
+	s.waitIdle(t, gate)
+	h, err := s.c.UpdateWorkflow(s.ctx, client.UpdateWorkflowOptions{WorkflowID: gate, UpdateName: engine.GateUpdateFreeze,
+		Args:         []any{engine.GateFreeze{Request: engine.GateResetForTest{ID: "expired", IssuedAt: time.Now(), Body: "b"}}},
+		WaitForStage: client.WorkflowUpdateStageCompleted})
+	must.OK(t, err)
+	var frozen engine.GateFrozen
+	must.OK(t, h.Get(s.ctx, &frozen))
+	s.waitIdle(t, gate)
+	s.release(t, gate, a, 1, gateLevel)
+	s.waitState(t, gate, "b granted once the freeze ended", holdsOnly(b))
+	s.release(t, gate, b, 1, gateLevel)
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, first)
+}
+
+// reset-records: a key with no limit is reset: the new gate records it
+// applied and completed.
+func gateResetRecords(t *testing.T, s *gateStack, _ string, tun engine.GateTunables) *historypb.History {
+	key, gate := resetKey("records")
+	next := s.resetOnce(t, key, gate, tun, "")
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, next)
+}
+
+// rebuild-seeded: the gate a reset starts holds what it was seeded with, adds
+// nothing its runs' records say twice, and grants its line.
+func gateRebuildSeeded(t *testing.T, s *gateStack, _ string, tun engine.GateTunables) *historypb.History {
+	key, gate := resetKey("seeded")
+	a, b := gateRunID("a"), gateRunID("b")
+	first := s.held(t, gate, tun, 1, a, b)
+	next := s.resetOnce(t, key, gate, tun, first)
+	s.waitState(t, gate, "a holding", holdsOnly(a))
+	s.waitIdle(t, gate)
+	s.release(t, gate, a, 1, gateLevel)
+	s.waitState(t, gate, "b holding", holdsOnly(b))
+	s.release(t, gate, b, 1, gateLevel)
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, next)
+}
+
+// reset-lapsed: a gate a reset started after its freeze had ended keeps what
+// it was given and writes into its memo that it takes no other reset.
+func gateResetLapsed(t *testing.T, s *gateStack, gate string, tun engine.GateTunables) *historypb.History {
+	run, err := s.c.ExecuteWorkflow(s.ctx, client.StartWorkflowOptions{ID: gate, TaskQueue: s.gateQueue}, engine.ConcurrencyGateWorkflowType,
+		engine.GateStart{GateID: gate, Namespace: gateNamespace, Key: "deploy", Tunables: tun, Previous: engine.GatePreviousUnclean,
+			Reset: &engine.GateResetStart{Request: engine.GateResetForTest{ID: "lapsed", IssuedAt: time.Now(), Body: "b"},
+				FrozenUntil: time.Now().Add(-time.Minute)}})
+	must.OK(t, err)
+	s.waitState(t, gate, "settled", func(v engine.GateStateView) bool { return v.State.Rebuild.State == "" })
+	if v := s.state(t, gate); v.State.ResetsUnknownUntil.IsZero() {
+		t.Fatalf("a lapsed reset's gate knows its resets: %+v", v.State)
+	}
+	s.closeEmpty(t, gate)
+	return s.history(t, gate, run.GetRunID())
 }
 
 // basic: a clean start grants the first arrival, queues the second, and on
@@ -701,7 +808,11 @@ func gateHistoryShape(h *historypb.History) []string {
 // naming the first event where it differs; it returns the path.
 func requireSameShape(t *testing.T, fixture string, repeat int, want []string, h *historypb.History) []string {
 	t.Helper()
-	got := gateHistoryShape(h)
+	return requireSameShapeOf(t, fixture, repeat, want, gateHistoryShape(h))
+}
+
+func requireSameShapeOf(t *testing.T, fixture string, repeat int, want, got []string) []string {
+	t.Helper()
 	if want == nil {
 		return got
 	}

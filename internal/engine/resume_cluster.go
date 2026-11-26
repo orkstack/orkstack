@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	commonpb "go.temporal.io/api/common/v1"
 	deploymentpb "go.temporal.io/api/deployment/v1"
 	enumspb "go.temporal.io/api/enums/v1"
@@ -13,6 +15,7 @@ import (
 	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
+	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
@@ -67,13 +70,33 @@ type ResumeCluster interface {
 	DescribeResumeExecution(ctx context.Context, runID, executionRunID string) (ResumeExecution, error)
 	// ResumeExecutionHistory is one execution's whole history, in order.
 	ResumeExecutionHistory(ctx context.Context, runID, executionRunID string) ([]*historypb.HistoryEvent, error)
-	// ResetKeyOf is the reason a reset run was started under, read from its
-	// RESET_WORKFLOW workflow-task failure; found is false for a run no
-	// reset started.
+	// ResetKeyOf is the reason of the reset an execution is of, read from its
+	// RESET_WORKFLOW workflow-task failure, or from that of the execution it
+	// carried on from; found is false for a run no reset started, and where
+	// the cluster no longer holds the one that was.
 	ResetKeyOf(ctx context.Context, runID, executionRunID string) (key string, found bool, err error)
 	// ResetForResume sends the reset exactly once and answers the new
 	// execution's id, or ErrResetOutcomeUnknown when the answer was lost.
 	ResetForResume(ctx context.Context, reset ResumeReset) (string, error)
+	// ExecutionPayloads is what one execution's history is read with, given
+	// its start: the run's own payloads, sealed or not (PayloadsOf).
+	// payloadcrypt.ErrKeyless and ErrUnreadable say it never can be.
+	ExecutionPayloads(ctx context.Context, runID string, start *historypb.HistoryEvent) (converter.DataConverter, error)
+}
+
+// ExecutionPayloads implements ResumeCluster.
+func (s *TemporalStarter) ExecutionPayloads(ctx context.Context, runID string, start *historypb.HistoryEvent) (converter.DataConverter, error) {
+	if s.payloads == nil {
+		return DataConverter(), nil
+	}
+	return s.payloads(ctx, runID, start)
+}
+
+// WithPayloads has what the resume seam reads of a run's history read with
+// the run's own payloads (TemporalRunReader.PayloadsOf).
+func (s *TemporalStarter) WithPayloads(payloads func(context.Context, string, *historypb.HistoryEvent) (converter.DataConverter, error)) *TemporalStarter {
+	s.payloads = payloads
+	return s
 }
 
 var _ ResumeCluster = (*TemporalStarter)(nil)
@@ -121,20 +144,68 @@ func (s *TemporalStarter) ResumeExecutionHistory(ctx context.Context, runID, exe
 // as its original, in its first event. For another it reads forward only until
 // it finds the reset that made it, which follows the copied prefix.
 func (s *TemporalStarter) ResetKeyOf(ctx context.Context, runID, executionRunID string) (string, bool, error) {
-	var key string
-	found := false
-	err := s.pageHistory(ctx, runID, executionRunID, func(page []*historypb.HistoryEvent) bool {
-		if len(page) > 0 {
-			if started := page[0].GetWorkflowExecutionStartedEventAttributes(); started != nil && started.GetOriginalExecutionRunId() == executionRunID {
+	key, carry, err := s.ownResetKey(ctx, runID, executionRunID)
+	if _, resume := ParseResumePlanKey(key); err != nil || resume || carry.GetResume() == nil {
+		return key, key != "", err
+	}
+	// It carried on from a resume's: the history that published the resume's
+	// first event is the one its reset made.
+	first := int64(carry.GetResume().GetSeqBase())
+	for _, segment := range carry.GetSegments() {
+		if first < segment.GetFirstSequence() || first > segment.GetLastSequence() {
+			continue
+		}
+		earlier, _, err := s.ownResetKey(ctx, runID, segment.GetExecutionId())
+		if err != nil && !errors.Is(err, ErrResumeExecutionNotFound) {
+			return "", false, err
+		}
+		if _, resume := ParseResumePlanKey(earlier); resume {
+			return earlier, true, nil
+		}
+	}
+	return key, key != "", nil
+}
+
+// ownResetKey is the reason of the reset that made one execution, or of the
+// newest resume's reset in the history it copied, when its own was made by
+// hand: such an execution stays of that resume (startOf says the same). It
+// answers the saved state the execution started from too.
+func (s *TemporalStarter) ownResetKey(ctx context.Context, runID, executionRunID string) (key string, carry *orkstackv1.RunContinuation, err error) {
+	var (
+		decodeErr error
+		newest    ResumePlanKey
+	)
+	err = s.pageHistory(ctx, runID, executionRunID, func(page []*historypb.HistoryEvent) bool {
+		for _, event := range page {
+			if started := event.GetWorkflowExecutionStartedEventAttributes(); started != nil {
+				dc, payloadsErr := s.ExecutionPayloads(ctx, runID, event)
+				if payloadsErr != nil {
+					decodeErr = payloadsErr
+					return false
+				}
+				if carry, decodeErr = startCarry(dc, started); decodeErr != nil {
+					return false
+				}
+				if started.GetOriginalExecutionRunId() == executionRunID {
+					return false
+				}
+			}
+			failed := event.GetWorkflowTaskFailedEventAttributes()
+			if failed.GetCause() != enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW {
+				continue
+			}
+			reason := failed.GetFailure().GetMessage()
+			if plan, ok := ParseResumePlanKey(reason); ok && plan.Scope > newest.Scope {
+				newest, key = plan, reason
+			}
+			if failed.GetNewRunId() == executionRunID {
+				key = cmp.Or(key, reason)
 				return false
 			}
 		}
-		if facts, ok := findResetEvent(page, executionRunID); ok {
-			key, found = facts.Reason, true
-		}
-		return !found
+		return true
 	})
-	return key, found, err
+	return key, carry, cmp.Or(err, decodeErr)
 }
 
 // pageHistory reads one execution's history page by page, until each runs

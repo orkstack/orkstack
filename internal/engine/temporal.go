@@ -8,6 +8,7 @@ import (
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -72,6 +73,8 @@ type TemporalStarter struct {
 	// (WithCancelClockForTest); nil is context.WithTimeout and time.After.
 	cancelBound func(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc)
 	cancelWait  func(interval time.Duration) <-chan time.Time
+	// payloads opens a run's history for the resume seam; nil reads it plain.
+	payloads func(context.Context, string, *historypb.HistoryEvent) (converter.DataConverter, error)
 }
 
 // NewTemporalStarter returns a starter that dispatches RunWorkflow onto queue.

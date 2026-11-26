@@ -21,19 +21,22 @@ import (
 // stubReleases states what a ReleaseCluster would read from the cluster, and
 // records every write it was asked to make.
 type stubReleases struct {
-	mu         sync.Mutex
-	obs        engine.ReleaseObservation
-	obsErr     error
-	counts     map[string]int64
-	paused     map[string]int64
-	queued     map[string]int64
-	runs       map[string][]*orkstackv1.Run
-	runErr     map[string]error
-	running    int64
-	runningErr error
-	setErr     error
-	awaitOK    bool
-	awaitErr   error
+	mu     sync.Mutex
+	obs    engine.ReleaseObservation
+	obsErr error
+	counts map[string]int64
+	paused map[string]int64
+	queued map[string]int64
+	// resumable is each release's failed runs that can be resumed.
+	resumable    map[string]int64
+	resumableErr error
+	runs         map[string][]*orkstackv1.Run
+	runErr       map[string]error
+	running      int64
+	runningErr   error
+	setErr       error
+	awaitOK      bool
+	awaitErr     error
 
 	sets    []engine.Routing
 	awaited []engine.Routing
@@ -72,6 +75,12 @@ func (s *stubReleases) ReleaseQueuedRuns(_ context.Context, build string) (int64
 	defer s.mu.Unlock()
 	n, ok := s.queued[build]
 	return n, ok, nil
+}
+
+func (s *stubReleases) ReleaseResumableRuns(_ context.Context, build string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resumable[build], s.resumableErr
 }
 
 func (s *stubReleases) RunningRuns(context.Context) (int64, error) {
@@ -140,6 +149,39 @@ func releaseFleet() *stubFleet {
 			"orker-b1": {OrkerId: "orker-b1", Pool: "main", BuildId: "v2"},
 		},
 		failures: map[string]error{},
+	}
+}
+
+// A release counts the failed runs that can be resumed only while it runs, a
+// drained release's among them; an engine that resumes no runs counts none and
+// asks nothing, and a count that cannot be read makes the release's runs unknown:
+// a drained release's 0 would say that stopping it loses nothing.
+func TestListReleases_CountsAReleasesResumableRuns(t *testing.T) {
+	list := func(resume engine.ResumeCluster, err error) map[string]int64 {
+		t.Helper()
+		stub := rolloutReleases()
+		stub.resumable, stub.resumableErr = map[string]int64{"v1": 4}, err
+		svc := api.NewService(api.Config{Fleet: releaseFleet(), Releases: stub, Resume: resume,
+			Now: func() time.Time { return releaseT0.Add(15 * time.Minute) }})
+		got := map[string]int64{}
+		for _, r := range listReleases(t, svc, "").GetReleases() {
+			if (err != nil) != (r.GetRunsUnavailableReason() != "") {
+				t.Errorf("%s with the count answering %v: runs unavailable %q", r.GetBuildId(), err, r.GetRunsUnavailableReason())
+			}
+			if r.GetResumableRuns() != 0 {
+				got[r.GetBuildId()] = r.GetResumableRuns()
+			}
+		}
+		return got
+	}
+	if got := list(&fakeResumeCluster{}, nil); len(got) != 1 || got["v1"] != 4 {
+		t.Errorf("resumable = %v, want v1's 4", got)
+	}
+	if got := list(nil, nil); len(got) != 0 {
+		t.Errorf("an engine that resumes none counted %v", got)
+	}
+	if got := list(&fakeResumeCluster{}, errors.New("down")); len(got) != 0 {
+		t.Errorf("a count that was not read = %v", got)
 	}
 }
 

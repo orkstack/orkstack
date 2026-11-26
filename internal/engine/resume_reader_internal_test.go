@@ -21,12 +21,12 @@ func TestClosedExecution_KeepsAResetRunsOwnEnding(t *testing.T) {
 		event := &historypb.HistoryEvent{EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED,
 			Attributes: &historypb.HistoryEvent_WorkflowExecutionFailedEventAttributes{
 				WorkflowExecutionFailedEventAttributes: &historypb.WorkflowExecutionFailedEventAttributes{
-					Failure: &failurepb.Failure{Message: "the reset that made this run could not be read",
+					Failure: &failurepb.Failure{Message: "how this run was resumed could not be read",
 						FailureInfo: &failurepb.Failure_ApplicationFailureInfo{
 							ApplicationFailureInfo: &failurepb.ApplicationFailureInfo{Type: code}}}}}}
 		status, failure, closed := closedExecution(event, false)
 		if !closed || status != orkstackv1.Status_STATUS_FAILED || failure.GetCode() != code || failure.GetCategory() != category ||
-			failure.GetMessage() != "the reset that made this run could not be read" {
+			failure.GetMessage() != "how this run was resumed could not be read" {
 			t.Fatalf("%s = %v %v, want FAILED %s %v with its message", code, status, failure, code, category)
 		}
 	}

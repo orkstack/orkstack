@@ -38,9 +38,13 @@ import (
 type fakeReader struct {
 	// mu guards runs, so a test can move a run to a terminal state while a
 	// stream is following it — which is the whole shape of a live log follow.
-	mu     sync.Mutex
-	runs   map[string]*orkstackv1.Run
-	events map[string][]*orkstackv1.Event
+	mu   sync.Mutex
+	runs map[string]*orkstackv1.Run
+	// saved is the saved state each run carried on with, and savedErr its
+	// read's failure.
+	saved    map[string]*orkstackv1.Run
+	savedErr error
+	events   map[string][]*orkstackv1.Event
 	// live blocks the stream after the events already recorded, so a test can
 	// assert on a run that has not finished yet. Closing it ends the stream.
 	live chan struct{}
@@ -93,6 +97,10 @@ type fakeReader struct {
 
 // RunDefinition resolves a start record's definition: through definitions
 // when a test set it, otherwise the record's own.
+func (f *fakeReader) RunSavedState(_ context.Context, _, runID string, _ *orkstackv1.RunContinuation) (*orkstackv1.Run, error) {
+	return f.saved[runID], f.savedErr
+}
+
 func (f *fakeReader) RunDefinition(ctx context.Context, runID string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
 	f.mu.Lock()
 	f.runDefinitionCount++

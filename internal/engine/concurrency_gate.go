@@ -25,6 +25,8 @@ import (
 // user surface.
 const (
 	ConcurrencyGateWorkflowType = "ConcurrencyGateWorkflow"
+	GateUpdateFreeze            = "freeze"
+	GateSignalUnfreeze          = "unfreeze"
 	GateUpdateAcquire           = "acquire"
 	GateSignalRelease           = "release"
 	GateSignalReleaseAll        = "release_all"
@@ -34,6 +36,9 @@ const (
 	// granted.
 	ConcurrencyGrantSignal = "ork-concurrency-grant"
 )
+
+// gateSignals are the signals a gate takes.
+var gateSignals = []string{GateSignalRelease, GateSignalReleaseAll, GateSignalVerify, GateSignalUnfreeze}
 
 // The gate's local activities (§5.1.8). All run on the engine worker that
 // runs the workflow task, never on ork-tasks.
@@ -68,7 +73,12 @@ type GateStart struct {
 	Key         string       `json:"key"`
 	Tunables    GateTunables `json:"tunables"`
 	Previous    string       `json:"previous,omitempty"`
-	Carry       *gateState   `json:"carry,omitempty"`
+	// Resets is what the key's earlier executions remembered of its resets,
+	// nil for nothing.
+	Resets *gateResetMemo `json:"resets,omitempty"`
+	// Reset is set on a start that resets the key.
+	Reset *GateResetStart `json:"reset,omitempty"`
+	Carry *gateState      `json:"carry,omitempty"`
 }
 
 // GateResult is a gate's completion: it closed empty (§5.1.7).
@@ -149,6 +159,8 @@ type gateRun struct {
 	// ordinal is the concurrency-gate-ordinal decision, asked the first time
 	// an acquire or a release carries a slot ordinal: 0 until then.
 	ordinal workflow.Version
+	// records are the reset's records still to be written, in order.
+	records []ConcurrencyResetRecord
 	// reclaimed is what this execution took back and has not reported yet.
 	reclaimed map[gateReclaimKey]int
 }
@@ -210,6 +222,7 @@ func ConcurrencyGateWorkflow(ctx workflow.Context, in GateStart) (GateResult, er
 	}
 	if w.g == nil {
 		w.g = &gateState{Tunables: in.Tunables, Phase: gatePhaseActive}
+		remember := w.g.inheritResets(in.Resets, workflow.Now(ctx))
 		if in.Previous != GatePreviousClean {
 			rebuild = true
 			w.g.Epoch++
@@ -217,6 +230,18 @@ func ConcurrencyGateWorkflow(ctx workflow.Context, in GateStart) (GateResult, er
 				// Rebuilding before the acquire handler exists, so no acquire
 				// is ever decided by a gate that does not yet know it.
 				w.g.Rebuild = gateRebuild{State: gateRebuildListing, Since: workflow.Now(ctx)}
+			}
+		}
+		if in.Reset != nil {
+			lapsed, err := w.beginReset(ctx, *in.Reset)
+			if err != nil {
+				return GateResult{}, err
+			}
+			remember = remember || lapsed
+		}
+		if remember {
+			if err := w.rememberResets(ctx); err != nil {
+				return GateResult{}, err
 			}
 		}
 	}
@@ -230,6 +255,9 @@ func ConcurrencyGateWorkflow(ctx workflow.Context, in GateStart) (GateResult, er
 	}
 	if rebuild {
 		if err := w.rebuild(ctx, in.Previous != GatePreviousAbsent); err != nil {
+			return GateResult{}, err
+		}
+		if err := w.finishReset(ctx); err != nil {
 			return GateResult{}, err
 		}
 	}
@@ -249,6 +277,9 @@ func (w *gateRun) register(ctx workflow.Context) error {
 	}); err != nil {
 		return fmt.Errorf("register %s: %w", GateUpdateAcquire, err)
 	}
+	if err := workflow.SetUpdateHandler(ctx, GateUpdateFreeze, w.freeze); err != nil {
+		return fmt.Errorf("register %s: %w", GateUpdateFreeze, err)
+	}
 	if err := workflow.SetQueryHandler(ctx, GateQueryState, func() (GateStateView, error) {
 		return GateStateView{Namespace: w.in.Namespace, Key: w.in.Key, State: *w.g}, nil
 	}); err != nil {
@@ -258,7 +289,7 @@ func (w *gateRun) register(ctx workflow.Context) error {
 	// blocking in Receive: the SDK hands a signal straight to a blocked
 	// Receive, where a drain could not see it. Buffered, every delivered
 	// signal is visible to drainSignals in whatever order coroutines run.
-	for _, name := range []string{GateSignalRelease, GateSignalReleaseAll, GateSignalVerify} {
+	for _, name := range gateSignals {
 		ch := workflow.GetSignalChannel(ctx, name)
 		workflow.Go(ctx, func(ctx workflow.Context) {
 			for {
@@ -300,6 +331,12 @@ func (w *gateRun) applySignal(ctx workflow.Context, name string, ch workflow.Rec
 			return true
 		}
 		w.g.releaseAll(r.Run, r.Below, now())
+	case GateSignalUnfreeze:
+		var r gateReset
+		if !receive(&r) {
+			return false
+		}
+		w.g.unfreeze(r, now())
 	case GateSignalVerify:
 		if !receive(nil) {
 			return false
@@ -313,7 +350,7 @@ func (w *gateRun) applySignal(ctx workflow.Context, name string, ch workflow.Rec
 // drainSignals applies every signal already delivered, so none is left
 // behind by a continue-as-new or a close.
 func (w *gateRun) drainSignals(ctx workflow.Context) {
-	for _, name := range []string{GateSignalRelease, GateSignalReleaseAll, GateSignalVerify} {
+	for _, name := range gateSignals {
 		ch := workflow.GetSignalChannel(ctx, name)
 		for w.applySignal(ctx, name, ch) {
 		}
@@ -391,11 +428,14 @@ func (w *gateRun) loop(ctx workflow.Context) (GateResult, error) {
 			w.sendReport(ctx)
 			continue
 		}
-		if w.continueDue(ctx) {
+		if len(w.records) == 0 && !w.g.resetHeld(now) && w.continueDue(ctx) {
 			w.sendReport(ctx)
 			return GateResult{}, w.continueAsNew(ctx)
 		}
-		if w.g.empty() {
+		if w.g.empty() && !w.g.frozen(now) && !w.g.resetHeld(now) && len(w.records) == 0 {
+			// A frozen gate does not close: an acquire would then start one
+			// the reset it is frozen for does not know of. Nor does one whose
+			// own start may be repeated, or still writing a reset's record.
 			if w.emptySince.IsZero() {
 				w.emptySince = now
 			}
@@ -453,6 +493,7 @@ func (w *gateRun) nextWake(now time.Time) time.Time {
 		consider(g.Rebuild.Since.Add(g.Tunables.RebuildSettle))
 	}
 	consider(g.FrozenUntil)
+	consider(g.ResetHeldUntil)
 	for _, q := range g.Queue {
 		consider(q.WaitUntil)
 	}
@@ -650,7 +691,7 @@ func (w *gateRun) continueAsNew(ctx workflow.Context) error {
 	carry := *w.g
 	carry.Draining = false
 	next := w.in
-	next.Previous, next.Carry = "", &carry
+	next.Previous, next.Resets, next.Reset, next.Carry = "", nil, nil, &carry
 	return workflow.NewContinueAsNewError(ctx, ConcurrencyGateWorkflowType, next)
 }
 
@@ -695,6 +736,7 @@ func (w *gateRun) rebuild(ctx workflow.Context, settle bool) error {
 		g.Rebuild.Attempts++
 		if now.Sub(g.Rebuild.Since) >= g.Tunables.RebuildTimeout && g.Rebuild.State != gateRebuildFailing {
 			g.Rebuild.State = gateRebuildFailing
+			w.recordReset(ctx, ResetRecordFailed)
 			workflow.GetLogger(ctx).Error("a concurrency gate is past rebuild_timeout and still cannot rebuild; it grants nothing until it does",
 				"gate", w.in.GateID, "attempts", g.Rebuild.Attempts, "error", err)
 		}

@@ -178,7 +178,7 @@ func (a *ResumeActivities) ReadResetFacts(ctx context.Context, in ReadResetFacts
 	facts, found, err := readResetFacts(ctx, a.history, a.temporalNamespace, in.RunID, in.ExecutionID)
 	if err == nil && !found {
 		err = temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("run %s is a reset run whose history holds no reset of it", in.RunID), ReasonResumePlanUnreadable, nil)
+			fmt.Sprintf("run %s: its history does not say how it was resumed", in.RunID), ReasonResumePlanUnreadable, nil)
 	}
 	if err != nil {
 		// Counted when no further try can follow: a final answer, or the
@@ -203,7 +203,7 @@ func planKeyOf(runID, reason string) (ResumePlanKey, bool, error) {
 	}
 	if strings.HasPrefix(reason, resumeKeyFamily) {
 		return ResumePlanKey{}, false, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("run %s was reset with %q, a resume plan key this build does not read", runID, reason),
+			fmt.Sprintf("run %s was resumed with plan key %q, which this build does not read", runID, reason),
 			ReasonResumePlanInvalid, nil)
 	}
 	return ResumePlanKey{}, false, nil
@@ -235,9 +235,9 @@ func verifyResumePlan(key ResumePlanKey, facts ResetFacts, read artifacts.Record
 	case digest != key.PlanDigest:
 		return fmt.Sprintf("its record hashes to %s, not %s", digest, key.PlanDigest)
 	case rec.GetBaseExecutionRunId() != facts.BaseRunID:
-		return fmt.Sprintf("its record resets execution %q, and the reset was of %q", rec.GetBaseExecutionRunId(), facts.BaseRunID)
+		return fmt.Sprintf("its record is of the ending of %q, and the run was resumed from that of %q", rec.GetBaseExecutionRunId(), facts.BaseRunID)
 	case rec.GetRScheduledEventId() != facts.ScheduledEventID || rec.GetRStartedEventId() != facts.StartedEventID:
-		return fmt.Sprintf("its record resets to workflow task %d/%d, and the reset was to %d/%d",
+		return fmt.Sprintf("its record starts from point %d/%d of the run, and the run was resumed from %d/%d",
 			rec.GetRScheduledEventId(), rec.GetRStartedEventId(), facts.ScheduledEventID, facts.StartedEventID)
 	case rec.GetBlock().GetScope() != key.Scope:
 		return fmt.Sprintf("its block is of scope %d, not %d", rec.GetBlock().GetScope(), key.Scope)

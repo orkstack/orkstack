@@ -292,6 +292,11 @@ message GetStatsResponse {
 
   // executing is how many of the running runs do not: running minus queued.
   int64 executing = 20;
+
+  // resumed_runs is how many of the window's runs were resumed at least once,
+  // finished or running. A resumed run is counted once everywhere in this
+  // answer, as it is now.
+  int64 resumed_runs = 21;
 }
 
 // FailureGroupBy names one dimension of a fingerprint. The order of the

@@ -36,6 +36,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunDiffCommand(g),
 		newRunTimingCommand(g),
 		newRunAgainCommand(g),
+		newRunResumeCommand(g),
 		newRunCancelCommand(g),
 		newRunPauseCommand(g),
 		newRunUnpauseCommand(g),
@@ -526,6 +527,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 			first = false
 		}
 		fmt.Fprintln(out, composedLine(run.GetNamespace(), taskRun))
+		if q := taskRun.GetQueued(); q != nil {
+			fmt.Fprintf(out, "%s: its child run is %s\n", taskRun.GetTaskId(), queuedLine(q))
+		}
 	}
 	// Why each waiting task, and fan-out item, is not running yet: what the
 	// engine derived on read (pending_reason). A run with none prints nothing new.

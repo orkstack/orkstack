@@ -61,6 +61,9 @@ type ReleaseCluster interface {
 	// ReleaseRuns counts the runs executing on one release and lists up to
 	// limit of them, newest first, as shallow projections.
 	ReleaseRuns(ctx context.Context, buildID string, limit int) (int64, []*orkstackv1.Run, error)
+	// ReleaseResumableRuns counts the failed runs pinned to one release that
+	// could still be resumed while it runs.
+	ReleaseResumableRuns(ctx context.Context, buildID string) (int64, error)
 	// RunningRuns counts every run executing on the deployment, on any
 	// release or none.
 	RunningRuns(ctx context.Context) (int64, error)
@@ -567,6 +570,18 @@ func (c *TemporalReleaseCluster) ReleaseQueuedRuns(ctx context.Context, buildID 
 		return 0, false, c.fail(ReleaseOpRead, "count the queued runs on a release", buildID, err)
 	}
 	return n, ok, nil
+}
+
+// ReleaseResumableRuns delegates to the run reader with this deployment's
+// name.
+func (c *TemporalReleaseCluster) ReleaseResumableRuns(ctx context.Context, buildID string) (int64, error) {
+	readCtx, cancel := context.WithTimeout(ctx, releaseReadTimeout)
+	defer cancel()
+	n, err := c.runs.ReleaseResumableRuns(readCtx, c.deployment, buildID)
+	if err != nil {
+		return 0, c.fail(ReleaseOpRead, "count the resumable runs of a release", buildID, err)
+	}
+	return n, nil
 }
 
 // RunningRuns delegates to the run reader.

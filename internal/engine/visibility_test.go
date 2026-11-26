@@ -556,7 +556,7 @@ func TestStatsWindow_MeasuresChainsFromCreatedAt(t *testing.T) {
 		record{id: "ork-old", status: completed, start: inside, created: since.Add(-time.Hour), closed: inside.Add(time.Minute)},
 	)
 	index.indexLater(t, record{id: "ork-b", status: completed, start: until.Add(time.Hour), created: inside, closed: inside.Add(5 * time.Hour)})
-	durations, err := readerOverIndex(index).windowRunDurations(context.Background(), StatsWindow{Since: since, Until: until})
+	durations, _, err := readerOverIndex(index).windowRunDurations(context.Background(), StatsWindow{Since: since, Until: until})
 	must.OK(t, err)
 	want := []time.Duration{10 * time.Minute, 2 * time.Hour, 5 * time.Hour}
 	if fmt.Sprint(durations) != fmt.Sprint(want) {

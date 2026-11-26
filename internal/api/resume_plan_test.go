@@ -69,6 +69,7 @@ func TestResumeRun_Preview(t *testing.T) {
 func TestResumeRun_PreviewWarnings(t *testing.T) {
 	f := newResumeFixture(t, func(f *resumeFixture) {
 		f.run.Pause = &orkstackv1.RunPause{PausedAt: timestamppb.New(resumeEpoch), PausedBy: "ada"}
+		f.run.Timeout = &orkstackv1.RunTimeout{Seconds: 5400}
 		f.fleet.failures = map[string]error{"orker-a": errors.New("gone")}
 	})
 	if _, err := f.attempts.ClaimAttempt(context.Background(), attemptOf("b"), "orker-a"); err != nil {
@@ -86,11 +87,17 @@ func TestResumeRun_PreviewWarnings(t *testing.T) {
 		kinds[orkstackv1.ResumeWarningKind_RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN].GetAcknowledgeKey() != "orker-a/b//1" {
 		t.Fatalf("warnings = %v", got.GetWarnings())
 	}
+	if w := kinds[orkstackv1.ResumeWarningKind_RESUME_WARNING_KIND_FRESH_TIMEOUT].GetMessage(); w != "the run gets a fresh timeout of 1h30m0s when its tasks start again" {
+		t.Fatalf("a run with a timeout says %q", w)
+	}
 	// Warnings are not the plan: they come and go without changing it.
 	plain := newResumeFixture(t, nil)
 	p, err := plain.resume(&orkstackv1.ResumeRunRequest{DryRun: true})
 	if err != nil || p.GetPlanDigest() != got.GetPlanDigest() {
 		t.Fatalf("the plan changed with its warnings: %v", err)
+	}
+	if len(p.GetWarnings()) != 0 {
+		t.Fatalf("a run with nothing to say warns %v", p.GetWarnings())
 	}
 }
 
@@ -109,12 +116,21 @@ func TestResumeRun_PlanRefusals(t *testing.T) {
 		reason, cause string
 		class         orkstackv1.ResumeRefusalClass
 	}{
-		"a part not built yet": {change: func(f *resumeFixture) {
-			f.def.Tasks[0].Await, f.def.Tasks[0].Uses = &orkstackv1.AwaitSpec{}, ""
-		}, req: preview(), reason: "RELEASE_UNSUPPORTED", cause: "settle", class: permanent},
-		"a run held to a concurrency limit": {change: func(f *resumeFixture) {
+		// Its own definition declares none: its child's does.
+		"a run admitted by its plan": {change: func(f *resumeFixture) {
+			f.plan.Identity = &engine.IdentityPlan{}
+		}, req: preview(), reason: "RELEASE_UNSUPPORTED", cause: "admitted_run", class: permanent},
+		"a run whose tasks are held to a concurrency limit": {change: func(f *resumeFixture) {
 			f.plan.Concurrency = &engine.ConcurrencyPlan{}
 		}, req: preview(), reason: "RELEASE_UNSUPPORTED", cause: "concurrency_slot", class: permanent},
+		"its concurrency key is full and it refuses": {change: limitedResume(engine.ConcurrencyStrategyRefuse, 0,
+			&fakeConcReader{lines: map[string]engine.GateLine{"ork-conc-k": {Present: true, Holders: 1, HolderRuns: []string{"ork-other"}}}}),
+			req: preview(), reason: "CONCURRENCY_LIMIT_REACHED", class: wait},
+		"its concurrency line is full": {change: limitedResume(engine.ConcurrencyStrategyQueue, 1,
+			&fakeConcReader{lines: map[string]engine.GateLine{"ork-conc-k": {Present: true, Holders: 1, Queued: 1}}}),
+			req: preview(), reason: "CONCURRENCY_QUEUE_FULL", class: wait},
+		"its concurrency limit cannot be read": {change: limitedResume(engine.ConcurrencyStrategyQueue, 0,
+			&fakeConcReader{lineErr: errors.New("raw cluster words")}), req: preview(), reason: "RESUME_CHECK_UNAVAILABLE", class: wait},
 		"its history is too full": {change: func(f *resumeFixture) { f.plan = limited }, req: preview(), reason: "RESUME_TOO_LARGE", class: permanent},
 		"its namespace is held": {change: func(f *resumeFixture) {
 			f.run.Namespace, f.def.Namespace = "payments", "payments"
@@ -152,6 +168,9 @@ func TestResumeRun_PlanRefusals(t *testing.T) {
 			}
 			_, err := f.resume(proto.Clone(tc.req).(*orkstackv1.ResumeRunRequest))
 			r := refusalOf(t, err)
+			if strings.Contains(r.GetMessage(), "raw cluster words") {
+				t.Errorf("the cluster's own error reached the caller: %s", r.GetMessage())
+			}
 			if r.GetReason() != tc.reason || r.GetCause() != tc.cause || r.GetClass() != tc.class || r.GetMessage() == "" ||
 				(tc.class == wait) != (r.GetRetryAfterSeconds() > 0) {
 				t.Fatalf("refusal = %v, want %s %s %s", r, tc.reason, tc.cause, tc.class)
@@ -172,8 +191,13 @@ func TestResumeRun_SequenceGap(t *testing.T) {
 	far := newResumeFixture(t, nil)
 	far.snapshot(t, 9000)
 	_, err = far.resume(&orkstackv1.ResumeRunRequest{DryRun: true})
-	if r := refusalOf(t, err); !strings.Contains(r.GetMessage(), "9000") {
+	// Named in a field of its own: what a client sends back to accept it.
+	if r := refusalOf(t, err); !strings.Contains(r.GetMessage(), "9000") || r.GetHighestSequence() != 9000 {
 		t.Fatalf("the refusal does not name the highest sequence: %v", r)
+	}
+	_, err = far.resume(&orkstackv1.ResumeRunRequest{DryRun: true, AcceptSequenceGap: true, AcceptedHighestSeq: 8999})
+	if r := refusalOf(t, err); r.GetReason() != "PLAN_CHANGED" || r.GetHighestSequence() != 9000 {
+		t.Fatalf("a gap accepted at another event = %v, want PLAN_CHANGED naming 9000", r)
 	}
 	got, err = far.resume(&orkstackv1.ResumeRunRequest{DryRun: true, AcceptSequenceGap: true, AcceptedHighestSeq: 9000})
 	if err != nil || got.GetSeqBase() != 9001 || got.GetHighestSequence() != 9000 {
@@ -197,6 +221,34 @@ func TestResumeRun_ResultGoneReruns(t *testing.T) {
 	}
 	if a := got.GetTasks()[0]; a.GetCategory() != orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_RESULT_GONE || a.GetDetail() == "" || got.GetKeptCount() != 0 {
 		t.Fatalf("a = %v", a)
+	}
+}
+
+// TestResumeRun_UnreadResultIsToBeReadBack: a result an earlier resume kept
+// and could not read is kept when it is there, and the preview says it is to
+// be read back.
+func TestResumeRun_UnreadResultIsToBeReadBack(t *testing.T) {
+	f := newResumeFixture(t, func(f *resumeFixture) {
+		a := f.run.TaskRuns[0]
+		a.Status = orkstackv1.Status_STATUS_FAILED
+		a.Error = &orkstackv1.Error{Code: engine.ReasonCommitReadFailed}
+		a.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+	})
+	got, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := got.GetTasks()[0]; a.GetCategory() != orkstackv1.ResumeCategory_RESUME_CATEGORY_KEPT || !strings.HasPrefix(a.GetDetail(), "to be read back") {
+		t.Fatalf("a = %v, want kept, to be read back", a)
+	}
+	// Run again, it repeats what it did when it succeeded: whoever confirms
+	// is asked, as for any task that succeeded.
+	got, err = f.resume(&orkstackv1.ResumeRunRequest{DryRun: true, FromTaskId: got.GetTasks()[0].GetTaskId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := got.GetTasks()[0]; a.GetCategory() != orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_SELECTED || a.GetPreviousOutcome() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("a = %v, want run again, having succeeded", a)
 	}
 }
 
@@ -285,5 +337,33 @@ func TestGetRun_ResumeHint(t *testing.T) {
 		f.configure = func(cfg *api.Config) { cfg.ResumeRecords = nil }
 	})); h != nil {
 		t.Fatalf("an engine that resumes nothing offers it: %v", h)
+	}
+}
+
+// limitedResume holds the fixture's run to a run-level limit of 1 on one key,
+// whose line reader answers.
+func limitedResume(strategy string, maxQueued int, reader *fakeConcReader) func(*resumeFixture) {
+	return func(f *resumeFixture) {
+		run := 0
+		f.plan.Concurrency = &engine.ConcurrencyPlan{Run: &run, Slots: []engine.ConcurrencySlotPlan{{
+			GateID: "ork-conc-k", Key: "k", Label: "k", Limit: 1, Strategy: strategy, MaxQueued: maxQueued}}}
+		f.configure = func(cfg *api.Config) {
+			cfg.ConcurrencyReader, cfg.Capabilities = reader, &fakeCapabilities{}
+			cfg.Starter = &concStarter{fakeStarter: &fakeStarter{}, indexed: true}
+		}
+	}
+}
+
+// TestResumeRun_ARunHeldToALimitIsResumed: whose key has a slot, or a place in
+// line for one that queues, as a submit would be.
+func TestResumeRun_ARunHeldToALimitIsResumed(t *testing.T) {
+	for name, line := range map[string]engine.GateLine{
+		"a free slot":   {},
+		"a place, only": {Present: true, Holders: 1, Queued: 3},
+	} {
+		f := newResumeFixture(t, limitedResume(engine.ConcurrencyStrategyQueue, 0, &fakeConcReader{lines: map[string]engine.GateLine{"ork-conc-k": line}}))
+		if _, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true}); err != nil {
+			t.Errorf("%s: preview = %v; want a plan", name, err)
+		}
 	}
 }

@@ -49,7 +49,7 @@ func RenderConcurrencyKey(text string, inputs map[string]any, run ConcurrencyKey
 		}
 		key = rendered
 	}
-	if err := CheckConcurrencyKey(key); err != nil {
+	if err := CheckConcurrencyKey(key, KeyAuthored); err != nil {
 		return "", fmt.Errorf("%w (from the key template %s)", err, strconv.Quote(text))
 	}
 	return key, nil

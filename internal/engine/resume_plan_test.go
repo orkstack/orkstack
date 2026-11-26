@@ -269,6 +269,151 @@ func TestResumePlan_EachSourceInSRerunsEveryItem(t *testing.T) {
 	}
 }
 
+// A result an earlier resume kept and could not read back is checked again by
+// the next: kept when it is there, though its row failed and nothing of it
+// was dispatched, and run again, with what depends on it, when it is gone.
+func TestResumePlan_AKeptResultThatWasNotReadBackIsCheckedAgain(t *testing.T) {
+	unread := func(code string) *orkstackv1.TaskRun {
+		row := prow("build", sFail)
+		row.Error = &orkstackv1.Error{Code: code}
+		row.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+		row.ResultEpoch = 7
+		return row
+	}
+	for _, code := range []string{ReasonCommitReadFailed, ReasonCommitMissing, ReasonCommitIdentity, ReasonCommitUndecodable, ReasonValuesMissing} {
+		for name, answer := range map[string]KeptAnswer{"there": KeptValid, "gone": KeptGone} {
+			t.Run(code+" "+name, func(t *testing.T) {
+				f := newPlan([]*orkstackv1.Task{ptask("build"), ptask("deploy", "build"), ptask("other")},
+					unread(code), prow("deploy", sCanc), prow("other", sOK))
+				f.in.Facts.Dispatched = map[ResumeUnit]bool{} // the earlier resume dispatched nothing
+				f.in.Evidence.Kept[nodeUnit("build")] = answer
+				p := f.plan(t)
+				u := unitOf(t, p, "build", -1)
+				if answer == KeptValid && (u.InRerunSet || u.Disposition != DispositionAdopt || u.Detail != unreadKeptDetail) {
+					t.Errorf("build = %+v, want kept, to be read back", u)
+				}
+				if answer == KeptGone && (!u.InRerunSet || u.Category != CategoryRerunResultGone) {
+					t.Errorf("build = %+v, want run again: its result is gone", u)
+				}
+				if d := unitOf(t, p, "deploy", -1); !d.InRerunSet {
+					t.Errorf("deploy = %+v, want run", d)
+				}
+				if o := unitOf(t, p, "other", -1); o.InRerunSet || o.Detail != "" {
+					t.Errorf("other = %+v, want kept with nothing to say", o)
+				}
+			})
+		}
+	}
+}
+
+// A result that is there and could not be used is not kept for ever: its task
+// runs again, whatever verification says of the bytes.
+func TestResumePlan_AKeptResultThatCannotBeUsedRunsAgain(t *testing.T) {
+	row := prow("build", sFail)
+	row.Error = &orkstackv1.Error{Code: taskOutputInvalidCode, Message: "its kept values do not decode"}
+	row.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+	f := newPlan([]*orkstackv1.Task{ptask("build"), ptask("deploy", "build")}, row, prow("deploy", sCanc))
+	f.in.Facts.Dispatched = map[ResumeUnit]bool{}
+	p := f.plan(t)
+	if u := unitOf(t, p, "build", -1); !u.InRerunSet || u.Category != CategoryRerunResultGone || u.Detail != "its kept values do not decode" {
+		t.Errorf("build = %+v, want run again, saying why", u)
+	}
+}
+
+// A cached unit that succeeded before and runs again reads no memo, which
+// would hand back the result it runs again to replace; one that never did
+// looks its memo up. A unit an earlier resume was to run again may have
+// succeeded before that.
+func TestResumePlan_ARerunOfACachedSuccessReadsNoMemo(t *testing.T) {
+	cached := func(task *orkstackv1.Task) *orkstackv1.Task {
+		task.Cache = &orkstackv1.CacheSpec{}
+		return task
+	}
+	disposed := func(row *orkstackv1.TaskRun, d orkstackv1.ResumeDisposition) *orkstackv1.TaskRun {
+		row.ResumeDisposition = d
+		return row
+	}
+	notRead := disposed(prow("unread", sCanc), dAdopt)
+	notRead.ReadingBack, notRead.Error = true, &orkstackv1.Error{Code: ReasonResumeNotReadBack}
+	f := newPlan([]*orkstackv1.Task{
+		cached(ptask("build")), ptask("plain", "build"), cached(ptask("test", "build")), cached(ptask("failed", "build")), cached(ptask("again", "build")),
+		cached(ptask("unread")), cached(eachTask("fan", "build", "build")), cached(ptask("kept")),
+		cached(eachTask("fan2", "build", "build")),
+	}, prow("build", sOK), prow("plain", sOK), prow("test", sOK), prow("failed", sFail), disposed(prow("again", sCanc), dRerun),
+		notRead, fanRow("fan", sFail, pitem(0, sOK), pitem(1, sFail)), prow("kept", sOK),
+		disposed(fanRow("fan2", sCanc, pitem(0, sFail)), dRerun))
+	f.in.Action, f.in.FromTask = ResumeActionRetryFrom, "build"
+	f.in.Evidence.Kept[nodeUnit("unread")] = KeptGone
+	f.in.Definition.Tasks[6].Each.MaxItems, f.in.Definition.Tasks[8].Each.MaxItems = 5, 5
+	p := f.plan(t)
+	for _, want := range []struct {
+		task             string
+		item             int
+		fresh, succeeded bool
+	}{
+		{"build", -1, true, true}, {"plain", -1, false, true}, {"test", -1, true, true}, {"failed", -1, false, false}, {"again", -1, true, false},
+		{"unread", -1, true, true}, {"fan", -1, false, false}, {"fan", 0, true, true}, {"fan", 1, false, false}, {"kept", -1, false, true},
+		{"fan2", -1, true, false}, {"fan2", 0, true, false},
+	} {
+		if u := unitOf(t, p, want.task, want.item); u.Fresh != want.fresh || u.Succeeded != want.succeeded {
+			t.Errorf("%s[%d]: fresh %v, succeeded %v; want %v, %v", want.task, want.item, u.Fresh, u.Succeeded, want.fresh, want.succeeded)
+		}
+	}
+	b, err := BuildResumeBlock(ResumeBlockInput{Input: f.in, Plan: p, SeqBase: 100, Scope: 100,
+		Verification: ResumeVerification{Sizes: map[ResumeUnit]int64{nodeUnit("kept"): 10}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	units, err := DecodeResumeUnits(f.in.Definition, b, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, u := range units {
+		if u.Fresh != p.Units[i].Fresh {
+			t.Errorf("%s packs fresh %v, want %v", u.unit(), u.Fresh, p.Units[i].Fresh)
+		}
+	}
+}
+
+// The same of a fan-out: its unread items are checked again, and one that is
+// there does not run again because another could not be read.
+func TestResumePlan_AKeptItemThatWasNotReadBackIsCheckedAgain(t *testing.T) {
+	item := func(i int32, status orkstackv1.Status, code string) *orkstackv1.TaskRun {
+		r := pitem(i, status)
+		r.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+		if code != "" {
+			r.Error = &orkstackv1.Error{Code: code}
+		}
+		return r
+	}
+	build := func() *planFixture {
+		fan := fanRow("fan", sFail, item(0, sFail, ReasonCommitReadFailed), item(1, sCanc, ReasonResumeNotReadBack))
+		fan.ResumeDisposition = orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT
+		fan.Error = &orkstackv1.Error{Code: ReasonCommitReadFailed}
+		f := newPlan([]*orkstackv1.Task{ptask("src"), eachTask("fan", "src", "src"), ptask("after", "fan")}, prow("src", sOK), fan, prow("after", sCanc))
+		f.in.Facts.Dispatched = map[ResumeUnit]bool{}
+		return f
+	}
+	p := build().plan(t)
+	for _, i := range []int{-1, 0, 1} {
+		if u := unitOf(t, p, "fan", i); u.InRerunSet || u.Disposition != DispositionAdopt {
+			t.Errorf("fan[%d] = %+v, want kept", i, u)
+		}
+	}
+	if u := unitOf(t, p, "fan", 0); u.Detail != unreadKeptDetail {
+		t.Errorf("fan[0] = %+v, want to be read back", u)
+	}
+	f := build()
+	f.in.Evidence.Kept[ResumeUnit{Task: "fan", Item: 0}] = KeptGone
+	p = f.plan(t)
+	if u := unitOf(t, p, "fan", 0); !u.InRerunSet || u.Category != CategoryRerunResultGone {
+		t.Errorf("fan[0] = %+v, want run again", u)
+	}
+	if u := unitOf(t, p, "fan", 1); u.InRerunSet {
+		t.Errorf("fan[1] = %+v, want kept", u)
+	}
+}
+
 // linesTask is a fan-out over the lines of an artifact of producer, which is
 // always one of its own needs (docs/DSL.md): its source names no task, so it
 // is in S through its need.
@@ -457,6 +602,24 @@ func TestResumePlan_ComposedTasks(t *testing.T) {
 			}
 		})
 	}
+	// Open at a force cancel, whichever task is chosen, and whatever its row's
+	// own status says of it.
+	for _, from := range []string{"c", "x"} {
+		for _, status := range []orkstackv1.Status{sRun, sPend, sCanc, sFail} {
+			t.Run("open at a force cancel, "+status.String()+", from "+from, func(t *testing.T) {
+				f := newPlan([]*orkstackv1.Task{composedTask("c"), ptask("x")}, prow("c", status), prow("x", sRun))
+				forceCanceled(f, from)
+				f.in.Evidence.Kept[nodeUnit("c")] = KeptGone
+				r := f.refusal(t)
+				if r.Code != RefuseComposedTask || r.Tasks[0] != "c" {
+					t.Fatalf("refusal = %+v, want COMPOSED_TASK of c", r)
+				}
+				if status == sRun && from == "x" && r.Cause != string(ComposedRunningAtForceCancel) {
+					t.Errorf("cause = %s, want %s", r.Cause, ComposedRunningAtForceCancel)
+				}
+			})
+		}
+	}
 	t.Run("result gone", func(t *testing.T) {
 		f := newPlan([]*orkstackv1.Task{composedTask("c"), ptask("x")}, prow("c", sOK), prow("x", sFail))
 		f.in.Evidence.Kept[ResumeUnit{Task: "c", Item: -1}] = KeptGone
@@ -485,6 +648,8 @@ func TestResumePlan_BaseRefusals(t *testing.T) {
 			f.in.Base.Origin = &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN}
 		}, RefuseChildRun, RefusalPermanent},
 		{"never started", func(f *planFixture) { f.in.Facts.ResetPoint = ResetPoint{} }, RefuseNeverStarted, RefusalPermanent},
+		{"never started, with no row either", func(f *planFixture) { f.in.Base.TaskRuns, f.in.Facts.ResetPoint = nil, ResetPoint{} }, RefuseNeverStarted, RefusalPermanent},
+		{"its tasks' record is gone", func(f *planFixture) { f.in.Base.TaskRuns = nil }, RefuseStateUnreadable, RefusalPermanent},
 		{"state unreadable", func(f *planFixture) { f.in.Facts.StateUnreadable = true }, RefuseStateUnreadable, RefusalPermanent},
 		{"budget", func(f *planFixture) { f.in.ResumesUsed = MaxResumesPerRun }, RefuseTooManyResumes, RefusalPermanent},
 		{"unknown from", func(f *planFixture) { f.in.Action, f.in.FromTask = ResumeActionRetryFrom, "zz" }, RefuseFromTaskUnknown, RefusalPermanent},

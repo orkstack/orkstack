@@ -131,6 +131,10 @@ type RunPlan struct {
 	// them (E88; concurrency_run.go): nil for a run with no limit, so its
 	// plan encodes exactly as before and its every path is today's.
 	Concurrency *ConcurrencyPlan `json:"concurrency,omitempty"`
+	// ConcurrencyAncestors is the limits every run above this one declares,
+	// set by its parent as it starts it: a child asking for one of them would
+	// wait for a slot its own ancestor keeps.
+	ConcurrencyAncestors []string `json:"concurrency_ancestors,omitempty"`
 
 	// Awaits holds, per task id, the callback credential of every `await:`
 	// of this run that declares `callback: true`: a salt and the salted

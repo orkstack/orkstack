@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +17,7 @@ import (
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/identity"
@@ -125,19 +125,14 @@ func TestTemporalRunReader_AForceCancelItCannotCheckIsNotPlainlyTerminated(t *te
 	}
 }
 
-// namingSnapshots is countingSnapshotStore that names a snapshot by its sequence.
-type namingSnapshots struct{ *countingSnapshotStore }
-
-func (namingSnapshots) SnapshotURI(_, _ string, sequence int64) (string, error) {
-	return fmt.Sprintf("file:///snap/%d.pb", sequence), nil
-}
-
-// TestTemporalRunReader_AForceCancelOfAResumeThatNeverBegan: a resumed run ended
-// before it recorded anything of its own ends after the ending its resume set
-// aside, with that ending's rows, and takes no sequence of it; once it has
-// recorded its resume, its own events say where it ends.
+// TestTemporalRunReader_AForceCancelOfAResumeThatNeverBegan: a resumed run
+// force-canceled before it recorded anything of its own ends at its resume's
+// scope, after the ending that resume set aside and with that ending's rows,
+// and takes no sequence of it. Where that ending is gone it still reads as
+// force-canceled, and says what is missing.
 func TestTemporalRunReader_AForceCancelOfAResumeThatNeverBegan(t *testing.T) {
 	const runID, scope = "ork-r", int64(9)
+	ctx := context.Background()
 	keys := recordKeys(t)
 	rec := sampleRecord()
 	rec.Namespace, rec.WorkflowID = "default", ForceCancelWorkflowIDPrefix("default", runID)+rec.RequestID
@@ -150,69 +145,132 @@ func TestTemporalRunReader_AForceCancelOfAResumeThatNeverBegan(t *testing.T) {
 			WorkflowTaskFailedEventAttributes: &historypb.WorkflowTaskFailedEventAttributes{Cause: cause, Failure: &failurepb.Failure{Message: reason}}}}
 	}
 	resets := func(events ...*historypb.HistoryEvent) []*historypb.HistoryEvent { return events }
-	base, err := proto.Marshal(&orkstackv1.Run{Id: runID, Status: orkstackv1.Status_STATUS_FAILED, Error: &orkstackv1.Error{Code: "TASK_FAILED"},
-		TaskRuns: []*orkstackv1.TaskRun{{TaskId: "build", Status: orkstackv1.Status_STATUS_SUCCEEDED}}})
-	must.OK(t, err)
+	// The ending set aside was a force cancel's too: what it says of who ended
+	// it is not this ending's.
+	base := &orkstackv1.Run{Id: runID, OrkflowName: "wf", Status: orkstackv1.Status_STATUS_CANCELED, Error: &orkstackv1.Error{Code: "EXIT_1"},
+		CanceledBy: "someone else", CanceledByVerified: true, ForceCancelRecord: "another record",
+		TaskRuns: []*orkstackv1.TaskRun{{TaskId: "build", Status: orkstackv1.Status_STATUS_SUCCEEDED}}}
 	byReset := enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW
 	for _, tt := range []struct {
-		name    string
-		failed  []*historypb.HistoryEvent
-		keep    int // events of the run the history holds
-		lost    bool
-		ends    int64
-		gap     bool
-		rows    int
-		refused bool
+		name   string
+		failed []*historypb.HistoryEvent
+		lost   bool
+		ends   int64
+		rows   int
 	}{
-		{"resumed, and nothing since", resets(reset(byReset, key)), 3, false, scope, true, 1, false},
-		{"resumed twice", resets(reset(byReset, earlier), reset(byReset, key)), 3, false, scope, true, 1, false},
-		{"resumed, then reset by hand", resets(reset(byReset, key), reset(byReset, "by hand")), 3, false, scope, true, 1, false},
-		{"reset by hand, then resumed", resets(reset(byReset, "by hand"), reset(byReset, key)), 3, false, scope, true, 1, false},
-		{"the ending set aside is gone", resets(reset(byReset, key)), 3, true, scope, true, 0, true},
-		{"reset by hand", resets(reset(byReset, "by hand")), 3, false, 3, false, 0, false},
-		{"a task of it failed, saying so", resets(reset(enumspb.WORKFLOW_TASK_FAILED_CAUSE_WORKFLOW_WORKER_UNHANDLED_FAILURE, key)), 3, false, 3, false, 0, false},
-		{"a scope its own events are past", resets(reset(byReset, ResumePlanKey{Scope: 2, PlanDigest: strings.Repeat("a", 64)}.String())), 3, false, 3, false, 0, false},
+		{"resumed, and nothing since", resets(reset(byReset, key)), false, scope, 1},
+		{"resumed twice", resets(reset(byReset, earlier), reset(byReset, key)), false, scope, 1},
+		{"resumed, then reset by hand", resets(reset(byReset, key), reset(byReset, "by hand")), false, scope, 1},
+		{"reset by hand, then resumed", resets(reset(byReset, "by hand"), reset(byReset, key)), false, scope, 1},
+		{"the ending set aside is gone", resets(reset(byReset, key)), true, scope, 0},
+		{"reset by hand", resets(reset(byReset, "by hand")), false, 3, 0},
+		{"a task of it failed, saying so", resets(reset(enumspb.WORKFLOW_TASK_FAILED_CAUSE_WORKFLOW_WORKER_UNHANDLED_FAILURE, key)), false, 3, 0},
+		{"a scope its own events are past", resets(reset(byReset, ResumePlanKey{Scope: 2, PlanDigest: strings.Repeat("a", 64)}.String())), false, 3, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			history, counting := helloRun(t, runID)
-			if !tt.lost {
-				counting.objects[fmt.Sprintf("file:///snap/%d.pb", scope-1)] = base
-			}
+			history, snapshots := helloRun(t, runID)
 			closeEvent := terminated(t, details)
 			closeEvent.EventId, closeEvent.EventType = 9, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED
 			closeEvent.EventTime = closedEvent(9, closeEvent.EventType, time.Now()).GetEventTime()
-			history = append(append(history[:tt.keep:tt.keep], tt.failed...), closeEvent)
+			history = append(append(history[:3:3], tt.failed...), closeEvent)
 			reader, fake := readerOver(history, runID)
 			fake.describes = map[string]*workflowservice.DescribeWorkflowExecutionResponse{runID: {
 				WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{Status: enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
 					Execution: &commonpb.WorkflowExecution{WorkflowId: runID, RunId: "exec-1"}}}}
-			reader = reader.WithSnapshotStore(namingSnapshots{counting}).WithForceCancelVerifier(keys, func() string { return "enforce" })
-			events, err := reader.Events(context.Background(), runID, 0)
-			must.OK(t, err)
-			last, before := events[len(events)-1], events[len(events)-2]
-			if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED || last.GetSequence() != tt.ends ||
-				(before.GetType() == orkstackv1.EventType_EVENT_TYPE_STREAM_GAP) != tt.gap {
-				t.Errorf("it ends %v, after %v", last, before)
+			endings := &fakeEndings{run: base, events: setAside(scope - 1)}
+			if tt.lost {
+				endings = &fakeEndings{err: artifacts.ErrNotFound}
 			}
-			archived, err := reader.EventsForArchive(context.Background(), runID)
+			reader = reader.WithSnapshotStore(snapshots).WithForceCancelVerifier(keys, func() string { return "enforce" }).WithEndings(endings)
+
+			live, err := reader.GetRun(ctx, runID)
 			must.OK(t, err)
-			if end := archived.Events[len(archived.Events)-1]; !proto.Equal(end, last) || (len(archived.Gaps) == 1) != tt.gap {
-				t.Errorf("archived, it ends %v with gaps %v", end, archived.Gaps)
+			archived, read, err := reader.readForArchive(ctx, runID, false)
+			must.OK(t, err)
+			for where, run := range map[string]*orkstackv1.Run{"live": live, "archived": archived} {
+				if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != RunForceCanceledCode || len(run.GetTaskRuns()) != tt.rows ||
+					run.GetCanceledBy() != rec.Principal || run.GetForceCancelRecord() == "another record" ||
+					strings.Contains(run.GetError().GetDetails(), recordSetAsideSentence) != tt.lost {
+					t.Errorf("%s: %v", where, run)
+				}
+			}
+			if last := read.Events[len(read.Events)-1]; last.GetSequence() != tt.ends || last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED || (len(read.Gaps) > 0) != tt.lost {
+				t.Errorf("archived, it ends %v with gaps %v", last, read.Gaps)
+			}
+			if base.GetCanceledBy() != "someone else" {
+				t.Error("the ending set aside was changed")
+			}
+
+			events, err := reader.Events(ctx, runID, 0)
+			if tt.lost {
+				if !errors.Is(err, ErrEventSegmentLost) {
+					t.Errorf("its stream = %v", err)
+				}
+			} else if must.OK(t, err); !proto.Equal(events[len(events)-1], read.Events[len(read.Events)-1]) || int64(len(events)) != tt.ends {
+				t.Errorf("its stream ends %v after %d events", events[len(events)-1], len(events))
 			}
 			// A stream that goes on from what the resume set aside gets the end alone.
-			since, err := reader.Events(context.Background(), runID, max(tt.ends-1, 2))
+			since, err := reader.Events(ctx, runID, max(tt.ends-1, 2))
 			must.OK(t, err)
-			if len(since) != 1 || !proto.Equal(since[0], last) {
+			if len(since) != 1 || since[0].GetSequence() != tt.ends {
 				t.Errorf("from %d: %v", tt.ends-1, since)
 			}
-			run, err := reader.GetRun(context.Background(), runID)
-			if tt.refused != errors.Is(err, artifacts.ErrNotFound) {
-				t.Fatalf("%v", err)
-			}
-			if err == nil && (run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != RunForceCanceledCode || len(run.GetTaskRuns()) != tt.rows) {
-				t.Errorf("%v", run)
-			}
 		})
+	}
+}
+
+// TestHistoryArchiver_TheLastResortOfAResume: the last resort of a resumed run
+// is its newest ending's, with the rows of the ending set aside and nobody
+// named, and every reader of it shows no more than that.
+func TestHistoryArchiver_TheLastResortOfAResume(t *testing.T) {
+	const runID, scope = "ork-r", uint64(9)
+	ctx := context.Background()
+	mode := func() string { return "enforce" }
+	keys := recordKeys(t)
+	rec := sampleRecord()
+	rec.Namespace, rec.WorkflowID = "default", ForceCancelWorkflowIDPrefix("default", runID)+rec.RequestID
+	details, err := SignForceCancelRecord(keys, rec)
+	must.OK(t, err)
+	history, snapshots := helloRun(t, runID)
+	closeEvent := terminated(t, details)
+	closeEvent.EventId, closeEvent.EventType, closeEvent.EventTime = 9, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED, timestamppb.Now()
+	history = append(history[:3:3], resetFrom(4, "exec-0", "exec-1", ResumePlanKey{Scope: scope, PlanDigest: strings.Repeat("a", 64)}.String()), closeEvent)
+	reader, fake := readerOver(history, runID)
+	fake.describes = map[string]*workflowservice.DescribeWorkflowExecutionResponse{runID: {
+		WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{Status: enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+			Execution: &commonpb.WorkflowExecution{WorkflowId: runID, RunId: "exec-1"}}}}
+	base := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", OrkflowVersion: "0.1.0", CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now(), Status: orkstackv1.Status_STATUS_CANCELED,
+		CanceledBy: "someone else", CanceledByVerified: true, ForceCancelRecord: "another record",
+		TaskRuns: []*orkstackv1.TaskRun{{TaskId: "build", Status: orkstackv1.Status_STATUS_SUCCEEDED}}}
+	reader = reader.WithSnapshotStore(snapshots).WithForceCancelVerifier(recordsUnreadable{keys}, mode).
+		WithEndings(&fakeEndings{run: base, events: setAside(int64(scope) - 1)})
+	bodies, err := artifacts.NewRunArchive(artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: t.TempDir()})
+	must.OK(t, err)
+
+	unverified, err := NewHistoryArchiver(reader, NewRunArchiver(bodies)).ArchiveLastResort(ctx, runID)
+	must.OK(t, err)
+	store := bodies.(artifacts.RunEndingStore)
+	body, err := store.GetEnding(ctx, runID, scope)
+	must.OK(t, err)
+	run, err := UnmarshalRunLine(body)
+	must.OK(t, err)
+	if !unverified || run.GetError().GetCode() != RunForceCancelUnverifiedCode || run.GetCanceledBy() != "" || run.GetCanceledByVerified() ||
+		!strings.Contains(run.GetForceCancelRecord(), `"signed":`) || len(run.GetTaskRuns()) != 1 {
+		t.Errorf("as a last resort: %v, unverified %v", run, unverified)
+	}
+	if _, err := store.GetEnding(ctx, runID, 0); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("the first ending was written too: %v", err)
+	}
+
+	archive := NewRunArchiver(bodies).WithForceCancelVerifier(keys, mode)
+	listed, err := archive.ListRuns(ctx, ArchiveQuery{Namespace: "default", Limit: 10})
+	must.OK(t, err)
+	shown, err := archive.LoadRun(ctx, runID)
+	must.OK(t, err)
+	for where, run := range map[string][]*orkstackv1.Run{"listed": listed, "read": {shown}} {
+		if len(run) != 1 || run[0].GetError().GetCode() != RunForceCancelUnverifiedCode || run[0].GetCanceledBy() != "" || run[0].GetForceCancelRecord() != "" || len(run[0].GetTaskRuns()) != 1 {
+			t.Errorf("%s: %v", where, run)
+		}
 	}
 }
 

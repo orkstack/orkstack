@@ -48,7 +48,7 @@ const (
 	ResumeCategory_RESUME_CATEGORY_SETTLED ResumeCategory = 9
 	// Stays skipped.
 	ResumeCategory_RESUME_CATEGORY_SKIPPED ResumeCategory = 10
-	// Waits again, from the resume, with a fresh deadline.
+	// Waits again, in full, once what it needs is done.
 	ResumeCategory_RESUME_CATEGORY_WAITS_AGAIN ResumeCategory = 11
 	// A sleep that already started: it wakes when it would have.
 	ResumeCategory_RESUME_CATEGORY_SLEEP_KEPT ResumeCategory = 12
@@ -133,10 +133,10 @@ type ResumeMemoState int32
 const (
 	// Not a cached task.
 	ResumeMemoState_RESUME_MEMO_STATE_UNSPECIFIED ResumeMemoState = 0
-	// It succeeded before: it runs again, and its memo points at the new
-	// result.
+	// It succeeded before, or an earlier resume was to run it again: it runs
+	// again, and its memo points at the new result.
 	ResumeMemoState_RESUME_MEMO_STATE_BYPASSED ResumeMemoState = 1
-	// It never succeeded: its memo is looked up as on any run.
+	// Neither: its memo is looked up as on any run.
 	ResumeMemoState_RESUME_MEMO_STATE_LOOKED_UP ResumeMemoState = 2
 )
 
@@ -197,6 +197,8 @@ const (
 	ResumeWarningKind_RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN ResumeWarningKind = 4
 	// The force cancel of the run is still finishing.
 	ResumeWarningKind_RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING ResumeWarningKind = 5
+	// The run has a timeout, and gets a fresh one.
+	ResumeWarningKind_RESUME_WARNING_KIND_FRESH_TIMEOUT ResumeWarningKind = 6
 )
 
 // Enum value maps for ResumeWarningKind.
@@ -208,6 +210,7 @@ var (
 		3: "RESUME_WARNING_KIND_PIN_LEASE_HELD",
 		4: "RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN",
 		5: "RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING",
+		6: "RESUME_WARNING_KIND_FRESH_TIMEOUT",
 	}
 	ResumeWarningKind_value = map[string]int32{
 		"RESUME_WARNING_KIND_UNSPECIFIED":               0,
@@ -216,6 +219,7 @@ var (
 		"RESUME_WARNING_KIND_PIN_LEASE_HELD":            3,
 		"RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN":   4,
 		"RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING":    5,
+		"RESUME_WARNING_KIND_FRESH_TIMEOUT":             6,
 	}
 )
 
@@ -1355,7 +1359,9 @@ type ResumeTask struct {
 	Item     *int32         `protobuf:"varint,2,opt,name=item,proto3,oneof" json:"item,omitempty"`
 	Category ResumeCategory `protobuf:"varint,3,opt,name=category,proto3,enum=orkstack.v1.ResumeCategory" json:"category,omitempty"`
 	// why is the sentence the plan lists the task with.
-	Why             string          `protobuf:"bytes,4,opt,name=why,proto3" json:"why,omitempty"`
+	Why string `protobuf:"bytes,4,opt,name=why,proto3" json:"why,omitempty"`
+	// previous_outcome is how it ended before: SUCCEEDED for a result an
+	// earlier resume kept and did not read back.
 	PreviousOutcome Status          `protobuf:"varint,5,opt,name=previous_outcome,json=previousOutcome,proto3,enum=orkstack.v1.Status" json:"previous_outcome,omitempty"`
 	Memo            ResumeMemoState `protobuf:"varint,6,opt,name=memo,proto3,enum=orkstack.v1.ResumeMemoState" json:"memo,omitempty"`
 	// callback_works: an awaited task's callback token accepts one more
@@ -1773,9 +1779,13 @@ type ResumeRefusal struct {
 	Tasks   []string `protobuf:"bytes,5,rep,name=tasks,proto3" json:"tasks,omitempty"`
 	Message string   `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
 	// diff: for PLAN_CHANGED, what changed since the preview.
-	Diff          *ResumeDiff `protobuf:"bytes,7,opt,name=diff,proto3" json:"diff,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Diff *ResumeDiff `protobuf:"bytes,7,opt,name=diff,proto3" json:"diff,omitempty"`
+	// highest_sequence: the run's highest stored event, which accepting a gap
+	// in its events names (accepted_highest_seq); set with cause
+	// events_above_terminal, and when that event moved on since.
+	HighestSequence int64 `protobuf:"varint,8,opt,name=highest_sequence,json=highestSequence,proto3" json:"highest_sequence,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ResumeRefusal) Reset() {
@@ -1855,6 +1865,13 @@ func (x *ResumeRefusal) GetDiff() *ResumeDiff {
 		return x.Diff
 	}
 	return nil
+}
+
+func (x *ResumeRefusal) GetHighestSequence() int64 {
+	if x != nil {
+		return x.HighestSequence
+	}
+	return 0
 }
 
 // RecordedResult is one record, or one result that has none.
@@ -6835,7 +6852,7 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x03pin\x18\n" +
 	" \x01(\tR\x03pin\x120\n" +
 	"\x05until\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x05untilB\a\n" +
-	"\x05_item\"\x81\x02\n" +
+	"\x05_item\"\xac\x02\n" +
 	"\rResumeRefusal\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x125\n" +
 	"\x05class\x18\x02 \x01(\x0e2\x1f.orkstack.v1.ResumeRefusalClassR\x05class\x12.\n" +
@@ -6843,7 +6860,8 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x05cause\x18\x04 \x01(\tR\x05cause\x12\x14\n" +
 	"\x05tasks\x18\x05 \x03(\tR\x05tasks\x12\x18\n" +
 	"\amessage\x18\x06 \x01(\tR\amessage\x12+\n" +
-	"\x04diff\x18\a \x01(\v2\x17.orkstack.v1.ResumeDiffR\x04diff\"\xfd\x05\n" +
+	"\x04diff\x18\a \x01(\v2\x17.orkstack.v1.ResumeDiffR\x04diff\x12)\n" +
+	"\x10highest_sequence\x18\b \x01(\x03R\x0fhighestSequence\"\xfd\x05\n" +
 	"\x0eRecordedResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x17\n" +
 	"\x04item\x18\x02 \x01(\x05H\x00R\x04item\x88\x01\x01\x12!\n" +
@@ -7299,14 +7317,15 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x0fResumeMemoState\x12!\n" +
 	"\x1dRESUME_MEMO_STATE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aRESUME_MEMO_STATE_BYPASSED\x10\x01\x12\x1f\n" +
-	"\x1bRESUME_MEMO_STATE_LOOKED_UP\x10\x02*\x98\x02\n" +
+	"\x1bRESUME_MEMO_STATE_LOOKED_UP\x10\x02*\xbf\x02\n" +
 	"\x11ResumeWarningKind\x12#\n" +
 	"\x1fRESUME_WARNING_KIND_UNSPECIFIED\x10\x00\x121\n" +
 	"-RESUME_WARNING_KIND_FORCE_CANCELED_SAME_BUILD\x10\x01\x12\"\n" +
 	"\x1eRESUME_WARNING_KIND_WAS_PAUSED\x10\x02\x12&\n" +
 	"\"RESUME_WARNING_KIND_PIN_LEASE_HELD\x10\x03\x12/\n" +
 	"+RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN\x10\x04\x12.\n" +
-	"*RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING\x10\x05*\x9e\x01\n" +
+	"*RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING\x10\x05\x12%\n" +
+	"!RESUME_WARNING_KIND_FRESH_TIMEOUT\x10\x06*\x9e\x01\n" +
 	"\x12ResumeRefusalClass\x12$\n" +
 	" RESUME_REFUSAL_CLASS_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eRESUME_REFUSAL_CLASS_PERMANENT\x10\x01\x12\x1d\n" +

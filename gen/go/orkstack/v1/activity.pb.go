@@ -206,8 +206,8 @@ const (
 	CacheOutcome_CACHE_OUTCOME_HIT CacheOutcome = 1
 	// No usable memo: the container ran. CacheResult.miss_reason says why.
 	CacheOutcome_CACHE_OUTCOME_MISS CacheOutcome = 2
-	// The run was submitted with no_cache: no memo was read; the container ran
-	// and its memo was refreshed.
+	// The run was submitted with no_cache, or resumed for another result of
+	// this task: no memo was read; the container ran and its memo was refreshed.
 	CacheOutcome_CACHE_OUTCOME_BYPASSED CacheOutcome = 3
 )
 
@@ -265,6 +265,9 @@ const (
 	AdoptEntryKind_ADOPT_ENTRY_KIND_RESOLUTION AdoptEntryKind = 2
 	// COMPOSED is a composed task's record of its child's values.
 	AdoptEntryKind_ADOPT_ENTRY_KIND_COMPOSED AdoptEntryKind = 3
+	// VALUES is the values.json of an awaited or composed task of a run whose
+	// results are not recorded.
+	AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES AdoptEntryKind = 4
 )
 
 // Enum value maps for AdoptEntryKind.
@@ -274,12 +277,14 @@ var (
 		1: "ADOPT_ENTRY_KIND_COMMIT",
 		2: "ADOPT_ENTRY_KIND_RESOLUTION",
 		3: "ADOPT_ENTRY_KIND_COMPOSED",
+		4: "ADOPT_ENTRY_KIND_VALUES",
 	}
 	AdoptEntryKind_value = map[string]int32{
 		"ADOPT_ENTRY_KIND_UNSPECIFIED": 0,
 		"ADOPT_ENTRY_KIND_COMMIT":      1,
 		"ADOPT_ENTRY_KIND_RESOLUTION":  2,
 		"ADOPT_ENTRY_KIND_COMPOSED":    3,
+		"ADOPT_ENTRY_KIND_VALUES":      4,
 	}
 )
 
@@ -1792,8 +1797,9 @@ type CacheContext struct {
 	// deployment's ORK_CACHE_MAX_TTL, or the cap when the task set none. Always
 	// positive.
 	TtlSeconds int64 `protobuf:"varint,2,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
-	// refresh is true when the run was submitted with no_cache: the Orker reads
-	// no memo, runs the container, and writes the memo from its fresh commit.
+	// refresh is true when the run was submitted with no_cache, and for a task
+	// or item a resume runs again for another result: the Orker reads no memo,
+	// runs the container, and writes the memo from its fresh commit.
 	Refresh bool `protobuf:"varint,3,opt,name=refresh,proto3" json:"refresh,omitempty"`
 	// orkflow_namespace is set only when the task belongs to an Orkflow another
 	// namespace shared through composition: the namespace that owns the
@@ -3131,7 +3137,11 @@ type AdoptEntry struct {
 	// expected is what that commit must name.
 	Expected *ExpectedCommit `protobuf:"bytes,5,opt,name=expected,proto3" json:"expected,omitempty"`
 	// record_scope is the resume scope a RESOLUTION or COMPOSED record lives under.
-	RecordScope   uint64 `protobuf:"varint,6,opt,name=record_scope,json=recordScope,proto3" json:"record_scope,omitempty"`
+	RecordScope uint64 `protobuf:"varint,6,opt,name=record_scope,json=recordScope,proto3" json:"record_scope,omitempty"`
+	// values is the values.json a VALUES entry reads, and inline_limit the most
+	// bytes of one it reads: a larger one is kept by reference alone.
+	Values        *ArtifactRef `protobuf:"bytes,7,opt,name=values,proto3" json:"values,omitempty"`
+	InlineLimit   int64        `protobuf:"varint,8,opt,name=inline_limit,json=inlineLimit,proto3" json:"inline_limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3204,6 +3214,20 @@ func (x *AdoptEntry) GetExpected() *ExpectedCommit {
 func (x *AdoptEntry) GetRecordScope() uint64 {
 	if x != nil {
 		return x.RecordScope
+	}
+	return 0
+}
+
+func (x *AdoptEntry) GetValues() *ArtifactRef {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *AdoptEntry) GetInlineLimit() int64 {
+	if x != nil {
+		return x.InlineLimit
 	}
 	return 0
 }
@@ -7692,7 +7716,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\vget_timeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\n" +
 	"getTimeout\x12\x1b\n" +
 	"\tget_tries\x18\x04 \x01(\x05R\bgetTries\x12\x16\n" +
-	"\x06budget\x18\x05 \x01(\x03R\x06budget\"\xe5\x01\n" +
+	"\x06budget\x18\x05 \x01(\x03R\x06budget\"\xba\x02\n" +
 	"\n" +
 	"AdoptEntry\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x12\n" +
@@ -7701,7 +7725,9 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\n" +
 	"commit_uri\x18\x04 \x01(\tR\tcommitUri\x127\n" +
 	"\bexpected\x18\x05 \x01(\v2\x1b.orkstack.v1.ExpectedCommitR\bexpected\x12!\n" +
-	"\frecord_scope\x18\x06 \x01(\x04R\vrecordScope\"\xe2\x01\n" +
+	"\frecord_scope\x18\x06 \x01(\x04R\vrecordScope\x120\n" +
+	"\x06values\x18\a \x01(\v2\x18.orkstack.v1.ArtifactRefR\x06values\x12!\n" +
+	"\finline_limit\x18\b \x01(\x03R\vinlineLimit\"\xe2\x01\n" +
 	"\x0eExpectedCommit\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
@@ -8106,12 +8132,13 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\x19CACHE_OUTCOME_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11CACHE_OUTCOME_HIT\x10\x01\x12\x16\n" +
 	"\x12CACHE_OUTCOME_MISS\x10\x02\x12\x1a\n" +
-	"\x16CACHE_OUTCOME_BYPASSED\x10\x03*\x8f\x01\n" +
+	"\x16CACHE_OUTCOME_BYPASSED\x10\x03*\xac\x01\n" +
 	"\x0eAdoptEntryKind\x12 \n" +
 	"\x1cADOPT_ENTRY_KIND_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17ADOPT_ENTRY_KIND_COMMIT\x10\x01\x12\x1f\n" +
 	"\x1bADOPT_ENTRY_KIND_RESOLUTION\x10\x02\x12\x1d\n" +
-	"\x19ADOPT_ENTRY_KIND_COMPOSED\x10\x03*\xa4\x01\n" +
+	"\x19ADOPT_ENTRY_KIND_COMPOSED\x10\x03\x12\x1b\n" +
+	"\x17ADOPT_ENTRY_KIND_VALUES\x10\x04*\xa4\x01\n" +
 	"\x12RecordedValuesKind\x12$\n" +
 	" RECORDED_VALUES_KIND_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fRECORDED_VALUES_KIND_RESOLUTION\x10\x01\x12!\n" +
@@ -8334,110 +8361,111 @@ var file_orkstack_v1_activity_proto_depIdxs = []int32{
 	89,  // 43: orkstack.v1.AdoptRecordedInput.get_timeout:type_name -> google.protobuf.Duration
 	4,   // 44: orkstack.v1.AdoptEntry.kind:type_name -> orkstack.v1.AdoptEntryKind
 	38,  // 45: orkstack.v1.AdoptEntry.expected:type_name -> orkstack.v1.ExpectedCommit
-	40,  // 46: orkstack.v1.AdoptRecordedResult.entries:type_name -> orkstack.v1.AdoptedEntry
-	43,  // 47: orkstack.v1.AdoptedEntry.result:type_name -> orkstack.v1.ExecuteTaskResult
-	23,  // 48: orkstack.v1.ReleasePinInput.pin:type_name -> orkstack.v1.PinContext
-	84,  // 49: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
-	42,  // 50: orkstack.v1.ExecuteTaskResult.commit:type_name -> orkstack.v1.CommitRef
-	81,  // 51: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
-	81,  // 52: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	81,  // 53: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
-	17,  // 54: orkstack.v1.ExecuteTaskResult.image:type_name -> orkstack.v1.ImageRef
-	84,  // 55: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
-	84,  // 56: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
-	28,  // 57: orkstack.v1.ExecuteTaskResult.cache:type_name -> orkstack.v1.CacheResult
-	34,  // 58: orkstack.v1.ExecuteTaskResult.line_indexes:type_name -> orkstack.v1.LineIndexBuilt
-	17,  // 59: orkstack.v1.ActivityCommit.image:type_name -> orkstack.v1.ImageRef
-	81,  // 60: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
-	81,  // 61: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
-	81,  // 62: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	84,  // 63: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
-	84,  // 64: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
-	28,  // 65: orkstack.v1.ActivityCommit.cache:type_name -> orkstack.v1.CacheResult
-	45,  // 66: orkstack.v1.ActivityCommit.recorded:type_name -> orkstack.v1.CommitRecording
-	84,  // 67: orkstack.v1.CommitRecording.time:type_name -> google.protobuf.Timestamp
-	5,   // 68: orkstack.v1.RecordedValues.kind:type_name -> orkstack.v1.RecordedValuesKind
-	81,  // 69: orkstack.v1.RecordedValues.values:type_name -> orkstack.v1.ArtifactRef
-	46,  // 70: orkstack.v1.RecordedValues.sources:type_name -> orkstack.v1.RecordedSource
-	45,  // 71: orkstack.v1.RecordedValues.recorded:type_name -> orkstack.v1.CommitRecording
-	46,  // 72: orkstack.v1.RecordedValues.follows:type_name -> orkstack.v1.RecordedSource
-	81,  // 73: orkstack.v1.RecordedValues.artifacts:type_name -> orkstack.v1.ArtifactRef
-	90,  // 74: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
-	81,  // 75: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
-	81,  // 76: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	17,  // 77: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
-	84,  // 78: orkstack.v1.ActivityFailureDetail.started_at:type_name -> google.protobuf.Timestamp
-	84,  // 79: orkstack.v1.DescribeOrkerResult.cordoned_at:type_name -> google.protobuf.Timestamp
-	52,  // 80: orkstack.v1.DescribeOrkerResult.pins:type_name -> orkstack.v1.OpenPin
-	50,  // 81: orkstack.v1.DescribeOrkerResult.capacity:type_name -> orkstack.v1.ResourceQuantity
-	50,  // 82: orkstack.v1.DescribeOrkerResult.reserved:type_name -> orkstack.v1.ResourceQuantity
-	50,  // 83: orkstack.v1.DescribeOrkerResult.max_request:type_name -> orkstack.v1.ResourceQuantity
-	50,  // 84: orkstack.v1.DescribeOrkerResult.default_request:type_name -> orkstack.v1.ResourceQuantity
-	53,  // 85: orkstack.v1.DescribeOrkerResult.store_outage:type_name -> orkstack.v1.StoreOutage
-	67,  // 86: orkstack.v1.DescribeOrkerResult.stopping:type_name -> orkstack.v1.OrkerStopping
-	11,  // 87: orkstack.v1.DescribeOrkerResult.profile_kinds_supported:type_name -> orkstack.v1.ProfileKind
-	65,  // 88: orkstack.v1.DescribeOrkerResult.profiles:type_name -> orkstack.v1.OrkerProfile
-	68,  // 89: orkstack.v1.DescribeOrkerResult.profile_cordons:type_name -> orkstack.v1.ProfileCordon
-	8,   // 90: orkstack.v1.DescribeOrkerResult.identity_storage:type_name -> orkstack.v1.IdentityStorage
-	71,  // 91: orkstack.v1.DescribeOrkerResult.providers:type_name -> orkstack.v1.ProviderInfo
-	51,  // 92: orkstack.v1.DescribeOrkerResult.running:type_name -> orkstack.v1.RunningAttempt
-	64,  // 93: orkstack.v1.DescribeOrkerResult.metadata_probes:type_name -> orkstack.v1.MetadataProbe
-	15,  // 94: orkstack.v1.DescribeOrkerResult.store_scope:type_name -> orkstack.v1.StoreScope
-	84,  // 95: orkstack.v1.DescribeOrkerResult.store_scope_confirmed_at:type_name -> google.protobuf.Timestamp
-	12,  // 96: orkstack.v1.DescribeOrkerResult.results_scope:type_name -> orkstack.v1.ResultsScope
-	73,  // 97: orkstack.v1.DescribeOrkerResult.service_host:type_name -> orkstack.v1.ServiceHost
-	84,  // 98: orkstack.v1.OpenPin.since:type_name -> google.protobuf.Timestamp
-	84,  // 99: orkstack.v1.OpenPin.expires_at:type_name -> google.protobuf.Timestamp
-	84,  // 100: orkstack.v1.StoreOutage.since:type_name -> google.protobuf.Timestamp
-	84,  // 101: orkstack.v1.Orker.cordoned_at:type_name -> google.protobuf.Timestamp
-	84,  // 102: orkstack.v1.Orker.last_seen:type_name -> google.protobuf.Timestamp
-	52,  // 103: orkstack.v1.Orker.pins:type_name -> orkstack.v1.OpenPin
-	50,  // 104: orkstack.v1.Orker.capacity:type_name -> orkstack.v1.ResourceQuantity
-	50,  // 105: orkstack.v1.Orker.reserved:type_name -> orkstack.v1.ResourceQuantity
-	50,  // 106: orkstack.v1.Orker.max_request:type_name -> orkstack.v1.ResourceQuantity
-	53,  // 107: orkstack.v1.Orker.store_outage:type_name -> orkstack.v1.StoreOutage
-	67,  // 108: orkstack.v1.Orker.stopping:type_name -> orkstack.v1.OrkerStopping
-	65,  // 109: orkstack.v1.Orker.profiles:type_name -> orkstack.v1.OrkerProfile
-	68,  // 110: orkstack.v1.Orker.profile_cordons:type_name -> orkstack.v1.ProfileCordon
-	73,  // 111: orkstack.v1.Orker.service_host:type_name -> orkstack.v1.ServiceHost
-	64,  // 112: orkstack.v1.Orker.metadata_probes:type_name -> orkstack.v1.MetadataProbe
-	81,  // 113: orkstack.v1.EachLines.source:type_name -> orkstack.v1.ArtifactRef
-	81,  // 114: orkstack.v1.EachLines.index:type_name -> orkstack.v1.ArtifactRef
-	6,   // 115: orkstack.v1.EachLines.format:type_name -> orkstack.v1.EachLineFormat
-	81,  // 116: orkstack.v1.IndexEachLinesInput.source:type_name -> orkstack.v1.ArtifactRef
-	6,   // 117: orkstack.v1.IndexEachLinesInput.format:type_name -> orkstack.v1.EachLineFormat
-	81,  // 118: orkstack.v1.IndexEachLinesResult.index:type_name -> orkstack.v1.ArtifactRef
-	7,   // 119: orkstack.v1.IdentityRef.refresh:type_name -> orkstack.v1.RefreshPolicy
-	7,   // 120: orkstack.v1.CredentialRef.refresh:type_name -> orkstack.v1.RefreshPolicy
-	80,  // 121: orkstack.v1.CredentialRef.params:type_name -> orkstack.v1.CredentialRef.ParamsEntry
-	60,  // 122: orkstack.v1.IdentityContext.identities:type_name -> orkstack.v1.IdentityRef
-	61,  // 123: orkstack.v1.IdentityContext.credentials:type_name -> orkstack.v1.CredentialRef
-	63,  // 124: orkstack.v1.IdentityContext.grants:type_name -> orkstack.v1.IdentityGrant
-	9,   // 125: orkstack.v1.MetadataProbe.outcome:type_name -> orkstack.v1.MetadataProbeOutcome
-	11,  // 126: orkstack.v1.OrkerProfile.kind:type_name -> orkstack.v1.ProfileKind
-	66,  // 127: orkstack.v1.OrkerProfile.contracts:type_name -> orkstack.v1.OrkerProfileContract
-	84,  // 128: orkstack.v1.OrkerStopping.since:type_name -> google.protobuf.Timestamp
-	84,  // 129: orkstack.v1.OrkerStopping.grace_ends_at:type_name -> google.protobuf.Timestamp
-	16,  // 130: orkstack.v1.ProfileCordon.cause:type_name -> orkstack.v1.ProfileCordon.Cause
-	10,  // 131: orkstack.v1.ProfileCordon.reason:type_name -> orkstack.v1.ProfileCordonReason
-	84,  // 132: orkstack.v1.ProfileCordon.since:type_name -> google.protobuf.Timestamp
-	70,  // 133: orkstack.v1.ProfileRef.contracts:type_name -> orkstack.v1.ProfileContractPin
-	84,  // 134: orkstack.v1.RunContext.created_at:type_name -> google.protobuf.Timestamp
-	84,  // 135: orkstack.v1.RunContext.started_at:type_name -> google.protobuf.Timestamp
-	84,  // 136: orkstack.v1.RunContext.task_scheduled_at:type_name -> google.protobuf.Timestamp
-	84,  // 137: orkstack.v1.RunContext.run_deadline:type_name -> google.protobuf.Timestamp
-	74,  // 138: orkstack.v1.ServiceHost.profiles:type_name -> orkstack.v1.ServiceProfileVersions
-	18,  // 139: orkstack.v1.ServiceHost.max_request:type_name -> orkstack.v1.ResourceRequest
-	84,  // 140: orkstack.v1.ServiceHost.probed_at:type_name -> google.protobuf.Timestamp
-	18,  // 141: orkstack.v1.HostEventSourceInput.resources:type_name -> orkstack.v1.ResourceRequest
-	13,  // 142: orkstack.v1.HostEventSourceResult.end:type_name -> orkstack.v1.InstanceEnd
-	14,  // 143: orkstack.v1.HostEventSourceResult.class:type_name -> orkstack.v1.InstanceEndClass
-	84,  // 144: orkstack.v1.HostEventSourceResult.refused_since:type_name -> google.protobuf.Timestamp
-	145, // [145:145] is the sub-list for method output_type
-	145, // [145:145] is the sub-list for method input_type
-	145, // [145:145] is the sub-list for extension type_name
-	145, // [145:145] is the sub-list for extension extendee
-	0,   // [0:145] is the sub-list for field type_name
+	81,  // 46: orkstack.v1.AdoptEntry.values:type_name -> orkstack.v1.ArtifactRef
+	40,  // 47: orkstack.v1.AdoptRecordedResult.entries:type_name -> orkstack.v1.AdoptedEntry
+	43,  // 48: orkstack.v1.AdoptedEntry.result:type_name -> orkstack.v1.ExecuteTaskResult
+	23,  // 49: orkstack.v1.ReleasePinInput.pin:type_name -> orkstack.v1.PinContext
+	84,  // 50: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
+	42,  // 51: orkstack.v1.ExecuteTaskResult.commit:type_name -> orkstack.v1.CommitRef
+	81,  // 52: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
+	81,  // 53: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	81,  // 54: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
+	17,  // 55: orkstack.v1.ExecuteTaskResult.image:type_name -> orkstack.v1.ImageRef
+	84,  // 56: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
+	84,  // 57: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
+	28,  // 58: orkstack.v1.ExecuteTaskResult.cache:type_name -> orkstack.v1.CacheResult
+	34,  // 59: orkstack.v1.ExecuteTaskResult.line_indexes:type_name -> orkstack.v1.LineIndexBuilt
+	17,  // 60: orkstack.v1.ActivityCommit.image:type_name -> orkstack.v1.ImageRef
+	81,  // 61: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
+	81,  // 62: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
+	81,  // 63: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	84,  // 64: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
+	84,  // 65: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
+	28,  // 66: orkstack.v1.ActivityCommit.cache:type_name -> orkstack.v1.CacheResult
+	45,  // 67: orkstack.v1.ActivityCommit.recorded:type_name -> orkstack.v1.CommitRecording
+	84,  // 68: orkstack.v1.CommitRecording.time:type_name -> google.protobuf.Timestamp
+	5,   // 69: orkstack.v1.RecordedValues.kind:type_name -> orkstack.v1.RecordedValuesKind
+	81,  // 70: orkstack.v1.RecordedValues.values:type_name -> orkstack.v1.ArtifactRef
+	46,  // 71: orkstack.v1.RecordedValues.sources:type_name -> orkstack.v1.RecordedSource
+	45,  // 72: orkstack.v1.RecordedValues.recorded:type_name -> orkstack.v1.CommitRecording
+	46,  // 73: orkstack.v1.RecordedValues.follows:type_name -> orkstack.v1.RecordedSource
+	81,  // 74: orkstack.v1.RecordedValues.artifacts:type_name -> orkstack.v1.ArtifactRef
+	90,  // 75: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
+	81,  // 76: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
+	81,  // 77: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	17,  // 78: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
+	84,  // 79: orkstack.v1.ActivityFailureDetail.started_at:type_name -> google.protobuf.Timestamp
+	84,  // 80: orkstack.v1.DescribeOrkerResult.cordoned_at:type_name -> google.protobuf.Timestamp
+	52,  // 81: orkstack.v1.DescribeOrkerResult.pins:type_name -> orkstack.v1.OpenPin
+	50,  // 82: orkstack.v1.DescribeOrkerResult.capacity:type_name -> orkstack.v1.ResourceQuantity
+	50,  // 83: orkstack.v1.DescribeOrkerResult.reserved:type_name -> orkstack.v1.ResourceQuantity
+	50,  // 84: orkstack.v1.DescribeOrkerResult.max_request:type_name -> orkstack.v1.ResourceQuantity
+	50,  // 85: orkstack.v1.DescribeOrkerResult.default_request:type_name -> orkstack.v1.ResourceQuantity
+	53,  // 86: orkstack.v1.DescribeOrkerResult.store_outage:type_name -> orkstack.v1.StoreOutage
+	67,  // 87: orkstack.v1.DescribeOrkerResult.stopping:type_name -> orkstack.v1.OrkerStopping
+	11,  // 88: orkstack.v1.DescribeOrkerResult.profile_kinds_supported:type_name -> orkstack.v1.ProfileKind
+	65,  // 89: orkstack.v1.DescribeOrkerResult.profiles:type_name -> orkstack.v1.OrkerProfile
+	68,  // 90: orkstack.v1.DescribeOrkerResult.profile_cordons:type_name -> orkstack.v1.ProfileCordon
+	8,   // 91: orkstack.v1.DescribeOrkerResult.identity_storage:type_name -> orkstack.v1.IdentityStorage
+	71,  // 92: orkstack.v1.DescribeOrkerResult.providers:type_name -> orkstack.v1.ProviderInfo
+	51,  // 93: orkstack.v1.DescribeOrkerResult.running:type_name -> orkstack.v1.RunningAttempt
+	64,  // 94: orkstack.v1.DescribeOrkerResult.metadata_probes:type_name -> orkstack.v1.MetadataProbe
+	15,  // 95: orkstack.v1.DescribeOrkerResult.store_scope:type_name -> orkstack.v1.StoreScope
+	84,  // 96: orkstack.v1.DescribeOrkerResult.store_scope_confirmed_at:type_name -> google.protobuf.Timestamp
+	12,  // 97: orkstack.v1.DescribeOrkerResult.results_scope:type_name -> orkstack.v1.ResultsScope
+	73,  // 98: orkstack.v1.DescribeOrkerResult.service_host:type_name -> orkstack.v1.ServiceHost
+	84,  // 99: orkstack.v1.OpenPin.since:type_name -> google.protobuf.Timestamp
+	84,  // 100: orkstack.v1.OpenPin.expires_at:type_name -> google.protobuf.Timestamp
+	84,  // 101: orkstack.v1.StoreOutage.since:type_name -> google.protobuf.Timestamp
+	84,  // 102: orkstack.v1.Orker.cordoned_at:type_name -> google.protobuf.Timestamp
+	84,  // 103: orkstack.v1.Orker.last_seen:type_name -> google.protobuf.Timestamp
+	52,  // 104: orkstack.v1.Orker.pins:type_name -> orkstack.v1.OpenPin
+	50,  // 105: orkstack.v1.Orker.capacity:type_name -> orkstack.v1.ResourceQuantity
+	50,  // 106: orkstack.v1.Orker.reserved:type_name -> orkstack.v1.ResourceQuantity
+	50,  // 107: orkstack.v1.Orker.max_request:type_name -> orkstack.v1.ResourceQuantity
+	53,  // 108: orkstack.v1.Orker.store_outage:type_name -> orkstack.v1.StoreOutage
+	67,  // 109: orkstack.v1.Orker.stopping:type_name -> orkstack.v1.OrkerStopping
+	65,  // 110: orkstack.v1.Orker.profiles:type_name -> orkstack.v1.OrkerProfile
+	68,  // 111: orkstack.v1.Orker.profile_cordons:type_name -> orkstack.v1.ProfileCordon
+	73,  // 112: orkstack.v1.Orker.service_host:type_name -> orkstack.v1.ServiceHost
+	64,  // 113: orkstack.v1.Orker.metadata_probes:type_name -> orkstack.v1.MetadataProbe
+	81,  // 114: orkstack.v1.EachLines.source:type_name -> orkstack.v1.ArtifactRef
+	81,  // 115: orkstack.v1.EachLines.index:type_name -> orkstack.v1.ArtifactRef
+	6,   // 116: orkstack.v1.EachLines.format:type_name -> orkstack.v1.EachLineFormat
+	81,  // 117: orkstack.v1.IndexEachLinesInput.source:type_name -> orkstack.v1.ArtifactRef
+	6,   // 118: orkstack.v1.IndexEachLinesInput.format:type_name -> orkstack.v1.EachLineFormat
+	81,  // 119: orkstack.v1.IndexEachLinesResult.index:type_name -> orkstack.v1.ArtifactRef
+	7,   // 120: orkstack.v1.IdentityRef.refresh:type_name -> orkstack.v1.RefreshPolicy
+	7,   // 121: orkstack.v1.CredentialRef.refresh:type_name -> orkstack.v1.RefreshPolicy
+	80,  // 122: orkstack.v1.CredentialRef.params:type_name -> orkstack.v1.CredentialRef.ParamsEntry
+	60,  // 123: orkstack.v1.IdentityContext.identities:type_name -> orkstack.v1.IdentityRef
+	61,  // 124: orkstack.v1.IdentityContext.credentials:type_name -> orkstack.v1.CredentialRef
+	63,  // 125: orkstack.v1.IdentityContext.grants:type_name -> orkstack.v1.IdentityGrant
+	9,   // 126: orkstack.v1.MetadataProbe.outcome:type_name -> orkstack.v1.MetadataProbeOutcome
+	11,  // 127: orkstack.v1.OrkerProfile.kind:type_name -> orkstack.v1.ProfileKind
+	66,  // 128: orkstack.v1.OrkerProfile.contracts:type_name -> orkstack.v1.OrkerProfileContract
+	84,  // 129: orkstack.v1.OrkerStopping.since:type_name -> google.protobuf.Timestamp
+	84,  // 130: orkstack.v1.OrkerStopping.grace_ends_at:type_name -> google.protobuf.Timestamp
+	16,  // 131: orkstack.v1.ProfileCordon.cause:type_name -> orkstack.v1.ProfileCordon.Cause
+	10,  // 132: orkstack.v1.ProfileCordon.reason:type_name -> orkstack.v1.ProfileCordonReason
+	84,  // 133: orkstack.v1.ProfileCordon.since:type_name -> google.protobuf.Timestamp
+	70,  // 134: orkstack.v1.ProfileRef.contracts:type_name -> orkstack.v1.ProfileContractPin
+	84,  // 135: orkstack.v1.RunContext.created_at:type_name -> google.protobuf.Timestamp
+	84,  // 136: orkstack.v1.RunContext.started_at:type_name -> google.protobuf.Timestamp
+	84,  // 137: orkstack.v1.RunContext.task_scheduled_at:type_name -> google.protobuf.Timestamp
+	84,  // 138: orkstack.v1.RunContext.run_deadline:type_name -> google.protobuf.Timestamp
+	74,  // 139: orkstack.v1.ServiceHost.profiles:type_name -> orkstack.v1.ServiceProfileVersions
+	18,  // 140: orkstack.v1.ServiceHost.max_request:type_name -> orkstack.v1.ResourceRequest
+	84,  // 141: orkstack.v1.ServiceHost.probed_at:type_name -> google.protobuf.Timestamp
+	18,  // 142: orkstack.v1.HostEventSourceInput.resources:type_name -> orkstack.v1.ResourceRequest
+	13,  // 143: orkstack.v1.HostEventSourceResult.end:type_name -> orkstack.v1.InstanceEnd
+	14,  // 144: orkstack.v1.HostEventSourceResult.class:type_name -> orkstack.v1.InstanceEndClass
+	84,  // 145: orkstack.v1.HostEventSourceResult.refused_since:type_name -> google.protobuf.Timestamp
+	146, // [146:146] is the sub-list for method output_type
+	146, // [146:146] is the sub-list for method input_type
+	146, // [146:146] is the sub-list for extension type_name
+	146, // [146:146] is the sub-list for extension extendee
+	0,   // [0:146] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_proto_init() }

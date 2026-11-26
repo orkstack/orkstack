@@ -269,7 +269,7 @@ func TestGateTunables_Check(t *testing.T) {
 // (§5.1.9), so a change that grows the carry must change this number on
 // purpose, and the boot check still holds it to the bound.
 func TestWorstCaseGateState_FitsAtTheDefaults(t *testing.T) {
-	const pinned = 237902
+	const pinned = 243059
 	size, err := worstCaseGateBytes(DefaultGateTunables())
 	if err != nil {
 		t.Fatal(err)

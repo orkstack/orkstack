@@ -53,6 +53,9 @@ type resumeRefusal struct {
 	engine.ResumeRefusal
 	RetryAfter time.Duration
 	Diff       *orkstackv1.ResumeDiff
+	// Highest is the run's highest stored event, when a gap below it is what
+	// must be accepted.
+	Highest int64
 }
 
 // refuseResume is one of ResumeRun's own refusals.
@@ -81,6 +84,8 @@ func (r *resumeRefusal) connectError() error {
 		Tasks:   r.Tasks,
 		Message: r.Message,
 		Diff:    r.Diff,
+
+		HighestSequence: r.Highest,
 	}
 	if r.RetryAfter > 0 {
 		detail.RetryAfterSeconds = int64(math.Ceil(r.RetryAfter.Seconds()))

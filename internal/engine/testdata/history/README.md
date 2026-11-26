@@ -1016,6 +1016,14 @@ rebuilding from its first instant (`rebuild-first`, behind the
 `concurrency-gate-rebuild-first` version: a gate that set the state only once
 its rebuild began granted such an acquire past the holder).
 
+Five more are an operator's reset (E88 P5, behind the `concurrency-gate-reset`
+version): a frozen gate the reset's start ends (`freeze-replaced`), a freeze
+nothing follows ending by itself (`freeze-expired`), the gate a reset starts
+for a key with none, recording it applied and completed (`reset-records`), one
+that takes over a holder and a line and adds nothing twice (`rebuild-seeded`),
+and one started after its freeze had ended, which writes into its memo that it
+takes no other reset (`reset-lapsed`).
+
 - command: `TestConcurrencyWorkflows_ReplayCommittedHistories`; every
   committed `concurrency-*` file must be one it reads
   (`TestConcurrencyFixtures_EveryOneIsReplayed`)
@@ -1029,6 +1037,33 @@ its rebuild began granted such an acquire past the holder).
   `ORK_RECORD_GOLDEN_HISTORY=1` it writes only a fixture that is not yet
   committed: a committed one is kept, and the log says so. To re-record one
   whose commands genuinely changed, remove it first and say why in the commit
+
+### `concurrency-resume-commands-before-acquire-v1.json` — a resumed run retaking its slot
+
+The reset run of a resume of a run held to a limit (E85 §5.3 step 4), from
+`TestIntegration_ConcurrencyResumedRunAcquiresAfterResultsKept`: it releases
+its earlier incarnations, records its own, and asks for its slot in a later
+workflow task.
+
+- command and negative: `TestRunWorkflow_ReplaysTheCommittedConcurrencyResume`,
+  which also holds the recorded order and refuses a moved release
+- payload: none
+- recorder: with `ORK_RECORD_GOLDEN_HISTORY=1`, only while it is not committed
+
+### `concurrency-child-*-v1.json` — a composed child's own limit
+
+Parents whose composed child declares a concurrency limit, from
+`TestIntegration_ConcurrencyChildKeepsItsOwnLimit`: `keyed` (its key rendered
+from its inputs), `unkeyed` and `shared-default-key` (two parents whose
+children share their Orkflow's default key), and `key-conflict` (a key its
+parent holds, so it never starts).
+
+- command and negative:
+  `TestRunWorkflow_ReplaysCommittedConcurrencyChildHistories`, which also
+  holds the order (the key rendered, then the child started) and refuses a
+  moved start
+- payload: none
+- recorder: with `ORK_RECORD_GOLDEN_HISTORY=1`
 
 ### `concurrency-census-pass-v1.json`, `concurrency-census-activity-failure-v1.json` — the concurrency census
 

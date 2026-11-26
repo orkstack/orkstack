@@ -172,7 +172,7 @@ func ValidateConcurrency(spec *orkstackv1.ConcurrencySpec) error {
 	}
 	if !strings.Contains(key, "{{") {
 		// A literal key is its own rendering, held to §3.3 now.
-		if err := CheckConcurrencyKey(key); err != nil {
+		if err := CheckConcurrencyKey(key, KeyAuthored); err != nil {
 			return validationError("concurrency", fmt.Errorf("concurrency.key: %w", err))
 		}
 		return nil
@@ -241,11 +241,37 @@ func checkConcurrencyKeyAction(n *parse.ActionNode) error {
 		n.String(), path)
 }
 
-// CheckConcurrencyKey is §3.3's rule for a rendered authored key: 1 to 128
+// ConcurrencyKeyMaker is who made a key, which decides the rule it is held to.
+type ConcurrencyKeyMaker int
+
+const (
+	// KeyAuthored is a key an author wrote, or that a template an author wrote
+	// rendered to: it may not be one of OrkStack's own.
+	KeyAuthored ConcurrencyKeyMaker = iota + 1
+	// KeyPlanned is a key OrkStack planned, stored, or is asked to read back or
+	// act on: an authored one, or its own, which an Orkflow or a task that
+	// declares no key has.
+	KeyPlanned
+)
+
+// CheckConcurrencyKey is the one rule for a concurrency key, refused
+// CONCURRENCY_KEY_INVALID. Every caller says who made the key
+// (TestConcurrencyKeys_EveryCallerSaysWhoMadeTheKey lists them).
+func CheckConcurrencyKey(key string, madeBy ConcurrencyKeyMaker) error {
+	switch madeBy {
+	case KeyAuthored:
+		return checkAuthoredKey(key)
+	case KeyPlanned:
+		return checkPlannedKey(key)
+	}
+	return fmt.Errorf("%s: the key's maker is not known", ConcurrencyKeyInvalidCode)
+}
+
+// checkAuthoredKey is §3.3's rule for a rendered authored key: 1 to 128
 // bytes of [A-Za-z0-9._:/@+=-], starting with a letter or digit, and not
 // starting with ork:. A refusal is CONCURRENCY_KEY_INVALID, naming up to 64
 // bytes of the key and the offset of its first bad byte.
-func CheckConcurrencyKey(key string) error {
+func checkAuthoredKey(key string) error {
 	shown := key
 	if len(shown) > 64 {
 		shown = shown[:64] + "…"
@@ -274,15 +300,15 @@ func CheckConcurrencyKey(key string) error {
 	return nil
 }
 
-// CheckStoredConcurrencyKey is the rule for a key that is read back or acted
-// on rather than authored: an authored key's, or one of OrkStack's own, which
+// checkPlannedKey is the rule for a key that is read back or acted on rather
+// than authored: an authored key's, or one of OrkStack's own, which
 // an Orkflow or a task that declares no key has (ork:orkflow:<namespace>/<name>,
 // ork:task:<namespace>/<orkflow>:<task>), each part a name. Any other is
 // refused CONCURRENCY_KEY_INVALID.
-func CheckStoredConcurrencyKey(key string) error {
+func checkPlannedKey(key string) error {
 	own, reserved := strings.CutPrefix(key, concurrencyReservedPrefix)
 	if !reserved {
-		return CheckConcurrencyKey(key)
+		return checkAuthoredKey(key)
 	}
 	var names []string
 	if rest, ok := strings.CutPrefix(own, "orkflow:"); ok {

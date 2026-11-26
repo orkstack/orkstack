@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -356,6 +357,10 @@ func TestRunSubmitWatchJSON_NoCallbacksLeavesStderrEmpty(t *testing.T) {
 }
 
 // RunDefinition is a fake's: the start record's own definition.
+func (*awaitReader) RunSavedState(context.Context, string, string, *orkstackv1.RunContinuation) (*orkstackv1.Run, error) {
+	return nil, errors.New("no saved state")
+}
+
 func (r *awaitReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
 	return start.Orkflow, nil
 }

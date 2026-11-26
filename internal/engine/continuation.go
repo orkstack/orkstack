@@ -101,12 +101,16 @@ func (s *runState) endUnrestorable(
 	ectx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
 
-	s.eventSeq = int(max(0, carry.GetEventSequence()))
+	s.eventSeq = int(s.resume.sequenceBefore(carry))
 	s.createdAt = carry.GetCreatedAt()
 	s.startedAt = carry.GetStartedAt()
 	// A shared definition's owner, as the generation that switched decided
 	// it: read from the carry, never asked here.
 	s.sharedOwner = carriedSharedOwner(s.wf, carry)
+	if resumeCarryFault(carry) == "" {
+		// The ending is the resume's, whatever of the saved state is unread.
+		s.adoptResumeCarry(carry)
+	}
 	s.finished = timestamppb.New(workflow.Now(ectx))
 	s.status = orkstackv1.Status_STATUS_FAILED
 	// The category comes from the same mapping the reader applies to the
@@ -598,7 +602,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
 	if err := s.getLocal(writeCtx, workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.chainAdmission()), &checkpoint); err != nil {
+		budget.CheckpointMaxBytes-definition, obs, s.lossEvents, s.resumeState(), s.chainAdmission()), &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -647,6 +651,12 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	}
 	s.fillPauseCarry(ctx, carry)
 	carry.Concurrency = s.conc.carry()
+	carry.Resume = s.resumeCarry()
+	if why := resumeCarryFault(carry); why != "" {
+		// Never written: the next generation would refuse it.
+		s.setNoSwitch(ctx, inFlight, "its resume cannot be carried: "+why)
+		return nil, "", nil
+	}
 	if size, err := task.PayloadSize(carry); err != nil || size > task.MaxActivityInputBytes {
 		s.setNoSwitch(ctx, inFlight, "its carried bookkeeping is larger than 256 KiB")
 		return nil, "", nil
@@ -894,8 +904,14 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.createdAt": fieldRestored, "runState.startedAt": fieldRestored, "runState.status": fieldRestored,
 	"runState.eventSeq": fieldRestored, "runState.leanDecided": fieldRestored, "runState.lean": fieldRestored,
 	"runState.versions": fieldRestored, "runState.generation": fieldRestored, "runState.segments": fieldRestored,
-	// A resumed run's resume crosses in the carry (RunResumeCarry).
-	"runState.resume": fieldRestored,
+	// A resumed run's resume crosses in the carry (RunResumeCarry), and the
+	// units it reads no memo for in the saved state (RunResumeState).
+	"runState.resumed": fieldRestored, "runState.resumeEntry": fieldRestored, "runState.resumeCount": fieldRestored,
+	"runState.fresh": fieldRestored,
+	// Loaded and carried out at R, before anything can switch.
+	"runState.resume": fieldEphemeral,
+	// Read by a resume's read-back alone, which no switch interrupts.
+	"runState.recordedEnd": fieldEphemeral,
 	// Set and taken by one event's emit, never across a switch.
 	"runState.eventResumed": fieldEphemeral, "runState.eventResultsKept": fieldEphemeral,
 	"runState.resumeAdopting": fieldEphemeral,

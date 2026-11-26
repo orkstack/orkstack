@@ -172,6 +172,29 @@ func TestRetentionController_EnsureLaterBootWithoutRights(t *testing.T) {
 	}
 }
 
+// The life the backstop is kept above is the reset window's where that is the
+// longer (CR-1): a cluster that keeps executions longer than it asks, and that
+// this engine may not change, boots with its warning and is left as it is; one
+// that keeps them shorter refuses, naming what to set.
+func TestRetentionController_EnsureWithoutRightsHonoursTheResetWindow(t *testing.T) {
+	const life = 48*time.Hour + 5*time.Minute // a 48h window, above the 1h maximum
+	stored := &fakePolicyStore{policy: &orkstackv1.RetentionPolicy{MaxRunRetention: durationpb.New(time.Hour)}}
+	for _, kept := range []time.Duration{life + 24*time.Hour, 30 * 24 * time.Hour} {
+		cluster, seen := refusingCluster(kept, permissionDenied), &refusals{}
+		_, err := NewRetentionController(stored, cluster, "ork-main", 24*time.Hour, testLogger()).WithKeyLife(life).WithObserver(seen).Ensure(context.Background())
+		must.OKf(t, err, "Ensure on a cluster that keeps %s", kept)
+		if cluster.retention != kept || seen.short != 0 || (kept > life+24*time.Hour && seen.covered != 1) {
+			t.Errorf("kept %s: retention now %s, observed %+v; want it untouched and covered", kept, cluster.retention, *seen)
+		}
+	}
+	_, err := NewRetentionController(stored, refusingCluster(life+24*time.Hour-time.Second, permissionDenied), "ork-main", 24*time.Hour, testLogger()).
+		WithKeyLife(life).Ensure(context.Background())
+	var short *BackstopRefusedError
+	if !errors.As(err, &short) || short.Want != life+24*time.Hour {
+		t.Fatalf("Ensure on a cluster that keeps less = %v; want a refusal asking for %s", err, life+24*time.Hour)
+	}
+}
+
 // Another replica materializes the policy and raises the backstop right
 // after this engine's probe: the probe does not undo it, and this engine
 // adopts the winner's policy rather than write its own.

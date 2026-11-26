@@ -20,6 +20,7 @@ func TestGateReport_OutcomesAreTheMetricsOwn(t *testing.T) {
 	for name, sets := range map[string][2][]string{
 		"reclaimed": {engine.GateReclaimOutcomes(), telemetry.ConcurrencyReclaimOutcomes()},
 		"rebuilt":   {engine.GateRebuiltOutcomes(), telemetry.ConcurrencyRebuiltOutcomes()},
+		"resets":    {engine.ConcurrencyResetOutcomes(), telemetry.ConcurrencyResetOutcomes()},
 	} {
 		slices.Sort(sets[0])
 		slices.Sort(sets[1])

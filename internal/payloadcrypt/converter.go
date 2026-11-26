@@ -231,7 +231,7 @@ func (c *Converter) FromPayload(p *commonpb.Payload, valuePtr any) error {
 	if err != nil {
 		return err
 	}
-	return c.inner.FromPayload(opened, valuePtr)
+	return c.decodeOpened(opened, valuePtr)
 }
 
 // readerOpen is the root face's open of a sealed payload, through the
@@ -254,7 +254,16 @@ func (c *Converter) readerOpen(p *commonpb.Payload, valuePtr any) error {
 	if err != nil {
 		return err
 	}
-	return c.inner.FromPayload(opened, valuePtr)
+	return c.decodeOpened(opened, valuePtr)
+}
+
+// decodeOpened reads what a sealed payload opened to: an error of it holds
+// none of the decoder's words, which may quote what it read.
+func (c *Converter) decodeOpened(opened *commonpb.Payload, valuePtr any) error {
+	if c.inner.FromPayload(opened, valuePtr) != nil {
+		return unreadable("the payload, %q, does not decode as a %T", opened.GetMetadata()["encoding"], valuePtr)
+	}
+	return nil
 }
 
 // FromPayloads reads each payload into its pointer.

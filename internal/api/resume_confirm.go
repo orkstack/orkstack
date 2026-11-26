@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"time"
 
@@ -75,9 +74,22 @@ type resumeSend struct {
 func (s *Service) confirmResume(
 	ctx context.Context, req *connect.Request[orkstackv1.ResumeRunRequest], base *resumeBase, p *resumePlanned, warnings []*orkstackv1.ResumeWarning,
 ) (*connect.Response[orkstackv1.ResumeRunResponse], error) {
+	if err := s.archiveSetAside(ctx, base); err != nil {
+		return nil, err
+	}
 	send, err := s.recordResume(ctx, req, base, p)
 	if err != nil {
 		return nil, err
+	}
+	// Before any reset: what asks whether the run is archived asks the cluster
+	// about a marked run, whether or not this reset ever runs.
+	err = s.resumeEndings.MarkResumed(ctx, base.run.GetId(), send.key.Scope, base.scope)
+	if errors.Is(err, artifacts.ErrResumeMarkTaken) {
+		s.logger.ErrorContext(ctx, "resume: the run's resume mark names another ending", "run_id", base.run.GetId(), "error", err)
+		return nil, refuseResume(engine.RefuseStateUnreadable, engine.RefusalPermanent, "run %s's resume records can't be read back. Run again", base.run.GetId())
+	}
+	if err != nil {
+		return nil, s.recordsUnavailable(ctx, base.run.GetId(), err)
 	}
 	if err := s.baseUnmoved(ctx, base); err != nil {
 		return nil, err
@@ -193,7 +205,7 @@ func (s *Service) recordNewPlan(
 	}
 	block, err := engine.BuildResumeBlock(engine.ResumeBlockInput{
 		Input: p.input, Plan: p.plan, Verification: p.verified, SeqBase: uint64(p.seqBase), Scope: scope,
-		PreviousSeqBase: base.previous.GetBlock().GetSeqBase(),
+		PreviousSeqBase: base.previous,
 	})
 	if err != nil {
 		return nil, err
@@ -221,9 +233,9 @@ func (s *Service) recordNewPlan(
 	case err != nil:
 		return nil, s.recordsUnavailable(ctx, id, err)
 	}
+	rerun, reopened := engine.ResumeRecordTasks(base.definition, p.plan)
 	err = s.resumeRecords.WriteResume(ctx, artifacts.ResumeRecord{
-		Namespace: base.namespace, RunID: id, Scope: scope, N: n, PreviousScope: own,
-		Tasks: rerunTasks(p.plan), ReopenedAwaits: reopenedAwaits(base.definition, p.plan),
+		Namespace: base.namespace, RunID: id, Scope: scope, N: n, PreviousScope: own, Tasks: rerun, ReopenedAwaits: reopened,
 	})
 	switch {
 	case errors.Is(err, artifacts.ErrResumeLinkElsewhere), errors.Is(err, artifacts.ErrResumeScopeHasSuccessor), errors.Is(err, artifacts.ErrResumeRecordDiffers):
@@ -503,30 +515,4 @@ func resumeOf(rec *orkstackv1.ResumePlanRecord) *orkstackv1.RunResume {
 		ResumedAfterSequence: rec.GetBaseTerminalSequence(), Sequence: int64(rec.GetBlock().GetSeqBase()),
 		FromState: orkstackv1.ResumeFromState_RESUME_FROM_STATE_FAILED, Scope: rec.GetScope(),
 	}
-}
-
-// rerunTasks are the tasks that run again, whole or in part, each once.
-func rerunTasks(plan *engine.ResumePlan) []string {
-	out := []string{}
-	for _, u := range plan.RerunSet() {
-		if !slices.Contains(out, u.Task) {
-			out = append(out, u.Task)
-		}
-	}
-	return out
-}
-
-// reopenedAwaits are the awaited tasks that wait again.
-func reopenedAwaits(wf *orkstackv1.Orkflow, plan *engine.ResumePlan) []string {
-	await := map[string]bool{}
-	for _, t := range wf.GetTasks() {
-		await[t.GetId()] = t.GetAwait() != nil
-	}
-	out := []string{}
-	for _, u := range plan.Units {
-		if u.Disposition == engine.DispositionWait && await[u.Unit.Task] {
-			out = append(out, u.Unit.Task)
-		}
-	}
-	return out
 }

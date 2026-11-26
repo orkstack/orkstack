@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -181,8 +182,8 @@ func (s *Service) keyBound(ctx context.Context, namespace string, claim claimCoo
 	return false
 }
 
-// planConcurrency is §7.1 steps 3 and 4 and the plan: it refuses a tree
-// whose composed child declares a limit (not planned by this release), a key
+// planConcurrency is §7.1 steps 3 and 4 and the plan, for the run and for every
+// composed child that declares a limit (planChildLimits): it refuses a key
 // that does not render, a queue_timeout the deployment no longer allows and
 // a deployment that cannot hold a limit, and pins the run-level slot. A run
 // whose Orkflow declares none is untouched and asks nothing.
@@ -196,13 +197,50 @@ func (s *Service) planConcurrency(
 	claim claimCoords,
 	starter engine.RunStarter,
 ) error {
-	if err := refuseChildLimits(planned, plan); err != nil {
+	spec := planned.GetConcurrency()
+	limitedChild, err := childDeclaresLimit(planned, plan)
+	if err != nil {
 		return err
 	}
-	spec := planned.GetConcurrency()
-	if spec == nil {
+	if spec == nil && !limitedChild {
+		return nil // nothing of the tree is limited: nothing is asked
+	}
+	incarnation, err := concurrencyIncarnation(ns)
+	if err != nil {
+		return err
+	}
+	if spec != nil {
+		if err := s.planRunLimit(ctx, ns, planned, plan, msg, origin, claim, starter, incarnation); err != nil {
+			return err
+		}
+	}
+	if err := s.planChildLimits(ns, planned, plan, incarnation); err != nil {
+		return err
+	}
+	if spec != nil {
 		return nil
 	}
+	// The run itself has no limit: what its children's need of the deployment
+	// is asked here, once.
+	if s.keyBound(ctx, ns.GetName(), claim) {
+		return nil
+	}
+	return s.concurrencySupport(ctx, planned, starter)
+}
+
+// planRunLimit is planConcurrency's run-level slot.
+func (s *Service) planRunLimit(
+	ctx context.Context,
+	ns *orkstackv1.Namespace,
+	planned *orkstackv1.Orkflow,
+	plan *engine.RunPlan,
+	msg *orkstackv1.SubmitRunRequest,
+	origin *orkstackv1.RunOrigin,
+	claim claimCoords,
+	starter engine.RunStarter,
+	incarnation string,
+) error {
+	spec := planned.GetConcurrency()
 	if err := s.concurrencyBoundsError(planned); err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
 			"orkflow %s@%s: %w; create a new version within the bounds", planned.GetName(), planned.GetVersion(), err)))
@@ -230,10 +268,6 @@ func (s *Service) planConcurrency(
 		}
 		key = rendered
 	}
-	incarnation, err := concurrencyIncarnation(ns)
-	if err != nil {
-		return err
-	}
 	gateID := engine.GateID(namespace, incarnation, key)
 	strategy, err := planStrategy(spec.GetOnLimit())
 	if err != nil {
@@ -250,23 +284,15 @@ func (s *Service) planConcurrency(
 		}
 	}
 	run := 0
-	settings, gate := s.concurrency, s.gateTunables
-	plan.Concurrency = &engine.ConcurrencyPlan{
-		Orkflow: planned.GetName(),
-		Slots: []engine.ConcurrencySlotPlan{{
-			GateID: gateID, Key: key, Label: label,
-			Limit: int(spec.GetLimit()), Strategy: strategy,
-			QueueTimeoutSeconds: int64(s.queueTimeoutOf(spec) / time.Second), MaxQueued: int(spec.GetMaxQueued()),
-		}},
-		Run: &run,
-		// A fresh run's incarnation at its gates (decision D2).
-		SeqBase: 1, GateQueue: task.DefaultQueue, Namespace: namespace, Incarnation: incarnation,
-		AcquireTimeout: gate.AcquireTimeout, AcquireBackoffMin: settings.AcquireBackoffMin, AcquireBackoffMax: settings.AcquireBackoffMax,
-		RequeueInterval: settings.RequeueInterval, RequeueBackoffFactor: settings.RequeueBackoffFactor,
-		RequeueIntervalMax: settings.RequeueIntervalMax, PerSlotBytes: settings.PerSlotBytes,
-		EventHoldersShown: settings.EventHoldersShown, Gate: gate,
-	}
-	reserveConcurrencyRelease(plan, len(plan.Concurrency.Slots))
+	limit := s.concurrencyPlanOf(namespace, incarnation, planned.GetName())
+	limit.Slots = []engine.ConcurrencySlotPlan{{
+		GateID: gateID, Key: key, Label: label,
+		Limit: int(spec.GetLimit()), Strategy: strategy,
+		QueueTimeoutSeconds: int64(s.queueTimeoutOf(spec) / time.Second), MaxQueued: int(spec.GetMaxQueued()),
+	}}
+	limit.Run = &run
+	plan.Concurrency = &limit
+	plan.History = engine.ReserveConcurrencyRelease(plan.History, &limit)
 	return nil
 }
 
@@ -334,6 +360,63 @@ func (s *Service) applyLiveQueued(ctx context.Context, run *orkstackv1.Run) {
 		return
 	}
 	run.Queued = engine.LiveQueued(snapshot, run.GetId(), line, s.concurrency.APIHoldersShown, now)
+}
+
+// applyChildQueued says of each composed task whose child run waits for its
+// own concurrency slot where that run stands, as GetRun on the child would
+// (TaskRun.queued). GetRun is polled, so it is bounded: a run with no running
+// composed task whose child has a limit reads nothing, and at most
+// api_holders_shown children are asked. A child the caller may not read, or
+// that could not be read, is left as it is, and never fails the read.
+func (s *Service) applyChildQueued(ctx context.Context, run *orkstackv1.Run) {
+	if s.concurrencyReader == nil || runstatus.IsTerminal(run.GetStatus()) {
+		return
+	}
+	rows := map[string]*orkstackv1.TaskRun{}
+	var children []string
+	for _, row := range run.GetTaskRuns() {
+		child := row.GetChild()
+		if row.GetStatus() != orkstackv1.Status_STATUS_RUNNING || !child.GetConcurrencyLimited() || child.GetRunId() == "" {
+			continue
+		}
+		if len(children) == s.concurrency.APIHoldersShown {
+			break
+		}
+		rows[child.GetRunId()] = row
+		children = append(children, child.GetRunId())
+	}
+	if len(children) == 0 {
+		return
+	}
+	failed := func(what string, err error) {
+		if ctx.Err() == nil && s.queuedWarn.allow(time.Now(), capacityWarnInterval) {
+			s.logger.Warn("get run: "+what+", so whether its child runs wait for a concurrency slot is not shown (said at most once a minute)",
+				"run_id", run.GetId(), "error", err)
+		}
+	}
+	rctx, cancel := context.WithTimeout(ctx, censusReadTimeout)
+	defer cancel()
+	waiting, err := s.concurrencyReader.WaitingRuns(rctx, children)
+	if err != nil {
+		failed("a child run could not be described", err)
+	}
+	for _, id := range waiting {
+		child, err := s.LookupRunIn(rctx, id, run.GetNamespace())
+		if err != nil {
+			failed("a child run could not be read", err)
+			continue
+		}
+		may, err := s.mayReadRun(rctx, child)
+		if err != nil {
+			failed("whether the caller may read a child run could not be decided", err)
+			continue
+		}
+		if !may {
+			continue
+		}
+		s.applyLiveQueued(rctx, child)
+		rows[id].Queued = child.GetQueued()
+	}
 }
 
 // concurrencyIncarnation is the namespace's incarnation at its gates
@@ -520,39 +603,89 @@ func (s *Service) fullKeyCheck(ctx context.Context, gateID, key, strategy string
 	return connect.NewError(connect.CodeFailedPrecondition, &limitReached{strategy: strategy, key: key, err: errors.New(text)})
 }
 
-// reserveConcurrencyRelease adds to the run's history reserve what its
-// release appends after its failure path (§5.2.7): per gate, a signal's two
-// events and per_slot_bytes, charged as events at the reserve's own rate.
-func reserveConcurrencyRelease(plan *engine.RunPlan, gates int) {
-	reserve := &plan.History.Reserve
-	perGate := int64(2)
-	if reserve.BytesPerEvent > 0 {
-		perGate += (plan.Concurrency.PerSlotBytes + reserve.BytesPerEvent - 1) / reserve.BytesPerEvent
-	}
-	reserve.Fixed += perGate * int64(gates)
-}
-
-// refuseChildLimits refuses a tree whose composed child declares a limit:
-// this release plans the top-level run's limit only, and a child started
-// without its slot would run outside it. CONCURRENCY_UNSUPPORTED, naming the
-// child's Orkflow.
-func refuseChildLimits(planned *orkstackv1.Orkflow, plan *engine.RunPlan) error {
-	var limited *orkstackv1.Orkflow
+// childDeclaresLimit reports whether a composed child of the tree declares a
+// limit.
+func childDeclaresLimit(planned *orkstackv1.Orkflow, plan *engine.RunPlan) (bool, error) {
+	limited := false
 	if err := engine.ForEachChild(planned, plan, func(_ string, _ *engine.ChildRunPlan, def *orkstackv1.Orkflow) error {
-		if limited == nil && def.GetConcurrency() != nil {
-			limited = def
-		}
+		limited = limited || def.GetConcurrency() != nil
 		return nil
 	}); err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
+		return false, connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
 	}
-	if limited == nil {
+	return limited, nil
+}
+
+// planChildLimits pins the run-level limit of every composed child that
+// declares one (E88 §5.4, §22.3), its key a template its parent renders when
+// it starts it. A key that needs no rendering is held to its ancestors' here,
+// before a run exists (CONCURRENCY_KEY_CONFLICT).
+func (s *Service) planChildLimits(ns *orkstackv1.Namespace, planned *orkstackv1.Orkflow, plan *engine.RunPlan, incarnation string) error {
+	var walk func(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ancestors []string) error
+	walk = func(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ancestors []string) error {
+		for _, t := range wf.GetTasks() {
+			child := plan.Children[t.GetId()]
+			if t.GetOrkflow() == nil || child == nil {
+				continue
+			}
+			def, err := child.Definition()
+			if err != nil {
+				return connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
+			}
+			below := ancestors
+			if spec := def.GetConcurrency(); spec != nil {
+				if err := s.concurrencyBoundsError(def); err != nil {
+					return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
+						"orkflow %s@%s, composed by task %s: %w; create a new version within the bounds", def.GetName(), def.GetVersion(), t.GetId(), err)))
+				}
+				strategy, err := planStrategy(spec.GetOnLimit())
+				if err != nil {
+					return err
+				}
+				key, label := engine.DefaultRunConcurrencyKey(artifacts.ResolveNamespace(def.GetNamespace()), def.GetName()), spec.GetKey()
+				if label == "" {
+					label = key
+				} else {
+					key = label
+				}
+				child.Concurrency = &engine.ChildConcurrency{
+					Slot: engine.ConcurrencySlotPlan{Key: key, Label: label, Limit: int(spec.GetLimit()), Strategy: strategy,
+						QueueTimeoutSeconds: int64(s.queueTimeoutOf(spec) / time.Second), MaxQueued: int(spec.GetMaxQueued())},
+					Plan:          s.concurrencyPlanOf(ns.GetName(), incarnation, def.GetName()),
+					MaxActiveKeys: int64(s.concurrency.MaxActiveKeysPerNamespace),
+				}
+				if !strings.Contains(key, "{{") {
+					gate := engine.GateID(ns.GetName(), incarnation, key)
+					if slices.Contains(ancestors, gate) {
+						return connect.NewError(connect.CodeInvalidArgument, refused(refusalPause, engine.ConcurrencyKeyConflictCode, fmt.Errorf(
+							"%s: task %s composes %s@%s, whose concurrency key %s is one a run above it holds: the child would wait for a slot its own parent keeps",
+							engine.ConcurrencyKeyConflictCode, t.GetId(), def.GetName(), def.GetVersion(), key)))
+					}
+					below = append(slices.Clone(ancestors), gate)
+				}
+			}
+			if err := walk(def, &child.Plan, below); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_UNSUPPORTED", fmt.Errorf(
-		"%s: orkflow %s@%s declares a concurrency limit and runs here as a composed child; "+
-			"this release holds a limit only for the run submitted, so submit it as a run of its own",
-		engine.ConcurrencyUnsupportedCode, limited.GetName(), limited.GetVersion())))
+	return walk(planned, plan, plan.Concurrency.GateIDs())
+}
+
+// concurrencyPlanOf is a run's concurrency plan with no slot: what its limits
+// are decided with.
+func (s *Service) concurrencyPlanOf(namespace, incarnation, orkflow string) engine.ConcurrencyPlan {
+	settings, gate := s.concurrency, s.gateTunables
+	return engine.ConcurrencyPlan{
+		Orkflow: orkflow,
+		// A fresh run's incarnation at its gates (decision D2).
+		SeqBase: 1, GateQueue: task.DefaultQueue, Namespace: namespace, Incarnation: incarnation,
+		AcquireTimeout: gate.AcquireTimeout, AcquireBackoffMin: settings.AcquireBackoffMin, AcquireBackoffMax: settings.AcquireBackoffMax,
+		RequeueInterval: settings.RequeueInterval, RequeueBackoffFactor: settings.RequeueBackoffFactor,
+		RequeueIntervalMax: settings.RequeueIntervalMax, PerSlotBytes: settings.PerSlotBytes,
+		EventHoldersShown: settings.EventHoldersShown, Gate: gate,
+	}
 }
 
 // concurrencySupport is §7.1 step 4: CONCURRENCY_UNSUPPORTED naming every

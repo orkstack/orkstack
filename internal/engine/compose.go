@@ -133,6 +133,9 @@ type ChildRunPlan struct {
 	// (RunStartSearchAttributes).
 	NamespaceIndexed bool `json:"namespace_indexed,omitzero"`
 	OriginIndexed    bool `json:"origin_indexed,omitzero"`
+	// Concurrency is the child's own run-level limit, its key rendered by its
+	// parent when it starts it (concurrency_child.go); nil with none.
+	Concurrency *ChildConcurrency `json:"concurrency,omitempty"`
 }
 
 // NewChildRunPlan builds one from a planned definition: clones it, clears
@@ -534,12 +537,16 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	}
 
 	// 4. The child's plan: the planned one, with exactly its origin set and
-	// the run-tree limits copied (childStartPlan).
+	// the run-tree limits copied (childStartPlan), then its concurrency slot,
+	// asked before any artifact is claimed for a child a refusal never starts.
+	childPlan := s.childStartPlan(id, c.plan)
+	if err := s.limitChild(ctx, id, c, childInput, &childPlan); err != nil {
+		return nil, err
+	}
 	received, err := s.passChildArtifacts(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	childPlan := s.childStartPlan(id, c.plan)
 	childPlan.InputArtifacts = received
 
 	// 5. Start it, and wait for the start to be confirmed.
@@ -575,6 +582,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	// 7. Started.
 	taskRun.StartedAt = timestamppb.New(workflow.Now(ctx))
 	taskRun.Child.RunId = c.plan.RunID
+	taskRun.Child.ConcurrencyLimited = c.plan.Concurrency != nil
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
 		orkstackv1.Status_STATUS_RUNNING, fmt.Sprintf("child run %s started", c.plan.RunID)); err != nil {
 		return nil, err

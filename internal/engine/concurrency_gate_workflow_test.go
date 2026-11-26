@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -29,6 +30,10 @@ type gateHarness struct {
 	// reports are what the gate reported; reportErr fails each report.
 	reports   []ConcurrencyGateReport
 	reportErr error
+	// records are the reset records the gate wrote; memo is the last value
+	// it upserted of its resets.
+	records []ConcurrencyResetRecord
+	memo    *gateResetMemo
 }
 
 func newGateHarness(t *testing.T) *gateHarness {
@@ -61,6 +66,15 @@ func newGateHarness(t *testing.T) *gateHarness {
 		h.reports = append(h.reports, r)
 		return h.reportErr
 	}, activity.RegisterOptions{Name: ActivityReportConcurrencyGate})
+	h.env.RegisterActivityWithOptions(func(_ context.Context, r ConcurrencyResetRecord) error {
+		h.records = append(h.records, r)
+		return nil
+	}, activity.RegisterOptions{Name: ActivityRecordConcurrencyReset})
+	h.env.OnUpsertMemo(mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		m := args.Get(0).(map[string]any)[gateResetsMemoKey].(gateResetMemo)
+		m.Resets = slices.Clone(m.Resets)
+		h.memo = &m
+	})
 	h.env.OnSignalExternalWorkflow(mock.Anything, mock.Anything, "", ConcurrencyGrantSignal, mock.Anything).Return(
 		func(_, _, _, _ string, arg any) error {
 			g := arg.(ConcurrencyGrant)
@@ -114,10 +128,13 @@ func (h *gateHarness) signalAt(offset time.Duration, name string, arg any) {
 }
 
 func (h *gateHarness) run(previous string, tunables GateTunables) {
-	h.env.ExecuteWorkflow(ConcurrencyGateWorkflowType, GateStart{
-		GateID: GateID("default", "", "deploy"), Namespace: "default", Key: "deploy",
-		Tunables: tunables, Previous: previous,
-	})
+	h.start(GateStart{Tunables: tunables, Previous: previous})
+}
+
+// start runs the gate of one key from in.
+func (h *gateHarness) start(in GateStart) {
+	in.GateID, in.Namespace, in.Key = GateID("default", "", "deploy"), "default", "deploy"
+	h.env.ExecuteWorkflow(ConcurrencyGateWorkflowType, in)
 	if !h.env.IsWorkflowCompleted() {
 		h.t.Fatal("the gate did not complete")
 	}

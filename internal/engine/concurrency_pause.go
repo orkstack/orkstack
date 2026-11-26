@@ -86,7 +86,7 @@ func (s *runState) releaseRunEntry(ctx workflow.Context, gate string) error {
 	c := s.conc
 	f := workflow.SignalExternalWorkflow(ctx, gate, "", GateSignalRelease,
 		// The gate is no run and holds no key: ids and indices only.
-		payloadcrypt.PlainIn(runScope(ctx), GateRelease{Run: s.runID, SeqBase: c.plan.SeqBase, TaskIx: gateRunLevel, N: c.ordinal}))
+		payloadcrypt.PlainIn(runScope(ctx), GateRelease{Run: s.runID, SeqBase: c.seqBase, TaskIx: gateRunLevel, N: c.ordinal}))
 	if err := workflow.UpsertMemo(ctx, plainMemo(ctx, map[string]any{gateMemoKey(gate, gateRunLevel): nil})); err != nil {
 		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the run could not drop its slot's record: %v", err))
 	}
@@ -95,7 +95,7 @@ func (s *runState) releaseRunEntry(ctx workflow.Context, gate string) error {
 	}
 	if err := f.Get(ctx, nil); err != nil && !categoryOf(err).unknownRun {
 		workflow.GetLogger(ctx).Warn("a paused run could not release its concurrency slot; the limit's check pass frees it",
-			"run", s.runID, "gate", gate, "seq_base", c.plan.SeqBase, "n", c.ordinal, "error", err)
+			"run", s.runID, "gate", gate, "seq_base", c.seqBase, "n", c.ordinal, "error", err)
 	}
 	return nil
 }
@@ -109,7 +109,7 @@ func (s *runState) reacquireRunSlot(ctx workflow.Context) error {
 	c.ordinal++
 	now := workflow.Now(ctx)
 	req := gateAcquire{
-		Proto: gateProtoOrdinal, Run: s.runID, SeqBase: c.plan.SeqBase, TaskIx: gateRunLevel,
+		Proto: gateProtoOrdinal, Run: s.runID, SeqBase: c.seqBase, TaskIx: gateRunLevel,
 		Limit: slot.Limit, Strategy: gateStrategyQueue, Label: slot.Label,
 		WaitUntil: now.Add(time.Duration(slot.QueueTimeoutSeconds) * time.Second), IssuedAt: now,
 		N: c.ordinal, Requeue: true,
@@ -422,7 +422,7 @@ func (s *runState) failingRegain(ctx workflow.Context) string {
 	now := workflow.Now(ctx)
 	timeout := time.Duration(slot.QueueTimeoutSeconds) * time.Second
 	req := gateAcquire{
-		Proto: gateProtoOrdinal, Run: s.runID, SeqBase: c.plan.SeqBase, TaskIx: gateRunLevel,
+		Proto: gateProtoOrdinal, Run: s.runID, SeqBase: c.seqBase, TaskIx: gateRunLevel,
 		Limit: slot.Limit, Strategy: gateStrategyQueue, Label: slot.Label,
 		WaitUntil: now.Add(timeout), IssuedAt: now, N: c.ordinal, Requeue: true,
 	}

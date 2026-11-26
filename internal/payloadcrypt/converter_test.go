@@ -397,3 +397,24 @@ func TestRunKeyOf(t *testing.T) {
 		}
 	})
 }
+
+// A sealed payload that opens and does not decode says so without quoting
+// what it read, to a reader and to workflow code alike.
+func TestConverter_QuotesNothingOfWhatDoesNotDecode(t *testing.T) {
+	key := testKey(t, 4)
+	scope := NewScope(key, RunContext("ork-1"))
+	p, err := scope.SealPayload(&commonpb.Payload{Metadata: map[string][]byte{"encoding": []byte("json/protobuf")}, Data: []byte(`{"canary":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := NewConverter(converter.GetDefaultDataConverter(), nil)
+	for name, c := range map[string]*Converter{
+		"a reader":      root.WithReaderKeys(func(context.Context, Context) (*Key, error) { return key, nil }),
+		"workflow code": {inner: root.inner, run: &KeyState{scope: scope}},
+	} {
+		var into *commonpb.WorkflowExecution
+		if err := c.FromPayload(p, &into); !errors.Is(err, ErrUnreadable) || strings.Contains(err.Error(), "canary") {
+			t.Errorf("%s: = %v; want ErrUnreadable and nothing of the payload", name, err)
+		}
+	}
+}

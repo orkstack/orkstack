@@ -1384,7 +1384,8 @@ Orker-side behaviour and changes nothing a container sees: no file,
    reference with no digest cannot be keyed: a MISS `INPUT_UNHASHED`, and no
    memo is written.
 3. **The lookup** (skipped, and recorded `BYPASSED`, when the run was
-   submitted with `no_cache`), bounded as a whole by 30 s. The first failing
+   submitted with `no_cache`, or a resume runs the task again for another
+   result), bounded as a whole by 30 s. The first failing
    check is the recorded miss reason, and **every** failing check means *run
    the task*, never a failure:
 

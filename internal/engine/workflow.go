@@ -241,7 +241,25 @@ func runWorkflow(
 	// start carries a stub, and every generation copies the definition into
 	// its own history before it decides anything (definition_ref.go).
 	started := wf
-	loader, loaded, ended, end, endErr := loadDefinitionArgument(ctx, runID, wf, input, plan, carry)
+	// R of a carried history (E85 §30.2): its first code point, before the
+	// definition or the saved state is read. Nothing happens here unless the
+	// run is a reset run.
+	var resume *resumeHolder
+	if carry != nil {
+		holder, err := loadResumeAtR(ctx, deps, wf.GetNamespace(), runID, plan, false, time.Time{})
+		if err != nil {
+			state := newRunState(ctx, runID, wf, input, plan)
+			if state.conc != nil {
+				state.conc.runID = state.runID
+				state.conc.seedAttempted(carry)
+				*conc = state.conc
+			}
+			state.eventSeq = int(max(0, carry.GetEventSequence()))
+			return state.endResumeUnrunnable(ctx, err)
+		}
+		resume = holder
+	}
+	loader, loaded, ended, end, endErr := loadDefinitionArgument(ctx, runID, wf, input, plan, carry, resume)
 	if end {
 		return ended, endErr
 	}
@@ -257,7 +275,7 @@ func runWorkflow(
 		state.conc.runID = state.runID
 		// A carried generation's gates, before anything can end it: a
 		// restore that fails still releases what its predecessor held.
-		state.conc.seedAttempted(carry.GetConcurrency())
+		state.conc.seedAttempted(carry)
 		*conc = state.conc
 	}
 	// The arguments as passed, handed on unchanged at a switch: for a
@@ -266,6 +284,7 @@ func runWorkflow(
 	if loader != nil {
 		state.adoptDefinitionLoad(loader, carry)
 	}
+	state.resume = resume
 	// Every task activity is scheduled on runCtx, never on ctx directly, so the
 	// run has one handle that ends all of them at once. Temporal does NOT
 	// cancel activities a workflow function abandons by returning: only an
@@ -329,21 +348,8 @@ func runWorkflow(
 		state.resume = holder
 		if holder != nil {
 			if err := state.adoptResume(ctx, deps); err != nil {
-				var unrunnable *resumeLoadFailure
-				var unread *readBackFailure
-				switch {
-				case errors.As(err, &unrunnable):
-					return state.endResumeUnrunnable(ctx, err)
-				case errors.As(err, &unread):
-					return state.fail(ctx, cancelRun, inFlight, unread.task, unread.cause)
-				default:
-					return state.fail(ctx, cancelRun, inFlight, "", err)
-				}
+				return state.endUnresumed(ctx, cancelRun, inFlight, err)
 			}
-			// A resumed run keeps one history to its end until a resume can
-			// be carried across one (E85 PR4d); past its limit it ends
-			// RUN_HISTORY_LIMIT, explicitly.
-			state.setNoSwitch(ctx, inFlight, "a resumed run keeps its history to its end")
 		}
 		// A child that received artifacts claims them for itself before its
 		// first dispatch (composed_artifacts.go); a claim that cannot be
@@ -363,6 +369,14 @@ func runWorkflow(
 			state.decideSharedOwner(ctx)
 		}
 		switch {
+		case resume != nil && (code == restoreCanceled || ctx.Err() != nil):
+			// Nothing of the resume was carried out: the run ends canceled, over
+			// the tasks of the ending it was to set aside.
+			return state.endResumeUnrunnable(ctx, resumeCanceled(resume.key.Scope))
+		case resume != nil && code == RunStateUnavailableCode:
+			return state.endResumeUnrunnable(ctx, resume.unread(message))
+		case code == ReasonResumePlanInvalid:
+			return state.endResumeUnrunnable(ctx, &resumeLoadFailure{code: code, message: message, scope: resume.key.Scope})
 		case code == restoreCanceled:
 			// The operator's cancel reached this generation during the read.
 			return state.endUnrestorable(ctx, carry, "RUN_CANCELED", "run canceled")
@@ -375,6 +389,11 @@ func runWorkflow(
 		state.logInfo(ctx, inFlight, "run restored its saved state",
 			"state_bytes", carry.GetCheckpoint().GetSizeBytes(), "generation", state.generation)
 		state.observeDecisionState("restore")
+		if resume != nil {
+			if err := state.adoptResume(ctx, deps); err != nil {
+				return state.endUnresumed(ctx, cancelRun, inFlight, err)
+			}
+		}
 	}
 	state.markGenerationBase(ctx)
 	// The run timeout's one arm site, once per generation, immediately before
@@ -1127,10 +1146,20 @@ type runState struct {
 	runTimeout *runTimeout
 	// resume is the plan a reset run carries out (E85), nil for every other run.
 	resume *resumeHolder
+	// resumed is set from the resume's RUN_RESUMED on, whatever history it
+	// carries on into; resumeEntry is the resume as the run's snapshots list
+	// it, and resumeCount how many the run had with it.
+	resumed     bool
+	resumeEntry *orkstackv1.RunResume
+	resumeCount int32
 	// eventResumed and eventResultsKept are set for the one RUN_RESUMED and
 	// RUN_RESULTS_KEPT event that carries each, and taken by it.
 	eventResumed     *orkstackv1.RunResumed
 	eventResultsKept *orkstackv1.RunResultsKept
+	// fresh are the units a resume runs again that read no memo.
+	fresh map[ResumeUnit]bool
+	// recordedEnd is when each task a resume settles ended.
+	recordedEnd map[string]*timestamppb.Timestamp
 	// resumeAdopting is set while a reset run carries out its plan, before
 	// its main loop: a failure then starts no failure handler (E85 §4.3).
 	resumeAdopting bool
@@ -2500,7 +2529,7 @@ func (s *runState) taskDispatchInput(
 	if err != nil {
 		return nil, err
 	}
-	input := s.executeTaskInput(t, id, pool, pinContext)
+	input := s.executeTaskInput(t, id, -1, pool, pinContext)
 	if input.Devices, err = s.deviceRefs(pool, t); err != nil {
 		return nil, err
 	}
@@ -2579,7 +2608,7 @@ func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstac
 // everything but the idempotency key and commit URI, which identify ONE
 // logical activity and are set by the caller (schedule, scheduleItem).
 func (s *runState) executeTaskInput(
-	t *orkstackv1.Task, id, pool string, pinContext *orkstackv1.PinContext,
+	t *orkstackv1.Task, id string, item int, pool string, pinContext *orkstackv1.PinContext,
 ) *orkstackv1.ExecuteTaskInput {
 	namespace := s.wf.GetNamespace()
 	return &orkstackv1.ExecuteTaskInput{
@@ -2646,7 +2675,7 @@ func (s *runState) executeTaskInput(
 		// Set ONLY for a cached task of a run whose plan carries a cache plan
 		// — every item of a cached fan-out included — so every other task's
 		// payload is byte-identical to what it was before this field existed.
-		Cache: s.cacheContextFor(t),
+		Cache: s.cacheContextFor(t, item),
 
 		// Set ONLY for a task of a run its plan admitted, one that declares no
 		// identity included: what its attempt needs to ask the engine for its
@@ -2710,11 +2739,11 @@ func IdentityGrants(t *orkstackv1.Task, admitted map[string]artifacts.GrantSelec
 	return out
 }
 
-// cacheContextFor is t's CacheContext, or nil — for a task with no cache,
+// cacheContextFor is the CacheContext of t, or of one item of it, or nil — for a task with no cache,
 // for a pinned task (docs/DSL.md rule 36; hand-built only), and for a plan
 // with no Cache (a harness plan, or one a pre-caching engine built): caching
 // needs the submit-time cap, and a run without one caches nothing. Pure.
-func (s *runState) cacheContextFor(t *orkstackv1.Task) *orkstackv1.CacheContext {
+func (s *runState) cacheContextFor(t *orkstackv1.Task, item int) *orkstackv1.CacheContext {
 	spec := t.GetCache()
 	if spec == nil || t.GetPin() != "" || s.plan.Cache == nil || dropCacheContextForTest {
 		return nil
@@ -2726,7 +2755,7 @@ func (s *runState) cacheContextFor(t *orkstackv1.Task) *orkstackv1.CacheContext 
 	return &orkstackv1.CacheContext{
 		Scope:      scope,
 		TtlSeconds: EffectiveCacheTTL(spec.GetTtlSeconds(), s.plan.Cache.MaxTTLSeconds),
-		Refresh:    s.plan.Cache.Refresh,
+		Refresh:    s.plan.Cache.Refresh || s.readsNoMemo(t.GetId(), item),
 		// A shared definition's tasks never share a memo with the owner's
 		// own, nor with an Orkflow of the same name here.
 		OrkflowNamespace: s.sharedOwner,
@@ -3429,6 +3458,12 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 		}
 	}
 
+	// A read-back's failure is its own sentence, never the wording of the call
+	// that carried it. Reached only by a reset run before its main loop.
+	if taskID != "" && s.resumeAdopting {
+		failure.Message = readBackSentence(cause)
+	}
+
 	// A pin that lost its host is the one failure that ARRIVES as a
 	// cancellation without anything having cancelled the run: the SDK cancels
 	// the session context when the session fails, so every member's future
@@ -3575,6 +3610,8 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		PauseWarnings:  s.pauseWarningsProto(),
 		DispatchHold:   s.dispatchHoldProto(),
 		Queued:         s.concQueuedProto(),
+		// The resume that made this execution; a reader adds the earlier ones.
+		Resumes: s.resumesProto(),
 	}
 	// The trace the run belongs to; empty when its submission was not traced
 	// (the plan is replay-pinned).

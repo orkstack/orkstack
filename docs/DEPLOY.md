@@ -749,6 +749,10 @@ then the variable it becomes.
 | `engine.concurrency.rebuild_backoff_max` | `ORK_CONCURRENCY_REBUILD_BACKOFF_MAX` | `5m` | `ork` | the longest such wait. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
 | `engine.concurrency.rebuild_timeout` | `ORK_CONCURRENCY_REBUILD_TIMEOUT` | `10m` | `ork` | how long a rebuild keeps failing before the gate is reported failing. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
 | `engine.concurrency.freeze_timeout` | `ORK_CONCURRENCY_FREEZE_TIMEOUT` | `1m` | `ork` | how long a reset may hold a gate frozen. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
+| `engine.concurrency.freeze_margin` | `ORK_CONCURRENCY_FREEZE_MARGIN` | `20s` | `ork` | how long before such a freeze ends a reset no longer takes effect; below `freeze_timeout`. Allow for the engines' clocks differing from the cluster's. Read at boot |
+| `engine.concurrency.reset_audit_window` | `ORK_CONCURRENCY_RESET_AUDIT_WINDOW` | `24h` | `ork` | how long a reset's request may act or be asked about, counted from when it was issued; an older one is refused. Above `freeze_timeout` and ten minutes. The cluster keeps a finished execution at least this long plus five minutes (§5, "Ops notes", idempotency keys). Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
+| `engine.concurrency.reset_incomplete_after` | `ORK_CONCURRENCY_RESET_INCOMPLETE_AFTER` | `15m` | `ork` | how long a reset may run before `ork.concurrency.resets_incomplete` counts it. Read at boot; every replica keeps the one census schedule's settings, updating it only when they change |
+| `engine.concurrency.record_timeout` | `ORK_CONCURRENCY_RECORD_TIMEOUT` | `10s` | `ork` | how long one try at writing a reset's audit record may take; it is tried again for `rebuild_timeout`. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
 | `engine.concurrency.drain_margin` | `ORK_CONCURRENCY_DRAIN_MARGIN` | `5s` | `ork` | how much longer than `verify_await` a gate waits for its handlers before it carries on or closes. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
 | `engine.concurrency.gate_continue_events` | `ORK_CONCURRENCY_GATE_CONTINUE_EVENTS` | `2000` | `ork` | how many history events a gate records before it carries its state on. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
 | `engine.concurrency.gate_continue_updates` | `ORK_CONCURRENCY_GATE_CONTINUE_UPDATES` | `500` | `ork` | how many acquires a gate answers before it carries its state on. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. |
@@ -773,7 +777,7 @@ then the variable it becomes.
 | `engine.concurrency.retry_after` | `ORK_CONCURRENCY_RETRY_AFTER` | `1m` | `ork` | the `Retry-After` a trigger answers with when it is refused `MAX_RUNNING_REACHED` while runs wait in line |
 | `engine.concurrency.fire_unavailable_retry` | `ORK_CONCURRENCY_FIRE_UNAVAILABLE_RETRY` | `5m` | `ork` | how long a schedule's fire asks again while its concurrency limit cannot be checked, before it completes `FIRE_CONCURRENCY_UNAVAILABLE` without a run; pinned per fire |
 | `engine.concurrency.event_holders_shown` | `ORK_CONCURRENCY_EVENT_HOLDERS_SHOWN` | `5` | `ork` | how many holders a `RUN_QUEUED` event names. At most `api_holders_shown`. Read at boot and pinned into each run's plan at submit, so a change applies to new runs only |
-| `engine.concurrency.api_holders_shown` | `ORK_CONCURRENCY_API_HOLDERS_SHOWN` | `10` | `ork` | how many holders `GetRun` names for a waiting run |
+| `engine.concurrency.api_holders_shown` | `ORK_CONCURRENCY_API_HOLDERS_SHOWN` | `10` | `ork` | how many holders `GetRun` names for a waiting run, and for how many of a run's composed tasks it asks where a waiting child run stands |
 | `engine.runs.force_cancel_grace` | `ORK_FORCE_CANCEL_GRACE` | `1m` | `ork` | how long a run a force cancel asked to cancel is given before it is ended for making no progress, and the least a request may ask; never less than the run's longest task cancellation grace plus 30 s. At least `30s`. Pinned into each force cancel |
 | `engine.runs.max_force_cancel_grace` | `ORK_MAX_FORCE_CANCEL_GRACE` | `10m` | `ork` | the longest grace a force cancel may ask. At least `force_cancel_grace` |
 | `engine.runs.force_cancel_ceiling` | `ORK_FORCE_CANCEL_CEILING` | `30m` | `ork` | how long a run that keeps making progress is waited for before it is ended anyway, its record saying so; looked at as each grace ends. At least `max_force_cancel_grace`, at most `24h` and 500 times `force_cancel_grace`. Pinned into each force cancel |
@@ -1408,7 +1412,10 @@ draining until its pause ends, up to `engine.run_pause_timeout_max` (31 days
 at most), so unpause it or cancel it before a rollout that waits on it. They
 say too how many wait for a concurrency slot (`Release.queued_runs`, where the
 cluster indexes concurrency limits): a queued run keeps its release from
-draining until it starts or its `queue_timeout` passes. The **host**-scoped complement of the version-scoped `Drained` is
+draining until it starts or its `queue_timeout` passes. Where the
+engine resumes runs they also say how many failed runs, child runs among them,
+are pinned to the release (`Release.resumable_runs`): stopping a drained release ends their chance to be
+resumed, and a drain does not wait for them. The **host**-scoped complement of the version-scoped `Drained` is
 `orkctl orker drain` (§5, "Removing an Orker safely"): cordon one Orker so it
 opens no new pin, and wait until its open pins have finished.
 
@@ -2531,9 +2538,10 @@ re-archived every run the restore lost.
 **An execution the cluster no longer holds** is retired only once its own
 namespace's run retention, counted from the finish its archive body records,
 has passed. Nothing removes an execution earlier in normal operation — the
-backstop TTL sits past every namespace's retention, and never below an
-idempotency key's life (`engine.idempotency_ttl` plus five minutes) plus the
-margin, so a retry under a key finds a finished run — so one missing earlier
+backstop TTL sits past every namespace's retention, and never below the longer
+of an idempotency key's life (`engine.idempotency_ttl` plus five minutes) and a
+concurrency reset's (`engine.concurrency.reset_audit_window` plus five minutes),
+plus the margin, so a retry under a key finds a finished run — so one missing earlier
 means a restored or damaged cluster, or an `ork` replica pointed at the wrong
 `ORK_TEMPORAL_NAMESPACE`. Such a run is kept, logged at error ("kept a run
 whose execution is missing before its run retention") and counted
@@ -2597,6 +2605,9 @@ time a run has in the cluster: a run waits out one interval and then the next
 pass, and one deleted before a pass looks at it leaves nothing to report. Each
 pass logs an error when two intervals reach that time. What cannot be recovered
 is said:
+Of a run that was resumed it asks about the newest ending, which the cluster
+names, and dates what is at risk by that ending's close; it lists the runs a
+resume marked once a pass, and asks the cluster about those alone.
 
 - events lost from an earlier part of a long run, and numbers the run never
   published, are `gap` lines (`docs/STORAGE.md`);
@@ -2657,7 +2668,9 @@ cleanup intervals of the cluster's delete time, by the cluster's retention as
 last read, the sweep stops waiting and archives it `CANCELED`
 `RUN_FORCE_CANCEL_UNVERIFIED`, naming nobody ([REASONS.md](./REASONS.md)). Each
 one is an error in the log and counts as `unverified` beside `archived` in
-`ork.archive.sweep.runs`.
+`ork.archive.sweep.runs`. For a resumed run, that last archive also needs
+object storage to answer for the ending its resume set aside; while it does not,
+the run stays unarchived and is counted at risk.
 
 An archive write that stops short, on all three attempts of the run's own
 publish, leaves no body, because the body is its last write. The run reads as
@@ -2696,7 +2709,8 @@ Do not expire the other prefixes: `metadata/orkflows/`, `metadata/namespaces/`,
 definitions and registries; `metadata/commits/` holds the commits a retry
 adopts, `metadata/snapshots/` what live reads need and `metadata/run-context/`
 what a live run's tasks read about it, all three reclaimed by cleanup at
-retention; `metadata/runs/` and `metadata/index/` are the archive.
+retention; `metadata/runs/`, `metadata/run-resumes/` and
+`metadata/index/` are the archive.
 That includes `metadata/snapshots/{ns}/{run}/continuations/`: the event
 segments, switch snapshots and saved state a run that carried on into a fresh
 history wrote (§2, "Runs that span several executions"). A live run reads its
@@ -3731,9 +3745,12 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
     `ork.idempotency.legacy_pending`. All such claims end one
     `engine.idempotency_ttl` after the last engine is upgraded.
   - *The cluster keeps a finished run at least a key's life.* The retention
-    OrkStack sets on the cluster is the larger of the maximum run retention
-    and `engine.idempotency_ttl` plus five minutes, plus the enforcement
-    margin; no namespace's run retention changes, and runs are retired when
+    OrkStack sets on the cluster is the largest of the maximum run retention,
+    `engine.idempotency_ttl` plus five minutes and
+    `engine.concurrency.reset_audit_window` plus five minutes (what a key's
+    closed limit remembers of its resets must stay readable until none of them
+    could act again), plus the enforcement margin; an engine that cannot raise
+    it to that refuses to boot; no namespace's run retention changes, and runs are retired when
     they were. Set `engine.idempotency_ttl` the same on every engine. After
     lowering it, or the maximum run retention, a key claimed before is not
     started again once its claim is older than the retention the cluster
@@ -3880,7 +3897,8 @@ retention TTL, and it decides OrkStack's maximum run retention: an engine
 that may not change it takes the TTL less `engine.cleanup.retention_buffer`
 (24h by default) as the maximum, and refuses to boot when that is not
 longer than an idempotency key's life (`engine.idempotency_ttl`, 24h, plus
-5 minutes). `96h` gives the default 72h maximum. On a self-hosted cluster:
+5 minutes) or a concurrency reset's (`engine.concurrency.reset_audit_window`,
+24h, plus 5 minutes). `96h` gives the default 72h maximum. On a self-hosted cluster:
 
 ```bash
 temporal operator namespace create --namespace ork-main --retention 96h
@@ -7214,6 +7232,7 @@ or queues.
 | `ork.concurrency.queue.depth`, `.queue.oldest_age`, `.queue.oldest_timeout_fraction` | `ork.namespace`, `ork.concurrency.limit`, `ork.concurrency.level` | entries queued, how long the oldest has waited, and that as a share of its bound |
 | `ork.concurrency.stalled_holders`, `.fence_degraded` | `ork.namespace`, `ork.concurrency.limit` | holders whose runs keep failing their workflow tasks, and gates checking new holders because they dropped a live fence |
 | `ork.concurrency.rebuilding` | `ork.namespace`, `ork.concurrency.state` (`running`, `failing`) | gates rebuilding their record |
+| `ork.concurrency.resets_incomplete` | — | resets of a limit that have run longer than `engine.concurrency.reset_incomplete_after` |
 | `ork.concurrency.queued_runs` | `ork.namespace` | runs queued for a slot; absent, not zero, when the pass could not count them |
 | `ork.concurrency.census.partial` | `ork.namespace` | 1 when a gate of the namespace did not answer |
 | `ork.concurrency.census.gates`, `.unanswered`, `.truncated` | — | gates read, gates that did not answer, and 1 when the pass stopped at `census_max_gates` |
@@ -7251,6 +7270,7 @@ it:
 | `ork.concurrency.verify_errors` | `ork.namespace`, `ork.concurrency.limit` | checks of a holding or waiting run that failed or ran out of time; its slot or place is kept |
 | `ork.concurrency.rebuilt` | `ork.namespace`, `ork.concurrency.outcome` | rebuilds of a key's record: `skipped` after a clean end, `ok`, or a `failed_attempt` that is tried again |
 | `ork.concurrency.gates_started` | `ork.namespace` | keys that became active; two requests that find the key inactive at once may both count it, and a `skipped` rebuild with it |
+| `ork.concurrency.resets` | `ork.namespace`, `ork.concurrency.outcome`, `ork.concurrency.forced` | resets of a limit by an operator: `started` by the engine that answered it, then `applied`, and `completed` or `failed`, by the engine that wrote each audit record, each not at all where the answer was not heard; `forced` is one of a limit that did not answer |
 
 A slot or place taken back is counted at the end of the check that took it, or
 before the gate closes or carries its state on; a gate that is canceled, and a

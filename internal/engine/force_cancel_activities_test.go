@@ -776,12 +776,7 @@ func TestForceCancelPublish_AnnouncesTheEndWithEarlierEventsGone(t *testing.T) {
 	ctx := context.Background()
 	keys, d := recordKeys(t), sampleDecision()
 	d.Namespace, d.RunID = chainNamespace, chainRunID
-	msg, err := SignForceCancelDecision(keys, d)
-	must.OK(t, err)
-	details, err := SignForceCancelRecord(keys, d.record("exec-1", false, time.Now().UTC()))
-	must.OK(t, err)
-	end := terminated(t, details)
-	end.EventId, end.EventType, end.EventTime = 9, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED, timestamppb.Now()
+	end := terminatedBy(t, keys, d)
 	build := func(t *testing.T, spec chainSpec) *chainFixture {
 		f := newChain(t, spec)
 		f.client.describes = map[string]*workflowservice.DescribeWorkflowExecutionResponse{d.RunID: {
@@ -791,15 +786,7 @@ func TestForceCancelPublish_AnnouncesTheEndWithEarlierEventsGone(t *testing.T) {
 		return f
 	}
 	publish := func(t *testing.T, f *chainFixture) (FCPublished, *memSnapshotStore, error) {
-		a, _ := fcActivities(t, keys, d)
-		(&fcCluster{runID: d.RunID, status: enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED, events: []*historypb.HistoryEvent{end}}).on(t, a, nil)
-		written := newMemSnapshotStore()
-		a.reader, a.snapshots = f.reader, written
-		a.self = func(context.Context) (forceCancelSelf, error) {
-			return forceCancelSelf{WorkflowID: d.WorkflowID(), Type: ForceCancelWorkflowType, StartedAt: time.Now(), TaskQueue: task.DefaultQueue}, nil
-		}
-		got, err := a.Publish(ctx, FCStep{Input: ForceCancelInput{Decision: msg, ScanEvents: 100, PageSize: 10}, ExecutionRunID: "exec-1"})
-		return got, written, err
+		return publishForceCanceled(t, keys, d, end, f.reader)
 	}
 	two, none := chainSpec{closed: []int{4, 3}, current: 2, closeWith: end}, chainSpec{closed: []int{4}, closeWith: end}
 	segment := func(f *chainFixture) string { return f.segments[0].GetObject().GetUri() }
@@ -874,12 +861,78 @@ func TestForceCancelPublish_AnnouncesTheEndWithEarlierEventsGone(t *testing.T) {
 			t.Errorf("its archive says %v", run)
 		}
 	})
+	for name, lost := range map[string]bool{"the ending its resume set aside": true, "the ending its resume set aside does not answer": false} {
+		t.Run(name, func(t *testing.T) {
+			d := sampleDecision()
+			d.Namespace = "default"
+			end := terminatedBy(t, keys, d)
+			history, snapshots := helloRun(t, d.RunID)
+			reader, fake := readerOver(append(history[:3:3], resetFrom(4, "exec-0", "exec-1", ResumePlanKey{Scope: 9, PlanDigest: strings.Repeat("a", 64)}.String()), end), d.RunID)
+			fake.describes = map[string]*workflowservice.DescribeWorkflowExecutionResponse{d.RunID: {
+				WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{Status: enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+					Execution: &commonpb.WorkflowExecution{WorkflowId: d.RunID, RunId: "exec-1"}}}}
+			endings := &fakeEndings{err: errors.New("store is down")}
+			if lost {
+				endings.err = artifacts.ErrNotFound
+			}
+			reader.WithSnapshotStore(snapshots).WithEndings(endings).WithForceCancelVerifier(keys, func() string { return "enforce" })
+			if _, err := reader.Events(ctx, d.RunID, 0); errors.Is(err, ErrEventSegmentLost) != lost || err == nil {
+				t.Fatalf("its stream = %v; this case proves nothing", err)
+			}
+
+			got, written, err := publishForceCanceled(t, keys, d, end, reader)
+			if !lost {
+				if err == nil || !strings.Contains(err.Error(), "store is down") || len(written.objects) != 0 {
+					t.Fatalf("= %+v, %v, %d written; want an error", got, err, len(written.objects))
+				}
+				return
+			}
+			must.OK(t, err)
+			event, err := got.event()
+			must.OK(t, err)
+			if event.GetSequence() != 9 || event.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED || event.GetRequestId() != d.RequestID {
+				t.Errorf("announced %v; want RUN_CANCELED at 9", event)
+			}
+			var run orkstackv1.Run
+			must.OK(t, proto.Unmarshal(written.objects[got.SnapshotURI], &run))
+			if run.GetError().GetCode() != RunForceCanceledCode || !strings.Contains(run.GetError().GetDetails(), recordSetAsideSentence) {
+				t.Errorf("the ended run written at %q: %v", got.SnapshotURI, &run)
+			}
+		})
+	}
 	t.Run("it was resumed since and goes on", func(t *testing.T) {
 		f := build(t, chainSpec{closed: []int{4}, current: 2})
 		if got, _, err := publish(t, f); err != nil || got.Cause != FCCauseEventSequence || got.Event != nil {
 			t.Errorf("= %+v, %v; want nothing to announce", got, err)
 		}
 	})
+}
+
+// terminatedBy is the close d's force cancel leaves on exec-1.
+func terminatedBy(t *testing.T, keys *identity.Issuer, d ForceCancelDecision) *historypb.HistoryEvent {
+	t.Helper()
+	details, err := SignForceCancelRecord(keys, d.record("exec-1", false, time.Now().UTC()))
+	must.OK(t, err)
+	end := terminated(t, details)
+	end.EventId, end.EventType, end.EventTime = 9, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED, timestamppb.Now()
+	return end
+}
+
+// publishForceCanceled is d's Publish of the run reader reads, which end
+// closed, and what it wrote.
+func publishForceCanceled(t *testing.T, keys *identity.Issuer, d ForceCancelDecision, end *historypb.HistoryEvent, reader *TemporalRunReader) (FCPublished, *memSnapshotStore, error) {
+	t.Helper()
+	msg, err := SignForceCancelDecision(keys, d)
+	must.OK(t, err)
+	a, _ := fcActivities(t, keys, d)
+	(&fcCluster{runID: d.RunID, status: enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED, events: []*historypb.HistoryEvent{end}}).on(t, a, nil)
+	written := newMemSnapshotStore()
+	a.reader, a.snapshots = reader, written
+	a.self = func(context.Context) (forceCancelSelf, error) {
+		return forceCancelSelf{WorkflowID: d.WorkflowID(), Type: ForceCancelWorkflowType, StartedAt: time.Now(), TaskQueue: task.DefaultQueue}, nil
+	}
+	got, err := a.Publish(context.Background(), FCStep{Input: ForceCancelInput{Decision: msg, ScanEvents: 100, PageSize: 10}, ExecutionRunID: "exec-1"})
+	return got, written, err
 }
 
 // TestForceCancelEnding: what there is to announce of a run as its readers

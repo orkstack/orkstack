@@ -599,6 +599,66 @@ Inherited flags:
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
+## `orkctl admin concurrency`
+
+Repair a concurrency limit's own record
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin concurrency reset`
+
+Rebuild a limit's record from the runs that hold or wait for it
+
+Rebuild the limit's record from the runs that hold or wait for it, and wait until
+it is rebuilt. A limit that answers keeps every run that is still running: no run
+is stopped, restarted or moved in line. --dry-run says what a reset would do and
+changes nothing.
+
+A limit that does not answer is reset only with --force-unanswered, which accepts
+that more runs than the limit may hold the key until every run that holds it is
+found.
+
+A reset is named by its request id and the time it was issued, and acts once. To
+ask again about one that timed out, pass the --request-id and --issued-at it
+printed.
+
+Exit status: 0 completed or a dry run, 4 still running at --timeout, 5 refused,
+1 failed, interrupted, never applied, or the command itself failed.
+
+Flags:
+
+- `--dry-run` — say what a reset would do, and change nothing
+- `--expected-epoch INT64` — refuse when the limit was rebuilt since this epoch was read
+- `--force-unanswered` — reset a limit that does not answer
+- `--issued-at STRING` — when that request was issued, as it printed it (RFC 3339)
+- `--request-id STRING` — the request's id, to ask about one already made (with --issued-at)
+- `--timeout DURATION` (default `2m0s`) — how long to wait for the reset to finish
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
 ## `orkctl admin gc`
 
 Inspect artifact reclaim: what the artifact GC deletes
@@ -3868,6 +3928,51 @@ Flags:
 - `-t, --task STRING` — the awaited task to resolve (required)
 - `--values STRING` — the completion's values as one JSON object (default {})
 - `--values-file STRING` — read the completion's values from a file, verbatim (- for stdin)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl run resume`
+
+Resume a failed run from its failed tasks, or retry it from a task
+
+No engine resumes runs yet: it answers "this engine resumes no runs".
+
+Resume a failed run: its failed tasks and everything downstream of them run
+again, and every other task keeps its result. With --from, the chosen task and
+everything downstream of it run again too (retry from here). The run keeps its
+id, and its events continue after RUN_RESUMED.
+
+The command first previews the plan. When work that succeeded before would run
+again, it asks before going on (--yes answers for a script); a plan that
+changed since the preview is never accepted.
+
+Exit codes: 0 resumed (with --wait: succeeded); 1 an error, or a refusal no
+resume can fix; 2/3 with --wait: the run failed / was canceled; 4 the resume
+was sent and its outcome is not known yet; 5 with --wait: the run ended before
+anything ran again; 75 refused for now, try again later; 76 refused, look
+again and decide. See docs/RESUME.md.
+
+Flags:
+
+- `--accept-sequence-gap INT64` — go on above this event, the highest one the refusal named, although some of the run's events were never stored (needs run.resume.accept_gap)
+- `--acknowledge-unknown-attempts` — go on although earlier attempts on Orkers that are gone may still be running (--yes does not imply it)
+- `--dry-run` — show what would run again and what is kept, and change nothing
+- `--from STRING` — retry from this task: it and everything downstream of it run again
+- `--reason STRING` — why the run is resumed, recorded with it (at most 1 KiB)
+- `--wait` — after resuming, watch the run until it ends
+- `--yes` — do not ask for confirmation (required when standard input is not a terminal)
 
 Inherited flags:
 

@@ -8,7 +8,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // A resume's units travel packed (ResumeBlock.units, orkstack.v1.ResumeUnits):
@@ -41,19 +40,26 @@ type ResumeUnitPlan struct {
 	Epoch uint64
 	// EncodedSize is a read-back entry's encoded size.
 	EncodedSize int64
-	// Values is a SETTLE unit's recorded values, when it has any.
-	Values *orkstackv1.ArtifactRef
-	// WakeAt is a SLEEP_UNTIL unit's recorded wake-up.
-	WakeAt *timestamppb.Timestamp
+	// Fresh is set for a cached task's unit that runs again and reads no memo.
+	Fresh bool
+	// Row is a SETTLE or SLEEP_UNTIL unit's row as the base ended, as
+	// cutRecordedRow cuts it.
+	Row *orkstackv1.TaskRun
 }
 
 func (u ResumeUnitPlan) unit() ResumeUnit { return ResumeUnit{Task: u.Task, Item: u.Item} }
 
 // readBackUnit says whether u's result is read back: a kept container's, an
-// item's included. A fan-out's node has no result of its own.
+// item's included, and a settled task's values. A fan-out's node has no result
+// of its own.
 func readBackUnit(t *orkstackv1.Task, u ResumeUnitPlan) bool {
-	return u.Disposition == orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT &&
-		(u.Item >= 0 || t.GetEach() == nil)
+	switch u.Disposition {
+	case orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT:
+		return u.Item >= 0 || t.GetEach() == nil
+	case orkstackv1.ResumeDisposition_RESUME_DISPOSITION_SETTLE:
+		return u.Row.GetValuesRef().GetUri() != ""
+	}
+	return false
 }
 
 // keepsRecord says whether d keeps its unit from a record of its own.
@@ -132,6 +138,9 @@ func packResumeUnits(wf *orkstackv1.Orkflow, units []ResumeUnitPlan) (*orkstackv
 	if at != len(units) {
 		return nil, fmt.Errorf("engine: encode the resume's units: unit %d is %s, which the definition has no place for", at, units[at].unit())
 	}
+	if !slices.Contains(out.RunFresh, true) {
+		out.RunFresh = nil
+	}
 	return out, nil
 }
 
@@ -143,18 +152,19 @@ func addResumeUnit(out *orkstackv1.ResumeUnits, t *orkstackv1.Task, u ResumeUnit
 		at, _ := slices.BinarySearch(out.Epochs, u.Epoch)
 		epoch = int32(at + 1)
 	}
-	if n := len(out.RunLengths); n > 0 && out.RunDispositions[n-1] == u.Disposition && out.RunEpochs[n-1] == epoch {
+	if n := len(out.RunLengths); n > 0 && out.RunDispositions[n-1] == u.Disposition && out.RunEpochs[n-1] == epoch && out.RunFresh[n-1] == u.Fresh {
 		out.RunLengths[n-1]++
 	} else {
 		out.RunLengths = append(out.RunLengths, 1)
 		out.RunDispositions = append(out.RunDispositions, u.Disposition)
 		out.RunEpochs = append(out.RunEpochs, epoch)
+		out.RunFresh = append(out.RunFresh, u.Fresh)
 	}
 	if readBackUnit(t, u) {
 		out.EncodedSizes = append(out.EncodedSizes, u.EncodedSize)
 	}
 	if keepsRecord(u.Disposition) {
-		out.Recorded = append(out.Recorded, &orkstackv1.ResumeRecordedUnit{ValuesRef: u.Values, WakeAt: u.WakeAt})
+		out.Recorded = append(out.Recorded, &orkstackv1.ResumeRecordedUnit{Row: u.Row})
 	}
 }
 
@@ -277,6 +287,9 @@ func (d *resumeUnitsDecoder) runs() error {
 	if len(d.in.GetRunDispositions()) != n || len(d.in.GetRunEpochs()) != n {
 		return errors.New("its block's units are not one run each")
 	}
+	if fresh := d.in.GetRunFresh(); len(fresh) > 0 && (len(fresh) != n || !slices.Contains(fresh, true)) {
+		return errors.New("its block's fresh runs are not its runs, or none is")
+	}
 	for i := range n {
 		epoch := d.in.GetRunEpochs()[i]
 		switch {
@@ -284,11 +297,17 @@ func (d *resumeUnitsDecoder) runs() error {
 			return fmt.Errorf("its block's run %d has no unit", i)
 		case epoch < 0 || int(epoch) > len(d.in.GetEpochs()):
 			return fmt.Errorf("its block's run %d lies under scope %d, which it does not list", i, epoch)
-		case i > 0 && d.in.GetRunDispositions()[i-1] == d.in.GetRunDispositions()[i] && d.in.GetRunEpochs()[i-1] == epoch:
+		case i > 0 && d.in.GetRunDispositions()[i-1] == d.in.GetRunDispositions()[i] && d.in.GetRunEpochs()[i-1] == epoch &&
+			d.fresh(i-1) == d.fresh(i):
 			return fmt.Errorf("its block's runs %d and %d are one", i-1, i)
 		}
 	}
 	return nil
+}
+
+// fresh is run i's.
+func (d *resumeUnitsDecoder) fresh(i int) bool {
+	return i < len(d.in.GetRunFresh()) && d.in.GetRunFresh()[i]
 }
 
 // next reads the next unit, which is item of t.
@@ -307,6 +326,19 @@ func (d *resumeUnitsDecoder) next(t *orkstackv1.Task, item int) (ResumeUnitPlan,
 	if !d.allowed(t, u) {
 		return u, fmt.Errorf("its block gives %s the disposition %v, which it cannot have", u.unit(), u.Disposition)
 	}
+	if u.Fresh = d.fresh(d.run - 1); u.Fresh && (t.GetCache() == nil || u.Disposition != orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN) {
+		return u, fmt.Errorf("its block has %s read no memo, and it is not a cached task's that runs again", u.unit())
+	}
+	if keepsRecord(u.Disposition) {
+		if d.recorded >= len(d.in.GetRecorded()) {
+			return u, fmt.Errorf("its block holds no record of %s", u.unit())
+		}
+		u.Row = d.in.GetRecorded()[d.recorded].GetRow()
+		d.recorded++
+		if why := recordedRowFault((&planTask{def: t}).kind(), u.Row); why != "" {
+			return u, fmt.Errorf("its block's record of %s is not one of its disposition: %s", u.unit(), why)
+		}
+	}
 	reads := readBackUnit(t, u)
 	if u.Epoch > 0 && !reads && u.Disposition != orkstackv1.ResumeDisposition_RESUME_DISPOSITION_SETTLE {
 		return u, fmt.Errorf("its block gives %s a scope, and it keeps no result", u.unit())
@@ -320,19 +352,6 @@ func (d *resumeUnitsDecoder) next(t *orkstackv1.Task, item int) (ResumeUnitPlan,
 		if budget := d.b.GetReadback().GetBudget(); u.EncodedSize < 1 || u.EncodedSize > budget {
 			return u, fmt.Errorf("its block reads %s back in %d bytes, over its call's %d", u.unit(), u.EncodedSize, budget)
 		}
-	}
-	if keepsRecord(u.Disposition) {
-		if d.recorded >= len(d.in.GetRecorded()) {
-			return u, fmt.Errorf("its block holds no record of %s", u.unit())
-		}
-		r := d.in.GetRecorded()[d.recorded]
-		d.recorded++
-		settle := u.Disposition == orkstackv1.ResumeDisposition_RESUME_DISPOSITION_SETTLE
-		if settle && r.GetWakeAt() != nil || !settle && (r.GetWakeAt() == nil || r.GetValuesRef() != nil) ||
-			r.GetWakeAt() != nil && r.GetWakeAt().CheckValid() != nil {
-			return u, fmt.Errorf("its block's record of %s is not one of its disposition", u.unit())
-		}
-		u.Values, u.WakeAt = r.GetValuesRef(), r.GetWakeAt()
 	}
 	return u, nil
 }
@@ -379,9 +398,11 @@ func (d *resumeUnitsDecoder) together(units []ResumeUnitPlan) error {
 			return fmt.Errorf("its block keeps fan-out %q, whose item %d runs again", u.Task, u.Item)
 		}
 		if pin := pins[u.Task]; pin != "" {
-			if again(u) {
+			switch {
+			case again(u):
 				pinAgain[pin] = true
-			} else {
+			case u.Disposition != orkstackv1.ResumeDisposition_RESUME_DISPOSITION_UNSPECIFIED:
+				// One left as it was saved opened nothing (checkRows).
 				pinKept[pin] = u.Task
 			}
 		}

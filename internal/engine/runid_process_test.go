@@ -53,9 +53,6 @@ func TestRunIDHelperProcess(t *testing.T) {
 // process. It re-execs this binary runIDHelperProcesses times, concurrently,
 // and requires every id from every child to be distinct.
 func TestNewRunID_UniqueAcrossSeparateProcesses(t *testing.T) {
-	binary, err := os.Executable()
-	must.OKf(t, err, "locate this test binary")
-
 	perChild := make([][]string, runIDHelperProcesses)
 	failures := make([]error, runIDHelperProcesses)
 	var wg sync.WaitGroup
@@ -63,7 +60,7 @@ func TestNewRunID_UniqueAcrossSeparateProcesses(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ids, err := runRunIDHelper(binary)
+			ids, err := runRunIDHelper()
 			perChild[i], failures[i] = ids, err
 		}(i)
 	}
@@ -98,15 +95,21 @@ func TestNewRunID_UniqueAcrossSeparateProcesses(t *testing.T) {
 	}
 }
 
-// runRunIDHelper re-execs this binary in its child role and returns the ids it
-// printed.
-func runRunIDHelper(binary string) ([]string, error) {
-	cmd := exec.Command(binary, "-test.run=^TestRunIDHelperProcess$")
+// runRunIDHelper re-execs this test binary in its child role and returns the
+// ids it printed. It finds the binary itself, so what it starts is never a
+// program it was handed, which in a package whose tests start the Orker could
+// be the Orker (internal/docscheck's TestDocs_OrkerSpawnsSetAStopGrace).
+func runRunIDHelper() ([]string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate this test binary: %w", err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestRunIDHelperProcess$")
 	cmd.Env = append(os.Environ(), runIDHelperEnv+"=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("re-exec %s: %w: %s", binary, err, stderr.String())
+		return nil, fmt.Errorf("re-exec %s: %w: %s", self, err, stderr.String())
 	}
 
 	var ids []string

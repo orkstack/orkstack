@@ -69,3 +69,28 @@ func TestConcurrencyGauges_CountAPassThatCouldNotRun(t *testing.T) {
 		t.Fatalf("failed passes = %v, want 2", got)
 	}
 }
+
+// TestConcurrencyMetrics_ResetCountsItsOutcomes: each outcome under its
+// namespace and whether it was forced; one outside the closed set is not
+// recorded.
+func TestConcurrencyMetrics_ResetCountsItsOutcomes(t *testing.T) {
+	p, reader := areaProviders(t)
+	m := NewConcurrencyMetrics(p, nil, true, discardLogger())
+	ctx := context.Background()
+	for _, outcome := range append(ConcurrencyResetOutcomes(), "maybe") {
+		m.Reset(ctx, "acme", outcome, false)
+	}
+	m.Reset(ctx, "acme", "started", true)
+	points := collectGC(t, reader)
+	for _, outcome := range ConcurrencyResetOutcomes() {
+		labels := map[string]string{AttrNamespace: "acme", AttrConcurrencyOutcome: outcome, AttrConcurrencyForced: "false"}
+		if got := value(t, points, ConcurrencyResetsMetric, labels); got != 1 {
+			t.Errorf("%v = %v, want 1", labels, got)
+		}
+	}
+	if got := len(points[ConcurrencyResetsMetric]); got != len(ConcurrencyResetOutcomes())+1 {
+		t.Errorf("%d series, want each outcome's and the forced start's", got)
+	}
+	var none *ConcurrencyMetrics
+	none.Reset(ctx, "acme", "started", false)
+}

@@ -823,6 +823,9 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.ConcurrencyServiceListConcurrencyLimitsProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermRunRead)},
 	orkstackv1connect.ConcurrencyServiceGetConcurrencyLimitProcedure:   {res: inNamespace("namespace"), checks: perms(authz.PermRunRead)},
 
+	// ConcurrencyAdminService
+	orkstackv1connect.ConcurrencyAdminServiceResetConcurrencyLimitProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermConcurrencyReset)},
+
 	// StatsService and CacheService
 	orkstackv1connect.StatsServiceGetStatsProcedure:            {res: inNamespace("namespace"), checks: perms(authz.PermStatsRead)},
 	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermStatsRead)},

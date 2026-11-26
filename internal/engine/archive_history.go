@@ -33,6 +33,8 @@ const (
 		"archived, so its tasks are not shown"
 	recordStaleSentence = "the newest record of this run's tasks was lost from object storage before the run " +
 		"was archived, so its tasks are shown as of an earlier event"
+	recordSetAsideSentence = "the record of this run's tasks was lost from object storage with the archive of its " +
+		"earlier ending, so its tasks are not shown"
 	recordNeverSentence = "no record of this run's tasks was ever written to object storage, so its tasks are not shown"
 )
 
@@ -88,7 +90,7 @@ func (r *TemporalRunReader) readForArchive(ctx context.Context, runID string, la
 	if !st.closed {
 		return nil, ArchiveRead{}, fmt.Errorf("engine: archive run %s: %w", runID, errRunNotFinished)
 	}
-	return projection.run, ArchiveRead{Events: projection.events, Gaps: st.gaps, CanceledBy: projection.canceledBy}, nil
+	return projection.run, ArchiveRead{Events: projection.events, Gaps: st.gaps, CanceledBy: projection.canceledBy, Scope: st.scope, AsBase: st.readAsBase}, nil
 }
 
 // loadRecordForArchive loads the newest record of the run's tasks it can read,
@@ -220,7 +222,13 @@ func (h *HistoryArchiver) archiveFromHistory(ctx context.Context, runID string, 
 	if err := h.backfilled(ctx, run, lastResort); err != nil {
 		return false, err
 	}
-	return unverified, h.archive.Archive(ctx, run, read.Events, read.Gaps...)
+	if read.AsBase {
+		// No scope is known for an ending of its own: its base's body, which
+		// the archive holds, stays, and says how the base ended (FR-1).
+		slog.ErrorContext(ctx, "archive: a run reset under a plan key the engine cannot read is archived as its base ended; its own ending is in its history alone",
+			"run_id", runID, "scope", read.Scope, "code", run.GetError().GetCode())
+	}
+	return unverified, h.archive.ArchiveEnding(ctx, run, read.Scope, read.Events, read.Gaps...)
 }
 
 // backfilled writes the audit records a force-canceled run lacks.

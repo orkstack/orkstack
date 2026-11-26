@@ -135,6 +135,15 @@ const GateNotAnswering = "the limit did not answer in time"
 
 // Gate queries one gate's state.
 func (r *TemporalConcurrencyReader) Gate(ctx context.Context, gateID string) (GateView, bool, error) {
+	view, present, err := r.gateState(ctx, gateID)
+	if err != nil || !present {
+		return GateView{}, false, err
+	}
+	return gateViewOf(gateID, view), true, nil
+}
+
+// gateState queries one gate's whole state; a closed or absent gate has none.
+func (r *TemporalConcurrencyReader) gateState(ctx context.Context, gateID string) (GateStateView, bool, error) {
 	qctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	// A closed gate is no limit: it is not replayed for an empty answer.
@@ -143,15 +152,15 @@ func (r *TemporalConcurrencyReader) Gate(ctx context.Context, gateID string) (Ga
 	var missing *serviceerror.NotFound
 	switch {
 	case errors.As(err, &missing), err == nil && resp.QueryRejected != nil:
-		return GateView{}, false, nil
+		return GateStateView{}, false, nil
 	case err != nil:
-		return GateView{}, false, fmt.Errorf("engine: ask the concurrency limit %s for its state: %w", gateID, err)
+		return GateStateView{}, false, fmt.Errorf("engine: ask the concurrency limit %s for its state: %w", gateID, err)
 	case resp.QueryResult == nil:
-		return GateView{}, false, fmt.Errorf("engine: the concurrency limit %s answered nothing", gateID)
+		return GateStateView{}, false, fmt.Errorf("engine: the concurrency limit %s answered nothing", gateID)
 	}
 	var view GateStateView
 	if err := resp.QueryResult.Get(&view); err != nil {
-		return GateView{}, false, fmt.Errorf("engine: read the concurrency limit %s's state: %w", gateID, err)
+		return GateStateView{}, false, fmt.Errorf("engine: read the concurrency limit %s's state: %w", gateID, err)
 	}
-	return gateViewOf(gateID, view), true, nil
+	return view, true, nil
 }

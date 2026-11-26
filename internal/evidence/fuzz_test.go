@@ -214,8 +214,9 @@ func unsafeName(name string) bool {
 func FuzzParseManifest(f *testing.F) {
 	golden, _ := (&Manifest{SchemaVersion: SchemaVersion, RunID: "ork-1"}).MarshalJSON()
 	gapped, _ := (&Manifest{SchemaVersion: SchemaVersion, RunID: "ork-1", EventGaps: []EventGap{{First: 2, Last: 5, Reason: "lost"}}}).MarshalJSON()
+	resumed, _ := resumedFixture(resumedStream).manifest.MarshalJSON()
 	for _, seed := range [][]byte{
-		golden, gapped, []byte(`{}`), []byte(`{"schema_version":3}`), []byte(`{"schema_version":4}`), []byte(`{"schema_version":3,"event_gaps":[{"first":1,"last":2}]}`), []byte(`{"schema_version":2}`), []byte(`{"schema_version":1}`),
+		golden, gapped, resumed, []byte(`{}`), []byte(`{"schema_version":3}`), []byte(`{"schema_version":4}`), []byte(`{"schema_version":3,"event_gaps":[{"first":1,"last":2}]}`), []byte(`{"schema_version":2}`), []byte(`{"schema_version":1}`),
 		[]byte(`{"schema_version":3,"event_gaps":[{"first":0,"last":2}]}`), []byte(`{"schema_version":3,"event_gaps":[{"first":3,"last":2}]}`),
 		[]byte(`null`), []byte(``), []byte(`[]`), []byte(`{"schema_version":3,"members":[{"path":"a","state":"present","size_bytes":-1}]}`),
 	} {
@@ -235,6 +236,12 @@ func FuzzParseManifest(f *testing.F) {
 		for _, gap := range manifest.EventGaps {
 			if gap.First < 1 || gap.Last < gap.First {
 				t.Fatalf("ParseManifest(%q) accepted the gap %d-%d", document, gap.First, gap.Last)
+			}
+		}
+		for i, ending := range manifest.Endings {
+			if len(manifest.Endings) < 2 || (i == 0) != (ending.Scope == 0) || (i > 0 && ending.Scope <= manifest.Endings[i-1].Scope) ||
+				(i == len(manifest.Endings)-1) != (ending.Path == runPath) {
+				t.Fatalf("ParseManifest(%q) accepted the endings %+v", document, manifest.Endings)
 			}
 		}
 		written, err := manifest.MarshalJSON()

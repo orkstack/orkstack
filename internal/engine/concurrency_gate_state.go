@@ -115,6 +115,8 @@ type GateTunables struct {
 	RebuildBackoffMax   time.Duration `json:"rebuild_backoff_max"`
 	RebuildTimeout      time.Duration `json:"rebuild_timeout"`
 	FreezeTimeout       time.Duration `json:"freeze_timeout"`
+	ResetWindow         time.Duration `json:"reset_window"`
+	RecordTimeout       time.Duration `json:"record_timeout"`
 	DrainMargin         time.Duration `json:"drain_margin"`
 	ContinueEvents      int           `json:"gate_continue_events"`
 	ContinueUpdates     int           `json:"gate_continue_updates"`
@@ -176,6 +178,8 @@ func DefaultGateTunables() GateTunables {
 		RebuildBackoffMax:   5 * time.Minute,
 		RebuildTimeout:      10 * time.Minute,
 		FreezeTimeout:       time.Minute,
+		ResetWindow:         24 * time.Hour,
+		RecordTimeout:       10 * time.Second,
 		DrainMargin:         5 * time.Second,
 		ContinueEvents:      2000,
 		ContinueUpdates:     500,
@@ -285,20 +289,33 @@ type gateRebuild struct {
 
 // gateState is everything a gate carries across continue-as-new (§5.1.2).
 type gateState struct {
-	Labels             []string     `json:"labels,omitempty"`
-	Holders            []gateEntry  `json:"holders,omitempty"`
-	Queue              []gateEntry  `json:"queue,omitempty"`
-	Tombstones         []gateTomb   `json:"tombstones,omitempty"`
-	Seq                int64        `json:"seq"`
-	Epoch              int64        `json:"epoch"`
-	Phase              string       `json:"phase,omitempty"`
-	Draining           bool         `json:"draining,omitempty"`
-	FrozenUntil        time.Time    `json:"frozen_until,omitzero"`
-	Rebuild            gateRebuild  `json:"rebuild,omitzero"`
-	FenceDegradedUntil time.Time    `json:"fence_degraded_until,omitzero"`
-	ResetRequestID     string       `json:"reset_request_id,omitempty"`
-	LastPassAt         time.Time    `json:"last_pass_at,omitzero"`
-	Tunables           GateTunables `json:"tunables"`
+	Labels             []string    `json:"labels,omitempty"`
+	Holders            []gateEntry `json:"holders,omitempty"`
+	Queue              []gateEntry `json:"queue,omitempty"`
+	Tombstones         []gateTomb  `json:"tombstones,omitempty"`
+	Seq                int64       `json:"seq"`
+	Epoch              int64       `json:"epoch"`
+	Phase              string      `json:"phase,omitempty"`
+	Draining           bool        `json:"draining,omitempty"`
+	FrozenUntil        time.Time   `json:"frozen_until,omitzero"`
+	Rebuild            gateRebuild `json:"rebuild,omitzero"`
+	FenceDegradedUntil time.Time   `json:"fence_degraded_until,omitzero"`
+	// Frozen is the reset the gate is frozen for, while FrozenUntil holds.
+	Frozen gateReset `json:"frozen,omitzero"`
+	// Resets are the applied reset requests the gate still remembers, each
+	// until its window has passed (gateResetMemory).
+	Resets []gateReset `json:"resets,omitempty"`
+	// ResetsUnknownUntil: until then this gate cannot know which resets an
+	// earlier record applied, so it takes none. Acquires are unaffected.
+	ResetsUnknownUntil time.Time `json:"resets_unknown_until,omitzero"`
+	// ResetID is the reset this record began with, "" for none, and ResetAt
+	// when the cluster started the gate it began.
+	ResetID string `json:"reset_id,omitempty"`
+	// ResetHeldUntil is until when the start that began it may be repeated.
+	ResetHeldUntil time.Time    `json:"reset_held_until,omitzero"`
+	ResetAt        time.Time    `json:"reset_at,omitzero"`
+	LastPassAt     time.Time    `json:"last_pass_at,omitzero"`
+	Tunables       GateTunables `json:"tunables"`
 }
 
 // gateAcquire is an acquire's payload (§5.1.4). ArrivedAt and Seq are set
@@ -818,7 +835,7 @@ func (t GateTunables) Check() error {
 		"grant_backoff_max": t.GrantBackoffMax, "rebuild_page_timeout": t.RebuildPageTimeout,
 		"rebuild_settle": t.RebuildSettle, "rebuild_backoff_min": t.RebuildBackoffMin,
 		"rebuild_backoff_max": t.RebuildBackoffMax, "rebuild_timeout": t.RebuildTimeout,
-		"freeze_timeout": t.FreezeTimeout, "drain_margin": t.DrainMargin, "gate_linger": t.Linger,
+		"freeze_timeout": t.FreezeTimeout, "reset_audit_window": t.ResetWindow, "record_timeout": t.RecordTimeout, "drain_margin": t.DrainMargin, "gate_linger": t.Linger,
 	}
 	for _, name := range slices.Sorted(maps.Keys(durations)) {
 		if v := durations[name]; v <= 0 {
@@ -836,6 +853,9 @@ func (t GateTunables) Check() error {
 		return fmt.Errorf("engine.concurrency.gate_continue_updates is %d; it must be at least 4", t.ContinueUpdates)
 	case t.OrdinalModulus < 2 || t.OrdinalModulus > gateOrdinalWire || t.OrdinalModulus%2 != 0:
 		return fmt.Errorf("the gate's ordinal modulus is %d; it must be even, from 2 to %d", t.OrdinalModulus, gateOrdinalWire)
+	case t.ResetWindow <= t.FreezeTimeout+2*resetClockAhead:
+		return fmt.Errorf("engine.concurrency.reset_audit_window (%s) must be above freeze_timeout and ten minutes (%s): "+
+			"a reset could otherwise be too old before it was made", t.ResetWindow, t.FreezeTimeout+2*resetClockAhead)
 	case t.Linger <= t.tombstoneLife():
 		return fmt.Errorf("engine.concurrency.gate_linger (%s) must be above acquire_timeout + clock_grace + tombstone_margin (%s): "+
 			"a gate closed sooner could reopen clean while a release's fence still stands", t.Linger, t.tombstoneLife())
@@ -893,8 +913,10 @@ func worstCaseGateState(t GateTunables) gateState {
 	runID := strings.Repeat("r", gateWorstRunIDBytes)
 	// The label is sized by its encoding, so it is measured with characters
 	// JSON escapes: the validator holds a template's encoding to this bound.
+	reset := gateReset{ID: strings.Repeat("x", ResetRequestIDMax), IssuedAt: at, Body: strings.Repeat("x", resetBodyMax), Done: true}
 	g := gateState{Tunables: t, Seq: 1 << 62, Epoch: 1 << 62, Phase: gatePhaseActive,
-		FenceDegradedUntil: at, LastPassAt: at, FrozenUntil: at, ResetRequestID: strings.Repeat("x", 64),
+		FenceDegradedUntil: at, LastPassAt: at, FrozenUntil: at, Frozen: reset, Resets: slices.Repeat([]gateReset{reset}, gateResetMemory), ResetsUnknownUntil: at,
+		ResetID: reset.ID, ResetAt: at, ResetHeldUntil: at,
 		Rebuild: gateRebuild{State: gateRebuildSettling, Since: at, Attempts: 1 << 30}}
 	for range t.MaxLabels {
 		g.Labels = append(g.Labels, strings.Repeat("<", gateWorstLabelBytes/len(`\u003c`)))

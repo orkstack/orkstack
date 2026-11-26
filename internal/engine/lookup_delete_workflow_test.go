@@ -98,6 +98,7 @@ func deletionReader(t *testing.T, fake *fakeWorkflowServiceAdmin) *TemporalRunRe
 	t.Helper()
 	fake.describeExecutionFound = true
 	fake.describeExecutionRunID = "exec-0"
+	fake.describeExecutionClose = readerEpoch
 	reader := readerWithRetention(fake)
 	reader.client = &fakeReadClient{history: map[string]*fakeHistory{
 		"run-1": {events: []*historypb.HistoryEvent{startedEvent(t, "run-1", &orkstackv1.Orkflow{Name: "x"})}},
@@ -155,6 +156,7 @@ func chainDeletion(t *testing.T, fake *fakeWorkflowServiceAdmin) (*TemporalRunRe
 	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 2, finish: true})
 	fake.describeExecutionFound = true
 	fake.describeExecutionRunID = f.current
+	fake.describeExecutionClose = readerEpoch
 	reader := readerWithRetention(fake)
 	reader.client = f.client
 	reader.converter = converter.GetDefaultDataConverter()

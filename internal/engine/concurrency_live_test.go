@@ -127,7 +127,7 @@ func TestGateLineOf_OrdersTheLineAndTheHolders(t *testing.T) {
 	if !line.Rebuilding || !line.RebuildFailingSince.Equal(t0) || line.Holders != 3 || line.Queued != 3 {
 		t.Errorf("got %+v", line)
 	}
-	for state, rebuilding := range map[string]bool{gateRebuildNone: false, gateRebuildListing: true, gateRebuildSettling: true} {
+	for state, rebuilding := range map[string]bool{gateRebuildNone: false, gateRebuildListing: true, gateRebuildSettling: true, "a later release's": true} {
 		got := gateLineOf(gateState{Rebuild: gateRebuild{State: state, Since: t0}})
 		if got.Rebuilding != rebuilding || !got.RebuildFailingSince.IsZero() {
 			t.Errorf("rebuild %q: rebuilding %v, failing since %v", state, got.Rebuilding, got.RebuildFailingSince)

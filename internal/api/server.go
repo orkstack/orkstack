@@ -205,6 +205,10 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 	concurrencyPath, concurrencyHandler := orkstackv1connect.NewConcurrencyServiceHandler(svc, handlerOptions...)
 	mux.Handle(concurrencyPath, concurrencyHandler)
 
+	// ConcurrencyAdminService resets a limit's own record.
+	concurrencyAdminPath, concurrencyAdminHandler := orkstackv1connect.NewConcurrencyAdminServiceHandler(svc, handlerOptions...)
+	mux.Handle(concurrencyAdminPath, concurrencyAdminHandler)
+
 	webhookPath, webhookHandler := orkstackv1connect.NewWebhookServiceHandler(svc, handlerOptions...)
 	mux.Handle(webhookPath, webhookHandler)
 
