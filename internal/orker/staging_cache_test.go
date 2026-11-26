@@ -267,7 +267,7 @@ func TestStageInputs_IsBoundedParallel(t *testing.T) {
 	gated.delay = func(string) time.Duration { return 20 * time.Millisecond }
 	ws, err := NewWorkspace(t.TempDir())
 	must.OK(t, err)
-	staged, failure := d.stageInputs(context.Background(), in, ws, false, nil)
+	staged, failure := d.stageInputs(context.Background(), in, ws, false, nil, nil)
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -291,7 +291,7 @@ func TestStageInputs_ParallelIsByteIdenticalToSerial(t *testing.T) {
 		gated.delay = delay
 		ws, err := NewWorkspace(t.TempDir())
 		must.OK(t, err)
-		staged, failure := d.stageInputs(context.Background(), in, ws, false, nil)
+		staged, failure := d.stageInputs(context.Background(), in, ws, false, nil, nil)
 		if failure != nil {
 			t.Fatal(failure)
 		}
@@ -335,7 +335,7 @@ func TestStageInputs_ReportsTheLowestFailingIndex(t *testing.T) {
 	}
 	ws, err := NewWorkspace(t.TempDir())
 	must.OK(t, err)
-	_, failure := d.stageInputs(context.Background(), in, ws, false, nil)
+	_, failure := d.stageInputs(context.Background(), in, ws, false, nil, nil)
 	if failure == nil || failure.Reason != ReasonInputUnavailable || !strings.Contains(failure.Message, "part-03.txt") {
 		t.Fatalf("failure = %v; want INPUT_ARTIFACT_UNAVAILABLE naming part-03.txt", failure)
 	}

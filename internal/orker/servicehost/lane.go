@@ -64,6 +64,17 @@ func (l *Lane) wedgedFor() (bool, time.Time, time.Duration) {
 	return !l.wedgedSince.IsZero(), l.wedgedSince, l.lastDeadline
 }
 
+// Open reports that an exchange is open, and how long the container has owed
+// its next step; none when it owes none.
+func (l *Lane) Open(now time.Time) (open bool, owed time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.awaiting {
+		owed = max(now.Sub(l.deadline.Add(-l.allowed)), 0)
+	}
+	return l.open, owed
+}
+
 // LateInARow is how many exchanges in a row had a late step.
 func (l *Lane) LateInARow() int {
 	l.mu.Lock()

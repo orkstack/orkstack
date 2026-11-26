@@ -261,6 +261,48 @@ func TestMint_Refuses(t *testing.T) {
 	}
 }
 
+// TestMint_AheadOfWhatItsTaskFollows: whatever asks, the mint refuses an
+// attempt of a task whose approval has no record, naming the approval: it signs
+// nothing, records nothing issued and spends none of the attempts that may hold
+// the identity. The attempt that follows the record is issued its token.
+func TestMint_AheadOfWhatItsTaskFollows(t *testing.T) {
+	w := newMintWorld(t)
+	w.adm.Follows = map[string][]artifacts.FollowRef{"build": {{TaskID: "approve", Kind: artifacts.FollowAwaited}}}
+	task := w.adm.Tasks["build"]
+	task.IdentitySlots = 1
+	w.adm.Tasks["build"] = task
+	w.sha = w.write(w.adm)
+	w.starts.chains["ork-1"] = found(artifacts.Chain{FirstExecutionID: "e1", AdmissionSHA256: w.sha})
+	f := &followsWorld{t: t, dir: w.dir, store: w.store, check: &FollowsCheck{Store: w.store, Spacing: fastSpacings}, adm: w.adm, sha: w.sha}
+	w.minter.Follows = f.check
+	issued := func() int {
+		t.Helper()
+		recs, _, err := w.store.ListIssued(context.Background(), artifacts.IssuedQuery{Namespace: "ns", RunID: "ork-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(recs)
+	}
+	refused := func(what string) {
+		t.Helper()
+		tokens, err := w.mint(w.request())
+		var m *MintError
+		if len(tokens) != 0 || !errors.As(err, &m) || m.Reason != ReasonRequiredResultNotRecorded || m.Task != "approve" || m.Unavailable || issued() != 0 {
+			t.Fatalf("%s: %d tokens, %v, %d records of issue; want %s naming approve", what, len(tokens), err, issued(), ReasonRequiredResultNotRecorded)
+		}
+	}
+	refused("with no record")
+	f.resolve("approve", 0, true, nil)
+	refused("with a rejection on record")
+	f.resolve("approve", 0, false, nil)
+	w.facts.Pending[0].Attempt, w.facts.Pending[0].StartedAt = 2, started.Add(30*time.Second)
+	req := w.request()
+	req.Attempt = 2
+	if tokens, err := w.mint(req); err != nil || len(tokens) != 1 || issued() != 1 {
+		t.Fatalf("after the record: %d tokens, %v, %d records of issue", len(tokens), err, issued())
+	}
+}
+
 // grantWorld is a mint of a run admitted with grant deployer, which its task
 // uses, and with grant other, which it does not.
 func grantWorld(t *testing.T, edit func(*artifacts.Admission)) (*mintWorld, MintRequest) {
@@ -483,7 +525,8 @@ func TestMint_APolicyOutageSpendsNoSlot(t *testing.T) {
 
 // TestMintError_Public: what a caller is told is the reason and a fixed
 // sentence, never a store's key, a cluster's error or the run's shape;
-// TASK_NOT_AS_ADMITTED alone keeps its detail of members and builds.
+// TASK_NOT_AS_ADMITTED keeps its detail of members and builds, and
+// REQUIRED_RESULT_NOT_RECORDED the id of the task that has none.
 func TestMintError_Public(t *testing.T) {
 	secret := "s3://bucket/metadata/snapshots/ns/ork-1/identity/admission-x.json"
 	for _, reason := range []string{ReasonUnavailable, ReasonEngineRefused, ReasonNotAdmitted, ReasonAttemptNotHeld,
@@ -492,6 +535,11 @@ func TestMintError_Public(t *testing.T) {
 		if !strings.HasPrefix(got, reason+": ") || strings.Contains(got, secret) {
 			t.Errorf("%s: Public() = %q", reason, got)
 		}
+	}
+	// The one task an attempt is told of: an id the run was admitted with.
+	if got := (&MintError{Reason: ReasonRequiredResultNotRecorded, Task: "gate", Message: secret}).Public(); got !=
+		`REQUIRED_RESULT_NOT_RECORDED: task "gate", which this one follows, has no result on record` {
+		t.Errorf("Public() = %q", got)
 	}
 	if got := (&MintError{Reason: ReasonTaskNotAsAdmitted, Message: "differs in: env"}).Public(); !strings.Contains(got, "differs in: env") {
 		t.Errorf("TASK_NOT_AS_ADMITTED lost its detail: %q", got)

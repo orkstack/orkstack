@@ -6,6 +6,10 @@ import (
 	"regexp"
 )
 
+// FileValues are the values a credential's file holds, for a masker that is
+// given the file and no bundle that names its secrets (fileValues).
+func FileValues(content []byte) (values [][]byte, whole bool) { return fileValues(content) }
+
 // maxFileValues is the most values of one file masked by themselves: a file
 // of thousands of strings must not spend the masker's bound.
 const maxFileValues = 32

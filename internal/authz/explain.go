@@ -14,6 +14,7 @@ const (
 	MatchScopeDiffers
 	MatchRoleLacksPermission
 	MatchPinnedElsewhere
+	MatchSharedOrkerCredential
 )
 
 // Explained is one binding's part in a decision.
@@ -57,7 +58,6 @@ func Explain(p *Policy, sub *Subject, perm Permission, r Resource) Explanation {
 			continue
 		}
 		e := Explained{Binding: b.Name, Role: b.Role, Scope: b.Scope.String()}
-		perms, _ := p.RolePermissions(b.Role)
 		switch {
 		case matched == nil:
 			e.Match = MatchSubjectDiffers
@@ -65,7 +65,9 @@ func Explain(p *Policy, sub *Subject, perm Permission, r Resource) Explanation {
 			e.Match = MatchScopeDiffers
 		case pinnedElsewhere(b, r):
 			e.Match = MatchPinnedElsewhere
-		case !perms[perm] || !grantableAt(perm, b.Scope.Kind):
+		case sharedCredentialLacks(b, perm) && p.roleGrants(b, perm):
+			e.Match = MatchSharedOrkerCredential
+		case !p.bindingGrants(b, perm):
 			e.Match = MatchRoleLacksPermission
 		default:
 			e.Match = MatchGranted
@@ -135,11 +137,10 @@ func (p *Policy) Holdings(sub *Subject) []Holding {
 		if matched == nil {
 			continue
 		}
-		perms, _ := p.RolePermissions(b.Role)
 		h := Holding{Binding: Explained{Binding: b.Name, Match: MatchGranted, Subject: matched.String(), Role: b.Role,
 			Scope: b.Scope.String(), ClaimsReliedOn: matched.ClaimsReliedOn()}}
 		for _, perm := range Permissions() {
-			if perms[perm] && grantableAt(perm, b.Scope.Kind) {
+			if p.bindingGrants(b, perm) {
 				h.Permissions = append(h.Permissions, perm)
 			}
 		}

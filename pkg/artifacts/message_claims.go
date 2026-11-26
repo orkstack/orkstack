@@ -9,7 +9,10 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/stablejson"
@@ -31,6 +34,9 @@ const (
 	// MessageClaimPrefix holds claims and their markers, expired together by
 	// a bucket lifecycle rule and by nothing else.
 	MessageClaimPrefix = "metadata/message-claims"
+	// MessageClaimProbePrefix holds the object a probe of the claims writes
+	// and removes.
+	MessageClaimProbePrefix = "metadata/probes/event-sources"
 	// claimSchema is the one version of a claim and a marker this build
 	// writes and reads.
 	claimSchema = 1
@@ -113,7 +119,7 @@ type MessageClaimStore struct {
 
 // NewMessageClaimStore opens the claims on the deployment's artifact backend.
 func NewMessageClaimStore(ctx context.Context, cfg Config) (*MessageClaimStore, error) {
-	b, err := openBlobs(ctx, cfg, "message claim store", MessageClaimPrefix)
+	b, err := openBlobs(ctx, cfg, "message claim store", MessageClaimPrefix, MessageClaimProbePrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +128,7 @@ func NewMessageClaimStore(ctx context.Context, cfg Config) (*MessageClaimStore, 
 
 // NewLocalMessageClaimStore opens (creating if needed) the claims under dir.
 func NewLocalMessageClaimStore(dir string) (*MessageClaimStore, error) {
-	b, err := openLocalBlobs("message claim store", dir, MessageClaimPrefix)
+	b, err := openLocalBlobs("message claim store", dir, MessageClaimPrefix, MessageClaimProbePrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +246,24 @@ func (s *MessageClaimStore) MarkStarted(ctx context.Context, scope ClaimScope, i
 	}
 	if err := s.b.create(ctx, key, "application/json", body); err != nil && !errors.Is(err, errBlobExists) {
 		return fmt.Errorf("artifacts: write started marker %s: %w", s.b.uri(key), err)
+	}
+	return nil
+}
+
+// ProbeWrite writes a few bytes the way Create writes a claim, at a key of its
+// own outside the claims, and removes them: whether a claim could be written
+// now. A process killed between the two leaves them.
+func (s *MessageClaimStore) ProbeWrite(ctx context.Context) error {
+	key := MessageClaimProbePrefix + "/" + strings.ToLower(rand.Text())
+	if err := s.b.create(ctx, key, "text/plain; charset=utf-8", []byte("message claim probe\n")); err != nil && !errors.Is(err, errBlobExists) {
+		return fmt.Errorf("artifacts: probe message claims at %s: %w", s.b.uri(key), err)
+	}
+	refused, err := s.b.removeKeys(ctx, []string{key})
+	if err == nil {
+		err = errors.Join(slices.Collect(maps.Values(refused))...)
+	}
+	if err != nil {
+		return fmt.Errorf("artifacts: remove the message claims' probe %s: %w", s.b.uri(key), err)
 	}
 	return nil
 }

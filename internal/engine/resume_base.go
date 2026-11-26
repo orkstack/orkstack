@@ -23,8 +23,9 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// runStartedSequence is RUN_STARTED's sequence in generation 0: event 1 is
-// RUN_CREATED (workflow.go).
+// runStartedSequence is RUN_STARTED's sequence in generation 0 of a run that
+// started at once: event 1 is RUN_CREATED (workflow.go), and a run that waited
+// in line first published RUN_QUEUED between them.
 const runStartedSequence = 2
 
 // ResumeDispatch is one element of D: a task attempt the base scheduled.
@@ -111,6 +112,7 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 	// Generation 0 waits for its RUN_STARTED publish: the activity whose
 	// input is that event, then its completion.
 	var runStartedScheduled int64
+	startedAt := int64(runStartedSequence)
 	runStartedDone := h.Continued
 	open := map[int64]int{}     // scheduled event id -> index in Dispatches
 	children := map[int64]int{} // initiated event id -> index in Children
@@ -143,9 +145,12 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 				if event.GetTaskId() != "" {
 					h.Published[event.GetTaskId()] = true
 				}
-				if !h.Continued && runStartedScheduled == 0 &&
-					event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_STARTED &&
-					event.GetSequence() == runStartedSequence {
+				switch {
+				case h.Continued || runStartedScheduled != 0:
+				case event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED && event.GetSequence() == startedAt:
+					// It waited in line for its concurrency slot first.
+					startedAt++
+				case event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_STARTED && event.GetSequence() == startedAt:
 					runStartedScheduled = ev.GetEventId()
 				}
 			case name == task.ActivityExecuteTask:

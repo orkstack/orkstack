@@ -70,6 +70,14 @@ func NewResolveLimits(now func() time.Time) *MintLimits {
 	return l
 }
 
+// NewReadLimits builds the buckets of those who list recorded results on clock
+// now (nil is time.Now): a caller's calls, one a second.
+func NewReadLimits(now func() time.Time) *MintLimits {
+	l := NewMintLimits(now)
+	l.principalRate, l.principalBurst = 1, 4
+	return l
+}
+
 // Spend is a reservation of a mint's tokens: Refund it when the mint is
 // refused or unavailable, so only a granted mint spends.
 type Spend struct {

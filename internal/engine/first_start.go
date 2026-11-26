@@ -104,13 +104,17 @@ func (r *TemporalRunReader) startPlan(ctx context.Context, runID, execution stri
 			runID, event.GetEventType())
 	}
 	payloads := attrs.GetInput().GetPayloads()
+	dc := r.runConverter(ctx, runID)
+	if err := holdOrKeyless(dc, attrs); err != nil {
+		return RunPlan{}, false, fmt.Errorf("read the first start of run %s: %w", runID, err)
+	}
 	if len(payloads) < 4 {
 		// A run's start always carries (run id, orkflow, input, plan); one
 		// that does not was not started by an engine.
 		return RunPlan{}, false, nil
 	}
 	var plan RunPlan
-	if err := r.converter.FromPayload(payloads[3], &plan); err != nil {
+	if err := dc.FromPayload(payloads[3], &plan); err != nil {
 		return RunPlan{}, false, fmt.Errorf("decode the first start's plan of run %s: %w", runID, err)
 	}
 	return plan, true, nil

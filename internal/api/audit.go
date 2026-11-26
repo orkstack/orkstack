@@ -850,6 +850,13 @@ var unauditedWrites = map[string]string{
 	// (identity.token.refused): one a token, never one a refresh's call.
 	orkstackv1connect.IdentityServiceMintAttemptTokensProcedure: "a mint records what it issued, and audits a refusal itself",
 	orkstackv1connect.AttemptServiceCommitResultProcedure:       "a commit is itself a record, and audits a refusal itself",
+
+	orkstackv1connect.EventSourceHostServiceConfirmInstanceProcedure:         "an attempt's confirm record is its own",
+	orkstackv1connect.EventSourceHostServiceReportInstanceProcedure:          "an instance's state, not an action of anyone's",
+	orkstackv1connect.EventSourceHostServiceOfferMessageProcedure:            "it starts nothing; the Orker's receipt records what was decided",
+	orkstackv1connect.EventSourceHostServiceStartMessageRunProcedure:         "a run's own record is the durable fact, and the Orker's receipt the message's",
+	orkstackv1connect.EventSourceHostServiceProbeEventSourceProcedure:        "it changes nothing",
+	orkstackv1connect.EventSourceHostServiceRequestEventSourcePauseProcedure: "the pause is recorded on the source, with the Orker that asked for it",
 }
 
 // signinRecorded is why a sign-in's own calls are not recorded by the

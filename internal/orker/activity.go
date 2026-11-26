@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/orker/servicehost"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -63,6 +64,9 @@ type Options struct {
 	// retry history: like Logs, it is observability, and losing it must never
 	// lose the work.
 	Attempts artifacts.AttemptStore
+	// Records is what an awaited or a composed upstream of a run whose results
+	// the engine records is staged from. Nil stages none.
+	Records RecordReader
 	// Commits is the durable completion store. Nil disables the commit
 	// protocol, which is a TEST-ONLY configuration: a deployment without it
 	// cannot honor "a durably committed activity result cannot become pending
@@ -147,6 +151,9 @@ type Options struct {
 	// capacity needs it to tell a task polled there, which holds a permit's
 	// reservation, from a pinned member, which does not.
 	TaskQueue string
+	// SourceQueue is the source channel, where this Orker hosts event sources
+	// (SourceHost).
+	SourceQueue string
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
 	// Signatures verifies a task's cosign signature when its image policy
@@ -216,6 +223,12 @@ type Activities struct {
 	reachImage *probeImageSource
 	build      string
 	services   serviceHostState
+	// hosting is what this Orker hosts event sources with, and answers opens a
+	// started container's answer filesystem where a test does it otherwise.
+	hosting *SourceHosting
+	answers func(pid int, path string) (*servicehost.AnswerDir, error)
+	// engine answers who this Orker's credential is; nil where it hosts no source.
+	engine Whoamier
 	// metadataProbe is orker.metadata_probe; metadata is what Boot's probe
 	// found, nil until it ran, which DescribeOrker reports.
 	metadataProbe MetadataProbeMode
@@ -232,6 +245,9 @@ type Activities struct {
 	// cordon interceptor at the SDK seam (running_tasks), and is what a
 	// stopping Orker waits on (WaitForTasks).
 	running taskCount
+	// instances is the instances of event sources in flight, counted as running
+	// is.
+	instances taskCount
 	// reports is every ExecuteTask result the SDK still owes the cluster:
 	// owed when the attempt returns, settled when the cluster answers its
 	// report (owed_reports.go). A stopping Orker waits on it before it exits.
@@ -248,6 +264,7 @@ type Activities struct {
 	capacity    *Capacity
 	capacityErr error
 	taskQueue   string
+	sourceQueue string
 	// stopReap ends the periodic retry of containers it could not
 	// remove; nil until Boot starts one.
 	stopReap context.CancelFunc
@@ -335,6 +352,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			identityConfig:      opts.Identity,
 			Runtime:             runtime,
 			Store:               store,
+			Records:             opts.Records,
 			Commits:             scopeCommits(opts.Commits, opts.CommitRoot, opts.Namespaces),
 			Refs:                opts.Refs,
 			Logs:                opts.Logs,
@@ -379,6 +397,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		capacity:       capacity,
 		capacityErr:    capacityErr,
 		taskQueue:      opts.TaskQueue,
+		sourceQueue:    opts.SourceQueue,
 	}
 	// A typed interruption that depends on the stop (CONTAINER_STOPPED_BY_RUNTIME)
 	// asks the cordon whether this Orker is stopping (emission.go).
@@ -418,6 +437,25 @@ func (a *Activities) maxRequest() *orkstackv1.ResourceQuantity {
 	return q
 }
 
+// warnAboutInstances says that this Orker's event-source instances, which hold
+// their reservations for as long as they run, can leave no room for a task's
+// poll.
+func (a *Activities) warnAboutInstances(limit amount) {
+	source := a.capacity.source
+	if source == nil {
+		return
+	}
+	var all amount
+	for range source.slots {
+		all = all.add(source.ceiling)
+	}
+	if !a.capacity.ceiling.cpuMemory().add(all).within(limit) {
+		a.dispatcher.logger().Warn("this Orker's event-source instances can fill the capacity its tasks need: "+
+			"while they do, it polls for no task",
+			"capacity", limit.String(), "per_task_cap", a.capacity.ceiling.String(), "instances_at_most", all.String())
+	}
+}
+
 // newCapacityFor builds the admission ledger an Orker declaring a capacity
 // runs with: the capacity as its limit, and the per-task cap as what each poll
 // reserves. No capacity declared is (nil, nil). An unreadable cap is left to
@@ -452,6 +490,26 @@ func newCapacityFor(policy SecurityPolicy, opts Options, slots int) (*Capacity, 
 	}
 	c := newCapacity(limit, ceiling, slots)
 	c.observer = opts.CapacityObserver
+	if opts.SourceHost.HostsSources() {
+		if opts.SourceQueue == "" || opts.SourceQueue == opts.TaskQueue {
+			return nil, errors.New("hosting event sources within a declared capacity needs a source channel of its own (Options.SourceQueue)")
+		}
+		source, err := opts.SourceHost.ceiling()
+		if err != nil {
+			return nil, err
+		}
+		// A source host with room keeps one instance's request reserved for
+		// its poll, so a pool whose cap does not fit beside it polls for no
+		// task until the last instance slot is taken.
+		if !ceiling.add(source).within(limit) {
+			return nil, fmt.Errorf("the per-task cap (%s=%s, %s=%s) does not fit within the declared capacity (%s=%q, %s=%q) beside "+
+				"the largest event-source instance (%s=%s, %s=%s), so no task could be polled for while this Orker waits for an instance; "+
+				"lower either cap or raise the capacity",
+				MaxCPUVar, policy.MaxCPU, MaxMemoryVar, policy.MaxMemory, CapacityCPUVar, opts.CapacityCPU, CapacityMemoryVar, opts.CapacityMemory,
+				SourceHostMaxRequestCPUVar, opts.SourceHost.MaxRequestCPU, SourceHostMaxRequestMemoryVar, opts.SourceHost.MaxRequestMemory)
+		}
+		c.source = &channelLedger{ceiling: source, slots: opts.SourceHost.MaxInstances, polls: 1}
+	}
 	return c, nil
 }
 
@@ -491,14 +549,15 @@ func (a *Activities) WaitForTasks(ctx context.Context) error {
 // It returns how many attempts it took back.
 func (a *Activities) HandBack() int { return a.stops.handBack() }
 
-// AwaitIdle returns once this Orker runs no task and holds no open pin, or
+// AwaitIdle returns once this Orker runs no task and no instance of an event
+// source and holds no open pin, or
 // when ctx is done: a stopping Orker with nothing in flight need not wait out
 // its grace.
 func (a *Activities) AwaitIdle(ctx context.Context) error {
 	for {
 		// Idle is read first, so an idle Orker answers so even on a done
 		// context: a stop with no grace and nothing in flight ends idle.
-		if a.running.load() == 0 && a.pins.count() == 0 {
+		if a.running.load() == 0 && a.pins.count() == 0 && a.instances.load() == 0 {
 			return nil
 		}
 		select {
@@ -508,6 +567,11 @@ func (a *Activities) AwaitIdle(ctx context.Context) error {
 		}
 		select {
 		case <-a.pins.idle():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case <-a.instances.idle():
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -874,7 +938,7 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 	// ones removed are released (resume/design.md §26.7).
 	var own []OwnContainer
 	unlisted := false
-	if lister, ok := a.dispatcher.Runtime.(ownContainerLister); ok && a.dispatcher.Claims != nil {
+	if lister, ok := a.dispatcher.Runtime.(ownContainerLister); ok && (a.dispatcher.Claims != nil || a.sourceHost.HostsSources()) {
 		listed, err := lister.OwnContainers(ctx, a.dispatcher.OrkerID)
 		if err != nil {
 			a.dispatcher.logger().Warn("own containers could not be listed; their attempts are not released", "error", err)
@@ -908,6 +972,7 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 				a.dispatcher.unremoved.owe(id, time.Time{})
 			}
 		}
+		a.keepStuckAtBoot(own, unlisted, partial.Containers)
 		return nil
 	default:
 		return fmt.Errorf("reap orphaned containers: %w", err)
@@ -943,6 +1008,9 @@ type ownContainerLister interface {
 // nothing of it runs. A container that stayed keeps its attempt claimed until
 // a later reap removes it. Best-effort, as every marker is.
 func (a *Activities) releaseReaped(ctx context.Context, own []OwnContainer, reapErr error) {
+	if a.dispatcher.Claims == nil {
+		return
+	}
 	stayed := map[string]bool{}
 	var partial *ReapIncompleteError
 	if errors.As(reapErr, &partial) {
@@ -1343,6 +1411,7 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := a.bootIdentityStorage(ctx, root); err != nil {
 		return err
 	}
+	a.bootServiceStorage(ctx, root)
 	// Reap this Orker's own previous life's containers. An Orker crash does
 	// not stop its containers (§14.17), so a restarted Orker inherits them.
 	//
@@ -1369,6 +1438,7 @@ func (a *Activities) Boot(ctx context.Context) error {
 		a.dispatcher.logger().Info("capacity declared",
 			"capacity", limit.String(), "per_task_cap", a.capacity.ceiling.String(),
 			"reserved_by_orphans", reserved.String(), "orphans_pending_removal", a.capacity.pendingRemovals())
+		a.warnAboutInstances(limit)
 	} else {
 		// Said out loud rather than left to be inferred from an absent line:
 		// max_concurrent counts tasks, not their size, so nothing holds the
@@ -1511,6 +1581,7 @@ func (a *Activities) startRemovalRetry() {
 
 // retryRemovals is one pass of startRemovalRetry.
 func (a *Activities) retryRemovals(ctx context.Context) {
+	defer a.settleStuckServices()
 	if a.capacity != nil && a.capacity.pendingRemovals() > 0 {
 		reapCtx, done := context.WithTimeout(ctx, controlTimeout)
 		for _, err := range a.capacity.reap(reapCtx, a.dispatcher.Runtime.Remove) {

@@ -153,6 +153,8 @@ func (s *runState) beginPass() {
 	s.passCharge = reserveCount{}
 	s.pinClosureFresh = false // pinClosureAllows' set is rebuilt at most once per pass
 	s.holdSeen = false        // the pass decides the published hold afresh (hold.go)
+	s.reads.spent = false     // one unanswered read of a record a turn (await_records.go)
+	s.undeferAwaits()
 }
 
 // chargeReserve adds what one dispatch can add to failReserve. Before the
@@ -207,7 +209,7 @@ func (s *runState) chargePinOpen() {
 // chargeAwaitOpen is openAwait's charge.
 func (s *runState) chargeAwaitOpen() {
 	if limit := s.historyLimit(); limit != nil {
-		s.chargeReserve(limit.Reserve.PerAwait-limit.Reserve.PerPending, 0)
+		s.chargeReserve(s.awaitReserve(limit.Reserve)-limit.Reserve.PerPending, 0)
 	}
 }
 
@@ -287,7 +289,7 @@ func (s *runState) failReserve(inFlight map[string]workflow.Future, r HistoryRes
 			events += r.PerPending
 		}
 		if a := s.awaits[id]; a != nil && a.open {
-			events += r.PerAwait
+			events += s.awaitReserve(r)
 		}
 		// An open sleep's wake or cancel, which an await's resolution bounds.
 		if sl := s.sleeps[id]; sl != nil && sl.open {
@@ -340,7 +342,7 @@ func (s *runState) quickReserve(inFlight map[string]workflow.Future, r HistoryRe
 	events = s.fixedReserve(r) +
 		r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes)) +
 		r.PerPending*int64(len(s.order)) +
-		r.PerAwait*int64(len(s.awaits)+len(s.sleeps)+len(s.waits)) +
+		s.awaitReserve(r)*int64(len(s.awaits)) + r.PerAwait*int64(len(s.sleeps)+len(s.waits)) +
 		r.PerHandler*s.handlerCount +
 		r.PerOpenPin*int64(len(s.pins)) +
 		r.PerFanOut*int64(len(s.eaches))

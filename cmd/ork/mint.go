@@ -74,6 +74,24 @@ func awaitRecords(minter *identity.Minter, records *artifacts.RecordStore) api.A
 	return awaitStore{RecordStore: records, admissions: minter.Stores}
 }
 
+// resolutionReader is what a run reads an await's record with; nil when the
+// engine issues no task identity.
+func resolutionReader(records *artifacts.RecordStore) engine.ResolutionReader {
+	if records == nil {
+		return nil
+	}
+	return records
+}
+
+// recordedResults is what a listing of recorded results reads; nil when the
+// engine issues no task identity.
+func recordedResults(records *artifacts.RecordStore) api.RecordedResults {
+	if records == nil {
+		return nil
+	}
+	return records
+}
+
 type awaitStore struct {
 	*artifacts.RecordStore
 	admissions identity.MintStores

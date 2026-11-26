@@ -74,6 +74,8 @@ type Decision struct {
 	// Err is a wait's underlying failure, for the instance to log and
 	// count with its cause.
 	Err error
+	// Stop is, for a pause, what the engine stopped the instance for.
+	Stop string
 	// ConfirmedAt is, for a FILTERED settle, when the judging revision it
 	// was judged by was last confirmed: the verdict is held to it again
 	// when it is written.
@@ -115,6 +117,25 @@ func (j *Judge) Revision() int64 {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.revision
+}
+
+// Rate is the most messages a second the instance takes, as the source says now.
+func (j *Judge) Rate() int {
+	src, _, _ := j.held()
+	if n := int(src.GetRate()); n > 0 {
+		return n
+	}
+	return eventsources.DefaultRate
+}
+
+// RejectBreaker is how many distinct messages rejected in a row ask for a pause,
+// as the source says now; 0 is never.
+func (j *Judge) RejectBreaker() int {
+	src, _, _ := j.held()
+	if src.RejectBreaker == nil {
+		return DefaultRejectBreaker
+	}
+	return int(src.GetRejectBreaker())
 }
 
 // Swap takes a new judging spec without a restart.
@@ -172,8 +193,11 @@ func (j *Judge) Decide(ctx context.Context, msg HandedMessage, body []byte) (Dec
 			return Decision{Disposition: Settle, Action: ActionAck, ConfirmedAt: at,
 				Receipt: Receipt{Outcome: artifacts.ReceiptFiltered, Reason: eventsources.ReasonMessageNotMatched, Sampled: true}}, nil
 		}
-		sum := sha256.Sum256(body)
-		offer := Offer{Message: msg, BodyDigest: hex.EncodeToString(sum[:]), BodySize: int64(len(body)), Values: pre.Values, Revision: revision}
+		digest := msg.BodySHA256
+		if digest == "" {
+			digest = bodyDigest(body)
+		}
+		offer := Offer{Message: msg, BodyDigest: digest, BodySize: int64(len(body)), Values: pre.Values, Revision: revision}
 		if msg.Oversize {
 			offer.BodySize = msg.OversizeBytes
 		}
@@ -203,6 +227,11 @@ func (j *Judge) Decide(ctx context.Context, msg HandedMessage, body []byte) (Dec
 	}
 }
 
+func bodyDigest(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
 // prejudge runs bounds, parse, match and extraction with the spec held.
 func (j *Judge) prejudge(src *orkstackv1.EventSource, msg HandedMessage, body []byte) eventsources.Prejudgement {
 	if msg.Oversize {
@@ -225,7 +254,7 @@ func (j *Judge) confirmed(ctx context.Context) (fresh bool, d Decision, ok bool)
 		return false, j.waitErr("engine_unreachable", err), false
 	}
 	if c.Stop {
-		return false, j.pause(), false
+		return false, j.pause(c.Reason), false
 	}
 	if c.Revision < revision {
 		// A lagging replica: never go back to an older match: or map:.
@@ -314,7 +343,7 @@ func (j *Judge) finish(msg HandedMessage, a Answer) Decision {
 		}
 		return d
 	case AnswerStop:
-		return j.pause()
+		return j.pause(a.Reason)
 	case AnswerUncertain:
 		d := j.wait("uncertain")
 		d.Uncertain, d.Receipt.Reason = true, a.Reason
@@ -333,8 +362,8 @@ func (j *Judge) waitErr(cause string, err error) Decision {
 	return Decision{Disposition: Wait, Cause: cause, Err: err}
 }
 
-func (j *Judge) pause() Decision {
-	d := Decision{Disposition: Pause, Action: ActionRelease, Delay: releaseDelaySeconds,
+func (j *Judge) pause(reason string) Decision {
+	d := Decision{Disposition: Pause, Stop: stopReason(reason), Action: ActionRelease, Delay: releaseDelaySeconds,
 		Receipt: Receipt{Outcome: artifacts.ReceiptReleased, Reason: eventsources.ReasonPaused}}
 	if j.AtMostOnce {
 		d.Receipt.Outcome, d.Receipt.Required = artifacts.ReceiptDropped, true

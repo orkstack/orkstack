@@ -50,6 +50,10 @@ const (
 	// ArtifactInputUnsupportedCode refuses a start of an Orkflow with an
 	// artifact input by anything but a composing task (FAILED_PRECONDITION).
 	ArtifactInputUnsupportedCode = "ARTIFACT_INPUT_UNSUPPORTED"
+	// InputArtifactUnavailableCode refuses running a run again whose input
+	// artifact is no longer in object storage, as an Orker ends an attempt
+	// that cannot fetch one.
+	InputArtifactUnavailableCode = "INPUT_ARTIFACT_UNAVAILABLE"
 	ChildStartFailedCode         = "CHILD_START_FAILED"    // InfrastructureError
 	ChildRunFailedCode           = "CHILD_RUN_FAILED"      // the child's own category
 	ChildRunCanceledCode         = "CHILD_RUN_CANCELED"    // Cancelled; status CANCELED
@@ -652,31 +656,13 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 			fmt.Sprintf("child run %s succeeded, but its outputs could not be stored as task %q's values: %v",
 				c.plan.RunID, id, err), "")
 	}
-	localCtx := composeLocalContext(ctx)
 	var ref *orkstackv1.ArtifactRef
-	if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityStoreComposedValues, ComposeStoreRequest{
-		Orkflow: s.wf.GetName(),
-		RunID:   s.runID,
-		TaskID:  id,
-		Values:  raw,
-	}), &ref); err != nil || ref == nil {
-		if unreadableLocal(err) {
-			return s.failComposed(ctx, id, PayloadUnreadableCode,
-				orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
-				fmt.Sprintf("child run %s succeeded, but where its outputs were stored as task %q's values could not be read from this run's history",
-					c.plan.RunID, id), "")
+	if s.recorded() {
+		if ref, err = s.recordComposed(ctx, id, raw, result); err != nil {
+			return err
 		}
-		if err == nil {
-			err = errors.New("the store returned no reference")
-		}
-		cause := err.Error()
-		if failure := categoryOf(err); failure.isApplication() {
-			cause = failure.appMessage()
-		}
-		return s.failComposed(ctx, id, ChildValuesUnstoredCode,
-			orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
-			fmt.Sprintf("child run %s succeeded, but its outputs could not be stored as task %q's values: %s",
-				c.plan.RunID, id, cause), "")
+	} else if ref, err = s.storeComposed(ctx, id, raw); err != nil {
+		return err
 	}
 	output, err := payloadOf(values)
 	if err != nil {
@@ -706,6 +692,39 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 		orkstackv1.Status_STATUS_SUCCEEDED, fmt.Sprintf("child run %s succeeded", c.plan.RunID))
 }
 
+// storeComposed stores composed task id's values, whose canonical bytes are
+// raw; the error is the one that failed the task.
+func (s *runState) storeComposed(ctx workflow.Context, id string, raw []byte) (*orkstackv1.ArtifactRef, error) {
+	c := s.children[id]
+	localCtx := composeLocalContext(ctx)
+	var ref *orkstackv1.ArtifactRef
+	if err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityStoreComposedValues, ComposeStoreRequest{
+		Orkflow: s.wf.GetName(),
+		RunID:   s.runID,
+		TaskID:  id,
+		Values:  raw,
+	}), &ref); err != nil || ref == nil {
+		if unreadableLocal(err) {
+			return nil, s.failComposed(ctx, id, PayloadUnreadableCode,
+				orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
+				fmt.Sprintf("child run %s succeeded, but where its outputs were stored as task %q's values could not be read from this run's history",
+					c.plan.RunID, id), "")
+		}
+		if err == nil {
+			err = errors.New("the store returned no reference")
+		}
+		cause := err.Error()
+		if failure := categoryOf(err); failure.isApplication() {
+			cause = failure.appMessage()
+		}
+		return nil, s.failComposed(ctx, id, ChildValuesUnstoredCode,
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
+			fmt.Sprintf("child run %s succeeded, but its outputs could not be stored as task %q's values: %s",
+				c.plan.RunID, id, cause), "")
+	}
+	return ref, nil
+}
+
 // childFailure maps a child run's failure to the composed task's status, code
 // and category (docs/DSL.md "Composition").
 func childFailure(err error) (status orkstackv1.Status, code string, category orkstackv1.FailureCategory) {
@@ -729,6 +748,9 @@ func childFailure(err error) (status orkstackv1.Status, code string, category or
 		case RunHistoryLimitCode:
 			// The child stopped before its history limit: a fact about the
 			// platform, not the workload.
+			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+		case ResolutionRecordUnavailableCode, ResolutionRecordInvalidCode:
+			// The child could not read, or could not use, an await's record.
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 		case RunStateUnavailableCode, RunDefinitionUnavailableCode:
 			// The child's saved state, or its definition, could not be read
@@ -801,6 +823,9 @@ func (s *runState) recordChildFailure(ctx workflow.Context, id string, cause err
 	if reason := childReasonCode(cause); reason != "" {
 		details += "; reason " + reason
 	}
+	if code := s.childTaskCode(cause); code != "" {
+		details += "; child_code=" + code
+	}
 	taskRun.Status = status
 	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 	taskRun.Error = &orkstackv1.Error{
@@ -829,20 +854,7 @@ func (s *runState) recordChildFailure(ctx workflow.Context, id string, cause err
 // renderOutputs renders the Orkflow's declared outputs once, at success. A
 // failure is returned with its code and category.
 func (s *runState) renderOutputs(ctx workflow.Context) (*orkstackv1.Payload, *orkstackv1.Error) {
-	outputs := s.wf.GetOutputs()
-	fail := func(code string, category orkstackv1.FailureCategory, cause string) *orkstackv1.Error {
-		failure := &orkstackv1.Error{
-			Code:     code,
-			Category: category,
-			Message:  "the run's tasks finished but its declared outputs could not be produced: " + cause,
-		}
-		if strings.HasPrefix(cause, "outputs.") {
-			if field, _, ok := strings.Cut(cause, ":"); ok {
-				failure.Details = field
-			}
-		}
-		return failure
-	}
+	outputs, fail := s.wf.GetOutputs(), s.outputsFailure
 	req, err := s.renderRequest("outputs", renderPrefixOutputs, outputs, nil)
 	if err != nil {
 		return nil, fail(OutputsRenderFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, err.Error())
@@ -860,8 +872,25 @@ func (s *runState) renderOutputs(ctx workflow.Context) (*orkstackv1.Payload, *or
 	return output, nil
 }
 
+// outputsFailure is the error of a run whose outputs could not be produced.
+func (s *runState) outputsFailure(code string, category orkstackv1.FailureCategory, cause string) *orkstackv1.Error {
+	failure := &orkstackv1.Error{
+		Code:     code,
+		Category: category,
+		Message:  "the run's tasks finished but its declared outputs could not be produced: " + cause,
+	}
+	if strings.HasPrefix(cause, "outputs.") {
+		if field, _, ok := strings.Cut(cause, ":"); ok {
+			failure.Details = field
+		}
+	}
+	return failure
+}
+
 // failOutputs ends a run whose tasks all finished but whose declared outputs
-// could not be produced: FAILED, never SUCCEEDED.
+// could not be produced: FAILED, never SUCCEEDED. It is the one producer of a
+// close that carries the run's own reason, which the reader takes when the
+// terminal snapshot was not stored (outputsFailureCodes).
 func (s *runState) failOutputs(ctx workflow.Context, failure *orkstackv1.Error) (*orkstackv1.Run, error) {
 	s.status = orkstackv1.Status_STATUS_FAILED
 	s.finished = timestamppb.New(workflow.Now(ctx))
@@ -871,8 +900,13 @@ func (s *runState) failOutputs(ctx workflow.Context, failure *orkstackv1.Error) 
 		workflow.GetLogger(ctx).Error("emit terminal run event failed",
 			"run_id", s.runID, "event", "RUN_FAILED", "error", err)
 	}
+	var details []any
+	if s.recorded() {
+		// Its parent reads which of them it was.
+		details = []any{&orkstackv1.ActivityFailureDetail{ReasonCode: failure.GetCode(), Category: failure.GetCategory()}}
+	}
 	return s.result(), temporal.NewNonRetryableApplicationError(failure.GetMessage(),
-		categoryTypeFor(failure.GetCategory()), nil)
+		categoryTypeFor(failure.GetCategory()), nil, details...)
 }
 
 // isChildRun reports whether this run was started by a parent's composed

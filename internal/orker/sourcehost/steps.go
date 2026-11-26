@@ -82,6 +82,11 @@ type HandedMessage struct {
 	DeliveryCount int
 	Group         string
 	Broker        map[string]string
+
+	// Taken is when the Orker took the message from its container, and
+	// BodySHA256 the digest of its copy of the body, "" for one it never read.
+	Taken      time.Time
+	BodySHA256 string
 }
 
 // ReadMessage reads message.json from the Orker's copy. What breaks the

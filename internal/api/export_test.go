@@ -51,3 +51,6 @@ var MostFailingForTest = mostFailing
 // SetAccessForTest installs access control on a service built without a
 // mux, so an external test can call a handler as an authenticated caller.
 func (s *Service) SetAccessForTest(a *AccessControl) { s.access = a }
+
+// SpendRecordedReads takes n of run's reads of this minute.
+func (s *Service) SpendRecordedReads(run string, n int) bool { return s.recordedReads.spend(run, n) }

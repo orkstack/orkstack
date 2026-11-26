@@ -302,6 +302,10 @@ func runWorkflow(
 			return state.fail(ctx, cancelRun, inFlight, "", runLevelError(RunDefinitionUnsupportedCode,
 				"this run's definition declares a run timeout its plan does not carry; submit it again"))
 		}
+		if state.recorded() && !planCarriesRecords(plan) {
+			return state.fail(ctx, cancelRun, inFlight, "", runLevelError(RunDefinitionUnsupportedCode,
+				"this run's plan does not carry the bounds its records are read by; submit it again"))
+		}
 		// A run-level concurrency limit: the run asks for its slot, and
 		// waits in line for it, before it starts (E88 §5.2.1).
 		if state.conc != nil {
@@ -445,7 +449,7 @@ func runWorkflow(
 		// A run with a timeout applies the resolutions queued when the pass
 		// starts, bounded and never past D, before the ending check.
 		if state.runTimeout != nil && !state.runTimeout.taken {
-			if _, id, err := state.drainQueuedResolutions(ctx); err != nil {
+			if _, id, err := state.drainQueuedResolutions(ctx, inFlight); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, id, err)
 			}
 		}
@@ -716,18 +720,20 @@ func runWorkflow(
 		var resolution *orkstackv1.AwaitSignal
 		var resolutionRaw converter.RawValue
 		resolved, received := false, false
-		expired := ""
-		if state.resolutions != nil {
+		expired, confirmed := "", false
+		// While the reads of a run whose results the engine records go
+		// unanswered, its resolutions come after every deadline and sleep.
+		addResolutions := func() {
 			selector.AddReceive(state.resolutions, func(c workflow.ReceiveChannel, _ bool) {
 				c.Receive(ctx, &resolutionRaw)
 				received = true
 			})
-			for _, id := range state.order {
-				if a := state.awaits[id]; a != nil && a.open {
-					awaitID := id
-					selector.AddFuture(a.deadline, func(workflow.Future) { expired = awaitID })
-				}
+		}
+		if state.resolutions != nil {
+			if !state.reads.unanswered {
+				addResolutions()
 			}
+			state.addDeadlines(selector, func(id string) { expired = id }, func() { confirmed = true })
 		}
 		// Then every open sleep's timer in declaration order, last: a fixed
 		// position, and no history recorded before sleeps existed registers
@@ -738,6 +744,9 @@ func runWorkflow(
 				sleepID := id
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
+		}
+		if state.resolutions != nil && state.reads.unanswered {
+			addResolutions()
 		}
 		// Then every unit waiting to run again, in the order its wait was
 		// armed: a fixed position, and no history recorded before the
@@ -807,6 +816,7 @@ func runWorkflow(
 			continue // a pin closed: the switch may now be possible
 		}
 		if received {
+			state.receivedResolution()
 			// Opened here, out of the selector's callback: one that does not
 			// read is an event of the run, and no awaited task changes.
 			resolution, resolved = state.openResolution(ctx, resolutionRaw)
@@ -814,9 +824,32 @@ func runWorkflow(
 				continue
 			}
 		}
+		if resolved && state.recorded() {
+			if _, err := state.resolveRecorded(ctx, ctx, inFlight, resolution, nil); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, resolution.GetTaskId(), err)
+			}
+			continue
+		}
 		if resolved {
 			if err := state.resolve(ctx, resolution); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, resolution.GetTaskId(), err)
+			}
+			continue
+		}
+		if confirmed {
+			var ended settled
+			state.confirmAll(ctx, ctx, inFlight, func(end settled) bool {
+				ended = end
+				return end.err != nil
+			})
+			if ended.err != nil {
+				return state.fail(ctx, cancelRun, inFlight, ended.id, ended.err)
+			}
+			continue
+		}
+		if expired != "" && state.recorded() {
+			if _, err := state.expireRecorded(ctx, ctx, inFlight, expired); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, expired, err)
 			}
 			continue
 		}
@@ -878,7 +911,11 @@ func runWorkflow(
 		}
 	}
 
-	return state.succeed(ctx)
+	run, err := state.succeed(ctx)
+	if errors.Is(err, errCanceledAtSuccess) {
+		return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+	}
+	return run, err
 }
 
 // runState holds the deterministic in-workflow state of one run.
@@ -1112,6 +1149,7 @@ type runState struct {
 	// inherited request applied.
 	pauses         workflow.ReceiveChannel
 	pause          *ownPause
+	reads          recordReads // a recorded run's reads of its records (await_records.go)
 	pausedByParent *inheritedPause
 	lastPause      *lastPause
 	// pauseStop is set when a failing run's pause expired (pause.go).
@@ -2246,6 +2284,7 @@ func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 			CommitUri: result.GetCommit().GetUri(),
 			Values:    result.GetValuesRef(),
 			Artifacts: result.GetArtifacts(),
+			RecordUri: s.recordURI(need),
 		})
 	}
 	// The artifacts this run received, only those the task names: the
@@ -3206,6 +3245,10 @@ func (s *runState) fail(
 	taskID string,
 	cause error,
 ) (*orkstackv1.Run, error) {
+	if cause == nil {
+		cause = fmt.Errorf("internal: a failure with no cause at task %q", taskID)
+		workflow.GetLogger(ctx).Error("a run failed with no cause", "run_id", s.runID, "task_id", taskID)
+	}
 	// Every ending names the pause requests it will never apply; a failing
 	// run's handler loop would, but a canceled, timed-out or handler-less one
 	// has none.
@@ -3395,6 +3438,7 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 		failure.Code = "RUN_FAILED"
 		failure.Message = lost.GetMessage()
 	}
+	s.nameTaskFailure(failure, taskID)
 	return failure
 }
 
@@ -3413,6 +3457,16 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// whose outputs cannot be produced FAILS (docs/DSL.md "Composition").
 	// An Orkflow with no `outputs:` takes the path it always took.
 	var output *orkstackv1.Payload
+	// A child run whose results the engine records has its outputs recorded,
+	// also when it declares none.
+	recorded := s.recorded() && s.isChildRun()
+	if recorded && !outputsDeclared(s.wf) {
+		if _, failure, err := s.recordOutputs(ctx, nil); err != nil {
+			return nil, err
+		} else if failure != nil {
+			return s.failOutputs(ctx, failure)
+		}
+	}
 	if outputsDeclared(s.wf) {
 		returned, failure := s.resolveOutputArtifacts()
 		if failure != nil {
@@ -3423,7 +3477,16 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 			return nil, err
 		}
 		output = empty
-		if len(s.wf.GetOutputs()) > 0 {
+		if recorded {
+			rendered, failure, err := s.recordOutputs(ctx, returned)
+			if err != nil {
+				return nil, err
+			}
+			if failure != nil {
+				return s.failOutputs(ctx, failure)
+			}
+			output = rendered
+		} else if len(s.wf.GetOutputs()) > 0 {
 			rendered, failure := s.renderOutputs(ctx)
 			if failure != nil {
 				return s.failOutputs(ctx, failure)

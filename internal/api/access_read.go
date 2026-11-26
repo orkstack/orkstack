@@ -34,11 +34,12 @@ const (
 )
 
 var explainMatch = map[authz.Match]orkstackv1.BindingMatch{
-	authz.MatchGranted:             orkstackv1.BindingMatch_BINDING_MATCH_GRANTED,
-	authz.MatchSubjectDiffers:      orkstackv1.BindingMatch_BINDING_MATCH_SUBJECT_DIFFERS,
-	authz.MatchScopeDiffers:        orkstackv1.BindingMatch_BINDING_MATCH_SCOPE_DIFFERS,
-	authz.MatchRoleLacksPermission: orkstackv1.BindingMatch_BINDING_MATCH_ROLE_LACKS_PERMISSION,
-	authz.MatchPinnedElsewhere:     orkstackv1.BindingMatch_BINDING_MATCH_PINNED_ELSEWHERE,
+	authz.MatchGranted:               orkstackv1.BindingMatch_BINDING_MATCH_GRANTED,
+	authz.MatchSubjectDiffers:        orkstackv1.BindingMatch_BINDING_MATCH_SUBJECT_DIFFERS,
+	authz.MatchScopeDiffers:          orkstackv1.BindingMatch_BINDING_MATCH_SCOPE_DIFFERS,
+	authz.MatchRoleLacksPermission:   orkstackv1.BindingMatch_BINDING_MATCH_ROLE_LACKS_PERMISSION,
+	authz.MatchPinnedElsewhere:       orkstackv1.BindingMatch_BINDING_MATCH_PINNED_ELSEWHERE,
+	authz.MatchSharedOrkerCredential: orkstackv1.BindingMatch_BINDING_MATCH_SHARED_ORKER_CREDENTIAL,
 }
 
 func explainedProto(e authz.Explained) *orkstackv1.ExplainedBinding {

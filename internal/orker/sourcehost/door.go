@@ -36,8 +36,9 @@ type Confirmation struct {
 	// Source is the judging spec's source when Revision is not the one
 	// asked about; nil otherwise.
 	Source *orkstackv1.EventSource
-	// Stop: the source is paused or deleted; the instance ends.
-	Stop bool
+	// Stop: the source is paused or deleted; the instance ends, for Reason.
+	Stop   bool
+	Reason string
 }
 
 // Offer is what the Orker sends about one message.

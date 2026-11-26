@@ -280,7 +280,9 @@ func (r *Reader) describe(ctx context.Context, fresh bool, ref Ref, caller Calle
 			if !fresh && r.renewLocked(key, now, describeAge, holding) {
 				return true
 			}
-			return r.sources.allow(ref.SourceID, now) && r.orkers.allow(caller.OrkerID, now) && r.replica.AllowN(now, 1)
+			// The caller's own cap first: what it is refused spends nothing of
+			// the source's, which others ask about.
+			return r.orkers.allow(caller.OrkerID, now) && r.sources.allow(ref.SourceID, now) && r.replica.AllowN(now, 1)
 		},
 		fetch: func(ctx context.Context) (any, error) { return r.clients.Describe(ctx, ref.SourceID) },
 		size: func(v any) int {

@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -54,5 +55,28 @@ func TestUnmarshalRunLine_DecodesTheRunLineAndNeverAnEventLine(t *testing.T) {
 	listed, err := archiver.ListRuns(context.Background(), engine.ArchiveQuery{Namespace: "default", Limit: 10})
 	if err != nil || len(listed) != 1 || !proto.Equal(listed[0], run) {
 		t.Fatalf("ListRuns = %v, %v; want the run line alone", listed, err)
+	}
+	// A whole record that does not decode is told from one that is not there.
+	if err := store.PutRun(context.Background(), artifacts.RunRecord{
+		RunID: "ork-1-2", Namespace: "default", Orkflow: "reconcile", Status: "succeeded",
+		Time: run.GetCreatedAt().AsTime(), JSONL: []byte("{\"kind\":\"run\",\"run\":4}\n"),
+	}); err != nil {
+		t.Fatalf("PutRun: %v", err)
+	}
+	if _, err := archiver.LoadRun(context.Background(), "ork-1-2"); !errors.Is(err, engine.ErrRunRecordUndecodable) {
+		t.Fatalf("a run line that does not decode: %v", err)
+	}
+	// A line of a later release's kind says nothing of the record.
+	if err := store.PutRun(context.Background(), artifacts.RunRecord{
+		RunID: "ork-1-4", Namespace: "default", Orkflow: "reconcile", Status: "succeeded",
+		Time: run.GetCreatedAt().AsTime(), JSONL: []byte("{\"kind\":\"later\"}\n"),
+	}); err != nil {
+		t.Fatalf("PutRun: %v", err)
+	}
+	if _, err := archiver.LoadRun(context.Background(), "ork-1-4"); err == nil || errors.Is(err, engine.ErrRunRecordUndecodable) {
+		t.Fatalf("a line of a kind this release does not know: %v", err)
+	}
+	if _, err := archiver.LoadRun(context.Background(), "ork-1-3"); !errors.Is(err, artifacts.ErrNotFound) || errors.Is(err, engine.ErrRunRecordUndecodable) {
+		t.Fatalf("a run with no archive: %v", err)
 	}
 }

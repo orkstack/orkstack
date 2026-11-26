@@ -104,6 +104,29 @@ func TestReadRecordedValues_Found(t *testing.T) {
 	}
 }
 
+// TestReadRecordedValues_Inline: values are handed over with their record up to
+// 4096 bytes, and are a reference alone past that.
+func TestReadRecordedValues_Inline(t *testing.T) {
+	for size, inline := range map[int]bool{2: true, maxInlineValues: true, maxInlineValues + 1: false} {
+		f := newRecordFixture(t)
+		f.values = []byte(`{"v":"` + strings.Repeat("x", max(size-8, 0)) + `"}`)
+		if size == 2 {
+			f.values = []byte(`{}`)
+		}
+		if len(f.values) != size {
+			t.Fatalf("a fixture of %d bytes, want %d", len(f.values), size)
+		}
+		got, err := f.s.ReadRecordedValues(context.Background(), SlotRun, nil, f.write(nil), wantResolution)
+		if err != nil || got.Answer != RecordFound {
+			t.Fatalf("%d bytes: read = %+v, %v", size, got, err)
+		}
+		adopted, ok := got.Value.InTime(got.Value.StoredAt().Add(time.Minute), time.Time{})
+		if !ok || (string(adopted.Inline()) == string(f.values)) != inline || (!inline && adopted.Inline() != nil) || adopted.Record().GetValues().GetSizeBytes() != int64(size) {
+			t.Fatalf("%d bytes: %d inline, want inline %v", size, len(adopted.Inline()), inline)
+		}
+	}
+}
+
 // TestReadRecordedValues_BoundaryTable: one row per answer a record read
 // gives: none, invalid naming which object, unsupported naming which
 // object and its version.

@@ -79,6 +79,8 @@ type OutputsAsk struct {
 	// Offered is, for each task that succeeded, the values the run holds.
 	Offered  map[string]*orkstackv1.ArtifactRef
 	MaxBytes int64
+	// Spacing is the waits of one read; nil is the recorder's.
+	Spacing *artifacts.RecordSpacings
 }
 
 // ComposedAsk is a composed task whose child run ended, and the digest of the
@@ -89,6 +91,8 @@ type ComposedAsk struct {
 	// Input is the run's start input (StartInput).
 	Input                              []byte
 	ChildAdmissionSHA256, ValuesSHA256 string
+	// Spacing is the waits of one read; nil is the recorder's.
+	Spacing *artifacts.RecordSpacings
 }
 
 // RecordedOutcome is a record made, or found as it would have been made.
@@ -126,8 +130,11 @@ func (c *recording) refused(err error) error {
 }
 
 // begin is step 1: the run's admission, its start, and its root's resumes.
-func (r *ValuesRecorder) begin(ctx context.Context, reason, namespace, runID, sha string, scopes Scopes) (*recording, error) {
-	c := &recording{r: r, reason: reason, check: &FollowsCheck{Store: r.Records, Spacing: r.Spacing}, sha: sha}
+func (r *ValuesRecorder) begin(ctx context.Context, reason, namespace, runID, sha string, scopes Scopes, spacing *artifacts.RecordSpacings) (*recording, error) {
+	if spacing == nil {
+		spacing = r.Spacing
+	}
+	c := &recording{r: r, reason: reason, check: &FollowsCheck{Store: r.Records, Spacing: spacing}, sha: sha}
 	adm, err := c.admission(ctx, namespace, runID, sha)
 	if err != nil {
 		return nil, err
@@ -206,7 +213,7 @@ func (c *recording) write(ctx context.Context, rec *orkstackv1.RecordedValues, k
 	if !errors.Is(err, artifacts.ErrRecordExists) {
 		return "", nil, unavailableMint("the record could not be made: %v", err)
 	}
-	read, err := c.r.Records.ReadRecordedValues(ctx, artifacts.SlotRun, c.r.Spacing, key, wantOf(rec))
+	read, err := c.r.Records.ReadRecordedValues(ctx, artifacts.SlotRun, c.check.Spacing, key, wantOf(rec))
 	switch {
 	case err != nil:
 		return "", nil, unavailableMint("the record already there could not be read: %v", err)
@@ -222,7 +229,7 @@ func (c *recording) write(ctx context.Context, rec *orkstackv1.RecordedValues, k
 // outputs, whose values have the digest the child returned.
 func (r *ValuesRecorder) RecordComposed(ctx context.Context, q ComposedAsk) (RecordedOutcome, error) {
 	none := RecordedOutcome{}
-	c, err := r.begin(ctx, ReasonChildValuesNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes)
+	c, err := r.begin(ctx, ReasonChildValuesNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes, q.Spacing)
 	if err != nil {
 		return none, err
 	}
@@ -285,7 +292,7 @@ func (c *recording) outputsOf(ctx context.Context, childID string, q ComposedAsk
 	if err != nil {
 		return nil, c.refuse("child run %s has no record key: %v", childID, err)
 	}
-	read, err := c.r.Records.ReadRecordedValues(ctx, artifacts.SlotRun, c.r.Spacing, key, artifacts.RecordWant{
+	read, err := c.r.Records.ReadRecordedValues(ctx, artifacts.SlotRun, c.check.Spacing, key, artifacts.RecordWant{
 		Kind: orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_OUTPUTS, Namespace: q.Namespace, RunID: childID, AdmissionSHA256: q.ChildAdmissionSHA256})
 	switch {
 	case err != nil:
@@ -307,7 +314,7 @@ func (c *recording) outputsOf(ctx context.Context, childID string, q ComposedAsk
 // definition over the values its tasks' records name.
 func (r *ValuesRecorder) RecordOutputs(ctx context.Context, q OutputsAsk) (RecordedOutcome, error) {
 	none := RecordedOutcome{}
-	c, err := r.begin(ctx, ReasonOutputsNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes)
+	c, err := r.begin(ctx, ReasonOutputsNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes, q.Spacing)
 	if err != nil {
 		return none, err
 	}
@@ -528,6 +535,8 @@ func (c *recording) outputArtifacts(ctx context.Context, wf *orkstackv1.Orkflow,
 	if err != nil {
 		return nil, c.refused(err)
 	}
+	// One a failure handler passed, with no record, is returned by no record.
+	received = slices.DeleteFunc(received, func(a *orkstackv1.ArtifactRef) bool { return a == nil })
 	out := make([]*orkstackv1.ArtifactRef, 0, len(returned))
 	for _, name := range slices.Sorted(maps.Keys(returned)) {
 		spec, from := returned[name], received

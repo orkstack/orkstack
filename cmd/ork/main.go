@@ -40,6 +40,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/healthcheck"
+	"github.com/orkstack/orkstack/internal/held"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/provider"
@@ -1167,6 +1168,10 @@ func apiHandler(tcfg telemetry.Config, sinks *telemetry.Sinks, mux *http.ServeMu
 		append(telemetry.InboundHTTPOptions(sinks.Default()), otelhttp.WithFilter(traceAPIRequest))...)
 }
 
+// heldInventoryAge is how long the held check keeps an Orker's account of
+// itself as a source host, which may confirm and never refuse.
+const heldInventoryAge = time.Minute
+
 func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -1477,6 +1482,22 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	eventSourceStore, err := artifacts.NewEventSourceStore(ctx, artifacts.ConfigFromEnv())
 	if err != nil {
 		return fmt.Errorf("open event source store: %w", err)
+	}
+	// What only engines record about a source's instances: the attempts that
+	// confirmed, and that a source was deleted.
+	eventSourceInstances, err := artifacts.NewEventSourceInstanceStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open event source instance store: %w", err)
+	}
+	// Which run each message of a source has, and what Orkers staged for
+	// one that has none yet.
+	messageClaims, err := artifacts.NewMessageClaimStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open message claim store: %w", err)
+	}
+	eventSourceRecords, err := artifacts.NewEventSourceRecordStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open event source record store: %w", err)
 	}
 	// Schedule records: who bound each schedule and the consent they gave,
 	// beside what the cluster's schedule submits. Configuration the API
@@ -2146,6 +2167,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: engine.ActivityRecordOutputs})
 	runWorker.RegisterActivityWithOptions(valueRecords.RecordComposed,
 		activity.RegisterOptions{Name: engine.ActivityRecordComposed})
+	// The read of an await's record, of such a run.
+	runWorker.RegisterActivityWithOptions(engine.NewResolutionReadActivities(resolutionReader(issuedRecords)).ReadResolution,
+		activity.RegisterOptions{Name: engine.ActivityReadResolution})
 	svc := api.NewService(api.Config{
 		Minter:                 minter,
 		MintObserver:           identityMetrics,
@@ -2187,6 +2211,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Archive:                  archive,
 		Logs:                     logStore,
 		ArtifactStore:            artifactStore,
+		InputClaims:              claims,
 		Attempts:                 attemptStore,
 		Commits:                  commitStore,
 		Idempotency:              idempotency,
@@ -2210,6 +2235,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		SessionTags:              cfg.sessionTags,
 		AwaitRecords:             awaitRecords(minter, issuedRecords),
 		AwaitChecks:              awaitChecks(minter),
+		RecordedResults:          recordedResults(issuedRecords),
 		ClockSkew:                cfg.auth.clockSkew,
 		EngineBuild:              engineBuild(cfg.deployment.BuildID),
 		Issuer:                   issuer,
@@ -2290,6 +2316,21 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	deployed.follow(auth.mode)
+	// This replica's one reader of the held check (internal/held), where
+	// callers are verified: the door's and the mint's reads, what is kept of
+	// them and their caps are one.
+	if auth.access != nil {
+		if err := svc.ServeSourceHosts(api.SourceHosts{Instances: eventSourceInstances, Claims: messageClaims, Parts: eventSourceRecords, Artifacts: artifactStore, Reader: held.NewReader(held.Clients{
+			Describe:   engine.SourceReads{Client: temporalClient}.Describe,
+			Tombstoned: eventSourceInstances.Tombstoned,
+			Document:   api.HeldDocument(eventSourceStore, namespaces),
+			Confirmed:  eventSourceInstances.Confirmed,
+			Orker:      api.HeldOrkerRow(starter),
+			Access:     api.HeldAccess(auth.access.Policies),
+		}, held.Options{InventoryAge: heldInventoryAge})}); err != nil {
+			return err
+		}
+	}
 	if err := runWorker.Start(); err != nil {
 		return err
 	}

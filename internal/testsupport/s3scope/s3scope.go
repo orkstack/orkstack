@@ -20,6 +20,7 @@ package s3scope
 import (
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -121,6 +122,8 @@ type Request struct {
 	IfMatch string
 	// Allowed is the policy's answer, before any script.
 	Allowed bool
+	// Status is what the store answered; set for After alone.
+	Status int
 }
 
 // Answer is a scripted reply: an HTTP status and, unless the status is a
@@ -149,6 +152,8 @@ type Proxy struct {
 	requests []Request
 	// lose answers the next lost requests it matches 500 after forwarding
 	// them, as a store whose reply is lost after the write landed.
+	after    func(Request)
+	open     bool
 	lose     func(Request) bool
 	lost     int
 	lostSeen int
@@ -193,6 +198,25 @@ func New(t testing.TB, upstream, bucket string, policy Policy) *Proxy {
 		_ = p.server.Close()
 	})
 	return p
+}
+
+// Open starts a proxy as New does that refuses nothing, bucket-level requests
+// included: an engine's credential, whose requests a test scripts.
+func Open(t testing.TB, upstream, bucket string) *Proxy {
+	p := New(t, upstream, bucket, Everything())
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.open = true
+	return p
+}
+
+// After sets a function called once the store has answered a request and
+// before its client hears: what happens to a client lost in between. It is
+// an open proxy's alone. Nil removes it.
+func (p *Proxy) After(fn func(Request)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.after = fn
 }
 
 func reverseProxy(target *url.URL, modify func(*http.Response) error) *httputil.ReverseProxy {
@@ -265,8 +289,8 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	verb, key, ok := p.classify(r)
 	req := Request{Method: r.Method, Verb: verb, Key: key, IfMatch: r.Header.Get("If-Match")}
 	p.mu.Lock()
-	policy, script := p.policy, p.script
-	req.Allowed = ok && policy.Allows(verb, key)
+	policy, script, after, open := p.policy, p.script, p.after, p.open
+	req.Allowed = open || ok && policy.Allows(verb, key)
 	if src, isCopy := copySource(r, p.bucket); isCopy {
 		req.Allowed = req.Allowed && src != "" && policy.Allows(Get, src)
 	}
@@ -303,7 +327,17 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "AccessDenied", "s3scope: the policy does not allow "+string(verb)+" on "+key)
 		return
 	}
-	if (verb == Get || verb == Head) && !policy.Allows(List, parentPrefix(key)) {
+	if open && after != nil {
+		answer := httptest.NewRecorder()
+		p.forward.ServeHTTP(answer, r)
+		req.Status = answer.Code
+		after(req)
+		maps.Copy(w.Header(), answer.Header())
+		w.WriteHeader(answer.Code)
+		_, _ = io.Copy(w, answer.Body)
+		return
+	}
+	if (verb == Get || verb == Head) && !open && !policy.Allows(List, parentPrefix(key)) {
 		p.hiding.ServeHTTP(w, r)
 		return
 	}

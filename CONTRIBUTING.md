@@ -77,8 +77,10 @@ running keeps its address until `make down`.
 `make up` runs the stack the way a deployment that authenticates does: the
 engine in `enforce`, with a development issuer `dev` whose key pair
 `test/tools/devtoken` makes once under `.data/identity/`, beside the engine's
-own signing key (`identity.signing.key_files`, which `enforce` requires), and
-two tokens it
+own signing key (`identity.signing.key_files`, which `enforce` requires; it
+also signs the tokens of the stack's task identity issuer,
+`https://orkstack-dev.invalid`, a name nothing resolves, whose discovery the
+engine serves on its own address), and two tokens it
 signs afresh at every `make up`, each living thirty days. `dev-admin` is in
 `auth.admins`; `dev-orker` is the Orker's own credential
 (`orker.engine.auth.method: token_file`), bound to the `orker` role at `main`
@@ -207,14 +209,19 @@ recreate it. Its data stays.
 with `-short`, which skips the scale tests and the tests that compile binaries;
 it keeps the test cache, except for the packages whose unit tests run git
 (`GIT_STATE_PACKAGES`: the documentation checks, the engine's golden-fixture
-check and the proof harness), which it runs with `-count=1`. Go's cache records
+check, the release guards and the proof harness), which it runs with `-count=1`. Go's cache records
 only the files the test process itself opens inside the module, never what git
 reads in a subprocess (HEAD, the index, `info/exclude`, a global ignore file),
 so a cached pass there could survive a change to what git tracks or ignores.
 Run those packages with `-count=1` by hand too.
 Every proof runs those, without `-short`. It ends with the UI's gates, the ones
 a full proof's `ui-check` and `ui-unit` run: `bun install --frozen-lockfile`,
-`bun run check` and `bun test test/` in `ui/`, about 20 s together. So it needs
+`bun run check` (svelte-check over `ui/src` and `ui/test`, then `tsc` over
+the Playwright specs under `ui/e2e`, so a misspelt helper fails here rather
+than as a spec's timeout) and `bun test test/` in `ui/`, about 20 s together.
+Node's types reach the app's own program too, through SvelteKit's, so that
+`ui/src` uses nothing only Node has is held by a unit rule
+(`ui/test/noNodeInApp.test.ts`), not by the type check. So it needs
 Bun, and a first install needs the network. Run it before every push. For the
 site (`site/`, which also renders every doc): `make site`.
 

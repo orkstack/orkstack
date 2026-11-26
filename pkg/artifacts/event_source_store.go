@@ -2,6 +2,8 @@ package artifacts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"errors"
@@ -287,6 +289,26 @@ func (s *BlobEventSourceStore) PutSpec(ctx context.Context, id, digest string, b
 		return fmt.Errorf("artifacts: write event source spec %s/%s: %w", id, digest, err)
 	}
 	return nil
+}
+
+// ReadSpec reads the bytes of the spec of this id and digest. Bytes that do
+// not hash to the digest are an error, never a spec.
+func (s *BlobEventSourceStore) ReadSpec(ctx context.Context, id, digest string) ([]byte, bool, error) {
+	key, err := eventSourceSpecKey(id, digest)
+	if err != nil {
+		return nil, false, err
+	}
+	body, _, err := s.b.get(ctx, key, eventsources.MaxDocumentBytes+1)
+	if errors.Is(err, errBlobNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("artifacts: read event source spec %s/%s: %w", id, digest, err)
+	}
+	if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != digest {
+		return nil, false, fmt.Errorf("artifacts: event source spec %s/%s: %w", id, digest, eventsources.ErrSpecCorrupt)
+	}
+	return body, true, nil
 }
 
 // Delete removes the document of the source of this id, then the specs

@@ -167,6 +167,8 @@ func newAdminBindingCommand(g *globalFlags) *cobra.Command {
 	cmd.AddCommand(
 		&cobra.Command{
 			Use: "list", Short: "List the bindings, configuration's included", Args: cobra.NoArgs,
+			Long: "List the bindings, configuration's included: name, role, scope, subjects and where each comes from. " +
+				"A binding to a credential that Orkers share (orker_ids: any) has one more column, which says what it does not grant.",
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				ctx, cancel := g.unaryContext(cmd)
 				defer cancel()
@@ -183,8 +185,8 @@ func newAdminBindingCommand(g *globalFlags) *cobra.Command {
 					if b.GetFromConfiguration() {
 						origin = "configuration"
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", b.GetName(), b.GetRole(), b.GetScope(),
-						strings.Join(b.GetSubjects(), ","), origin)
+					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s%s\n", b.GetName(), b.GetRole(), b.GetScope(),
+						strings.Join(b.GetSubjects(), ","), origin, bindingMark(b))
 				}
 				return nil
 			},
@@ -224,6 +226,15 @@ func bindingPinLabel(b *orkstackv1.Binding) string {
 		return "by name"
 	}
 	return ""
+}
+
+// bindingMark is what a binding to a credential that Orkers share does not
+// grant, as one more column; nothing for any other.
+func bindingMark(b *orkstackv1.Binding) string {
+	if !b.GetOrkerIdsAny() {
+		return ""
+	}
+	return "\tshared Orker credential: hosts no event source"
 }
 
 func bindingWriteCommand(g *globalFlags, verb string) *cobra.Command {

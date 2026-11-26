@@ -62,6 +62,11 @@ func TestHoldSeconds_IsOneTryTwoParksAndAMinute(t *testing.T) {
 		if got := HoldSeconds(tc.park); got != tc.want {
 			t.Errorf("HoldSeconds(%d) = %d; want %d", tc.park, got, tc.want)
 		}
+		if tc.park > 0 {
+			if got := ParkSeconds(tc.want); got != tc.park {
+				t.Errorf("ParkSeconds(%d) = %d; want %d", tc.want, got, tc.park)
+			}
+		}
 	}
 }
 
@@ -158,4 +163,32 @@ func FuzzJudgingSpecRecord(f *testing.F) {
 			t.Fatalf("a judging spec that reads carries a service field: %v", src)
 		}
 	})
+}
+
+// TestReadServiceSpec_ANumberNobodyWouldWrite: an Orker keeps the deadlines it is
+// given, so a spec whose numbers are out of range is not read, each at its own bound.
+func TestReadServiceSpec_ANumberNobodyWouldWrite(t *testing.T) {
+	for name, set := range map[string]func(*SpecLimits, int){
+		"stop": func(l *SpecLimits, over int) { l.StopSeconds = MaxStopSeconds + over }, "hold": func(l *SpecLimits, over int) { l.HoldSeconds = maxHoldSeconds + over },
+		"status": func(l *SpecLimits, over int) { l.StatusSeconds = maxStepSeconds + over }, "startup": func(l *SpecLimits, over int) { l.StartupSeconds = maxStepSeconds + over },
+		"alive": func(l *SpecLimits, over int) { l.AliveSeconds = maxStepSeconds + over }, "orphan": func(l *SpecLimits, over int) { l.OrphanSeconds = maxStepSeconds + over },
+		"poll": func(l *SpecLimits, over int) { l.PollWaitSeconds = maxStepSeconds + over }, "answer": func(l *SpecLimits, over int) { l.AnswerSeconds = maxStepSeconds + over },
+		"settle": func(l *SpecLimits, over int) { l.SettleSeconds = maxStepSeconds + over }, "body": func(l *SpecLimits, over int) { l.MaxBodyBytes = MaxMessageBytesCeiling + int64(over) },
+		"attributes": func(l *SpecLimits, over int) { l.MaxAttributesBytes = MaxAttributesBytes + over },
+	} {
+		for over, read := range map[int]bool{0: true, 1: false} {
+			spec, _, _, err := BuildServiceSpec(specSource(), specImage, Limits{}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			set(&spec.Limits, over)
+			body, _, err := encodeSpec(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadServiceSpec(body); (err == nil) != read || err != nil && !errors.Is(err, ErrSpecUnreadable) {
+				t.Errorf("%s, over by %d: %v", name, over, err)
+			}
+		}
+	}
 }

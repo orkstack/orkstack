@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"time"
 
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -168,5 +170,37 @@ func (h authHandler) GetSignin(ctx context.Context, _ *connect.Request[orkstackv
 		}
 		return 0
 	})
+	if p.OrkerID != "" && hostsSources(out.Permissions) {
+		h.imagePolicy(ctx, out)
+	}
 	return connect.NewResponse(out), nil
+}
+
+// hostsSources reports that a caller may host event sources, at any pool.
+func hostsSources(held []*orkstackv1.ScopedPermissions) bool {
+	return slices.ContainsFunc(held, func(sp *orkstackv1.ScopedPermissions) bool {
+		return slices.Contains(sp.GetPermissions(), string(authz.PermEventSourceHost))
+	})
+}
+
+// whoamiPolicyRead bounds what GetSignin waits for the image policy, which an Orker's
+// own wait of it is longer than.
+const whoamiPolicyRead = 2 * time.Second
+
+// imagePolicy answers what the deployment's image policy holds every image to, read
+// now. One that was not read, in time or at all, leaves the field unset and the answer
+// what it is without it: an Orker boots on that answer. So does an engine that has no
+// store of it, which does not know that the deployment has no policy.
+func (h authHandler) imagePolicy(ctx context.Context, out *orkstackv1.GetSigninResponse) {
+	if h.svc.imagePolicies == nil {
+		return
+	}
+	read, cancel := context.WithTimeout(ctx, whoamiPolicyRead)
+	defer cancel()
+	policy, err := h.svc.imagePolicy(read)
+	if err != nil {
+		h.svc.doorFault(ctx, "whoami: the image policy could not be read, so an Orker judges its probe image as before", "orker", out.GetOrkerId(), "error", err)
+		return
+	}
+	out.ImagePolicy = &orkstackv1.ImagePolicySelection{RequireDigest: policy.GetRequireDigest(), AllowedRegistries: slices.Clone(policy.GetAllowedRegistries())}
 }

@@ -1606,7 +1606,7 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 // attempt labels the boot reap releases it by. Spelled as otherContainersFormat
 // is, so it needs no dialect either.
 const ownContainersFormat = `{{.ID}}` + "\t" + `{{.Label "ork.run"}}` + "\t" + `{{.Label "ork.task"}}` +
-	"\t" + `{{.Label "ork.item"}}` + "\t" + `{{.Label "ork.attempt"}}`
+	"\t" + `{{.Label "ork.item"}}` + "\t" + `{{.Label "ork.attempt"}}` + "\t" + `{{.Label "ork.source"}}`
 
 // OwnContainers lists the containers labelled with orkerID, with the attempt
 // each ran, so the boot reap can release the attempts of the ones it removes.
@@ -1625,15 +1625,15 @@ func (d *DockerRuntime) OwnContainers(ctx context.Context, orkerID string) ([]Ow
 }
 
 // parseOwnContainers reads ownContainersFormat's answer; a line without its
-// five fields, or without an id, is not one of its answers.
+// six fields, or without an id, is not one of its answers.
 func parseOwnContainers(answer string) []OwnContainer {
 	var own []OwnContainer
 	for _, line := range strings.Split(answer, "\n") {
 		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(fields) != 5 || fields[0] == "" {
+		if len(fields) != 6 || fields[0] == "" {
 			continue
 		}
-		own = append(own, OwnContainer{ID: fields[0], RunID: fields[1], TaskID: fields[2], Item: fields[3], Attempt: fields[4]})
+		own = append(own, OwnContainer{ID: fields[0], RunID: fields[1], TaskID: fields[2], Item: fields[3], Attempt: fields[4], Source: fields[5]})
 	}
 	return own
 }
@@ -1709,6 +1709,27 @@ func (d *DockerRuntime) ImageLabel(ctx context.Context, ref, key string) (string
 	}
 	value, ok := labels[key]
 	return value, ok, nil
+}
+
+// ImageRunsAsRoot reports whether a local image's configuration declares the root
+// user, or none, which is root.
+func (d *DockerRuntime) ImageRunsAsRoot(ctx context.Context, ref string) (bool, error) {
+	answer, overran, err := d.runWithin(ctx, controlTimeout, "image", "inspect", "--format", "{{json .Config.User}}", ref)
+	if overran || (answer.code != 0 && d.grammar().unreachable(answer.said())) {
+		return false, fmt.Errorf("%w: image inspect %s: no answer within %s: %s", errEngineUnreachable, ref, controlTimeout, answer.said())
+	}
+	if err != nil {
+		return false, err
+	}
+	if answer.code != 0 {
+		return false, fmt.Errorf("image inspect %s: exited %d: %s", ref, answer.code, answer.said())
+	}
+	var user string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(answer.stdout)), &user); err != nil {
+		return false, fmt.Errorf("image inspect %s: decode its user: %w", ref, err)
+	}
+	name, _, _ := strings.Cut(user, ":")
+	return name == "" || name == "root" || strings.Trim(name, "0") == "", nil
 }
 
 // LocalDaemon is nil when nothing in this Orker's environment points its CLI

@@ -43,3 +43,20 @@ func TestConcurrencyList_Golden(t *testing.T) {
 		t.Fatalf("empty list = %q", out.String())
 	}
 }
+
+// TestConcurrencyState_EveryRebuild: a state this build does not know is
+// named by its number, and never read as ok.
+func TestConcurrencyState_EveryRebuild(t *testing.T) {
+	for rebuild, want := range map[orkstackv1.ConcurrencyRebuild]string{
+		orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_UNSPECIFIED: "ok",
+		orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_NONE:        "ok",
+		orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_READING:     "reading its holders",
+		orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_SETTLING:    "reading its holders",
+		orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_FAILING:     "reading its holders, failing since " + formatTime(nil),
+		orkstackv1.ConcurrencyRebuild(99):                             "unknown (99)",
+	} {
+		if got := concurrencyState(&orkstackv1.ConcurrencyLimit{Answering: true, Rebuild: rebuild}); got != want {
+			t.Errorf("state of %v = %q; want %q", rebuild, got, want)
+		}
+	}
+}

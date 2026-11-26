@@ -463,7 +463,7 @@ func (s *runState) hasUnfinishedTasks() bool {
 // or child run, and no pin opening, open or closing — while work remains and
 // the run is not being canceled. Open awaits may cross: their deadlines are absolute instants.
 func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workflow.Future) bool {
-	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil || s.concWaiting() {
+	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil || s.concWaiting() || len(s.confirmingMembers()) > 0 {
 		return false
 	}
 	// No switch once the run's deadline is due: the pass top takes it.
@@ -921,6 +921,9 @@ var runStateFieldClass = map[string]fieldClass{
 	// switch; the rest are set only while a run ends or an event is built.
 	"runState.listed": fieldEphemeral, "runState.ending": fieldEphemeral, "runState.failingRun": fieldEphemeral,
 	"runState.failingPhase": fieldEphemeral, "runState.eventInterruption": fieldEphemeral, "runState.eventWaitEnd": fieldEphemeral,
+	// The loop's working memory of its reads of records; an open confirming
+	// set holds the switch, and deferred is of a run that is ending.
+	"runState.reads": fieldEphemeral, "awaitState.confirming": fieldEphemeral, "awaitState.deferred": fieldEphemeral,
 	"runState.runError": fieldEphemeral, "runState.finished": fieldEphemeral, "runState.output": fieldEphemeral, "runState.outputArtifacts": fieldEphemeral,
 	"runState.pendingItemPublishes": fieldEphemeral, "runState.publishCtx": fieldEphemeral,
 	"runState.dispatchTaskLength": fieldEphemeral, "runState.dispatchTaskBytes": fieldEphemeral,

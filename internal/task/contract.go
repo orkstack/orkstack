@@ -61,6 +61,10 @@ const (
 	// ActivityExecuteTask is the registered activity name for task execution.
 	ActivityExecuteTask = "ExecuteTask"
 
+	// ActivityHostEventSource is the registered activity name for hosting one
+	// instance of an event source, on a pool's source channel.
+	ActivityHostEventSource = "HostEventSource"
+
 	// ActivityDescribeOrker is the registered activity name for the pool
 	// liveness probe.
 	//

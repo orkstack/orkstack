@@ -309,7 +309,10 @@ func (a *ForceCancelActivities) isBelow(ctx context.Context, d ForceCancelDecisi
 		if err != nil {
 			return "", err
 		}
-		namespace, origin, err := a.reader.startedBy(first)
+		namespace, origin, err := a.reader.startedBy(ctx, runID, first)
+		if errors.Is(err, errPayloadKeyUnavailable) {
+			return "", err // asked again: it says nothing of the chain
+		}
 		if err != nil {
 			return FCCauseChainUnreadable, nil
 		}

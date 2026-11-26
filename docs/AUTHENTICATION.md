@@ -415,7 +415,13 @@ as a secret source. Bind the Orker with `auth.orkers` or a binding to the
 `orker` role at its pool (docs/ACCESS.md). The engine answers the Orker id
 the credential names (`GetSigninResponse.orker_id`: its issuer's
 `orker_id_claim`, a service account's `orker_id`, a certificate's SAN), and
-an Orker whose `orker.id` differs refuses to start, naming both. A credential
+an Orker whose `orker.id` differs refuses to start, naming both. An Orker
+that holds `eventsource.host`, at any scope, is also answered what the
+deployment's image policy holds every image to (`image_policy`:
+`require_digest` and `allowed_registries`, never a signer), by which it judges
+its own probe image; the engine waits two seconds for that at most and
+otherwise leaves it unset, so a store that does not answer keeps no Orker
+from booting. A credential
 that names no Orker, shared by a pool bound with `orker_ids: any`, lets the
 Orker keep its own id, and serves no task identity and no event source.
 

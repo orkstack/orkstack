@@ -276,6 +276,26 @@ func (s *S3CommitStore) probeConditionalAnswers(ctx context.Context) error {
 	return probeConditionalAnswers(ctx, s.client, s.bucket)
 }
 
+// StoreRefuses reports a store's failure it would answer again however often
+// it is asked: a refused credential, a missing bucket, or a request it does
+// not take. One with no answer, a server's error, a throttle and a timeout
+// are not: they may pass. A missing object is told apart before.
+func StoreRefuses(err error) bool {
+	if errors.Is(err, fs.ErrPermission) {
+		return true
+	}
+	var response *smithyhttp.ResponseError
+	if !errors.As(err, &response) {
+		return false
+	}
+	switch response.HTTPStatusCode() {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+		http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return true
+	}
+	return false
+}
+
 // isStoreUnavailable reports whether an S3 call failed without the store saying
 // anything about the request itself: no response at all, a refused credential,
 // no such bucket, or a server error. A 400, 405 or 501 is left out: a store that

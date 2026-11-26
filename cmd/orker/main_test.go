@@ -723,3 +723,47 @@ func TestLoadConfig_RefusesAProfilesDocumentItCannotRead(t *testing.T) {
 		})
 	}
 }
+
+// TestSourceQueue: an Orker polls its own pool's source channel, and none where it
+// hosts no source.
+func TestSourceQueue(t *testing.T) {
+	hosts := orker.SourceHostSettings{MaxInstances: 1}
+	for queue, want := range map[string]string{"ork-tasks": "ork-source-main", "ork-pool-gpu": "ork-source-gpu", "ork-tasks-agent": "ork-source-_ork-tasks-agent"} {
+		got, err := sourceQueue(config{queue: queue, sourceHost: hosts})
+		if err != nil || got != want {
+			t.Errorf("%s: %q, %v; want %s", queue, got, err, want)
+		}
+		if got, err := sourceQueue(config{queue: queue}); err != nil || got != "" {
+			t.Errorf("one that hosts none: %q, %v", got, err)
+		}
+	}
+	if _, err := sourceQueue(config{queue: "ork-source-main", sourceHost: hosts}); err == nil {
+		t.Error("a source channel bound as the pool's is accepted")
+	}
+}
+
+// TestSourceHosting: the stores a deployment opens keep what an instance leaves,
+// and the hosting is under the deployment's own name.
+func TestSourceHosting(t *testing.T) {
+	t.Setenv("ORK_ARTIFACT_BACKEND", "local")
+	t.Setenv("ORK_ARTIFACT_DIR", t.TempDir())
+	logs, err := artifacts.NewLogStoreFromEnv()
+	must.OK(t, err)
+	attempts, err := artifacts.NewAttemptStoreFromEnv()
+	must.OK(t, err)
+	engine, err := orker.NewEngineClient(orker.EngineSettings{URL: "http://127.0.0.1:1", Method: orker.EngineAuthTokenFile, TokenFile: "/dev/null"})
+	must.OK(t, err)
+	defer engine.Close()
+	h, done, err := sourceHosting(t.Context(), config{deployment: task.Deployment{Name: "prod"}}, engine, logs, attempts)
+	must.OK(t, err)
+	done()
+	if h.Deployment != "prod" || h.Engine == nil || h.Conn == nil || h.Records == nil || h.Logs == nil || h.Attempts == nil {
+		t.Errorf("%+v", h)
+	}
+	if _, _, err := sourceHosting(t.Context(), config{}, engine, nil, attempts); err == nil {
+		t.Error("a log store that keeps no instance's log is accepted")
+	}
+	if _, _, err := sourceHosting(t.Context(), config{}, engine, logs, nil); err == nil {
+		t.Error("an attempt store that keeps no instance's record is accepted")
+	}
+}

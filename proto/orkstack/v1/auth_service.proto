@@ -4,6 +4,7 @@ package orkstack.v1;
 
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/access.proto";
+import "orkstack/v1/image_policy.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
@@ -87,6 +88,14 @@ message GetSigninResponse {
   // orker_id_claim, or a service account's or certificate's Orker); empty
   // when it names none. An Orker refuses to boot unless it is its own id.
   string orker_id = 12;
+  // image_policy is what the deployment's image policy holds every image to
+  // now: require_digest and allowed_registries, and never a signer, which is a
+  // namespace's. It is set only for a verified credential, in observe as in
+  // enforce, that names an Orker and holds eventsource.host at any scope: the
+  // Orker judges its own probe image by it, and the policy is the deployment's
+  // whatever the scope. Unset says that the policy was not read, and set and
+  // empty that the deployment has none.
+  ImagePolicySelection image_policy = 13;
 }
 
 message RefreshSigninRequest {}

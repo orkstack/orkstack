@@ -33,3 +33,9 @@ func (a *Activities) RegisterTaskActivities(w TaskRegistrar) {
 	// block one shape.
 	w.RegisterActivityWithOptions(a.ReleasePin, activity.RegisterOptions{Name: task.ActivityReleasePin})
 }
+
+// RegisterSourceActivities registers what the source worker runs: a pool's event
+// sources' instances, on its source channel.
+func (a *Activities) RegisterSourceActivities(w TaskRegistrar) {
+	w.RegisterActivityWithOptions(a.HostEventSource, activity.RegisterOptions{Name: task.ActivityHostEventSource})
+}

@@ -33,22 +33,23 @@ const localInARow = 3
 // InstanceConfig is one instance's settings from its service spec and the
 // activity that hosts it.
 type InstanceConfig struct {
-	Limits        eventsources.SpecLimits
-	Park          time.Duration
-	RejectBreaker int
-	Trial         string
-	AtMostOnce    bool
-	// Rate is messages a second for the whole instance; 0 is unlimited.
-	Rate int
+	Limits     eventsources.SpecLimits
+	Park       time.Duration
+	Trial      string
+	AtMostOnce bool
 }
 
 // Ending is how an instance ended: the attempt's reason ("" when it was
-// stopped), and the breaker it asked to pause the source with, if any.
+// stopped), what the engine stopped it for, and the breaker it asked to pause the
+// source with, if any.
 type Ending struct {
 	Reason  string
 	Detail  string
+	Stop    string
 	Paused  string
 	Retried bool
+	// exited: its container is gone.
+	exited bool
 }
 
 // Instance runs one event-source container's lanes (06, 01 §5): the beat,
@@ -62,6 +63,9 @@ type Instance struct {
 	Asks    Asks
 	Now     func() time.Time
 	Started time.Time
+	// Hold is what the Orker holds the instance back for, "" for nothing: it
+	// writes no poll while it does.
+	Hold func() string
 
 	mu       sync.Mutex
 	waiter   *Waiter
@@ -79,6 +83,23 @@ type Instance struct {
 	nextPoll time.Time
 	end      chan Ending
 	once     sync.Once
+	// stopping is closed when the instance is asked to stop; polled is the
+	// wait for a container's answer, which then ends.
+	stopping chan struct{}
+	polled   context.Context
+	// beat and lastBeat are the loop's, and then the stop's.
+	beat     servicehost.Beat
+	lastBeat time.Time
+
+	shown      shown
+	waitCause  string
+	readySince time.Time
+	acceptedAt time.Time
+	pollOkAt   time.Time
+	block      brokerStatus
+	checkedAt  time.Time
+	looked     time.Time
+	finished   chan struct{}
 }
 
 type heldMessage struct {
@@ -95,54 +116,199 @@ const (
 	cmdRelease
 )
 
+// The stop's own bounds (06 §7): what is in flight at the engine for a message
+// in hand, and how long an at-most-once source is asked for what it buffered.
+const (
+	stopInFlight  = 5 * time.Second
+	stopBuffered  = 10 * time.Second
+	stopReceiptAt = 500 * time.Millisecond
+	// lanesEnd is how long a lane that was cancelled is given to end. One of
+	// the Orker's own that does not holds no ending.
+	lanesEnd = 10 * time.Second
+)
+
 // Run runs the instance until ctx ends (a stop: Ending{} with no reason),
-// or the attempt ends for a reason of its own.
+// or the attempt ends for a reason of its own. A stop tells the container so and
+// finishes the Orker's side of each open exchange; stopping the container is the
+// caller's.
 func (in *Instance) Run(ctx context.Context) Ending {
-	in.waiter = NewWaiter(in.Config.Park, len(in.Drivers))
-	in.breakers = NewBreakers(in.Config.RejectBreaker, in.Config.Trial)
-	in.status = servicehost.NewStatusWatch(in.Started, in.Config.Limits.StartupSeconds, in.Config.Limits.StatusSeconds)
-	in.held, in.locals, in.fails, in.end = map[int]*heldMessage{}, map[int]int{}, map[int]int{}, make(chan Ending, 1)
-	ctx, cancel := context.WithCancel(ctx)
+	work, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
+	polled, stopPolls := context.WithCancel(work)
+	defer stopPolls()
+	in.mu.Lock()
+	in.waiter = NewWaiter(in.Config.Park, len(in.Drivers))
+	in.breakers = NewBreakers(in.Judge.RejectBreaker(), in.Config.Trial)
+	in.status = servicehost.NewStatusWatch(in.Started, in.Config.Limits.StartupSeconds, in.Config.Limits.StatusSeconds)
+	in.held, in.locals, in.fails, in.end = map[int]*heldMessage{}, map[int]int{}, map[int]int{}, in.endings()
+	in.stopping, in.polled = make(chan struct{}), polled
+	in.mu.Unlock()
 	var wg sync.WaitGroup
-	for i := range in.Drivers {
+	for i, d := range in.Drivers {
+		d.Limit, d.Hold = in.DeliveryLimit, in.heldBack
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			in.lane(ctx, i)
+			in.lane(work, i)
 		}()
 	}
-	ending := in.loop(ctx)
+	done, returned := make(chan struct{}), make(chan struct{})
+	in.Finished()
+	go func() { wg.Wait(); close(done); <-returned; close(in.finished) }()
+	defer close(returned)
+	ending := in.loop(ctx, work)
+	if ending.stops() {
+		in.windDown(stopPolls, cancel, done)
+	}
 	cancel()
-	wg.Wait()
+	in.lanesEnded(done)
+	if ending.stops() {
+		// What a lane found while it finished is not a clean stop.
+		select {
+		case e := <-in.end:
+			if e != (Ending{}) {
+				return e
+			}
+		default:
+		}
+	}
 	return ending
 }
 
+// stops reports an ending whose container is still there to be told of it and
+// has kept the contract: a stop that was asked for, or a pause.
+func (e Ending) stops() bool { return e.Reason == "" && !e.exited }
+
+// lanesEnded waits for the lanes, which were cancelled, to end.
+func (in *Instance) lanesEnded(done <-chan struct{}) {
+	bound := time.NewTimer(lanesEnd)
+	defer bound.Stop()
+	select {
+	case <-done:
+	case <-bound.C:
+		if len(in.Drivers) > 0 {
+			in.Drivers[0].failed("stalled", errors.New("a lane of this Orker's own did not end"))
+		}
+	}
+}
+
+// windDown tells the container that it is stopping and finishes the Orker's side
+// of each open exchange.
+func (in *Instance) windDown(stopPolls, cancel context.CancelFunc, done <-chan struct{}) {
+	in.mu.Lock()
+	close(in.stopping)
+	in.mu.Unlock()
+	if err := in.Asks.WriteJSON("stop.json", map[string]any{"schemaVersion": 1}); err != nil && len(in.Drivers) > 0 {
+		// It is stopped by its signals then.
+		in.Drivers[0].failed("stop", err)
+	}
+	within := stopInFlight
+	if in.Config.AtMostOnce {
+		within = stopBuffered
+	} else {
+		stopPolls()
+	}
+	bound := time.NewTimer(within)
+	defer bound.Stop()
+	beats := time.NewTicker(instanceTick)
+	defer beats.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-bound.C:
+			cancel()
+			return
+		case <-beats.C:
+			// A beat that cannot be written now ends nothing: the container
+			// is being stopped.
+			_ = in.beatDue(in.Now())
+		}
+	}
+}
+
+// beatDue writes the beat when it is due.
+func (in *Instance) beatDue(now time.Time) error {
+	if now.Sub(in.lastBeat) < time.Duration(in.Config.Limits.AliveSeconds)*time.Second {
+		return nil
+	}
+	if err := in.Asks.WriteJSON("alive.json", in.beat.Next()); err != nil {
+		return err
+	}
+	in.lastBeat = now
+	return nil
+}
+
+// isStopping reports that the instance was asked to stop.
+func (in *Instance) isStopping() bool {
+	select {
+	case <-in.stopping:
+		return true
+	default:
+		return false
+	}
+}
+
+// Exited ends the instance because its container is gone.
+func (in *Instance) Exited(e Ending) {
+	e.exited = true
+	in.finish(e)
+}
+
+// Finished is closed once Run has returned and nothing of it uses the container's
+// files any more, which a lane that hangs may do after it.
+func (in *Instance) Finished() <-chan struct{} {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.finished == nil {
+		in.finished = make(chan struct{})
+	}
+	return in.finished
+}
+
+// DeliveryLimit is the broker's delivery limit as the container last reported
+// it, and when.
+func (in *Instance) DeliveryLimit() (int, time.Time) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.limit.Limit()
+}
+
 func (in *Instance) finish(e Ending) {
-	in.once.Do(func() { in.end <- e })
+	in.once.Do(func() {
+		in.mu.Lock()
+		end := in.endings()
+		in.mu.Unlock()
+		end <- e
+	})
+}
+
+// endings is where the instance's one ending goes, which may come before it
+// runs. Locked.
+func (in *Instance) endings() chan Ending {
+	if in.end == nil {
+		in.end = make(chan Ending, 1)
+	}
+	return in.end
 }
 
 // loop is the instance's own loop: the beat every aliveSeconds, the
 // status, the wait's steps and the watchdog.
-func (in *Instance) loop(ctx context.Context) Ending {
-	var beat servicehost.Beat
-	var lastBeat time.Time
+func (in *Instance) loop(ctx, work context.Context) Ending {
 	var lastStatus servicehost.StepID
-	alive := time.Duration(in.Config.Limits.AliveSeconds) * time.Second
 	ticker := time.NewTicker(instanceTick)
 	defer ticker.Stop()
 	for {
 		now := in.Now()
-		if now.Sub(lastBeat) >= alive {
-			if err := in.Asks.WriteJSON("alive.json", beat.Next()); err != nil {
-				return Ending{Reason: eventsources.ReasonServiceHostStalled, Retried: true, Detail: "the beat could not be written: " + err.Error()}
-			}
-			lastBeat = now
+		if err := in.beatDue(now); err != nil {
+			return Ending{Reason: eventsources.ReasonServiceHostStalled, Retried: true, Detail: "the beat could not be written: " + err.Error()}
 		}
 		if e, done := in.readStatus(now, &lastStatus); done {
 			return e
 		}
+		hold := in.heldBack()
 		in.mu.Lock()
+		in.show(now, hold)
 		step := in.waiter.Due(now)
 		in.mu.Unlock()
 		switch step {
@@ -156,7 +322,7 @@ func (in *Instance) loop(ctx context.Context) Ending {
 		case StepProbe:
 			// Bounded: the loop that asks is the one that writes the beat,
 			// which a hung engine must not stop (14 §6.1).
-			pctx, cancel := context.WithTimeout(ctx, doorCallBound)
+			pctx, cancel := context.WithTimeout(work, doorCallBound)
 			err := in.Door.Probe(pctx)
 			cancel()
 			in.mu.Lock()
@@ -169,6 +335,12 @@ func (in *Instance) loop(ctx context.Context) Ending {
 		if in.unresponsive(now) {
 			return Ending{Reason: eventsources.ReasonServiceUnresponsive, Retried: true, Detail: "more than a quarter of the lanes stopped answering"}
 		}
+		if k, stalled := in.stalled(now); stalled {
+			return Ending{Reason: eventsources.ReasonServiceHostStalled, Retried: true, Detail: fmt.Sprintf("lane %d of this Orker's own made no step past the longest hold", k)}
+		}
+		in.mu.Lock()
+		in.looked = now
+		in.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return Ending{}
@@ -202,13 +374,22 @@ func (in *Instance) readStatus(now time.Time, last *servicehost.StepID) (Ending,
 				in.limit.Observe(limit, now)
 			}
 			in.status.Observe(s, now, id != *last)
+			if id != *last {
+				in.block, in.checkedAt = readBroker(s.Block), now
+			}
 			in.mu.Unlock()
 			*last = id
 		}
 	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	switch in.status.Health(now) {
+	health := in.status.Health(now)
+	if health != servicehost.HealthReady {
+		in.readySince = time.Time{}
+	} else if in.readySince.IsZero() {
+		in.readySince = now
+	}
+	switch health {
 	case servicehost.HealthNeverReported:
 		return Ending{Reason: eventsources.ReasonServiceNotReady, Retried: true, Detail: "no status within startupSeconds"}, true
 	case servicehost.HealthFatal:
@@ -254,6 +435,18 @@ func (in *Instance) unresponsive(now time.Time) bool {
 	return servicehost.Unresponsive(lanes, now, hold)
 }
 
+// stalled is the Orker's watch over itself (14 §4.4): a lane whose exchange is
+// open and that made no step for longer than the longest hold.
+func (in *Instance) stalled(now time.Time) (int, bool) {
+	hold := time.Duration(in.Config.Limits.HoldSeconds) * time.Second
+	for i, d := range in.Drivers {
+		if open, _ := d.Lane.Open(now); open && now.Sub(d.lastMoved()) > hold {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 // command sends cmd to the held lanes: the oldest one alone, or all.
 func (in *Instance) command(cmd laneCommand, oldestOnly bool) {
 	in.mu.Lock()
@@ -282,18 +475,21 @@ func (in *Instance) command(cmd laneCommand, oldestOnly bool) {
 // mayPoll reports whether lane i may write a poll now: the service is
 // ready and healthy, the wait lets this lane poll, and the rate allows one.
 func (in *Instance) mayPoll(i int) bool {
+	hold, rate := in.heldBack(), in.Judge.Rate()
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	if !in.healthy || i >= in.waiter.Lanes() {
+	if in.isStopping() {
+		// Only an at-most-once source is asked for what it buffered.
+		return in.Config.AtMostOnce && in.healthy
+	}
+	if !in.healthy || i >= in.waiter.Lanes() || hold != "" {
 		return false
 	}
 	now := in.Now()
-	if in.Config.Rate > 0 {
-		if now.Before(in.nextPoll) {
-			return false
-		}
-		in.nextPoll = now.Add(time.Second / time.Duration(in.Config.Rate))
+	if now.Before(in.nextPoll) {
+		return false
 	}
+	in.nextPoll = now.Add(time.Second / time.Duration(rate))
 	return true
 }
 
@@ -303,6 +499,9 @@ func (in *Instance) lane(ctx context.Context, i int) {
 	look := time.NewTicker(lookEvery)
 	defer look.Stop()
 	for ctx.Err() == nil {
+		if in.isStopping() && !in.Config.AtMostOnce {
+			return
+		}
 		if !in.mayPoll(i) {
 			select {
 			case <-ctx.Done():
@@ -311,16 +510,32 @@ func (in *Instance) lane(ctx context.Context, i int) {
 			}
 			continue
 		}
-		ex, err := d.Poll(ctx, in.Config.Limits.PollWaitSeconds)
+		wait, last := in.Config.Limits.PollWaitSeconds, in.isStopping()
+		if last {
+			if !in.Config.AtMostOnce {
+				return
+			}
+			wait = 0
+		}
+		ex, err := d.pollUntil(ctx, in.polled, wait)
 		if errors.Is(err, ErrReceiptRequired) && ex.Kind == ExchangeHeld {
 			// The verdict waits for its receipt (01 §5): the message is
 			// held and judged again after a park.
 			err = nil
 		}
 		if err != nil {
-			if ctx.Err() == nil {
+			if !errors.Is(err, context.Canceled) {
 				in.finish(endingFor(err))
 			}
+			return
+		}
+		if ex.Kind != ExchangeReceiveFailed {
+			in.mu.Lock()
+			in.pollOkAt = in.Now()
+			in.mu.Unlock()
+		}
+		if last && ex.Kind == ExchangeQuiet {
+			// Asked after the notice, it has nothing left.
 			return
 		}
 		if !in.took(ctx, i, d, ex) {
@@ -400,6 +615,7 @@ func receiveBackoff(n int) time.Duration {
 // breakers and the wait. One its container closed at the hold bound says
 // nothing of how the broker settles, so it counts no settlement.
 func (in *Instance) settled(ctx context.Context, ex Exchange) bool {
+	rejectAt := in.Judge.RejectBreaker()
 	in.mu.Lock()
 	refused := !ex.Settled.OK && ex.Settled.Error != nil && ex.Settled.Error.Kind == KindRefused
 	trip := ""
@@ -410,8 +626,10 @@ func (in *Instance) settled(ctx context.Context, ex Exchange) bool {
 	case artifacts.ReceiptAccepted, artifacts.ReceiptDuplicate:
 		in.breakers.Accepted()
 		in.waiter.Accepted()
+		in.acceptedAt = in.Now()
 	case artifacts.ReceiptRejected, artifacts.ReceiptDropped:
 		if ex.Decision.Disposition == Reject {
+			in.breakers.RejectAt(rejectAt)
 			if t := in.breakers.Rejected(ex.Message.ID); t != "" {
 				trip = t
 			}
@@ -423,7 +641,7 @@ func (in *Instance) settled(ctx context.Context, ex Exchange) bool {
 	}
 	in.mu.Unlock()
 	if ex.Decision.Disposition == Pause {
-		in.finish(Ending{Detail: "the source is paused"})
+		in.finish(Ending{Stop: ex.Decision.Stop, Detail: "the engine stopped it"})
 		return false
 	}
 	if trip != "" {
@@ -444,7 +662,7 @@ func (in *Instance) pause(ctx context.Context, code string) {
 	if err != nil {
 		detail = "asked to pause the source; the request got no answer: " + err.Error()
 	}
-	in.finish(Ending{Paused: code, Detail: detail})
+	in.finish(Ending{Paused: code, Stop: eventsources.ReasonPaused, Detail: detail})
 }
 
 // hold keeps a message whose disposition is a wait until the instance's
@@ -452,7 +670,7 @@ func (in *Instance) pause(ctx context.Context, code string) {
 func (in *Instance) hold(ctx context.Context, i int, d *LaneDriver, ex Exchange) bool {
 	h := &heldMessage{msg: ex.Message, body: ex.Body, since: in.Now(), cmd: make(chan laneCommand, 1)}
 	in.mu.Lock()
-	in.held[i] = h
+	in.held[i], in.waitCause = h, ex.Decision.Cause
 	if !ex.Decision.Uncertain {
 		// A certain decision ends a run of uncertain ones: the breaker
 		// counts five in a row.
@@ -481,11 +699,13 @@ func (in *Instance) hold(ctx context.Context, i int, d *LaneDriver, ex Exchange)
 		select {
 		case <-ctx.Done():
 			return false
+		case <-in.stopping:
+			return in.releaseOne(ctx, i, d, h, ex.Decision)
 		case cmd := <-h.cmd:
 			if cmd == cmdRelease {
 				return in.releaseOne(ctx, i, d, h, ex.Decision)
 			}
-			next, err := in.Judge.Decide(ctx, h.msg, h.body)
+			next, err := d.decide(ctx, &h.msg, &h.body)
 			if err != nil {
 				if ctx.Err() == nil {
 					in.finish(endingFor(err))
@@ -570,6 +790,12 @@ func (in *Instance) release(ctx context.Context, d *LaneDriver, h *heldMessage, 
 		select {
 		case <-ctx.Done():
 			return false
+		case <-in.stopping:
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(stopReceiptAt):
+			}
 		case <-time.After(max(in.Config.Park, lookEvery)):
 		}
 		if expired, xerr := d.HoldExpired(ctx, h.msg); xerr != nil || expired {

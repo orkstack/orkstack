@@ -27,6 +27,7 @@
 	import {
 		CURRENT_VERSION,
 		EMPTY_SCHEDULE_FORM,
+		fireNote,
 		fireOutcome,
 		firesLabel,
 		isoUTC,
@@ -326,6 +327,8 @@
 										>
 									{:else if outcome?.kind === 'refused'}
 										<span class="text-red-strong" data-tip={outcome.refusal}>refused</span>
+									{:else if outcome?.kind === 'skipped' && newest}
+										<span class="stamp stamp-sm pill-plain" data-tip={fireNote(newest)}>skipped</span>
 									{:else}
 										-
 									{/if}
@@ -429,6 +432,7 @@
 									<tbody class="font-mono text-ink-secondary">
 										{#each schedule.recentFires as recent, index (index)}
 											{@const result = fireOutcome(recent)}
+											{@const why = fireNote(recent)}
 											<tr>
 												<td class="pr-3 align-top">{isoUTC(recent.scheduledAt)}</td>
 												<td class="align-top">
@@ -438,10 +442,12 @@
 														>
 													{:else if result.kind === 'refused'}
 														<span class="text-red-strong">refused</span>
-														<span class="block font-sans text-ink-secondary">{result.refusal}</span>
+													{:else if result.kind === 'skipped'}
+														<span class="stamp stamp-sm pill-plain" data-testid="schedule-fire-skipped">skipped</span>
 													{:else}
 														<span class="italic">{result.kind}</span>
 													{/if}
+													{#if why && result.kind !== 'unavailable'}<span class="block font-sans text-ink-secondary" data-testid="schedule-fire-note">{why}</span>{/if}
 												</td>
 											</tr>
 										{/each}

@@ -721,18 +721,18 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		var resolution *orkstackv1.AwaitSignal
 		var resolutionRaw converter.RawValue
 		resolved, received := false, false
-		expired := ""
-		if s.resolutions != nil {
+		expired, confirmed := "", false
+		addResolutions := func() {
 			selector.AddReceive(s.resolutions, func(c workflow.ReceiveChannel, _ bool) {
 				c.Receive(ctx, &resolutionRaw)
 				received = true
 			})
-			for _, id := range s.order {
-				if a := s.awaits[id]; a != nil && a.open {
-					awaitID := id
-					selector.AddFuture(a.deadline, func(workflow.Future) { expired = awaitID })
-				}
+		}
+		if s.resolutions != nil {
+			if !s.reads.unanswered {
+				addResolutions()
 			}
+			s.addDeadlines(selector, func(id string) { expired = id }, func() { confirmed = true })
 		}
 		// Then every open sleep's timer in s.order, last, as the main loop's.
 		woke := ""
@@ -741,6 +741,9 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				sleepID := id
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
+		}
+		if s.resolutions != nil && s.reads.unanswered {
+			addResolutions()
 		}
 		// Then every handler waiting to run again, in the order its wait was
 		// armed, as the main loop's.
@@ -783,6 +786,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		selector.Select(ctx)
 		ectx = s.eventContext(ctx)
 		if received {
+			s.receivedResolution()
 			// Opened out of the selector's callback: one that does not read is
 			// an event of the run, and no awaited task changes.
 			resolution, resolved = s.openResolution(ectx, resolutionRaw)
@@ -811,8 +815,27 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 						"run_id", s.runID, "task_id", woke, "error", cancelErr)
 				}
 			}
+		case resolved && s.recorded():
+			id := resolution.GetTaskId()
+			outcome, err := s.resolveRecorded(ectx, ctx, inFlight, resolution, nil)
+			switch {
+			case outcome == resolveCanceled:
+				if err := s.cancelAwaiting(ectx, id); err != nil {
+					workflow.GetLogger(ctx).Error("mark canceled failed", "run_id", s.runID, "task_id", id, "error", err)
+				}
+			case outcome == resolveApplied && err != nil:
+				workflow.GetLogger(ctx).Error("emit of an await's resolution failed", "run_id", s.runID, "task_id", id, "error", err)
+			}
 		case resolved:
 			_ = s.resolve(ectx, resolution) // the outcome is recorded on the task
+		case confirmed:
+			s.confirmAll(ectx, ctx, inFlight, func(end settled) bool {
+				s.handlerExpired(ectx, end)
+				return false
+			})
+		case expired != "" && s.recorded():
+			outcome, err := s.expireRecorded(ectx, ctx, inFlight, expired)
+			s.handlerExpired(ectx, settled{id: expired, outcome: outcome, err: err})
 		case expired != "":
 			// expire always returns an error: the deadline's own failure, or the
 			// cancellation that settled its timer.

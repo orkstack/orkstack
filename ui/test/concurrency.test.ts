@@ -3,7 +3,10 @@ import { create } from '@bufbuild/protobuf';
 import { timestampFromMs } from '@bufbuild/protobuf/wkt';
 import { ConcurrencyQueueCause, ConcurrencyQueuedSchema } from '../src/lib/gen/orkstack/v1/run_pb';
 import { ConcurrencySpecSchema, ConcurrencyStrategy } from '../src/lib/gen/orkstack/v1/orkflow_pb';
-import { concurrencyLabel, ordinal, queuedBehind, queuedHeadline, queuedPlace, shortDuration, waitsOnArrival } from '../src/lib/concurrency';
+import { ConcurrencyLimitSchema, ConcurrencyRebuild, ConcurrencySlotHolderSchema } from '../src/lib/gen/orkstack/v1/concurrency_service_pb';
+import { concurrencyLabel, limitHref, ordinal, queuedBehind, queuedHeadline, queuedPlace, shortDuration, waitsOnArrival } from '../src/lib/concurrency';
+import { concurrencyGetCli, concurrencyHref, concurrencyListCli, entryLevel, holderNote, limitState, shownOf, strategyName } from '../src/lib/concurrencyLimits';
+import { FilterOperator, filterOf, filtersFromUrl } from '../src/lib/listFilter';
 
 const at = (iso: string) => timestampFromMs(Date.parse(iso));
 const base = (cause: ConcurrencyQueueCause) =>
@@ -98,4 +101,76 @@ test('another strategy is named as the DSL writes it, and an unknown one by its 
 test('only a run that arrived to a full key waits on arrival', () => {
 	const arrived = [ConcurrencyQueueCause.UNSPECIFIED, ConcurrencyQueueCause.ARRIVAL, ConcurrencyQueueCause.RESUME, ConcurrencyQueueCause.UNPAUSE, ConcurrencyQueueCause.FAILING];
 	expect(arrived.map((cause) => waitsOnArrival(base(cause)))).toEqual([true, true, false, false, false]);
+});
+
+// The Concurrency page's State is `orkctl concurrency`'s STATE cell
+// (cmd/orkctl/concurrency.go, concurrencyState and renderConcurrencyList).
+test('a limit\'s state is the CLI\'s word for it, with why beside it', () => {
+	const limit = (fields: Parameters<typeof create<typeof ConcurrencyLimitSchema>>[1]) => limitState(create(ConcurrencyLimitSchema, fields));
+	expect(limit({ answering: true, rebuild: ConcurrencyRebuild.NONE })).toEqual({ word: 'OK', tone: 'ok', detail: '' });
+	expect(limit({ answering: true })).toEqual({ word: 'OK', tone: 'ok', detail: '' });
+	expect(limit({ answering: true, rebuild: ConcurrencyRebuild.READING })).toEqual({ word: 'Reading its holders', tone: 'wait', detail: '' });
+	expect(limit({ answering: true, rebuild: ConcurrencyRebuild.SETTLING })).toEqual({ word: 'Reading its holders', tone: 'wait', detail: '' });
+	expect(limit({ answering: true, rebuild: ConcurrencyRebuild.FAILING, rebuildFailingSince: at('2026-11-25T01:02:03Z') })).toEqual({
+		word: 'Reading its holders',
+		tone: 'fail',
+		detail: 'failing since 2026-11-25T01:02:03Z'
+	});
+	// Not answering wins over whatever else the message holds.
+	expect(limit({ answering: false, notAnsweringReason: 'the limit did not answer in time', rebuild: ConcurrencyRebuild.READING })).toEqual({
+		word: 'Not answering',
+		tone: 'fail',
+		detail: 'the limit did not answer in time'
+	});
+});
+
+test('a rebuild this build does not know is not read as fine', () => {
+	const state = limitState(create(ConcurrencyLimitSchema, { answering: true, rebuild: 99 as ConcurrencyRebuild }));
+	expect(state.tone).not.toBe('ok');
+	expect(state.word).toBe('Unknown (99)');
+});
+
+test('an entry names its level and strategy as the CLI does, and a stalled holder what must be done', () => {
+	expect([entryLevel(false), entryLevel(true)]).toEqual(['run', 'task']);
+	expect([ConcurrencyStrategy.QUEUE, ConcurrencyStrategy.REFUSE, ConcurrencyStrategy.SKIP, ConcurrencyStrategy.UNSPECIFIED].map(strategyName)).toEqual([
+		'queue',
+		'refuse',
+		'skip',
+		'-'
+	]);
+	expect(holderNote(create(ConcurrencySlotHolderSchema, { stalled: true }))).toBe('not making progress; an operator must end it');
+	expect(holderNote(create(ConcurrencySlotHolderSchema, {}))).toBe('');
+});
+
+test('a list shorter than its total says so, and a whole one says nothing', () => {
+	expect(shownOf(10, 35, 'holding')).toBe('The first 10 of 35 holding');
+	expect(shownOf(10, 11, 'waiting')).toBe('The first 10 of 11 waiting');
+	expect(shownOf(3, 3, 'holding')).toBe('');
+	// A total that lags its own list never claims fewer than are shown.
+	expect(shownOf(3, 2, 'holding')).toBe('');
+});
+
+test('a key survives its own address, whatever it holds', () => {
+	for (const key of ['ork:orkflow:default/db-migrate', 'a+b=c@d', './/x', 'a b&c=d#e?f%2F', '..', 'é"\'$(x)']) {
+		const url = new URL(limitHref('payments', key), 'http://x');
+		expect(url.pathname).toBe('/admin/concurrency');
+		expect(url.searchParams.get('key')).toBe(key);
+		expect(url.searchParams.get('ns')).toBe('payments');
+	}
+});
+
+test('the list\'s address carries its namespace, filters and cursor, and a page only with a cursor', () => {
+	const filters = [filterOf('key', FilterOperator.PREFIX, ['db-'])];
+	const url = new URL(concurrencyHref({ ns: 'payments', filters, cursor: 'tok', page: 2 }), 'http://x');
+	expect(filtersFromUrl(url)).toEqual({ filters, error: null });
+	expect([url.searchParams.get('ns'), url.searchParams.get('cursor'), url.searchParams.get('page')]).toEqual(['payments', 'tok', '2']);
+	expect(concurrencyHref({ ns: '', filters: [], cursor: '', page: 3 })).toBe('/admin/concurrency?ns=default');
+});
+
+test('the commands are the same reads, every value quoted', () => {
+	expect(concurrencyListCli('payments', [filterOf('key', FilterOperator.PREFIX, ['db-'])])).toBe("orkctl -n payments concurrency list -F 'key^db-'");
+	expect(concurrencyListCli('', [])).toBe('orkctl -n default concurrency list');
+	expect(concurrencyGetCli('payments', "it's $(x)")).toBe(`orkctl -n payments concurrency get 'it'"'"'s $(x)'`);
+	// A key that begins with a dash is a key, never a flag.
+	expect(concurrencyGetCli('payments', '-x')).toBe('orkctl -n payments concurrency get -- -x');
 });

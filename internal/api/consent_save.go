@@ -125,8 +125,8 @@ func (s *Service) asksFor(ctx context.Context, ns, name, version string) (consen
 		return consent.Asks{}, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"what orkflow %q asks for cannot be known: %w", name, err))
 	case err != nil:
-		return consent.Asks{}, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
-			"what orkflow %q asks for could not be read: %w", name, err))
+		return consent.Asks{}, connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf(
+			"what orkflow %q asks for could not be read: %w", name, err)))
 	}
 	return asks, nil
 }

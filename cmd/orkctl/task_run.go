@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -56,6 +55,12 @@ type taskRunOptions struct {
 	artifacts   []string
 	secrets     []string
 	omitSecrets []string
+	// The stand-ins for what a local run is not issued
+	// (task_run_identity.go).
+	identities      []string
+	omitIdentities  []string
+	credentials     []string
+	omitCredentials []string
 	// needs is --need TASK=STATUS: a failure handler's need outcome, as
 	// typed (docs/DSL.md "Joins and failure handlers").
 	needs      []string
@@ -83,6 +88,7 @@ type parsedTaskRun struct {
 	secrets     map[string]string // name -> source, a file: path made absolute
 	secretFlags map[string]string // name -> the flag value as typed
 	omitted     map[string]bool
+	identity    suppliedIdentities
 	shared      string
 	policy      orker.SecurityPolicy
 	// needs is every --need, in flag order; needStatus the same by task.
@@ -167,6 +173,17 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 	flags.StringArrayVar(&opts.secrets, "secret", nil,
 		"supply a declared secret as NAME=file:PATH or NAME=env:VAR (repeatable)")
 	flags.StringArrayVar(&opts.omitSecrets, "omit-secret", nil, "run without this declared secret (repeatable)")
+	flags.StringArrayVar(&opts.identities, "identity", nil,
+		"supply a declared identity's token as NAME=file:PATH, read again at each refresh (repeatable)")
+	flags.StringArrayVar(&opts.omitIdentities, "omit-identity", nil, "run without this declared identity (repeatable)")
+	flags.StringArrayVar(&opts.credentials, "credential", nil,
+		"supply a declared credential's files as NAME=dir:PATH (repeatable)")
+	flags.StringArrayVar(&opts.omitCredentials, "omit-credential", nil, "run without this declared credential (repeatable)")
+	if !dsl.TaskIdentityAvailable() {
+		for _, name := range []string{"identity", "omit-identity", "credential", "omit-credential"} {
+			_ = flags.MarkHidden(name)
+		}
+	}
 	flags.StringArrayVar(&opts.needs, "need", nil,
 		"a failure handler's direct need and how it ended, TASK=succeeded|failed|skipped|canceled (repeatable); "+
 			"with --from-run it overrides the recorded outcome, without it every direct need must be named")
@@ -196,6 +213,10 @@ func parseTaskRunFlags(opts *taskRunOptions) (*parsedTaskRun, error) {
 		}{
 			{"--secret", len(opts.secrets) > 0},
 			{"--omit-secret", len(opts.omitSecrets) > 0},
+			{"--identity", len(opts.identities) > 0},
+			{"--omit-identity", len(opts.omitIdentities) > 0},
+			{"--credential", len(opts.credentials) > 0},
+			{"--omit-credential", len(opts.omitCredentials) > 0},
 			{"--shared", opts.shared != ""},
 		} {
 			if used.set {
@@ -262,6 +283,9 @@ func parseTaskRunFlags(opts *taskRunOptions) (*parsedTaskRun, error) {
 		parsed.omitted[name] = true
 	}
 	if err := parsed.policy.Validate(); err != nil {
+		return nil, err
+	}
+	if parsed.identity, err = parseIdentityFlags(opts, parsed.policy, time.Now()); err != nil {
 		return nil, err
 	}
 	return parsed, nil
@@ -348,9 +372,13 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 // ownSecretFlag is the dispatcher's floor, asked of one --secret source
 // before anything is fetched.
 func ownSecretFlag(name, source string, policy orker.SecurityPolicy) error {
+	return ownSourceFlag("--secret", name, source, policy)
+}
+
+func ownSourceFlag(flag, name, source string, policy orker.SecurityPolicy) error {
 	if err := policy.AllowsSecretSource(source); err != nil {
-		return fmt.Errorf("--secret %s: %w; a local run refuses it as an Orker does, so supply the value "+
-			"from a file or a variable of its own", name, err)
+		return fmt.Errorf("%s %s: %w; a local run refuses it as an Orker does, so supply the value "+
+			"from a file or a variable of its own", flag, name, err)
 	}
 	return nil
 }
@@ -380,25 +408,6 @@ func checkSharedSeed(dir string) (string, error) {
 		return "", err
 	}
 	return abs, nil
-}
-
-// credentialRefusal refuses a task that declares a credential, by name. A
-// provider issues a credential as the namespace's grant, logging in with the
-// attempt's identity token, and a local run has neither, so the task is
-// refused rather than run without the files it reads. A provider's secret is
-// not refused: --secret supplies it from a local source, which replaces the
-// provider's source, its grant and its ciphertext together.
-func credentialRefusal(spec *orkstackv1.Task) error {
-	creds := spec.GetCredentials()
-	if len(creds) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(creds))
-	for _, c := range creds {
-		names = append(names, strconv.Quote(c.GetName()))
-	}
-	return fmt.Errorf("task %q declares the credentials %s, which a provider issues as the namespace's grant to a run's attempt; "+
-		"a local run holds no identity to obtain them with, so orkctl task run does not run this task", spec.GetId(), strings.Join(names, ", "))
 }
 
 // localSecrets turns the definition's SecretRefs into the local input's.
@@ -639,9 +648,6 @@ func (r *taskRunner) execute() error {
 	if ref := r.spec.GetOrkflow(); ref != nil {
 		return engine.ComposedTaskRefusal(r.opts.task, ref)
 	}
-	if err := credentialRefusal(r.spec); err != nil {
-		return err
-	}
 	if err := r.checkNeeds(); err != nil {
 		return err
 	}
@@ -877,6 +883,7 @@ func (r *taskRunner) account() error {
 					"or run without it with --omit-secret %s", r.opts.task, name, name, name, name))
 		}
 	}
+	problems = append(problems, r.parsed.identity.problems(r.spec, r.opts.renderOnly)...)
 	if r.parsed.shared != "" && r.spec.GetPin() == "" {
 		problems = append(problems, fmt.Sprintf("--shared seeds a pin's /orkstack/shared, and task %q is not pinned", r.opts.task))
 	}
@@ -1172,6 +1179,12 @@ func (r *taskRunner) dispatch() (err error) {
 	})
 	dispatcher := acts.Dispatcher()
 	dispatcher.LogSinkObserver = r.t.line
+	if local, any := r.parsed.identity.local(r.spec); any && !r.opts.renderOnly {
+		dispatcher.UseLocalIdentity(local)
+		for _, note := range r.parsed.identity.notes(time.Now()) {
+			r.t.println(note)
+		}
+	}
 	if r.in.GetEach().GetLines() != nil {
 		// An item of a fan-out over lines reads its run's line index, read
 		// only, from the deployment's store, as its source's span is.

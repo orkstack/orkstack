@@ -71,6 +71,27 @@ func StaticPath(t testing.TB, pkg string) string {
 	return p
 }
 
+// IdentityGateTag is the build tag that opens task identity in a test's own
+// binaries (internal/dsl, identity_testgate.go).
+const IdentityGateTag = "ork_test_identity"
+
+// GatedPath returns the path of a build of pkg with task identity open
+// (IdentityGateTag), for its end-to-end tests while the gate is closed. It
+// is always built by this process: no proof's binaries carry the tag.
+func GatedPath(t testing.TB, pkg string) string {
+	t.Helper()
+	if err := checkPackage(pkg); err != nil {
+		t.Fatal(err)
+	}
+	p, err := once("gated:"+pkg, func() (string, error) {
+		return compile(pkg, path.Base(pkg)+"-gated/"+path.Base(pkg), false, "-tags="+IdentityGateTag)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func checkPackage(pkg string) error {
 	if !strings.HasPrefix(pkg, "./cmd/") && !strings.HasPrefix(pkg, "./test/tools/") {
 		return fmt.Errorf("testbin: %q is not a ./cmd/<name> or ./test/tools/<name> package", pkg)
@@ -105,7 +126,7 @@ func resolve(pkg string) (string, error) {
 	return once(pkg, func() (string, error) { return compile(pkg, name, false) })
 }
 
-func compile(pkg, name string, static bool) (string, error) {
+func compile(pkg, name string, static bool, flags ...string) (string, error) {
 	root, err := repoRoot()
 	if err != nil {
 		return "", err
@@ -121,7 +142,10 @@ func compile(pkg, name string, static bool) (string, error) {
 	}
 	out := filepath.Join(dir, name)
 	mu.Unlock()
-	cmd := exec.Command("go", "build", "-o", out, pkg)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return "", fmt.Errorf("testbin: %w", err)
+	}
+	cmd := exec.Command("go", append(append([]string{"build"}, flags...), "-o", out, pkg)...)
 	cmd.Dir = root
 	cmd.Env = GoBuildEnv(os.Environ())
 	if static {

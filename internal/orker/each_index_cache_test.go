@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 func shaHex(b []byte) string {
@@ -250,4 +252,113 @@ func TestIndexCache_ReverifiesAndEvicts(t *testing.T) {
 			t.Fatalf("fetched %d times; want 2 (nothing kept)", calls.Load())
 		}
 	})
+}
+
+// TestIndexCache_DropsOnlyTheCopyItRead: a load that found a damaged copy may
+// be slow to drop it. One that another load has kept in its place since is
+// not what it read, and stays.
+func TestIndexCache_DropsOnlyTheCopyItRead(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	c := newEachIndexCache(dir, 1<<20)
+	body := []byte("an index")
+	key, path := eachIndexCacheName(testIndexURI, shaHex(body)), cachedPath(dir, testIndexURI, shaHex(body))
+	var calls atomic.Int32
+	load := func() {
+		t.Helper()
+		if got, err := c.load(ctx, testIndexURI, shaHex(body), countingFetch(body, &calls)); err != nil || string(got) != string(body) {
+			t.Fatalf("load = %q, %v; want %q", got, err, body)
+		}
+	}
+	load()
+	damaged := c.entries[key]
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	load() // finds the damage, and keeps a fresh copy
+	if calls.Load() != 2 {
+		t.Fatalf("fetched %d times; want 2 (the damaged copy fetched again)", calls.Load())
+	}
+
+	c.drop(key, damaged) // the slow load's
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the fresh copy is gone: %v", err)
+	}
+	if c.used != int64(len(body)) {
+		t.Fatalf("used = %d; want %d", c.used, len(body))
+	}
+	load()
+	if calls.Load() != 2 {
+		t.Fatalf("fetched %d times; want 2 (the fresh copy is kept)", calls.Load())
+	}
+	// The positive control: what it did read, it drops.
+	c.drop(key, c.entries[key])
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) || len(c.entries) != 0 || c.used != 0 {
+		t.Fatalf("the copy read is still there: %v, %d entries of %d bytes", err, len(c.entries), c.used)
+	}
+}
+
+// TestIndexCache_AFetchThatEndedWithoutAnAnswer: a fetch that panicked, or
+// whose goroutine exited, answers nobody. Its own load ends so; a load that
+// waited for it makes the fetch itself, and so does every later one.
+func TestIndexCache_AFetchThatEndedWithoutAnAnswer(t *testing.T) {
+	for name, end := range map[string]func(){
+		"it panicked":          func() { panic("the fetch's own") },
+		"its goroutine exited": runtime.Goexit,
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := newEachIndexCache(t.TempDir(), 1<<20)
+				body := []byte("shared index")
+				// Long past the wait of any load that can be answered.
+				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cancel()
+				release, led := make(chan struct{}), make(chan any, 1)
+				go func() {
+					defer func() { led <- recover() }()
+					_, _ = c.load(ctx, testIndexURI, shaHex(body), func(context.Context) ([]byte, error) {
+						<-release
+						end()
+						return nil, nil
+					})
+				}()
+				synctest.Wait() // the leader is in its fetch
+				var calls atomic.Int32
+				type answer struct {
+					body []byte
+					err  error
+				}
+				answers := make(chan answer, 3)
+				for range 3 {
+					go func() {
+						got, err := c.load(ctx, testIndexURI, shaHex(body), countingFetch(body, &calls))
+						answers <- answer{got, err}
+					}()
+				}
+				synctest.Wait() // the others wait for it
+				if calls.Load() != 0 {
+					t.Fatalf("fetched %d times while one fetch is in flight", calls.Load())
+				}
+				close(release)
+				if r := <-led; name == "it panicked" && r != "the fetch's own" {
+					t.Errorf("the load whose fetch panicked recovered %v; want its own panic", r)
+				}
+				for range 3 {
+					if a := <-answers; a.err != nil || string(a.body) != string(body) {
+						t.Fatalf("a load that waited = %q, %v; want %q", a.body, a.err, body)
+					}
+				}
+				if calls.Load() != 1 {
+					t.Fatalf("the loads that waited fetched %d times; want once between them", calls.Load())
+				}
+				if len(c.inflight) != 0 {
+					t.Fatalf("%d fetches in flight with none running", len(c.inflight))
+				}
+			})
+		})
+	}
 }

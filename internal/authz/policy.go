@@ -461,6 +461,26 @@ func (p *Policy) RolePermissions(name string) (map[Permission]bool, bool) {
 	return perms, ok
 }
 
+// bindingGrants reports whether b's role holds perm as b binds it: every
+// decision about a binding asks here, so a rule about a binding cannot differ
+// between them. A binding that accepts any Orker id hosts no event source:
+// which Orker holds an instance must be its credential's to say.
+func (p *Policy) bindingGrants(b Binding, perm Permission) bool {
+	return !sharedCredentialLacks(b, perm) && p.roleGrants(b, perm)
+}
+
+// sharedCredentialLacks reports whether b is for a credential that names no
+// Orker, and perm is one only a named Orker's holds.
+func sharedCredentialLacks(b Binding, perm Permission) bool {
+	return perm == PermEventSourceHost && b.OrkerIDsAny
+}
+
+// roleGrants reports whether b's role holds perm at b's kind of scope.
+func (p *Policy) roleGrants(b Binding, perm Permission) bool {
+	perms, ok := p.RolePermissions(b.Role)
+	return ok && perms[perm] && grantableAt(perm, b.Scope.Kind)
+}
+
 // Configuration is what configuration contributes to every policy.
 type Configuration struct {
 	// Admins are auth.admins: subjects that hold admin at the deployment.
@@ -774,7 +794,7 @@ func Validate(doc *orkstackv1.AccessDocument, opts ValidateOptions) (warnings []
 				}
 			}
 		}
-		if perms, _ := p.RolePermissions(b.Role); b.Scope.Kind == ScopeDeployment && perms[PermAccessWrite] {
+		if b.Scope.Kind == ScopeDeployment && p.bindingGrants(b, PermAccessWrite) {
 			writers = true
 		}
 	}

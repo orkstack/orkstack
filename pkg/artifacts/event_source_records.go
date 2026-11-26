@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"regexp"
 	"strings"
@@ -106,6 +107,9 @@ func ReceiptKey(p ReceiptKeyParts) (string, error) {
 		p.Delivery, p.Epoch, p.Lane, p.Seq, p.Outcome, hex.EncodeToString(sum[:])[:16]), nil
 }
 
+// ReceiptID is the id of the receipt of a message taken then.
+func ReceiptID(taken time.Time) string { return "rcp-" + taken.UTC().Format(receiptStampLayout) }
+
 // ReceiptSourcePrefix is the prefix every receipt of one source is under.
 func ReceiptSourcePrefix(namespace, sourceID string) (string, error) {
 	if !eventSourceSlug.MatchString(namespace) || !eventsources.ValidID(sourceID) {
@@ -148,35 +152,62 @@ func (a InstanceAttempt) valid() error {
 	if !eventsources.ValidID(a.SourceID) {
 		return fmt.Errorf("artifacts: instance: %q is not an event source id", a.SourceID)
 	}
-	if a.Index < 0 || a.Index > 99999 || a.Epoch < 0 || a.Epoch > 999999999999 || a.Attempt < 0 || a.Attempt > 9999 {
+	if a.Index < 0 || a.Index > 99999 || a.Epoch < 0 || a.Epoch > 999999999999 || a.Attempt < 0 || a.Attempt > math.MaxInt32 {
 		return errors.New("artifacts: instance: index, epoch and attempt are within their key widths")
 	}
 	return nil
 }
 
 func (a InstanceAttempt) path() string {
-	return fmt.Sprintf("%s/%s/%05d/%012d-%04d", a.SourceID, sourceSegment, a.Index, a.Epoch, a.Attempt)
+	return fmt.Sprintf("%s/%s/%05d/%012d-%010d", a.SourceID, sourceSegment, a.Index, a.Epoch, a.Attempt)
 }
 
 // SourceLogKey is the key of one chunk of an instance attempt's rolling
-// stdout and stderr: metadata/logs/{id}/_source/{index:05}/{epoch:012}-{attempt:04}/{seq}.
-func SourceLogKey(a InstanceAttempt, seq int) (string, error) {
+// stdout and stderr: metadata/logs/{id}/_source/{index:05}/{epoch:012}-{attempt:010}/{seq:020}.
+// As a task's chunk, it is numbered from 1 and the keys list in its order.
+func SourceLogKey(a InstanceAttempt, seq int64) (string, error) {
 	if err := a.valid(); err != nil {
 		return "", err
 	}
-	if seq < 0 {
-		return "", errors.New("artifacts: instance log: seq is not negative")
+	if seq < 1 {
+		return "", errors.New("artifacts: instance log: seq is numbered from 1")
 	}
-	return fmt.Sprintf("%s/%s/%d", LogPrefix, a.path(), seq), nil
+	return fmt.Sprintf("%s/%s/%0*d", LogPrefix, a.path(), logSeqWidth, seq), nil
 }
 
 // SourceAttemptKey is the key of one instance attempt's record:
-// metadata/attempts/{id}/_source/{index:05}/{epoch:012}-{attempt:04}.json.
+// metadata/attempts/{id}/_source/{index:05}/{epoch:012}-{attempt:010}.json.
 func SourceAttemptKey(a InstanceAttempt) (string, error) {
 	if err := a.valid(); err != nil {
 		return "", err
 	}
 	return AttemptPrefix + "/" + a.path() + ".json", nil
+}
+
+// PutInstanceLogChunk writes one chunk of an instance attempt's log, whole or
+// not at all.
+func (s *BlobLogStore) PutInstanceLogChunk(ctx context.Context, a InstanceAttempt, seq int64, data []byte) error {
+	key, err := SourceLogKey(a, seq)
+	if err != nil {
+		return err
+	}
+	if err := s.b.put(ctx, key, LogChunkContentType, data); err != nil {
+		return fmt.Errorf("artifacts: put instance log chunk %q: %w", s.b.uri(key), err)
+	}
+	return nil
+}
+
+// PutInstanceAttempt writes an instance attempt's record create-only. One
+// already there is the same attempt's, and is success.
+func (s *BlobAttemptStore) PutInstanceAttempt(ctx context.Context, a InstanceAttempt, record eventsources.AttemptRecord) error {
+	key, err := SourceAttemptKey(a)
+	if err != nil {
+		return err
+	}
+	if err := s.b.create(ctx, key, AttemptContentType, record.Encode()); err != nil && !errors.Is(err, errBlobExists) {
+		return fmt.Errorf("artifacts: put instance attempt %q: %w", s.b.uri(key), err)
+	}
+	return nil
 }
 
 // EventSourceRecordStore writes what an Orker hosting an event source

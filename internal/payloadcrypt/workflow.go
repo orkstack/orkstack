@@ -240,8 +240,9 @@ func OpenRaw(s *Scope, dc converter.DataConverter, raw converter.RawValue, ptr a
 	default:
 		return false, unreadable("no key for a run whose key was lost")
 	}
-	if err := dc.FromPayload(p, ptr); err != nil {
-		return false, unreadable("the payload does not decode: %v", err)
+	if dc.FromPayload(p, ptr) != nil {
+		// Not the decoder's words, which may quote what it read.
+		return false, unreadable("the payload does not decode as a %T", ptr)
 	}
 	return true, nil
 }

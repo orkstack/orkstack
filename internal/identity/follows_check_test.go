@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,6 +248,66 @@ func (w *followsWorld) holds(rows []FollowedRecord, err error, want string, n in
 	var m *MintError
 	if !errors.As(err, &m) || m.Reason != want || m.Unavailable != (want == ReasonUnavailable) || rows != nil {
 		w.t.Fatalf("rows %v, err %v; want %s", rows, err, want)
+	}
+}
+
+// wavedReads answers no commit read before as many are waiting as one check
+// makes at a time, or as are left: each answer is one round trip.
+type wavedReads struct {
+	FollowsStore
+	mu            sync.Mutex
+	left, waiting int
+	wave          chan struct{}
+	waves, most   int
+}
+
+func (r *wavedReads) ReadAttestedCommit(ctx context.Context, class artifacts.SlotClass, spacing *artifacts.RecordSpacings, want artifacts.AttestedWant) (artifacts.RecordRead[artifacts.CommitRecord], error) {
+	r.mu.Lock()
+	r.waiting++
+	r.most = max(r.most, r.waiting)
+	wave := r.wave
+	if r.waiting == min(followsParallel, r.left) {
+		r.left -= r.waiting
+		r.waiting, r.wave, r.waves = 0, make(chan struct{}), r.waves+1
+		close(wave)
+	}
+	r.mu.Unlock()
+	select {
+	case <-wave:
+	case <-ctx.Done():
+		return artifacts.RecordRead[artifacts.CommitRecord]{}, ctx.Err()
+	}
+	return r.FollowsStore.ReadAttestedCommit(ctx, class, spacing, want)
+}
+
+// TestCheckFollows_AsManyRowsAsARecordHolds: a check of 180 records has sixteen
+// reads in flight and is twelve round trips, and answers every row in order.
+func TestCheckFollows_AsManyRowsAsARecordHolds(t *testing.T) {
+	const rows = 180
+	w := newFollowsWorld(t)
+	for i := range rows {
+		id := fmt.Sprintf("t%03d", i)
+		w.adm.Follows["many"] = append(w.adm.Follows["many"], artifacts.FollowRef{TaskID: id, Kind: artifacts.FollowContainer})
+	}
+	w.sha = w.admission(w.adm)
+	for i := range rows {
+		w.commit("ork-1", w.sha, fmt.Sprintf("t%03d", i), 0, "c", nil)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	waved := &wavedReads{FollowsStore: w.check.Store, left: rows, wave: make(chan struct{})}
+	w.check.Store = waved
+	got, err := w.check.CheckFollows(ctx, w.adm, w.sha, "many", 0)
+	if err != nil || len(got) != rows {
+		t.Fatalf("%d rows, %v", len(got), err)
+	}
+	for i, row := range got {
+		if want := fmt.Sprintf("t%03d", i); row.Ref.TaskID != want {
+			t.Fatalf("row %d is of %s, want %s", i, row.Ref.TaskID, want)
+		}
+	}
+	if waved.most != followsParallel || waved.waves != 12 {
+		t.Fatalf("%d reads at once in %d round trips, want %d in 12", waved.most, waved.waves, followsParallel)
 	}
 }
 
@@ -587,15 +649,21 @@ func TestCheckReceived(t *testing.T) {
 			Artifacts: []*orkstackv1.ArtifactRef{{Name: "out", Uri: "file:///out", Sha256: strings.Repeat("1", 64)}},
 			Follows:   []*orkstackv1.RecordedSource{{TaskId: "build", RecordSha256: strings.Repeat("b", 64), ResultSha256: resultOf(t, "c")}}})
 		w.resume(5, 0, []string{"build"}, nil)
-		w.commit("ork-1", w.sha, "build", 5, "d", app)
-		a, _ := admitted(t, "ork-2", artifacts.Starter{Kind: artifacts.StarterParentRun, RunID: "ork-1", AdmissionSHA256: w.sha, TaskID: "next"}, nil)
-		a.RootRunID = "ork-1"
-		a.StartArtifacts = map[string]artifacts.StartArtifact{"in": {RunID: "ork-1", TaskID: "sub", Kind: artifacts.FollowComposed, Name: "out"}}
-		row := a.Tasks["build"]
-		row.Inputs = []string{"in"}
-		a.Tasks["build"] = row
-		if got, err := w.check.CheckReceived(ctx, a, w.admission(a), "build", 5); reasonOf(err) != ReasonRequiredResultNotRecorded || got != nil {
-			t.Fatalf("%v, %v", got, err)
+		for n := range 4 {
+			// First while what it follows has no record, then while it has another.
+			handler := n%2 == 1
+			if n == 2 {
+				w.commit("ork-1", w.sha, "build", 5, "d", app)
+			}
+			a, _ := admitted(t, "ork-2", artifacts.Starter{Kind: artifacts.StarterParentRun, RunID: "ork-1", AdmissionSHA256: w.sha, TaskID: "next"}, nil)
+			a.RootRunID = "ork-1"
+			a.StartArtifacts = map[string]artifacts.StartArtifact{"in": {RunID: "ork-1", TaskID: "sub", Kind: artifacts.FollowComposed, Name: "out", Handler: handler}}
+			row := a.Tasks["build"]
+			row.Inputs = []string{"in"}
+			a.Tasks["build"] = row
+			if got, err := w.check.CheckReceived(ctx, a, w.admission(a), "build", 5); reasonOf(err) != ReasonRequiredResultNotRecorded || got != nil {
+				t.Fatalf("passed by a failure handler %v, replaced %v: %v, %v", handler, n >= 2, got, err)
+			}
 		}
 	})
 	refused := func(name string, edit func(*artifacts.Admission), make func(*followsWorld)) {
@@ -604,22 +672,28 @@ func TestCheckReceived(t *testing.T) {
 			make(w)
 			a, sha := below(w, edit)
 			got, err := w.check.CheckReceived(ctx, a, sha, "build", 0)
-			if reasonOf(err) != ReasonRequiredResultNotRecorded || got != nil {
+			var m *MintError
+			if !errors.As(err, &m) || m.Reason != ReasonRequiredResultNotRecorded || m.Task != "build" || got != nil {
 				t.Fatalf("%v, %v", got, err)
 			}
 		})
 	}
 	refused("no record of the producer", nil, func(*followsWorld) {})
-	refused("a record with no such artifact", nil, func(w *followsWorld) { w.commit("ork-1", w.sha, "build", 0, "c", nil) })
+	handlers := func(a *artifacts.Admission) {
+		src := a.StartArtifacts["bundle"]
+		src.Handler = true
+		a.StartArtifacts["bundle"] = src
+	}
+	noArtifact := func(w *followsWorld) { w.commit("ork-1", w.sha, "build", 0, "c", nil) }
+	refused("a record with no such artifact", nil, noArtifact)
+	refused("a failure handler's, whose record names no such artifact", handlers, noArtifact)
 	t.Run("a failure handler's, with no record", func(t *testing.T) {
 		w := newFollowsWorld(t)
-		a, sha := below(w, func(a *artifacts.Admission) {
-			src := a.StartArtifacts["bundle"]
-			src.Handler = true
-			a.StartArtifacts["bundle"] = src
-		})
+		a, sha := below(w, handlers)
 		got, err := w.check.CheckReceived(ctx, a, sha, "build", 0)
-		if err != nil || len(got) != 1 || got[0].GetName() != "notes" {
+		// Its name alone: the Orker takes no other unrecorded one.
+		if err != nil || len(got) != 2 || got[0].GetName() != "bundle" || got[0].GetUri() != "" || got[0].GetSha256() != "" ||
+			got[1].GetName() != "notes" || got[1].GetUri() == "" {
 			t.Fatalf("%v, %v", got, err)
 		}
 	})

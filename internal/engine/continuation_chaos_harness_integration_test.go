@@ -1284,7 +1284,10 @@ func (s *chaosStack) serveAPI(cfg api.Config) *chaosAPI {
 	if cfg.Reader == nil {
 		cfg.Reader = s.reader
 	}
-	cfg.Starter, cfg.RawQueue = s.starter, s.orkerQueue
+	if cfg.Starter == nil {
+		cfg.Starter = s.starter
+	}
+	cfg.RawQueue = s.orkerQueue
 	cfg.Runs, cfg.Bus, cfg.Archive = s.runs, s.bus, s.archive
 	cfg.Artifacts, cfg.ArtifactStore, cfg.Limits = s.cfg, store, engine.DefaultLimits()
 	if cfg.Attempts == nil {

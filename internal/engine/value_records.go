@@ -57,6 +57,8 @@ type RecordOutputsRequest struct {
 	// Offered is each task that succeeded and the values the run holds of it.
 	Offered  []ComposeUpstream `json:"offered"`
 	MaxBytes int64             `json:"max_bytes"`
+	// Spacings are the waits of one read, the run's own; nil is the reader's.
+	Spacings *artifacts.RecordSpacings `json:"spacings,omitempty"`
 }
 
 // RecordComposedRequest is a composed task whose child run succeeded.
@@ -70,7 +72,8 @@ type RecordComposedRequest struct {
 	Input                stablejson.RawJSON `json:"input"`
 	ChildAdmissionSHA256 string             `json:"child_admission_sha256"`
 	// ValuesSHA256 is of the values the child returned (canonicalValuesJSON).
-	ValuesSHA256 string `json:"values_sha256"`
+	ValuesSHA256 string                    `json:"values_sha256"`
+	Spacings     *artifacts.RecordSpacings `json:"spacings,omitempty"`
 }
 
 // RecordedValuesResult is the record made, or found as it would have been
@@ -92,7 +95,7 @@ func (a *ValueRecordActivities) RecordOutputs(ctx context.Context, req RecordOut
 		offered[up.TaskID] = &orkstackv1.ArtifactRef{Uri: up.URI, Sha256: up.SHA256}
 	}
 	got, err := a.rec.RecordOutputs(ctx, identity.OutputsAsk{Namespace: req.Namespace, RunID: req.RunID, AdmissionSHA256: req.AdmissionSHA256,
-		Scopes: identity.Scopes{Root: req.RootScope}, Input: req.Input, Offered: offered, MaxBytes: req.MaxBytes})
+		Scopes: identity.Scopes{Root: req.RootScope}, Input: req.Input, Offered: offered, MaxBytes: req.MaxBytes, Spacing: req.Spacings})
 	return recordedResult(ctx, got, err)
 }
 
@@ -103,7 +106,7 @@ func (a *ValueRecordActivities) RecordComposed(ctx context.Context, req RecordCo
 	}
 	got, err := a.rec.RecordComposed(ctx, identity.ComposedAsk{Namespace: req.Namespace, RunID: req.RunID, AdmissionSHA256: req.AdmissionSHA256,
 		TaskID: req.TaskID, Scopes: identity.Scopes{Resume: req.ResumeScope, Root: req.RootScope}, Input: req.Input,
-		ChildAdmissionSHA256: req.ChildAdmissionSHA256, ValuesSHA256: req.ValuesSHA256})
+		ChildAdmissionSHA256: req.ChildAdmissionSHA256, ValuesSHA256: req.ValuesSHA256, Spacing: req.Spacings})
 	return recordedResult(ctx, got, err)
 }
 
@@ -133,8 +136,8 @@ func recordFailure(ctx context.Context, err error) error {
 	if errors.As(err, &refusal) {
 		return composeActivityError(refusal.Reason, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR, refusal.Message)
 	}
-	if app := categoryOf(err).app; app != nil {
-		return app
+	if failure := categoryOf(err); failure.isApplication() {
+		return failure.app
 	}
 	return recordUnanswered(artifacts.UnansweredClass(err), err)
 }

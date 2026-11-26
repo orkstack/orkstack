@@ -419,6 +419,53 @@ type IdentityPlan struct {
 	// Grants are the run's grants as admitted, by name; nil when it names
 	// none.
 	Grants map[string]artifacts.GrantSelection `json:"grants,omitempty"`
+	// ValueRecords is the format of the records the engine makes of the
+	// run's resolutions, composed values and outputs, as admitted.
+	ValueRecords int `json:"value_records,omitzero"`
+	// RecordBudget is what reading or making one of those records may take.
+	RecordBudget *RecordBudget `json:"record_budget,omitempty"`
+	// ResolutionsPerPass bounds the queued resolutions one drain takes, and
+	// NonesPerAwait the tellings of one await that found nothing a generation
+	// takes before it drops the rest until the deadline.
+	ResolutionsPerPass int32 `json:"resolutions_per_pass,omitzero"`
+	NonesPerAwait      int32 `json:"nones_per_await,omitzero"`
+}
+
+// RecordBudget is the bounds of the local activities that read and make a
+// run's records, and of the reader inside one. They decide outcomes, so a run
+// keeps the ones it was submitted with.
+type RecordBudget struct {
+	AttemptSeconds   int32   `json:"attempt_seconds"`
+	TotalSeconds     int32   `json:"total_seconds"`
+	Attempts         int32   `json:"attempts"`
+	RetrySeconds     int32   `json:"retry_initial_seconds"`
+	RetryCoefficient float64 `json:"retry_coefficient"`
+	// A composed task's and a child's outputs' reads are many in one attempt.
+	OutputsAttemptSeconds int32 `json:"outputs_attempt_seconds"`
+	OutputsAttempts       int32 `json:"outputs_attempts"`
+	MissConfirmMS         int32 `json:"miss_confirm_ms"`
+	ReaskInitialMS        int32 `json:"reask_initial_ms"`
+	ReaskMaxMS            int32 `json:"reask_max_ms"`
+	AttemptMarginMS       int32 `json:"attempt_margin_ms"`
+	// DeadlineRereadSeconds is how long after a deadline's read that was not
+	// answered the second is made.
+	DeadlineRereadSeconds int32 `json:"deadline_reread_seconds"`
+	// ReadEvents is what one read or write that is not answered can add to
+	// the run's history: a workflow task of three events for each eight
+	// seconds it takes, and its marker. Measured on a real cluster: 13 events
+	// over 32 s and 16 over 40 s, so 25 over the whole of TotalSeconds, and a
+	// margin of seven for what woke the run and what it emits.
+	ReadEvents int64 `json:"read_events"`
+}
+
+// Spacings are the reader's waits inside one attempt.
+func (b *RecordBudget) Spacings() *artifacts.RecordSpacings {
+	if b == nil {
+		return nil
+	}
+	ms := func(n int32) time.Duration { return time.Duration(n) * time.Millisecond }
+	return &artifacts.RecordSpacings{MissConfirm: ms(b.MissConfirmMS), ReaskInitial: ms(b.ReaskInitialMS),
+		ReaskMax: ms(b.ReaskMaxMS), AttemptMargin: ms(b.AttemptMarginMS)}
 }
 
 // AttemptDeadlineSeconds is the deadline the interpreter gives the cluster

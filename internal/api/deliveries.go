@@ -539,6 +539,11 @@ func (s *Service) RedeliverWebhook(
 // mayReadRun reports whether the caller may read run: always in asserted
 // mode; otherwise only with run.read at the run's Orkflow.
 func (s *Service) mayReadRun(ctx context.Context, run *orkstackv1.Run) (bool, error) {
+	return s.mayOnRun(ctx, run, authz.PermRunRead)
+}
+
+// mayOnRun says the caller holds perm on run's Orkflow.
+func (s *Service) mayOnRun(ctx context.Context, run *orkstackv1.Run, perm authz.Permission) (bool, error) {
 	if !s.access.enabled() {
 		return true, nil
 	}
@@ -548,6 +553,15 @@ func (s *Service) mayReadRun(ctx context.Context, run *orkstackv1.Run) (bool, er
 		orkflow = owner + "/" + orkflow
 	}
 	policy, _ := s.access.policy(ctx)
-	return s.mayWithIDs(ctx, authz.Request{Action: authz.Action(authz.PermRunRead),
+	return s.mayWithIDs(ctx, authz.Request{Action: authz.Action(perm),
 		Subject: subjectOf(authn.FromContext(ctx)), Resource: authz.Resource{Namespace: ns, Orkflow: orkflow}, Policy: policy})
+}
+
+// mayOnDeployment says the caller holds perm on the deployment.
+func (s *Service) mayOnDeployment(ctx context.Context, perm authz.Permission) (bool, error) {
+	if !s.access.enabled() {
+		return true, nil
+	}
+	policy, _ := s.access.policy(ctx)
+	return s.mayWithIDs(ctx, authz.Request{Action: authz.Action(perm), Subject: subjectOf(authn.FromContext(ctx)), Policy: policy})
 }

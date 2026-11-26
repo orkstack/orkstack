@@ -42,6 +42,8 @@ type ProfileUnavailableError struct {
 	// Detail says what the Orker reported instead, when it reported the
 	// profile at all.
 	Detail string
+	// Nowhere: Orkers answered, and not one of them defines the profile.
+	Nowhere bool
 }
 
 func (e *ProfileUnavailableError) Error() string {
@@ -286,7 +288,7 @@ func (j profileJudge) offeredAndKind() (orkstackv1.ProfileKind, error) {
 	}
 	if first == nil {
 		return 0, &ProfileUnavailableError{Namespace: j.namespace, Pool: j.pool, Profile: j.name, Tasks: j.tasks,
-			OrkerID: j.serving[0].GetOrkerId()}
+			OrkerID: j.serving[0].GetOrkerId(), Nowhere: true}
 	}
 	kind := first.GetKind()
 	if kind != orkstackv1.ProfileKind_PROFILE_KIND_DEVICES && kind != orkstackv1.ProfileKind_PROFILE_KIND_GPU {

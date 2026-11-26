@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -318,5 +319,28 @@ func TestAccessWrite_RecoveryCannotBeDisabled(t *testing.T) {
 		if _, err := h.SetPrincipalDisabled(ctx, connect.NewRequest(&orkstackv1.SetPrincipalDisabledRequest{PrincipalId: id, Disabled: true, Etag: etag})); err != nil {
 			t.Fatalf("disabling %s: %v", id, err)
 		}
+	}
+}
+
+// TestGetAccess_AConfiguredBindingOfASharedCredential: one that configuration
+// makes for a credential Orkers share is answered as one, as a stored one is.
+func TestGetAccess_AConfiguredBindingOfASharedCredential(t *testing.T) {
+	s, h := accessWriter(t)
+	configured, err := authz.CompileConfiguration(authz.Configuration{Orkers: []authz.OrkerEntry{
+		{Subject: "serviceaccount:orker-shared", Pool: "main", OrkerIDsAny: true}, {Subject: "serviceaccount:orker-own", Pool: "main"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.access.Configured = configured
+	resp, err := h.GetAccess(asAlice(authn.ModeEnforce), connect.NewRequest(&orkstackv1.GetAccessRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, b := range resp.Msg.GetDocument().GetConfiguredBindings() {
+		got[strings.Join(b.GetSubjects(), ",")] = b.GetOrkerIdsAny()
+	}
+	if len(got) != 2 || !got["serviceaccount:orker-shared"] || got["serviceaccount:orker-own"] {
+		t.Fatalf("%v", got)
 	}
 }

@@ -30,7 +30,7 @@ const texts = new Map<string, string>();
 function listed(dir: string, recursive: boolean): string[] {
 	const at = `${recursive ? 'tree' : 'dir'}:${path.resolve(dir)}`;
 	let names = listings.get(at);
-	if (!names) listings.set(at, (names = readdirSync(dir, recursive ? { recursive } : {})));
+	if (!names) listings.set(at, (names = readdirSync(dir, { recursive, encoding: 'utf8' })));
 	// A copy: callers sort and splice.
 	return [...names];
 }

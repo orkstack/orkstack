@@ -16,6 +16,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/config"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/orker"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -127,10 +128,19 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 		!strings.Contains(ork["ORK_AUTH_ORKERS"], "claims:dev:sub=dev-orker") || !strings.Contains(ork["ORK_AUTH_ISSUERS"], "jwks_file:") {
 		t.Fatalf("the engine's auth settings = %v", ork)
 	}
-	// enforce needs a signing key, which signs what engines hand each other.
+	// enforce needs a signing key, which signs what engines hand each other,
+	// and the tokens of the task identity issuer: a name nothing resolves, so
+	// the engine never asks it whether it serves the key, and serves the
+	// discovery itself, on its own loopback address. The stack's store has one
+	// key, so its Orker's is reported rather than refused.
 	if !strings.HasSuffix(ork["ORK_IDENTITY_SIGNING_KEY_FILES"], filepath.Join(".data", "identity", "engine-signing.key")) ||
-		ork["ORK_IDENTITY_SIGNING_ALGORITHM"] != "ES256" || ork["ORK_IDENTITY_ISSUER"] != "" {
+		ork["ORK_IDENTITY_SIGNING_ALGORITHM"] != "ES256" || ork["ORK_IDENTITY_ISSUER"] != "https://orkstack-dev.invalid" ||
+		ork["ORK_IDENTITY_SERVE_DISCOVERY"] != "true" || ork["ORK_IDENTITY_SIGNING_VERIFY_PUBLISHED"] != "false" ||
+		ork["ORK_IDENTITY_SIGNING_ACTIVATION_DELAY"] != "0s" || ork["ORK_IDENTITY_UNSCOPED_ORKERS"] != identity.UnscopedReport {
 		t.Fatalf("the engine's identity settings = %v", ork)
+	}
+	if _, err := identity.CheckIssuerURL(ork["ORK_IDENTITY_ISSUER"]); err != nil {
+		t.Fatalf("the engine would refuse its issuer: %v", err)
 	}
 	orkerEnv := read(config.BinaryOrker)
 	settings := orker.EngineSettingsFromEnv(func(k string) string { return orkerEnv[k] })
@@ -190,7 +200,7 @@ func TestDevStack_IdentityZeroIsAsserted(t *testing.T) {
 	s.engineAddr() // the engine was started on the script's configuration
 	conf, err := os.ReadFile(filepath.Join(s.root, ".run", "orkstack.yaml"))
 	must.OK(t, err)
-	if strings.Contains(string(conf), "auth:") || strings.Contains(string(conf), "mode: enforce") {
+	if strings.Contains(string(conf), "auth:") || strings.Contains(string(conf), "mode: enforce") || strings.Contains(string(conf), "identity:") {
 		t.Fatalf("IDENTITY=0 wrote auth settings:\n%s", conf)
 	}
 	if _, err := os.Stat(filepath.Join(s.logs, "dexrun")); err == nil {

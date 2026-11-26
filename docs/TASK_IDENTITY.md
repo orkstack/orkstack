@@ -502,12 +502,15 @@ have written it and not been heard, and only with nothing there fails
 `COMMIT_ENGINE_UNAVAILABLE`, retried. It never writes a result around the
 engine. A record already there, its own or another attempt's, is adopted.
 An upstream's record is found by the producer's own key in the run, never
-by a path its input names. Not everything is staged from a record yet. An
-awaited or a composed upstream of such a run, and the artifacts a composed
-run received (`_inputs`), fail `UPSTREAM_RESULT_NOT_RECORDED` until their own
-records are read. A failure handler stages a failed need's artifacts, and a
-fan-out its item values and its line index, as the cluster carries them, as
-before.
+by a path its input names. An awaited
+or a composed upstream is staged as its own record names it, read at its key
+in the run under the run's admission, and a rejection there is no result. What
+a composed run received (`_inputs`) is staged only as the engine answers the
+preflight; a task that holds an identity asks one for it. A difference, or no
+record, is `UPSTREAM_RESULT_NOT_RECORDED`; a store that does not answer is
+`COMMIT_READ_FAILED`, retried. A failure handler stages a failed need's
+artifacts, and a fan-out its item values and its line index, as the cluster
+carries them, as before.
 
 ## Resolutions the engine records
 
@@ -550,6 +553,27 @@ this order:
 | `delivery_pending` | on record, and the run could not be told: repeat the request, or `orkctl run resolve --redeliver` |
 | `deadline_passed` | on record, and the deadline has passed: the run decides whether it takes it. Repeating changes nothing |
 | `AWAIT_RUN_ENDED` | the run ended meanwhile and did not take it |
+
+The run takes an answer from its record and from nothing a message says: a
+message only names an await. A record stored after the deadline is left to the
+deadline; with none, the run logs `RESOLUTION_NOT_RECORDED` on the task, which
+still awaits; one that cannot be used fails it `RESOLUTION_RECORD_INVALID`. A
+read that is not answered, or a record in a newer format, changes nothing: the
+await stays open, and its record is taken when the run is told again, or at the
+deadline. So that such reads never hold a run up, a message is dropped unread
+when it was queued before such a read ended, repeats one just read, follows
+three that found nothing, or meets an ending that is ready or a history with no
+room left; its record stands.
+
+At its deadline an await's record is read before the task fails. An answer
+there in time is taken, and the run goes on; with none, or a late one, the task
+fails `AWAIT_TIMED_OUT`. A read that is not answered is made once more, five
+minutes later, for every await whose deadline passed meanwhile: one timer and
+one read that goes unanswered, however many they are. Unread twice, each fails
+`RESOLUTION_RECORD_UNAVAILABLE`, its record standing. So an awaiting task may be
+past its deadline for some minutes, and one unanswered read can end several of
+them. A run waits for that second read before it carries on into a fresh
+history, and holds no new task back meanwhile.
 
 At the callback route each is `202` with `Ork-Delivery: told`, `pending`
 (with `Retry-After: 10`) or `deadline-passed` (with
@@ -597,7 +621,37 @@ and whether a task that may be skipped was rightly called absent.
 | the outputs do not render, or are too large | the child ends `OUTPUTS_RENDER_FAILED` or `OUTPUTS_TOO_LARGE`, as any run does |
 | the store or the cluster did not answer in time | `CHILD_VALUES_UNSTORED` or `OUTPUTS_UNAVAILABLE`, with the class of the failure |
 
-The interpreter does not ask for these records yet, so no run holds one.
+The artifacts a child returns must be the ones its outputs record names, and a
+parent's composed task holds nothing else. An operator's cancel while a record
+is made is the run's cancel.
+
+## Reading what is on record
+
+`ListRecordedResults` and `orkctl run records RUN` list, for such a run, each
+record the engine made and each result the run's state calls succeeded that has
+none. They need `run.read` on the run's Orkflow; a row's pool, Orker and
+location are shown only to a caller who also holds `run.artifacts.read` there,
+or `orker.read`.
+
+| State | Means |
+|---|---|
+| on record | the record is there, and the run applied it |
+| recorded, not applied | recorded in time, by the store's own time of it, and the run has not taken it. A task that still awaits can be told again (`orkctl run resolve --redeliver`); a child run's answer is not carried over, and its parent is run again |
+| not taken | stored after the task's deadline or its run's end, or under a resume a later one replaced |
+| not on record | the store said so, twice, and the run's state says the task succeeded: the alarm |
+| reclaimed | the run has left the cluster, and its records with its commits |
+| unread | the store did not answer, or the record cannot be used. It says nothing of the result |
+| newer format | a newer replica reads it |
+
+A page holds at most 50 rows, 25 unless asked, and says whether it was read
+whole; a listing is complete only when every page was, and `orkctl` exits
+non-zero otherwise. A run whose state cannot be read is `unavailable`, never a
+list without its missing rows. A caller makes four calls at once and one a
+second (`resource_exhausted`); a run gives 400 reads a minute over all callers,
+after which a page ends where it is (`READ_BUDGET`) and its token goes on; a
+replica makes 50 reads a second for these calls, sixteen at a time; and what a
+replica has found costs none of these. None is drawn on by a mint, a commit, a
+door or a run's own reads.
 
 ## Which Orkers serve it
 
@@ -823,8 +877,9 @@ passes it on, and which of its tasks name it. The engine answers a mint and a
 commit's preflight with those artifacts exactly as the producers' records
 name them, and refuses one whose producer has no record
 (`REQUIRED_RESULT_NOT_RECORDED`). One a failure handler passes may come from a
-need that failed, which leaves no record: it is left out of the answer, and
-is staged as the cluster carries it. The artifacts a composed task returns are
+need that failed, which leaves no record: it is answered by its name alone,
+and is staged as the cluster carries it. An artifact the answer does not name
+is not staged. The artifacts a composed task returns are
 in its record and in its child's outputs record, and count in their results'
 digests.
 

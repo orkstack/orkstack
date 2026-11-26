@@ -71,10 +71,10 @@ func (s *Service) definitionAtStart(
 		return nil, nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode the orkflow definition: %w", err))
 	}
 	if limit := plan.Continuation.CheckpointMaxBytes / definitionCarryShare; ref.SizeBytes > limit {
-		return nil, nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return nil, nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "DEFINITION_TOO_LARGE", fmt.Errorf(
 			"orkflow %s@%s's planned definition is %s compressed, over the %s a run may carry forward; "+
 				"split it into composed Orkflows", planned.GetName(), planned.GetVersion(),
-			mebibyteText(ref.SizeBytes), mebibyteText(limit)))
+			mebibyteText(ref.SizeBytes), mebibyteText(limit))))
 	}
 	plan.Definition = &ref
 	return engine.DefinitionStub(planned), data, nil
@@ -98,10 +98,10 @@ func (s *Service) definitionFleetCheck(ctx context.Context, planned *orkstackv1.
 		s.logger.Warn("fleet check could not read the engine processes",
 			"missing_capability", engine.CapabilityDefinitionRef, "orkflow", planned.GetName(),
 			"version", planned.GetVersion(), "error", err)
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+		return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf(
 			"orkflow %s@%s's planned definition is over the %d KiB a run's start may carry; the cluster's list of "+
 				"engine processes could not be read, so whether every engine process can read it by reference "+
-				"is unknown; try again", planned.GetName(), planned.GetVersion(), task.MaxActivityInputBytes/1024))
+				"is unknown; try again", planned.GetName(), planned.GetVersion(), task.MaxActivityInputBytes/1024)))
 	}
 	if len(lacking) == 0 {
 		return nil
@@ -114,8 +114,14 @@ func (s *Service) definitionFleetCheck(ctx context.Context, planned *orkstackv1.
 	if !errors.As(refusal, &ce) {
 		return refusal
 	}
-	return connect.NewError(ce.Code(), fmt.Errorf("%s; %s a release that cannot yet read a definition this large",
-		ce.Message(), processCount(len(lacking))))
+	// A definition this large waits for the rollout; an input too large is
+	// refused whatever runs.
+	v := classifyRefusal(refusal)
+	if v.class != refusalReject {
+		v = waits(waitRollout)
+	}
+	return connect.NewError(ce.Code(), &refusalMark{verdict: v, err: fmt.Errorf("%s; %s a release that cannot yet read a definition this large",
+		ce.Message(), processCount(len(lacking)))})
 }
 
 // checkDefinitionCarriable is apply's half of the bound: with the flag on, a

@@ -1,0 +1,244 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/event_source.proto";
+import "orkstack/v1/image_policy.proto";
+import "orkstack/v1/telemetry.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// EventSourceHostService is what an Orker that hosts an event source's
+// instance calls (docs/EVENT_SOURCES.md), and nothing else does. It is served
+// only where callers are authenticated (auth.mode enforce) and the engine
+// runs as a release. Every call needs eventsource.host at the source's pool
+// and names the instance it is made for, which the caller must hold; the
+// Orker is its credential's, never the request's. Each answers a DoorAnswer:
+// the engine says what the outcome is, and the Orker never reads one out of a
+// connection's code. A request is at most 256 KiB and carries no body.
+service EventSourceHostService {
+  // ConfirmInstance confirms that the caller holds the instance and that the
+  // source may run it now. It is an attempt's first call, and is made again
+  // at intervals and before a filtered message is settled.
+  rpc ConfirmInstance(ConfirmInstanceRequest) returns (ConfirmInstanceResponse);
+  // ReportInstance reports that the instance became ready, was found invalid
+  // or has been healthy.
+  rpc ReportInstance(ReportInstanceRequest) returns (ReportInstanceResponse);
+  // OfferMessage judges one message before anything is staged for it: whether
+  // it has a run, can have one, and which of its parts to stage. It starts
+  // nothing and claims nothing.
+  rpc OfferMessage(OfferMessageRequest) returns (OfferMessageResponse);
+  // StartMessageRun starts the message's run from what was staged.
+  rpc StartMessageRun(StartMessageRunRequest) returns (StartMessageRunResponse);
+  // ProbeEventSource asks whether a start could complete now, for an instance
+  // that waits and holds no message.
+  rpc ProbeEventSource(ProbeEventSourceRequest) returns (ProbeEventSourceResponse);
+  // RequestEventSourcePause pauses the source because a breaker the Orker
+  // counts has tripped.
+  rpc RequestEventSourcePause(RequestEventSourcePauseRequest) returns (RequestEventSourcePauseResponse);
+}
+
+// Disposition is what the engine decided about a call.
+enum Disposition {
+  // UNSPECIFIED, and a value the Orker does not know, are no answer.
+  DISPOSITION_UNSPECIFIED = 0;
+  // OK: the call was accepted, and there is nothing more to it.
+  DISPOSITION_OK = 1;
+  // PROCEED: stage the parts named, then start.
+  DISPOSITION_PROCEED = 2;
+  // ACCEPTED: the message's run has started.
+  DISPOSITION_ACCEPTED = 3;
+  // DUPLICATE: the message had a run already.
+  DISPOSITION_DUPLICATE = 4;
+  // REJECT: this message can never be accepted.
+  DISPOSITION_REJECT = 5;
+  // WAIT: nothing is wrong with the message or the source; ask again later.
+  DISPOSITION_WAIT = 6;
+  // UNCERTAIN: a refusal the engine does not class, or a failure that would
+  // repeat.
+  DISPOSITION_UNCERTAIN = 7;
+  // STOP: the instance ends.
+  DISPOSITION_STOP = 8;
+  // REFRESH: the judging spec changed; judge again with the one returned.
+  DISPOSITION_REFRESH = 9;
+  // UPLOAD_AGAIN: a staged part is not there; stage it and start again.
+  DISPOSITION_UPLOAD_AGAIN = 10;
+  // REFUSED: this replica cannot serve the call; another may.
+  DISPOSITION_REFUSED = 11;
+}
+
+// InstanceReport is what an instance reports.
+enum InstanceReport {
+  INSTANCE_REPORT_UNSPECIFIED = 0;
+  // READY: its container is ready.
+  INSTANCE_REPORT_READY = 1;
+  // INVALID: its container says it can never run as it is configured.
+  INSTANCE_REPORT_INVALID = 2;
+  // HEALTHY: it has been healthy long enough to be relied on.
+  INSTANCE_REPORT_HEALTHY = 3;
+}
+
+// DoorAnswer is the engine's answer to one call.
+message DoorAnswer {
+  Disposition disposition = 1;
+  // reason is a MESSAGE_* reason, a wait's reason or a stop's.
+  string reason = 2;
+  // cause is, for WAIT, what it waits for: admission, pool, rollout, outage
+  // or timeout.
+  string cause = 3;
+  // run_id is the message's run, for ACCEPTED and DUPLICATE only.
+  string run_id = 4;
+  // refusal_code is, for UNCERTAIN and for a STOP that paused the source, the
+  // refusal's code.
+  string refusal_code = 5;
+  // parts are, for PROCEED, what to stage.
+  repeated PartToUpload parts = 6;
+  // orkflow_version is the version resolved for the message.
+  string orkflow_version = 7;
+  // judging is, for REFRESH, the current judging spec.
+  JudgingSpec judging = 8;
+  // retired_run is set for a DUPLICATE whose run is known only by its started
+  // marker.
+  bool retired_run = 9;
+}
+
+// ServiceSpec is what an instance's container is started with, as it was
+// stored. A reader checks the digest over the bytes and decodes them
+// strictly: one it cannot read it does not use.
+message ServiceSpec {
+  // spec is the spec's JSON, at most 64 KiB.
+  bytes spec = 1;
+  // digest is the SHA-256 of spec, in hex.
+  string digest = 2;
+}
+
+// JudgingSpec is how a source's messages are judged. A reader checks the
+// digest over the bytes and decodes them strictly, as a ServiceSpec's.
+message JudgingSpec {
+  // spec is the spec's JSON, at most 128 KiB.
+  bytes spec = 1;
+  // digest is the SHA-256 of spec, in hex.
+  string digest = 2;
+}
+
+// MessageEnvelope is what a message carries beside its body, as its image
+// reported it. Its text is a publisher's.
+message MessageEnvelope {
+  // id is the message's identity: at most 256 bytes, no control characters.
+  string id = 1;
+  string subject = 2;
+  // attributes are the message's text attributes, at most 64 KiB in all. A
+  // binary attribute is in the metadata document only.
+  map<string, AttributeValues> attributes = 3;
+  string group = 4;
+  // broker holds at most 16 short facts.
+  map<string, string> broker = 5;
+  google.protobuf.Timestamp published_at = 6;
+}
+
+// PartToUpload is a part an offer asks the Orker to stage.
+message PartToUpload {
+  // input is the artifact input it becomes.
+  string input = 1;
+  MessagePart part = 2;
+  string content_type = 3;
+}
+
+// UploadedPart is a part as the Orker staged it. It names no object: the
+// engine computes every key itself.
+message UploadedPart {
+  string input = 1;
+  string sha256 = 2;
+  int64 size_bytes = 3;
+}
+
+message ConfirmInstanceRequest {
+  InstanceRef instance = 1;
+  // want_service_spec asks for the service spec, as an attempt's first call
+  // does.
+  bool want_service_spec = 2;
+}
+
+message ConfirmInstanceResponse {
+  DoorAnswer answer = 1;
+  // service is the service spec, when it was asked for.
+  ServiceSpec service = 2;
+  // judging is the judging spec, when the caller's is not the document's.
+  JudgingSpec judging = 3;
+  // image_policy is what the Orker judges the image by, as it is now.
+  ImagePolicySelection image_policy = 4;
+  // telemetry is the namespace's selection, as it is now.
+  TelemetrySelection telemetry = 5;
+}
+
+message ReportInstanceRequest {
+  InstanceRef instance = 1;
+  InstanceReport what = 2;
+  // reason is, for INVALID, the check's reason.
+  string reason = 3;
+}
+
+message ReportInstanceResponse {
+  DoorAnswer answer = 1;
+}
+
+message OfferMessageRequest {
+  InstanceRef instance = 1;
+  MessageEnvelope message = 2;
+  int32 delivery_count = 3;
+  // max_deliveries is the broker's delivery limit, as last reported.
+  int32 max_deliveries = 4;
+  // body_sha256 is the SHA-256 of the body, in hex; empty for a body over the
+  // source's bound, which nobody read.
+  string body_sha256 = 5;
+  int64 body_bytes = 6;
+  // extracted holds what each map: selector that selected a value selected,
+  // under its input's name.
+  map<string, google.protobuf.Value> extracted = 7;
+  // pre_rejection is the MESSAGE_* reason the Orker found, or empty. It is
+  // honoured only once the message's claim has been read.
+  string pre_rejection = 8;
+}
+
+message OfferMessageResponse {
+  DoorAnswer answer = 1;
+}
+
+message StartMessageRunRequest {
+  InstanceRef instance = 1;
+  MessageEnvelope message = 2;
+  repeated UploadedPart parts = 3;
+  // extracted is as OfferMessageRequest's.
+  map<string, google.protobuf.Value> extracted = 4;
+  // retry_of_own_start says that this exchange already asked for this start
+  // and lost the answer.
+  bool retry_of_own_start = 5;
+}
+
+message StartMessageRunResponse {
+  DoorAnswer answer = 1;
+}
+
+message ProbeEventSourceRequest {
+  InstanceRef instance = 1;
+}
+
+message ProbeEventSourceResponse {
+  DoorAnswer answer = 1;
+}
+
+message RequestEventSourcePauseRequest {
+  InstanceRef instance = 1;
+  // code is the breaker that tripped: EVENT_SOURCE_REFUSED,
+  // EVENT_SOURCE_ALL_REJECTED, EVENT_SOURCE_SETTLE_FAILING or
+  // EVENT_SOURCE_SETTLE_UNANSWERED.
+  string code = 2;
+  // refusal_code is, for EVENT_SOURCE_REFUSED, the code this service answered.
+  string refusal_code = 3;
+}
+
+message RequestEventSourcePauseResponse {
+  DoorAnswer answer = 1;
+}

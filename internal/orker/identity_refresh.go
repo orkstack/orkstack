@@ -73,6 +73,8 @@ type identityRefresher struct {
 	setupBudget time.Duration
 	maxSkew     time.Duration
 	orkerBuild  string
+	// observe, when set, hears what the Orker's identity metrics count.
+	observe IdentityObserver
 	// onSkew, when set, is told of a skew above identitySkewNoted that is
 	// within the bound.
 	onSkew func(time.Duration)
@@ -136,7 +138,7 @@ func (r *identityRefresher) Setup(ctx context.Context) *Failure {
 		}
 		var again mintAnswer
 		if err != nil {
-			ans := mapMintAnswer(err, r.orkerBuild)
+			ans := r.answerTo(err)
 			if ans.Then != mintAskAgain {
 				return Fail(ans.Reason, "%s", ans.Message)
 			}
@@ -182,6 +184,9 @@ func (r *identityRefresher) apply(sent time.Duration, resp *orkstackv1.MintAttem
 	now := r.clock.Now()
 	for name, tok := range byName {
 		skew := now.Sub(tok.GetIssuedAt().AsTime()).Abs()
+		if skew > identitySkewNoted || skew > r.maxSkew {
+			r.observer().ClockSkewed()
+		}
 		if skew > r.maxSkew {
 			if r.onClock != nil {
 				r.onClock(false)
@@ -233,12 +238,20 @@ func (r *identityRefresher) apply(sent time.Duration, resp *orkstackv1.MintAttem
 // disk stays until the watchdog finds it expired.
 func (r *identityRefresher) refreshStep(ctx context.Context) (time.Duration, *Failure) {
 	sent := r.clock.Boot()
+	outcome, decided := IdentityRefreshEnded, false
+	defer func() {
+		// One cut short by the attempt's end is no refresh.
+		if decided {
+			r.observer().Refreshed(outcome)
+		}
+	}()
 	resp, err := r.mintWithin(ctx, identityMintCallTimeout)
 	if ctx.Err() != nil {
 		return 0, nil
 	}
+	decided = true
 	if err != nil {
-		ans := mapMintAnswer(err, r.orkerBuild)
+		ans := r.answerTo(err)
 		switch ans.Then {
 		case mintEnd:
 			return 0, Fail(ans.Reason, "%s", ans.Message)
@@ -247,6 +260,7 @@ func (r *identityRefresher) refreshStep(ctx context.Context) (time.Duration, *Fa
 				return 0, Fail(ans.Reason, "%s", ans.Message)
 			}
 			r.done = true
+			outcome = IdentityRefreshStopped
 			if r.logger != nil {
 				r.logger.Warn("a best_effort identity was revoked and is no longer refreshed", "reason", ans.Reason, "message", ans.Message)
 			}
@@ -255,8 +269,10 @@ func (r *identityRefresher) refreshStep(ctx context.Context) (time.Duration, *Fa
 			}
 			return 0, nil
 		}
+		outcome = IdentityRefreshRetried
 		return r.retryAfter(ans), nil
 	}
+	left, held := r.leastLeft()
 	f, retry := r.apply(sent, resp)
 	switch {
 	case f == nil:
@@ -264,9 +280,14 @@ func (r *identityRefresher) refreshStep(ctx context.Context) (time.Duration, *Fa
 	// that disagrees are failed refreshes: what is on disk stays until it
 	// expires, and the watchdog decides then.
 	case retry || f.Reason == ReasonWorkdirFailed || f.Reason == ReasonIdentityClockSkew:
+		outcome = IdentityRefreshRetried
 		return r.retryAfter(mintAnswer{Reason: f.Reason, Message: f.Message}), nil
 	default:
 		return 0, f
+	}
+	outcome = IdentityRefreshed
+	if held {
+		r.observer().TokenMargin(left)
 	}
 	r.failures = 0
 	r.mu.Lock()
@@ -301,6 +322,34 @@ func (r *identityRefresher) logFailure(msg string, ans mintAnswer, next time.Dur
 		return
 	}
 	r.logger.Warn(msg, attrs...)
+}
+
+// answerTo is the Orker's reading of a failed mint, heard where the engine
+// refused this Orker itself.
+func (r *identityRefresher) answerTo(err error) mintAnswer {
+	ans := mapMintAnswer(err, r.orkerBuild)
+	if ans.Count != "" {
+		r.observer().EngineRefused(ans.Count)
+	}
+	return ans
+}
+
+func (r *identityRefresher) observer() IdentityObserver { return identityObserverOr(r.observe) }
+
+// leastLeft is the life left of the token nearest its end, on the boot clock,
+// false with none held.
+func (r *identityRefresher) leastLeft() (time.Duration, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	boot := r.clock.Boot()
+	var least time.Duration
+	first := true
+	for _, h := range r.held {
+		if left := h.sentBoot + h.life - boot; first || left < least {
+			least, first = left, false
+		}
+	}
+	return least, !first
 }
 
 // mintWithin asks once, giving up after within (at most the call timeout),

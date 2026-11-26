@@ -499,12 +499,22 @@ write_run_config() {
 			echo "    key_files:"
 			echo "      - $IDENTITY_DIR/signin.key"
 			# enforce needs an engine signing key: it signs what one engine
-			# hands another, and with no identity.issuer no token.
+			# hands another, and the task identity issuer's tokens. The
+			# issuer is a name nothing resolves, so the engine serves its
+			# discovery itself, on its own address, and never asks the issuer
+			# for it. Nothing here caches the keys, so a new one signs at
+			# once. The development store has one key, which the Orker
+			# shares, so its scope is reported and not refused.
 			echo "identity:"
+			echo "  issuer: https://orkstack-dev.invalid"
+			echo "  serve_discovery: true"
 			echo "  signing:"
 			echo "    key_files:"
 			echo "      - $IDENTITY_DIR/engine-signing.key"
 			echo "    algorithm: ES256"
+			echo "    activation_delay: 0s"
+			echo "    verify_published: false"
+			echo "  unscoped_orkers: report"
 		fi
 		if wants_admin_addr; then
 			echo "telemetry:"

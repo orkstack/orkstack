@@ -678,7 +678,11 @@ its failure path would need for every task not yet started:
   256 KiB plan still holds an entry for every await and a nested plan for
   every composed task: one plan holds about 2,050 awaits with a callback, or
   381 composed tasks of a one-task child. Past that a submit is refused,
-  `failed_precondition`, naming the plan's size.
+  `failed_precondition`, naming the plan's size. A composed child's own
+  definition is in that plan too, as resolved (about 560 bytes for a plain
+  task of a first-party image), so one child of about 450 such tasks fills it:
+  a larger one is refused when the Orkflow that composes it is created,
+  `invalid_argument` at its `uses:`, naming each child's size.
 - **Large inline outputs** count too. A run's saved state holds every task's
   inline output (up to 4 KiB of values each), and must fit
   `engine.continuation.bytes` (8 MiB by default) to carry on: at 4,000 tasks it
@@ -867,6 +871,13 @@ failure handler so every other task's input is unchanged:
    entry; the `artifact` helper fails the render for a name that is not staged.
 3. **Succeeded ancestors' values, as always.** A skipped, cancelled or failed
    ancestor contributes no values.
+
+**An await in a handler, or before one.** In a run that holds a task identity
+an await can end `RESOLUTION_RECORD_UNAVAILABLE` instead of `AWAIT_TIMED_OUT`:
+nobody is known to have answered. A handler runs on both, since a `condition:`
+sees only succeeded tasks; one that must tell them apart reads
+`join.needs[].error.code` in its `task.json`. One read the store does not answer
+can end every await whose deadline passed by then.
 
 **The saga idiom.** A condition — on any task — still sees only succeeded
 ancestors, so `{{ if index .tasks "reserve-flight" }}true{{ end }}` is the
@@ -1835,11 +1846,12 @@ tasks:
   upstream's. The parent claims the objects first; a claim that cannot be
   written fails the composed task `CHILD_OUTPUTS_UNCLAIMED`
   (`InfrastructureError`), and the child is not run again.
-- **Only a composing task passes them.** A run of an Orkflow with an artifact
-  input is started only by a composed task: a submit, a schedule, a trigger,
-  an event source's message or "run again" of one is refused with
-  `ARTIFACT_INPUT_UNSUPPORTED` (an event source's for now; a later release
-  passes its message's parts), and so
+- **No client passes them.** A run of an Orkflow with an artifact input is
+  started by a composed task, or by an event source whose `artifacts:` binds
+  its message's parts ([EVENT_SOURCES.md](./EVENT_SOURCES.md)). Such a run
+  that is run again receives the same artifacts, by reference, or is refused
+  `INPUT_ARTIFACT_UNAVAILABLE` where one is gone. A submit, a
+  schedule or a trigger is refused with `ARTIFACT_INPUT_UNSUPPORTED`, and so
   is creating or updating a schedule or a trigger to start one, and making
   such a version current while a schedule or a trigger follows current.
 
@@ -2279,8 +2291,10 @@ tasks:
   `queued_on=KEY` and `holding=KEY`, and the Runs page's Queued tile, list the
   runs waiting for or holding a key, and only a run still going matches them.
   `orkctl orkflow get` and the Orkflow page name the limit, and `orkctl stats`
-  and the dashboard count the queued runs among the running. A run waiting for
-  its slot cannot be paused.
+  and the dashboard count the queued runs among the running. `orkctl
+  concurrency list` and `get`, and Operate → Concurrency, show every key in
+  use: who holds it and who waits, in order. A run waiting for its slot cannot
+  be paused.
 - **The first run at a key** (or one after the limit's record of the key was
   lost) waits while the limit reads which runs hold the key: it says so, its
   place unknown. That usually takes seconds; past

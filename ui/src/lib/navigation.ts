@@ -48,6 +48,7 @@ export const OPERATE_PAGES: readonly NavPage[] = [
 	{ id: 'retention', href: '/admin/retention', label: 'Retention', title: 'Retention', mode: 'operate', icon: 'clock' },
 	{ id: 'usage', href: '/admin/usage', label: 'Usage', title: 'Usage', mode: 'operate', icon: 'usage' },
 	{ id: 'cache', href: '/admin/cache', label: 'Cache', title: 'Cache', mode: 'operate', icon: 'cache' },
+	{ id: 'concurrency', href: '/admin/concurrency', label: 'Concurrency', title: 'Concurrency', mode: 'operate', icon: 'hourglass' },
 	{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy', title: 'Image policy', mode: 'operate', icon: 'shield' },
 	{ id: 'audit', href: '/admin/audit', label: 'Audit', title: 'Audit', mode: 'operate', icon: 'audit' },
 	// Who may do what: its own screens are tabs under it (/admin/access/…).

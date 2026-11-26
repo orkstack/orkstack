@@ -14,6 +14,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/orkstack/orkstack/internal/orker/servicehost"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/eventsources"
@@ -37,6 +39,11 @@ type laneSource struct {
 	// statusOnce writes the status once and never refreshes it, as a
 	// container that hangs after it became ready.
 	statusOnce atomic.Bool
+	// longPolls leaves each poll unanswered, as a container whose broker has
+	// nothing for it does; quiet answers that many with nothing, whatever it
+	// has.
+	longPolls atomic.Bool
+	quiet     atomic.Int64
 }
 
 func (f *laneSource) rename(name string, body []byte) {
@@ -50,18 +57,21 @@ func (f *laneSource) run(ctx context.Context) {
 	lastStatus := time.Time{}
 	for ctx.Err() == nil {
 		time.Sleep(5 * time.Millisecond)
-		if f.status != "" && time.Since(lastStatus) > 200*time.Millisecond && !(f.statusOnce.Load() && f.statuses.Load() > 0) {
-			f.rename(servicehost.StatusName, []byte(f.status))
+		f.mu.Lock()
+		status := f.status
+		f.mu.Unlock()
+		if status != "" && time.Since(lastStatus) > 200*time.Millisecond && !(f.statusOnce.Load() && f.statuses.Load() > 0) {
+			f.rename(servicehost.StatusName, []byte(status))
 			f.statuses.Add(1)
 			lastStatus = time.Now()
 		}
 		for k := 0; k < f.lanes; k++ {
 			if raw, err := os.ReadFile(filepath.Join(f.ask, LanePath(k, StepPoll))); err == nil {
 				var p Poll
-				if json.Unmarshal(raw, &p) == nil && p.Seq > polls[k] {
+				if json.Unmarshal(raw, &p) == nil && p.Seq > polls[k] && !f.longPolls.Load() {
 					polls[k] = p.Seq
 					f.mu.Lock()
-					if len(f.queue) == 0 {
+					if len(f.queue) == 0 || f.quiet.Add(-1) >= 0 {
 						f.mu.Unlock()
 						f.rename(LanePath(k, StepEmpty), []byte(`{"schemaVersion":1,"seq":`+itoa(p.Seq)+`}`))
 						continue
@@ -126,7 +136,7 @@ func newInstanceFixture(t *testing.T, door Door, lanes int, status string, queue
 	j := NewJudge(judgingSource("PAID"), 1, door, &fakeStager{}, time.Now)
 	limits := eventsources.SpecLimits{StatusSeconds: 30, StartupSeconds: 1, StopSeconds: 20, AliveSeconds: 1, OrphanSeconds: 60,
 		MaxBodyBytes: 1 << 20, MaxAttributesBytes: 64 << 10, PollWaitSeconds: 0, AnswerSeconds: 10, SettleSeconds: 30, HoldSeconds: 960}
-	in := &Instance{Config: InstanceConfig{Limits: limits, Park: 300 * time.Millisecond, RejectBreaker: 20},
+	in := &Instance{Config: InstanceConfig{Limits: limits, Park: 300 * time.Millisecond},
 		Judge: j, Door: door, Steps: steps, Asks: a, Now: time.Now, Started: time.Now()}
 	for k := 0; k < lanes; k++ {
 		in.Drivers = append(in.Drivers, &LaneDriver{Index: k, Steps: steps, Asks: a, Judge: j, Recorder: rec, Now: time.Now,
@@ -323,12 +333,93 @@ func TestInstance_RejectBreakerAsksForAPause(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
 		in, _, _ := newInstanceFixture(t, door, 1, readyStatus, `{"status":"PAID","id":"1"}`, `{"status":"PAID","id":"2"}`)
-		in.Config.RejectBreaker = 2
+		// As a save made while it runs does, which restarts nothing.
+		src := proto.CloneOf(judgingSource("PAID"))
+		src.RejectBreaker = proto.Int32(2)
+		in.Judge.Swap(src, 2, time.Now())
 		e := in.Run(context.Background())
 		door.mu.Lock()
 		defer door.mu.Unlock()
 		if e.Paused != BreakerAllRejected || len(door.paused) != 1 || door.paused[0] != BreakerAllRejected {
 			t.Fatalf("ending %+v, pauses asked %v", e, door.paused)
+		}
+	})
+}
+
+// TestInstance_IsJudgedByTheSourceAsItIs: a rate and a reject breaker saved while
+// an instance runs are its own from then on.
+func TestInstance_IsJudgedByTheSourceAsItIs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		in, src, _ := newInstanceFixture(t, acceptingDoor(), 1, readyStatus)
+		src.mu.Lock()
+		for range 400 {
+			src.queue = append(src.queue, `{"status":"PAID","id":"1"}`)
+		}
+		src.mu.Unlock()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan Ending, 1)
+		go func() { done <- in.Run(ctx) }()
+		time.Sleep(5 * time.Second)
+		before := src.settled.Load()
+		if before < 20 || before > 55 {
+			t.Errorf("%d in five seconds at ten a second", before)
+		}
+		save := proto.CloneOf(judgingSource("PAID"))
+		save.Rate = 1
+		in.Judge.Swap(save, 2, time.Now())
+		time.Sleep(10 * time.Second)
+		if n := src.settled.Load() - before; n < 8 || n > 12 {
+			t.Errorf("%d in ten seconds at one a second", n)
+		}
+		cancel()
+		<-done
+	})
+	b := NewBreakers(2, "")
+	b.Rejected("a")
+	b.RejectAt(0)
+	if b.Rejected("b") != "" {
+		t.Error("a breaker turned off trips")
+	}
+	if b.RejectAt(2); b.Rejected("c") != "" {
+		t.Error("what was counted before it was turned off counts")
+	}
+	if b.RejectAt(3); b.Rejected("d") != "" || b.Rejected("e") != BreakerAllRejected {
+		t.Error("a raised breaker")
+	}
+	if b.RejectAt(1); b.Rejected("f") != BreakerAllRejected {
+		t.Error("a lowered breaker")
+	}
+}
+
+// TestInstance_SaysWhatTheEngineStoppedItFor: the engine's word ends the instance
+// and is what it ends for, wherever it was given; a word the engine has not is
+// that it is not held.
+func TestInstance_SaysWhatTheEngineStoppedItFor(t *testing.T) {
+	stop := func(reason string) func(Offer) (Answer, error) {
+		return func(Offer) (Answer, error) { return Answer{Kind: AnswerStop, Reason: reason}, nil }
+	}
+	for reason, want := range map[string]string{"EVENT_SOURCE_DELETING": "EVENT_SOURCE_DELETING", "EVENT_SOURCE_PAUSED": "EVENT_SOURCE_PAUSED",
+		"SERVICE_FAILED": "EVENT_SOURCE_NOT_HELD", "": "EVENT_SOURCE_NOT_HELD"} {
+		synctest.Test(t, func(t *testing.T) {
+			in, _, _ := newInstanceFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){stop(reason)}}, 1, readyStatus, `{"status":"PAID","id":"1"}`)
+			if e := in.Run(context.Background()); e.Stop != want || e.Reason != "" || e.Paused != "" {
+				t.Errorf("%q: %+v, want %s", reason, e, want)
+			}
+		})
+		synctest.Test(t, func(t *testing.T) {
+			in, _, _ := newInstanceFixture(t, &fakeDoor{confirm: []func() (Confirmation, error){func() (Confirmation, error) {
+				return Confirmation{Revision: 1, Stop: true, Reason: reason}, nil
+			}}}, 1, readyStatus, `{"status":"OTHER","id":"1"}`)
+			if e := in.Run(context.Background()); e.Stop != want || e.Reason != "" {
+				t.Errorf("confirmed %q: %+v, want %s", reason, e, want)
+			}
+		})
+	}
+	synctest.Test(t, func(t *testing.T) {
+		in, _, _ := newInstanceFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}, 1, readyStatus, `{"status":"PAID","id":"1"}`)
+		in.Config.Trial = BreakerAllRejected
+		if e := in.Run(context.Background()); e.Stop != "EVENT_SOURCE_PAUSED" || e.Paused != BreakerAllRejected {
+			t.Errorf("a breaker: %+v", e)
 		}
 	})
 }
@@ -365,7 +456,7 @@ func TestInstance_AShortWaitSpendsNothing(t *testing.T) {
 // closed at the hold bound says nothing of how the broker settles, so it
 // neither ends nor extends a run of refused settlements.
 func TestInstance_AHoldBoundCloseCountsNoSettlement(t *testing.T) {
-	in := &Instance{Now: time.Now, Config: InstanceConfig{RejectBreaker: 20}}
+	in := &Instance{Now: time.Now, Judge: NewJudge(judgingSource("PAID"), 1, nil, nil, time.Now)}
 	in.breakers, in.waiter = NewBreakers(20, ""), NewWaiter(time.Minute, 1)
 	refused := Settled{Error: &StepError{Kind: KindRefused}}
 	for range settleRefusedInARow - 1 {

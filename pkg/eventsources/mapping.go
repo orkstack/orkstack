@@ -233,6 +233,10 @@ func extract(src *orkstackv1.EventSource, msg Message, sel Selected) (map[string
 				return nil, &MessageError{Reason: ReasonMessageInputTooLarge, Offset: -1,
 					Detail: fmt.Sprintf("the value mapped to input %q is over %d bytes", name, MaxSelectedBytes)}
 			}
+			if !holdsExactly(raw) {
+				return nil, &MessageError{Reason: ReasonMessageFieldType, Offset: -1,
+					Detail: fmt.Sprintf("the value mapped to input %q holds a number an input would change", name)}
+			}
 			out[name] = raw
 		}
 	}

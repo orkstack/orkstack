@@ -129,7 +129,8 @@ export type Error = Message<"orkstack.v1.Error"> & {
   category: FailureCategory;
 
   /**
-   * task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+   * task_code is the code of the task a run failed at, for a run whose results
+   * the engine records; unset otherwise.
    *
    * @generated from field: string task_code = 6;
    */

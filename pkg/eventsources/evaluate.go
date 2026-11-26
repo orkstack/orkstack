@@ -7,6 +7,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"google.golang.org/protobuf/types/known/structpb"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
@@ -102,16 +104,30 @@ func Evaluate(src *orkstackv1.EventSource, msg Message, j Judge) Result {
 
 // checkMessage applies the bounds checked before anything is parsed.
 func checkMessage(src *orkstackv1.EventSource, msg Message, j Judge) *MessageError {
-	limit := src.GetMaxBytes()
-	if limit <= 0 {
-		limit = j.MaxMessageBytes
-		if limit <= 0 {
-			limit = DefaultMaxMessageBytes
-		}
+	return CheckEnvelope(src, msg, int64(len(msg.Body)), j.MaxMessageBytes)
+}
+
+// MaxBodyBytes is src's bound on a message's body. maxMessageBytes is the
+// deployment's, for a source that sets none; 0 is DefaultMaxMessageBytes.
+func MaxBodyBytes(src *orkstackv1.EventSource, maxMessageBytes int64) int64 {
+	switch {
+	case src.GetMaxBytes() > 0:
+		return src.GetMaxBytes()
+	case maxMessageBytes > 0:
+		return maxMessageBytes
 	}
-	if int64(len(msg.Body)) > limit {
+	return DefaultMaxMessageBytes
+}
+
+// CheckEnvelope holds a message to the bounds checked before anything is
+// parsed, where its body is bodyBytes long and need not be at hand.
+// maxMessageBytes is the deployment's body bound for a source that sets
+// none; 0 is DefaultMaxMessageBytes.
+func CheckEnvelope(src *orkstackv1.EventSource, msg Message, bodyBytes, maxMessageBytes int64) *MessageError {
+	limit := MaxBodyBytes(src, maxMessageBytes)
+	if bodyBytes > limit {
 		return &MessageError{Reason: ReasonMessageTooLarge, Offset: -1,
-			Detail: fmt.Sprintf("the body is %d bytes; the source's bound is %d", len(msg.Body), limit)}
+			Detail: fmt.Sprintf("the body is %d bytes; the source's bound is %d", bodyBytes, limit)}
 	}
 	if len(msg.ID) > MaxIdentityBytes || hasControl(msg.ID) || !utf8.ValidString(msg.ID) {
 		return &MessageError{Reason: ReasonMessageIdentityInvalid, Offset: -1,
@@ -176,6 +192,41 @@ func readBody(src *orkstackv1.EventSource, msg Message) (Selected, *MessageError
 	}
 	return ReadJSON(msg.Body, pointers)
 }
+
+// JudgeExtracted is the engine's half of a message an Orker prejudged: it
+// types what the selectors extracted against the version's declared inputs
+// and builds the run input. A name the source does not map is not read.
+func JudgeExtracted(src *orkstackv1.EventSource, extracted map[string]*structpb.Value, j Judge) (map[string]jsontext.Value, *MessageError) {
+	values := make(map[string]jsontext.Value, len(extracted))
+	for name := range src.GetMap() {
+		v, ok := extracted[name]
+		if !ok {
+			continue
+		}
+		// What JSON cannot write (no kind, a number that is none) no selector
+		// extracts.
+		raw, err := json.Marshal(v)
+		if err != nil || v.GetKind() == nil {
+			return nil, &MessageError{Reason: ReasonMessageUnprocessable, Offset: -1, Detail: fmt.Sprintf("the value of input %q is not JSON", name)}
+		}
+		values[name] = raw
+	}
+	return judge(src, values, j)
+}
+
+// preRejections are the reasons an Orker can find by itself (Prejudge): the
+// bounds, the parse and the extraction, a mapped number a run's input would
+// change among them. Whether a value is of its input's type is the engine's
+// alone to say.
+var preRejections = map[string]bool{
+	ReasonMessageTooLarge: true, ReasonMessageAttributesTooLarge: true, ReasonMessageIdentityInvalid: true,
+	ReasonMessageTextInvalid: true, ReasonMessageNotJSON: true, ReasonMessageJSONTooDeep: true,
+	ReasonMessageJSONTooLarge: true, ReasonMessageInputTooLarge: true, ReasonMessageUnprocessable: true, ReasonMessageFieldType: true,
+}
+
+// IsPreRejection reports a reason an Orker may reject a message with before
+// the engine judges it.
+func IsPreRejection(reason string) bool { return preRejections[reason] }
 
 // judge types what was extracted against the declared inputs and builds the
 // run input: a value that is absent or null leaves out an input that has a

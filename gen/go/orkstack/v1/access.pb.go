@@ -214,6 +214,12 @@ const (
 	// It would have matched by name, and is pinned to an earlier incarnation
 	// of the namespace or Orkflow.
 	BindingMatch_BINDING_MATCH_PINNED_ELSEWHERE BindingMatch = 5
+	// Its role holds the permission, and the binding is for a credential that
+	// Orkers share (orker_ids_any), which names no Orker: it does not grant
+	// hosting an event source, which only a named Orker may do. Such a
+	// credential serves no task identity either; that is refused where it is
+	// used, on the credential itself, and this match is never its answer.
+	BindingMatch_BINDING_MATCH_SHARED_ORKER_CREDENTIAL BindingMatch = 6
 )
 
 // Enum value maps for BindingMatch.
@@ -225,14 +231,16 @@ var (
 		3: "BINDING_MATCH_SCOPE_DIFFERS",
 		4: "BINDING_MATCH_ROLE_LACKS_PERMISSION",
 		5: "BINDING_MATCH_PINNED_ELSEWHERE",
+		6: "BINDING_MATCH_SHARED_ORKER_CREDENTIAL",
 	}
 	BindingMatch_value = map[string]int32{
-		"BINDING_MATCH_UNSPECIFIED":           0,
-		"BINDING_MATCH_GRANTED":               1,
-		"BINDING_MATCH_SUBJECT_DIFFERS":       2,
-		"BINDING_MATCH_SCOPE_DIFFERS":         3,
-		"BINDING_MATCH_ROLE_LACKS_PERMISSION": 4,
-		"BINDING_MATCH_PINNED_ELSEWHERE":      5,
+		"BINDING_MATCH_UNSPECIFIED":             0,
+		"BINDING_MATCH_GRANTED":                 1,
+		"BINDING_MATCH_SUBJECT_DIFFERS":         2,
+		"BINDING_MATCH_SCOPE_DIFFERS":           3,
+		"BINDING_MATCH_ROLE_LACKS_PERMISSION":   4,
+		"BINDING_MATCH_PINNED_ELSEWHERE":        5,
+		"BINDING_MATCH_SHARED_ORKER_CREDENTIAL": 6,
 	}
 )
 
@@ -1686,14 +1694,15 @@ const file_orkstack_v1_access_proto_rawDesc = "" +
 	"\x0eAccessDecision\x12\x1f\n" +
 	"\x1bACCESS_DECISION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17ACCESS_DECISION_ALLOWED\x10\x01\x12\x1a\n" +
-	"\x16ACCESS_DECISION_DENIED\x10\x02*\xd9\x01\n" +
+	"\x16ACCESS_DECISION_DENIED\x10\x02*\x84\x02\n" +
 	"\fBindingMatch\x12\x1d\n" +
 	"\x19BINDING_MATCH_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15BINDING_MATCH_GRANTED\x10\x01\x12!\n" +
 	"\x1dBINDING_MATCH_SUBJECT_DIFFERS\x10\x02\x12\x1f\n" +
 	"\x1bBINDING_MATCH_SCOPE_DIFFERS\x10\x03\x12'\n" +
 	"#BINDING_MATCH_ROLE_LACKS_PERMISSION\x10\x04\x12\"\n" +
-	"\x1eBINDING_MATCH_PINNED_ELSEWHERE\x10\x05*\xc6\x01\n" +
+	"\x1eBINDING_MATCH_PINNED_ELSEWHERE\x10\x05\x12)\n" +
+	"%BINDING_MATCH_SHARED_ORKER_CREDENTIAL\x10\x06*\xc6\x01\n" +
 	"\x10AccessObjectKind\x12\"\n" +
 	"\x1eACCESS_OBJECT_KIND_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17ACCESS_OBJECT_KIND_ROLE\x10\x01\x12\x1e\n" +

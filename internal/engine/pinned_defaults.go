@@ -1,6 +1,10 @@
 package engine
 
-import "time"
+import (
+	"time"
+
+	"github.com/orkstack/orkstack/pkg/artifacts"
+)
 
 // Every default a run's plan pins lives in this file, and nowhere else in
 // internal/engine refers to one. Its readers are internal/api (at submit,
@@ -41,6 +45,23 @@ var DefaultHistoryReserve = HistoryReserve{
 	ChildStartBytes:        1 << 20,
 	AwaitHandlerStartBytes: 64 << 10,
 }
+
+// DefaultRecordBudget is what reading or making a run's records may take.
+var DefaultRecordBudget = RecordBudget{
+	AttemptSeconds: int32(composeAttemptTimeout / time.Second), TotalSeconds: int32(composeTimeout / time.Second), Attempts: 3,
+	RetrySeconds: 1, RetryCoefficient: 2,
+	OutputsAttemptSeconds: 30, OutputsAttempts: 2,
+	MissConfirmMS:   int32(artifacts.DefaultRecordSpacings.MissConfirm / time.Millisecond),
+	ReaskInitialMS:  int32(artifacts.DefaultRecordSpacings.ReaskInitial / time.Millisecond),
+	ReaskMaxMS:      int32(artifacts.DefaultRecordSpacings.ReaskMax / time.Millisecond),
+	AttemptMarginMS: int32(artifacts.DefaultRecordSpacings.AttemptMargin / time.Millisecond),
+
+	DeadlineRereadSeconds: 300, ReadEvents: 32,
+}
+
+// DefaultNonesPerAwait is how many tellings of one await that find nothing a
+// generation takes.
+const DefaultNonesPerAwait int32 = 3
 
 // The continuation budget's defaults (engine.continuation.*, docs/DEPLOY.md
 // §1). Only enabled, events, bytes and restore_timeout are operator

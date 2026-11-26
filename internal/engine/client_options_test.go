@@ -50,11 +50,17 @@ func TestClientOptions_CarriesThePayloadConverters(t *testing.T) {
 	}
 }
 
+// otherDials is every test function that dials otherwise, and why.
+var otherDials = map[string]string{
+	"startSealedE2E":    "ClientOptions, then a converter that also opens what its activities are given of a sealed run (cmd/ork's wiring, P20c)",
+	"startSealingOrker": "an Orker's client, which holds no engines' key",
+}
+
 // Every client a Go test of the engine, its API or its binary dials is dialed
 // with engine.ClientOptions, as cmd/ork dials: a harness runs what production
 // runs.
 func TestClientOptions_EveryHarnessDialsWithThem(t *testing.T) {
-	dials := 0
+	dials, other := 0, map[string]bool{}
 	for _, dir := range []string{".", "../api", "../../cmd/ork"} {
 		files, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
 		must.OK(t, err)
@@ -64,7 +70,11 @@ func TestClientOptions_EveryHarnessDialsWithThem(t *testing.T) {
 			fset := token.NewFileSet()
 			file, err := parser.ParseFile(fset, f, src, 0)
 			must.OK(t, err)
+			in := ""
 			ast.Inspect(file, func(n ast.Node) bool {
+				if fn, ok := n.(*ast.FuncDecl); ok {
+					in = fn.Name.Name
+				}
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
@@ -82,6 +92,10 @@ func TestClientOptions_EveryHarnessDialsWithThem(t *testing.T) {
 					return true
 				}
 				dials++
+				if _, listed := otherDials[in]; listed {
+					other[in] = true
+					return true
+				}
 				arg := string(src[fset.Position(call.Args[len(call.Args)-1].Pos()).Offset:fset.Position(call.Args[len(call.Args)-1].End()).Offset])
 				if !strings.HasPrefix(arg, "engine.ClientOptions(") && !strings.HasPrefix(arg, "ClientOptions(") {
 					t.Errorf("%s: %s dials without engine.ClientOptions", fset.Position(call.Pos()), sel.Sel.Name)
@@ -92,6 +106,11 @@ func TestClientOptions_EveryHarnessDialsWithThem(t *testing.T) {
 	}
 	if dials == 0 {
 		t.Fatal("no dial found")
+	}
+	for fn := range otherDials {
+		if !other[fn] {
+			t.Errorf("%s is listed and dials nothing", fn)
+		}
 	}
 }
 

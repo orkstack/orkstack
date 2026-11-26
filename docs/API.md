@@ -173,6 +173,28 @@ Defined in `proto/orkstack/v1/concurrency_service.proto`.
 | `ListConcurrencyLimits` | [`ListConcurrencyLimitsRequest`](#listconcurrencylimitsrequest) | [`ListConcurrencyLimitsResponse`](#listconcurrencylimitsresponse) | ListConcurrencyLimits lists the namespace's keys in use: those with runs holding or waiting, and those just emptied and not yet closed, narrowed by filters on the key. A limit that does not answer is still listed, with answering false and why, unless its key is known and a filter excludes it. |
 | `GetConcurrencyLimit` | [`GetConcurrencyLimitRequest`](#getconcurrencylimitrequest) | [`GetConcurrencyLimitResponse`](#getconcurrencylimitresponse) | GetConcurrencyLimit reads one key. A key nothing holds or waits for is NOT_FOUND. |
 
+### EventSourceHostService
+
+EventSourceHostService is what an Orker that hosts an event source's
+instance calls (docs/EVENT_SOURCES.md), and nothing else does. It is served
+only where callers are authenticated (auth.mode enforce) and the engine
+runs as a release. Every call needs eventsource.host at the source's pool
+and names the instance it is made for, which the caller must hold; the
+Orker is its credential's, never the request's. Each answers a DoorAnswer:
+the engine says what the outcome is, and the Orker never reads one out of a
+connection's code. A request is at most 256 KiB and carries no body.
+
+Defined in `proto/orkstack/v1/eventsourcehost_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `ConfirmInstance` | [`ConfirmInstanceRequest`](#confirminstancerequest) | [`ConfirmInstanceResponse`](#confirminstanceresponse) | ConfirmInstance confirms that the caller holds the instance and that the source may run it now. It is an attempt's first call, and is made again at intervals and before a filtered message is settled. |
+| `ReportInstance` | [`ReportInstanceRequest`](#reportinstancerequest) | [`ReportInstanceResponse`](#reportinstanceresponse) | ReportInstance reports that the instance became ready, was found invalid or has been healthy. |
+| `OfferMessage` | [`OfferMessageRequest`](#offermessagerequest) | [`OfferMessageResponse`](#offermessageresponse) | OfferMessage judges one message before anything is staged for it: whether it has a run, can have one, and which of its parts to stage. It starts nothing and claims nothing. |
+| `StartMessageRun` | [`StartMessageRunRequest`](#startmessagerunrequest) | [`StartMessageRunResponse`](#startmessagerunresponse) | StartMessageRun starts the message's run from what was staged. |
+| `ProbeEventSource` | [`ProbeEventSourceRequest`](#probeeventsourcerequest) | [`ProbeEventSourceResponse`](#probeeventsourceresponse) | ProbeEventSource asks whether a start could complete now, for an instance that waits and holds no message. |
+| `RequestEventSourcePause` | [`RequestEventSourcePauseRequest`](#requesteventsourcepauserequest) | [`RequestEventSourcePauseResponse`](#requesteventsourcepauseresponse) | RequestEventSourcePause pauses the source because a breaker the Orker counts has tripped. |
+
 ### EventSourceService
 
 EventSourceService stores and evaluates event sources: objects that bind
@@ -295,6 +317,7 @@ Defined in `proto/orkstack/v1/run_service.proto`.
 | `DiffRuns` | [`DiffRunsRequest`](#diffrunsrequest) | [`DiffRunsResponse`](#diffrunsresponse) | DiffRuns compares two runs of ONE namespace field by field: the pinned definition, the input (as a canonical-JSON unified diff), and per task its status, attempt, pool, pin, orker, exit code, error, duration, and the image it was dispatched with and the platform manifest it ran.<br><br>It is a READ over what GetRun, GetOrkflow and ListTaskAttempts already serve, computed on every call and stored nowhere, so there is no comparison record that can disagree with the runs it compares. Both ids resolve inside the request's namespace exactly as GetRun resolves one: a run of another namespace is NotFound. Two runs of different orkflows are compared and flagged (same_orkflow=false), never refused.<br><br>The diff is SERVER-side for the reason DiffOrkflowVersions records: two clients render it, and the rendering of "unavailable", "does not apply" and an empty value must be decided once. Every from_value/to_value is a rendered string a client prints verbatim. |
 | `ExportRunEvidence` | [`ExportRunEvidenceRequest`](#exportrunevidencerequest) | stream [`EvidenceChunk`](#evidencechunk) | ExportRunEvidence streams ONE finished run's evidence bundle: a tar.gz whose first member, MANIFEST.json, names every other member's path, origin, size, sha256 and state, followed by the archived run and events, the pinned definition's source YAML, and per task the verbatim commit.json, values.json, every output artifact, every attempt record, and every attempt's stdout.log and stderr.log.<br><br>It is a READ, assembled per request from objects that already exist and kept nowhere: there is no export record, so nothing can disagree with the archive. Every member digest is of the bytes as they were read; a member with a recorded reference is verified as it streams and a mismatch ends the stream with DataLoss and no `last`. Bytes the cleanup worker or a lifecycle rule removed are listed with state "reclaimed" and their recorded sha256 preserved, never omitted.<br><br>The run is addressed inside its namespace exactly as GetRun addresses it and must be finished and archived; a live run is FailedPrecondition. The stream is complete only when a chunk with `last` arrives, on the same terms as ReadArtifact. The bundle layout and manifest schema are docs/RUN_EVIDENCE.md. |
 | `ResumeRun` | [`ResumeRunRequest`](#resumerunrequest) | [`ResumeRunResponse`](#resumerunresponse) | ResumeRun resumes a failed run from its failed tasks, or retries it from a chosen task, keeping the results of the tasks that need not run again. The run keeps its id, and its event stream continues after RUN_RESUMED.<br><br>dry_run previews the plan and changes nothing (run.read). A confirm (run.resume and run.submit) must send the preview's terminal_sequence and plan_digest; if the run or the plan changed since, it is refused and nothing is done. A refusal is FailedPrecondition with a ResumeRefusal detail naming its RUN_NOT_RESUMABLE sub-reason and its class: permanent, wait (try again after retry_after_seconds) or replan (preview again). docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason. |
+| `ListRecordedResults` | [`ListRecordedResultsRequest`](#listrecordedresultsrequest) | [`ListRecordedResultsResponse`](#listrecordedresultsresponse) | ListRecordedResults lists what the engine recorded for ONE run whose results it records (docs/TASK_IDENTITY.md), and each task the run's state calls succeeded that has no record. A run whose results the engine does not record has no rows. A run whose state cannot be read answers Unavailable, never a list without those rows. |
 
 ### ScheduleService
 
@@ -1171,6 +1194,23 @@ ConcurrencyWaitEnd is how a wait in a concurrency limit's line ended.
 | `limit_label` | `string` | limit_label is the limit's template, cut to 64 bytes, then "#" and eight hex digits of its SHA-256: never a rendered key. |
 | `task_level` | `bool` |  |
 
+### ConfirmInstanceRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `instance` | [`InstanceRef`](#instanceref) |  |
+| `want_service_spec` | `bool` | want_service_spec asks for the service spec, as an attempt's first call does. |
+
+### ConfirmInstanceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `answer` | [`DoorAnswer`](#dooranswer) |  |
+| `service` | [`ServiceSpec`](#servicespec) | service is the service spec, when it was asked for. |
+| `judging` | [`JudgingSpec`](#judgingspec) | judging is the judging spec, when the caller's is not the document's. |
+| `image_policy` | [`ImagePolicySelection`](#imagepolicyselection) | image_policy is what the Orker judges the image by, as it is now. |
+| `telemetry` | [`TelemetrySelection`](#telemetryselection) | telemetry is the namespace's selection, as it is now. |
+
 ### ConsentView
 
 ConsentView is the consent a schedule or a trigger records with its
@@ -1575,6 +1615,22 @@ is alive by answering DescribeOrker (§6.5).
 | `evidence_unavailable` | `int32` | evidence_unavailable counts rows with at least one unavailable side. |
 | `fields_compared` | repeated `string` | fields_compared is the resolved field list — every field when `only` is empty, else `only` plus "presence" — in canonical order, so a client can say what was and was not compared. It is exhaustive: every RunFieldDiff.field in differences is one of its entries. |
 
+### DoorAnswer
+
+DoorAnswer is the engine's answer to one call.
+
+| Field | Type | Description |
+|---|---|---|
+| `disposition` | [`Disposition`](#disposition) |  |
+| `reason` | `string` | reason is a MESSAGE_* reason, a wait's reason or a stop's. |
+| `cause` | `string` | cause is, for WAIT, what it waits for: admission, pool, rollout, outage or timeout. |
+| `run_id` | `string` | run_id is the message's run, for ACCEPTED and DUPLICATE only. |
+| `refusal_code` | `string` | refusal_code is, for UNCERTAIN and for a STOP that paused the source, the refusal's code. |
+| `parts` | repeated [`PartToUpload`](#parttoupload) | parts are, for PROCEED, what to stage. |
+| `orkflow_version` | `string` | orkflow_version is the version resolved for the message. |
+| `judging` | [`JudgingSpec`](#judgingspec) | judging is, for REFRESH, the current judging spec. |
+| `retired_run` | `bool` | retired_run is set for a DUPLICATE whose run is known only by its started marker. |
+
 ### EachArtifactSource
 
 EachArtifactSource is the artifact a fan-out runs over the lines of:
@@ -1672,7 +1728,7 @@ Error captures a structured failure for a run or task run.
 | `details` | `string` | optional stack/context |
 | `retryable` | `bool` |  |
 | `category` | [`FailureCategory`](#failurecategory) | category is the AGENTS.md §4 failure category this error belongs to. It is recorded in history, so it is part of the replay-visible contract and not merely display data. |
-| `task_code` | `string` | task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `task_code` | `string` | task_code is the code of the task a run failed at, for a run whose results the engine records; unset otherwise. |
 
 ### EvaluateEventSourceMessageRequest
 
@@ -1768,6 +1824,7 @@ Orkflow it binds are fixed when it is created.
 | `env` | map&lt;`string`, `string`&gt; | env is environment for the container; configuration, never a secret. |
 | `service_revision` | `int64` | service_revision is output only: it rises when what the source's containers are or hold changes (uses, with, env, secrets, identities, credentials, resources, pool, concurrency, delivery), so its containers are replaced. |
 | `judging_revision` | `int64` | judging_revision is output only: it rises when how a message is judged changes (version, format, max_bytes, match, input, map, artifacts, rate, reject_breaker), which restarts nothing. |
+| `deleting_since` | `google.protobuf.Timestamp` | deleting_since is output only: when a delete marked the source. A marked source is stopped, and is gone once its instances have ended. |
 
 ### EventSourceDeclaration
 
@@ -1795,6 +1852,7 @@ of the source runs.
 | `reason` | `string` | reason is the operator's words, or the code's one fixed sentence; at most 1 KiB. |
 | `since` | `google.protobuf.Timestamp` |  |
 | `principal` | `string` | principal is who paused it, as recorded; empty for OrkStack's own. |
+| `requested_by_orker` | `string` | requested_by_orker is the Orker whose instance asked for OrkStack's pause, as its credential names it; empty where none did. |
 
 ### EventSourceStatus
 
@@ -2422,6 +2480,7 @@ No fields.
 | `csrf_token` | `string` | csrf_token is set with signin: every request of the page that is not a GET carries it as Ork-CSRF. The page keeps it in memory only. |
 | `access_revision` | `int64` | access_revision is the access document's revision the answer was computed against. |
 | `orker_id` | `string` | orker_id is the one Orker the caller's credential names (its issuer's orker_id_claim, or a service account's or certificate's Orker); empty when it names none. An Orker refuses to boot unless it is its own id. |
+| `image_policy` | [`ImagePolicySelection`](#imagepolicyselection) | image_policy is what the deployment's image policy holds every image to now: require_digest and allowed_registries, and never a signer, which is a namespace's. It is set only for a verified credential, in observe as in enforce, that names an Orker and holds eventsource.host at any scope: the Orker judges its own probe image by it, and the policy is the deployment's whatever the scope. Unset says that the policy was not read, and set and empty that the deployment has none. |
 
 ### GetStatsRequest
 
@@ -2576,6 +2635,30 @@ never loosen it: there is no namespace field for either floor below.
 | `signing_keys` | map&lt;`string`, `string`&gt; | signing_keys are the cosign PUBLIC keys a namespace may require by name (Namespace.require_signed_by = "cosign:&lt;name>"): name → PEM "PUBLIC KEY" block, ECDSA P-256, exactly what `cosign generate-key-pair` writes to cosign.pub. Public material only: nothing in OrkStack ever holds or uses a private key. A key a namespace still names cannot be removed (FAILED_PRECONDITION naming the namespace) — the same "lower the namespace first" rule UpdateRetentionPolicy applies. |
 | `updated_at` | `google.protobuf.Timestamp` | updated_at is written by the store on every write; unset means no policy document has ever been written. |
 
+### ImagePolicySelection
+
+ImagePolicySelection is the policy IN FORCE for one run: the deployment
+floor composed with the run's namespace at submit, carried on the plan
+and on every ExecuteTaskInput exactly as WorkspaceLimits and
+TelemetrySelection are, and never re-read afterwards. It is UNSET when
+the deployment configured no policy and the namespace names no signer,
+which keeps such a run's recorded payloads byte-identical to what they
+were before this message existed.
+
+Carrying it is what makes every attempt of one task judged by one rule,
+and what lets the Orker verify without reading a document at dispatch
+(AGENTS.md §2.1, §5): the Orker trusts this message no more and no less
+than it trusts ExecuteTaskInput.image — it re-derives nothing from it, it
+checks the image against it, and it verifies the signature itself with
+the key it carries.
+
+| Field | Type | Description |
+|---|---|---|
+| `require_digest` | `bool` |  |
+| `allowed_registries` | repeated `string` |  |
+| `require_signed_by` | `string` | require_signed_by is the namespace's signer, "cosign:&lt;name>", or empty. |
+| `signing_key_pem` | `string` | signing_key_pem is the PEM public key that name resolved to when the run was submitted; set exactly when require_signed_by is. A run keeps the key it was submitted under even if the policy's key is later rotated. |
+
 ### ImageRef
 
 ImageRef is an OCI image resolved to an immutable reference. The engine
@@ -2650,6 +2733,24 @@ should neither happen.
 |---|---|---|
 | `images` | repeated [`SourceImage`](#sourceimage) |  |
 
+### InstanceRef
+
+InstanceRef names one attempt of one instance of an event source, as an
+Orker that holds it names it to an engine. An engine believes none of it:
+it holds every field to what the cluster and the store say.
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | namespace, name and event_source_id name the source. |
+| `name` | `string` |  |
+| `event_source_id` | `string` |  |
+| `index` | `int32` | index is the instance's index. |
+| `epoch` | `int64` | epoch is what the source's workflow scheduled the instance under. |
+| `attempt` | `int32` | attempt is the attempt of that epoch's activity, from 1. |
+| `service_digest` | `string` | service_digest names the service spec this instance runs. It is compared with the one its epoch was scheduled with, and used for nothing else. |
+| `judging_revision` | `int64` | judging_revision is the judging spec the Orker holds; 0 is none yet. |
+| `orker_id` | `string` | orker_id is never read: which Orker asks is its credential's to say. |
+
 ### InterfaceFinding
 
 InterfaceFinding is one statement about one declared input, one declared
@@ -2703,6 +2804,16 @@ IssuedTokenRecord is what one granted mint issued.
 | `orker_id` | `string` | orker_id is the Orker its credential names. |
 | `issued_at` | `google.protobuf.Timestamp` |  |
 | `tokens` | repeated [`IssuedTokenEntry`](#issuedtokenentry) |  |
+
+### JudgingSpec
+
+JudgingSpec is how a source's messages are judged. A reader checks the
+digest over the bytes and decodes them strictly, as a ServiceSpec's.
+
+| Field | Type | Description |
+|---|---|---|
+| `spec` | `bytes` | spec is the spec's JSON, at most 128 KiB. |
+| `digest` | `string` | digest is the SHA-256 of spec, in hex. |
 
 ### ListAccessRevisionsRequest
 
@@ -2952,6 +3063,26 @@ No fields.
 | `principals` | repeated [`SeenPrincipal`](#seenprincipal) |  |
 | `next_page_token` | `string` |  |
 | `window_start` | `google.protobuf.Timestamp` | window_start is the earliest instant the answer read. |
+
+### ListRecordedResultsRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | empty = the default namespace |
+| `run_id` | `string` |  |
+| `task_id` | `string` | empty = every task |
+| `page_size` | `int32` | page_size is at most 50; 25 when unset. |
+| `page_token` | `string` |  |
+| `unapplied_only` | `bool` | unapplied_only lists only resolutions not applied: of tasks that await, and of awaited tasks that ended without theirs. |
+
+### ListRecordedResultsResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `results` | repeated [`RecordedResult`](#recordedresult) |  |
+| `next_page_token` | `string` |  |
+| `read_complete` | `bool` | read_complete is said of this page; a listing is complete only when every page is. |
+| `incomplete_reason` | [`RecordedReadStop`](#recordedreadstop) |  |
 
 ### ListReleasesRequest
 
@@ -3243,6 +3374,20 @@ wrote. It never decides an attempt's outcome.
 | `unmeasured_reason` | [`UnmeasuredReason`](#unmeasuredreason) | unmeasured_reason is set when method is UNMEASURED. |
 | `oom_killed` | `bool` | oom_killed: the container was stopped at its memory limit. |
 
+### MessageEnvelope
+
+MessageEnvelope is what a message carries beside its body, as its image
+reported it. Its text is a publisher's.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | id is the message's identity: at most 256 bytes, no control characters. |
+| `subject` | `string` |  |
+| `attributes` | map&lt;`string`, [`AttributeValues`](#attributevalues)&gt; | attributes are the message's text attributes, at most 64 KiB in all. A binary attribute is in the metadata document only. |
+| `group` | `string` |  |
+| `broker` | map&lt;`string`, `string`&gt; | broker holds at most 16 short facts. |
+| `published_at` | `google.protobuf.Timestamp` |  |
+
 ### MessageMetadata
 
 MessageMetadata is what a broker says about a message, for an evaluation.
@@ -3288,7 +3433,7 @@ it.
 | Field | Type | Description |
 |---|---|---|
 | `tokens` | repeated [`IssuedToken`](#issuedtoken) |  |
-| `input_artifacts` | repeated [`ArtifactRef`](#artifactref) | input_artifacts are the artifacts of the run's start the task names, each under its input's name, as the engine read them from the records of the tasks that produced them: the only ones its attempt stages. |
+| `input_artifacts` | repeated [`ArtifactRef`](#artifactref) | input_artifacts are the artifacts of the run's start the task names, each under its input's name, as the engine read them from the records of the tasks that produced them: the only ones its attempt stages. One a failure handler passed, whose producer has no record, is its name alone. |
 
 ### NamedArtifact
 
@@ -3368,6 +3513,25 @@ nothing else (docs/TASK_IDENTITY.md).
 | `revision` | `int64` | revision counts the policy's changes: each change writes an immutable revision. Output only. |
 | `attempts_extra` | optional `int32` | attempts_extra is how many attempts past a task's own retries may hold its identity, inside the deployment's identity.attempts.max_extra. Unset takes the deployment's identity.attempts.extra. |
 | `namespace_id` | `string` | namespace_id is the namespace's immutable id: a namespace deleted and created again under its name has another one, and a binding pinned to this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default` is always `ns_default`. Empty when none was made yet: one is made on first need, never by a read. Opaque: nothing parses it, and no request takes it where it takes a name. Output only. |
+
+### OfferMessageRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `instance` | [`InstanceRef`](#instanceref) |  |
+| `message` | [`MessageEnvelope`](#messageenvelope) |  |
+| `delivery_count` | `int32` |  |
+| `max_deliveries` | `int32` | max_deliveries is the broker's delivery limit, as last reported. |
+| `body_sha256` | `string` | body_sha256 is the SHA-256 of the body, in hex; empty for a body over the source's bound, which nobody read. |
+| `body_bytes` | `int64` |  |
+| `extracted` | map&lt;`string`, `google.protobuf.Value`&gt; | extracted holds what each map: selector that selected a value selected, under its input's name. |
+| `pre_rejection` | `string` | pre_rejection is the MESSAGE_* reason the Orker found, or empty. It is honoured only once the message's claim has been read. |
+
+### OfferMessageResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `answer` | [`DoorAnswer`](#dooranswer) |  |
 
 ### OpDocs
 
@@ -3579,6 +3743,16 @@ name: the artifact name of the task task_id.
 |---|---|---|
 | `task_id` | `string` |  |
 | `name` | `string` |  |
+
+### PartToUpload
+
+PartToUpload is a part an offer asks the Orker to stage.
+
+| Field | Type | Description |
+|---|---|---|
+| `input` | `string` | input is the artifact input it becomes. |
+| `part` | [`MessagePart`](#messagepart) |  |
+| `content_type` | `string` |  |
 
 ### PauseEventSourceRequest
 
@@ -3874,6 +4048,18 @@ one that started nothing and holds no state of its own.
 | `waiting_runs` | `int64` |  |
 | `low_water_computed_at` | `google.protobuf.Timestamp` |  |
 
+### ProbeEventSourceRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `instance` | [`InstanceRef`](#instanceref) |  |
+
+### ProbeEventSourceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `answer` | [`DoorAnswer`](#dooranswer) |  |
+
 ### ProfileCordon
 
 ProfileCordon is one profile cause that holds an Orker's cordon. A drift
@@ -4029,10 +4215,39 @@ ReclaimSample is one object a preview names.
 
 ### RecordRef
 
-RecordRef is identity (O39)'s; it is empty until identity (O39) lands (v0.4.0 proto
-batch).
+RecordRef names the engine's record a task's result was taken from, by its
+digest and never by a path.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `sha256` | `string` |  |
+| `kind` | [`RecordedValuesKind`](#recordedvalueskind) |  |
+
+### RecordedResult
+
+RecordedResult is one record, or one result that has none.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` | task_id is unset for OUTPUTS. |
+| `item` | optional `int32` |  |
+| `resume_scope` | `uint64` | resume_scope is the resume the record was made under; 0 for none. |
+| `kind` | [`RecordedResultKind`](#recordedresultkind) |  |
+| `state` | [`RecordedResultState`](#recordedresultstate) |  |
+| `asked_at` | `google.protobuf.Timestamp` | asked_at is the instant the record itself holds, and stored_at the store's own time of it, which every "in time" is judged by. |
+| `stored_at` | `google.protobuf.Timestamp` |  |
+| `values_sha256` | `string` |  |
+| `rejected` | `bool` | rejected, via, principal and principal_verified are a resolution's. |
+| `via` | [`AwaitResolvedVia`](#awaitresolvedvia) |  |
+| `principal` | `string` |  |
+| `principal_verified` | `bool` |  |
+| `pool` | `string` | pool, orker_id and uri are shown only to a caller who also holds run.artifacts.read on the Orkflow, or orker.read. |
+| `orker_id` | `string` |  |
+| `uri` | `string` |  |
+| `child_run_id` | `string` | child_run_id is the child a composed task's values are of. |
+| `task_status` | [`Status`](#status) | task_status is the task's, or for OUTPUTS the run's, as the run's state has it. |
+| `in_child_run` | `bool` | in_child_run says a parent started the run: what it did not apply is not carried over, and the parent is run again. |
+| `deadline` | `google.protobuf.Timestamp` | deadline is when an awaited task's await ends. |
 
 ### RedeliverWebhookRequest
 
@@ -4117,6 +4332,34 @@ as a pool and a pin are (§7.1).
 | `kind` | [`ReleaseBlockerKind`](#releaseblockerkind) |  |
 | `pool` | `string` | pool is set for POOL_NOT_SERVED and PINS_NOT_HOSTED, and empty otherwise. |
 | `message` | `string` | message is one complete sentence in OrkStack's words: what is wrong and what to start. It never names the cluster's own objects or mechanisms (AGENTS.md §7.1). |
+
+### ReportInstanceRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `instance` | [`InstanceRef`](#instanceref) |  |
+| `what` | [`InstanceReport`](#instancereport) |  |
+| `reason` | `string` | reason is, for INVALID, the check's reason. |
+
+### ReportInstanceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `answer` | [`DoorAnswer`](#dooranswer) |  |
+
+### RequestEventSourcePauseRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `instance` | [`InstanceRef`](#instanceref) |  |
+| `code` | `string` | code is the breaker that tripped: EVENT_SOURCE_REFUSED, EVENT_SOURCE_ALL_REJECTED, EVENT_SOURCE_SETTLE_FAILING or EVENT_SOURCE_SETTLE_UNANSWERED. |
+| `refusal_code` | `string` | refusal_code is, for EVENT_SOURCE_REFUSED, the code this service answered. |
+
+### RequestEventSourcePauseResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `answer` | [`DoorAnswer`](#dooranswer) |  |
 
 ### ReservedResources
 
@@ -4827,6 +5070,17 @@ ServiceProfileVersions is one profile an Orker hosts and its versions.
 | `name` | `string` | name is the profile's name: "event-source". |
 | `versions` | repeated `int32` | versions are the profile's versions it hosts. |
 
+### ServiceSpec
+
+ServiceSpec is what an instance's container is started with, as it was
+stored. A reader checks the digest over the bytes and decodes them
+strictly: one it cannot read it does not use.
+
+| Field | Type | Description |
+|---|---|---|
+| `spec` | `bytes` | spec is the spec's JSON, at most 64 KiB. |
+| `digest` | `string` | digest is the SHA-256 of spec, in hex. |
+
 ### SetCurrentOrkflowVersionRequest
 
 | Field | Type | Description |
@@ -4971,6 +5225,22 @@ runs are refused an identity until it is consented to again.
 | `name` | `string` | name is the object's name. |
 | `digest` | `string` | digest is the consent digest to consent to: "c1:" and 64 hexadecimal digits. |
 | `older_projection` | `bool` | older_projection is true when the object's consent was given under an earlier consent projection, so it is stale whatever changed. |
+
+### StartMessageRunRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `instance` | [`InstanceRef`](#instanceref) |  |
+| `message` | [`MessageEnvelope`](#messageenvelope) |  |
+| `parts` | repeated [`UploadedPart`](#uploadedpart) |  |
+| `extracted` | map&lt;`string`, `google.protobuf.Value`&gt; | extracted is as OfferMessageRequest's. |
+| `retry_of_own_start` | `bool` | retry_of_own_start says that this exchange already asked for this start and lost the answer. |
+
+### StartMessageRunResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `answer` | [`DoorAnswer`](#dooranswer) |  |
 
 ### StatsBucket
 
@@ -5161,8 +5431,8 @@ task from a container task without reading the definition.
 | `callback` | `bool` | callback mirrors AwaitSpec.callback: whether a callback token was minted. |
 | `deadline` | `google.protobuf.Timestamp` | deadline is when the await times out, on the workflow's clock. Unset until the task starts awaiting. |
 | `resolved_via` | [`AwaitResolvedVia`](#awaitresolvedvia) | resolved_via and resolved_by are set when a resolution was APPLIED — completed or rejected — and never for a timeout or a cancellation. |
-| `resolved_by` | `string` | resolved_by is the Ork-Principal assertion on the resolving request, bounded to 256 bytes: recorded as asserted and NEVER authenticated, the word control-plane-audit-trail and run-origin use. Empty when none was sent. |
-| `resolved_by_verified` | `bool` | resolved_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `resolved_by` | `string` | resolved_by is the principal of the resolving request, bounded to 256 bytes: as asserted, never authenticated, unless resolved_by_verified. Empty when there was none. |
+| `resolved_by_verified` | `bool` | resolved_by_verified says resolved_by was verified, as the resolution's record has it; false where nothing recorded it. |
 
 ### TaskChild
 
@@ -5285,7 +5555,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `wake_at` | `google.protobuf.Timestamp` | wake_at is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `adopted` | `bool` | adopted is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `reading_back` | `bool` | reading_back is set from E85; unset until it lands (v0.4.0 proto batch). |
-| `record` | [`RecordRef`](#recordref) | record is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `record` | [`RecordRef`](#recordref) | record is the engine's record an awaited or a composed task's result was taken from, of a run whose results the engine records; unset otherwise. |
 | `dispatch_held` | `bool` | dispatch_held is true while the run holds this ready task back from dispatch, or a fan-out's next items: its in-flight cap is reached, or it is quiescing before carrying on into a fresh history. A pause holds dispatch too, and is said by the run's own pause state, not here. The row stays PENDING (a fan-out RUNNING) with nothing emitted; the flag is cleared when the row dispatches, and on any row that starts or ends. It is in the run's saved state and snapshot only, and a run written before it reads false. |
 
 ### TaskSleep
@@ -5596,6 +5866,17 @@ every. It carries no secret.
 |---|---|---|
 | `webhook` | [`Webhook`](#webhook) |  |
 
+### UploadedPart
+
+UploadedPart is a part as the Orker staged it. It names no object: the
+engine computes every key itself.
+
+| Field | Type | Description |
+|---|---|---|
+| `input` | `string` |  |
+| `sha256` | `string` |  |
+| `size_bytes` | `int64` |  |
+
 ### UsageRow
 
 UsageRow is one group's reserved consumption, or the namespace total.
@@ -5765,6 +6046,7 @@ BindingMatch says why a binding did or did not grant a permission.
 | `BINDING_MATCH_SCOPE_DIFFERS` | 3 | The binding's scope does not cover the resource. |
 | `BINDING_MATCH_ROLE_LACKS_PERMISSION` | 4 | The binding's role does not hold the permission at that scope's kind. |
 | `BINDING_MATCH_PINNED_ELSEWHERE` | 5 | It would have matched by name, and is pinned to an earlier incarnation of the namespace or Orkflow. |
+| `BINDING_MATCH_SHARED_ORKER_CREDENTIAL` | 6 | Its role holds the permission, and the binding is for a credential that Orkers share (orker_ids_any), which names no Orker: it does not grant hosting an event source, which only a named Orker may do. Such a credential serves no task identity either; that is refused where it is used, on the credential itself, and this match is never its answer. |
 
 ### BindingPin
 
@@ -5863,6 +6145,25 @@ starts no run.
 | `DELIVERY_CLASS_UNSPECIFIED` | 0 |  |
 | `DELIVERY_CLASS_AT_LEAST_ONCE` | 1 | AT_LEAST_ONCE: a message that is not accepted is delivered again by its broker. |
 | `DELIVERY_CLASS_AT_MOST_ONCE` | 2 | AT_MOST_ONCE: a message that is not accepted is lost. |
+
+### Disposition
+
+Disposition is what the engine decided about a call.
+
+| Value | Number | Description |
+|---|---|---|
+| `DISPOSITION_UNSPECIFIED` | 0 | UNSPECIFIED, and a value the Orker does not know, are no answer. |
+| `DISPOSITION_OK` | 1 | OK: the call was accepted, and there is nothing more to it. |
+| `DISPOSITION_PROCEED` | 2 | PROCEED: stage the parts named, then start. |
+| `DISPOSITION_ACCEPTED` | 3 | ACCEPTED: the message's run has started. |
+| `DISPOSITION_DUPLICATE` | 4 | DUPLICATE: the message had a run already. |
+| `DISPOSITION_REJECT` | 5 | REJECT: this message can never be accepted. |
+| `DISPOSITION_WAIT` | 6 | WAIT: nothing is wrong with the message or the source; ask again later. |
+| `DISPOSITION_UNCERTAIN` | 7 | UNCERTAIN: a refusal the engine does not class, or a failure that would repeat. |
+| `DISPOSITION_STOP` | 8 | STOP: the instance ends. |
+| `DISPOSITION_REFRESH` | 9 | REFRESH: the judging spec changed; judge again with the one returned. |
+| `DISPOSITION_UPLOAD_AGAIN` | 10 | UPLOAD_AGAIN: a staged part is not there; stage it and start again. |
+| `DISPOSITION_REFUSED` | 11 | REFUSED: this replica cannot serve the call; another may. |
 
 ### EachItemFailure
 
@@ -6043,6 +6344,17 @@ files.
 | `IDENTITY_STORAGE_UNSPECIFIED` | 0 |  |
 | `IDENTITY_STORAGE_MEMORY` | 1 | IDENTITY_STORAGE_MEMORY is tmpfs or ramfs: the files do not outlive the host's boot. |
 | `IDENTITY_STORAGE_DISK` | 2 | IDENTITY_STORAGE_DISK is the work root. |
+
+### InstanceReport
+
+InstanceReport is what an instance reports.
+
+| Value | Number | Description |
+|---|---|---|
+| `INSTANCE_REPORT_UNSPECIFIED` | 0 |  |
+| `INSTANCE_REPORT_READY` | 1 | READY: its container is ready. |
+| `INSTANCE_REPORT_INVALID` | 2 | INVALID: its container says it can never run as it is configured. |
+| `INSTANCE_REPORT_HEALTHY` | 3 | HEALTHY: it has been healthy long enough to be relied on. |
 
 ### InterfaceChange
 
@@ -6352,6 +6664,56 @@ ProfileKind is the closed set of profile kinds compiled into the Orker
 | `PROFILE_KIND_UNSPECIFIED` | 0 |  |
 | `PROFILE_KIND_DEVICES` | 1 | Uncounted, shared character devices of an allow-listed class. |
 | `PROFILE_KIND_GPU` | 2 | Counted, exclusive GPU units, each one CDI device. |
+
+### RecordedReadStop
+
+RecordedReadStop is why a page is not complete.
+
+| Value | Number | Description |
+|---|---|---|
+| `RECORDED_READ_STOP_UNSPECIFIED` | 0 |  |
+| `RECORDED_READ_STOP_ROWS_UNREAD` | 1 | ROWS_UNREAD: a row of the page could not be read. |
+| `RECORDED_READ_STOP_READ_BUDGET` | 2 | READ_BUDGET: the run's reads of this minute are spent; the token goes on. |
+
+### RecordedResultKind
+
+RecordedResultKind is what a record is of.
+
+| Value | Number | Description |
+|---|---|---|
+| `RECORDED_RESULT_KIND_UNSPECIFIED` | 0 |  |
+| `RECORDED_RESULT_KIND_COMMIT` | 1 | COMMIT: a container task's result, or one item's of a fan-out. |
+| `RECORDED_RESULT_KIND_RESOLUTION` | 2 |  |
+| `RECORDED_RESULT_KIND_COMPOSED` | 3 |  |
+| `RECORDED_RESULT_KIND_OUTPUTS` | 4 | OUTPUTS: a child run's outputs, of no task. |
+
+### RecordedResultState
+
+RecordedResultState is what became of a record, or of a result that should
+have one. A client that does not know a state shows it as unknown, never as
+on record.
+
+| Value | Number | Description |
+|---|---|---|
+| `RECORDED_RESULT_STATE_UNSPECIFIED` | 0 |  |
+| `RECORDED_RESULT_STATE_ON_RECORD` | 1 | ON_RECORD: the record is there, and the run applied it. |
+| `RECORDED_RESULT_STATE_NOT_APPLIED` | 2 | NOT_APPLIED: recorded in time, and the run has not applied it; the row's task_status says whether it still may. |
+| `RECORDED_RESULT_STATE_NOT_TAKEN` | 3 | NOT_TAKEN: a record the run will not apply: stored after the task's deadline or its run's end, or under a scope a later resume replaced. |
+| `RECORDED_RESULT_STATE_NOT_ON_RECORD` | 4 | NOT_ON_RECORD: the store said, twice, that there is none, of a result the run's state calls succeeded. |
+| `RECORDED_RESULT_STATE_RECLAIMED` | 5 | RECLAIMED: the run has left the cluster, and its records with its commits. |
+| `RECORDED_RESULT_STATE_UNREAD` | 6 | UNREAD: the store did not answer for this record, or what it answered cannot be used. It says nothing about the result. |
+| `RECORDED_RESULT_STATE_RECORDED_NEWER_FORMAT` | 7 | RECORDED_NEWER_FORMAT: a record in a later format than this engine reads; a newer replica answers it. |
+
+### RecordedValuesKind
+
+RecordedValuesKind is which result a RecordedValues records.
+
+| Value | Number | Description |
+|---|---|---|
+| `RECORDED_VALUES_KIND_UNSPECIFIED` | 0 |  |
+| `RECORDED_VALUES_KIND_RESOLUTION` | 1 | RESOLUTION: an awaited task's resolution, completed or rejected. |
+| `RECORDED_VALUES_KIND_COMPOSED` | 2 | COMPOSED: a composed task's values, from its child run's outputs. |
+| `RECORDED_VALUES_KIND_OUTPUTS` | 3 | OUTPUTS: a run's own outputs, and the records they were taken from. |
 
 ### ReferenceState
 

@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -199,13 +202,13 @@ func (d *OCIDispatcher) setupBudget() time.Duration {
 // once; an engine that cannot be asked is asked again inside the setup
 // budget, then the attempt fails COMMIT_ENGINE_UNAVAILABLE, retried, with
 // nothing run.
-func (d *OCIDispatcher) preflightCommit(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) *Failure {
+func (d *OCIDispatcher) preflightCommit(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) (*orkstackv1.CommitResultResponse, *Failure) {
 	if d.resultCommit == nil {
-		return Fail(ReasonIdentityNotConfigured, "task %q is of a run whose results the engine records, and this Orker reaches no engine (orker.engine.url)", in.GetTaskId())
+		return nil, Fail(ReasonIdentityNotConfigured, "task %q is of a run whose results the engine records, and this Orker reaches no engine (orker.engine.url)", in.GetTaskId())
 	}
 	req, f := commitRequest(in, attempt, nil)
 	if f != nil {
-		return f
+		return nil, f
 	}
 	clock := d.recordClock()
 	budget := d.setupBudget()
@@ -214,9 +217,9 @@ func (d *OCIDispatcher) preflightCommit(ctx context.Context, in *orkstackv1.Exec
 	}
 	resp, last, f := d.askCommit(ctx, req, true, clock.Boot()+budget)
 	if f != nil || resp != nil {
-		return f
+		return resp, f
 	}
-	return Fail(last.Reason, "the engine did not answer whether this attempt may commit within its setup budget of %s: %s", d.setupBudget(), last.Message)
+	return nil, Fail(last.Reason, "the engine did not answer whether this attempt may commit within its setup budget of %s: %s", d.setupBudget(), last.Message)
 }
 
 // commitThroughEngine is step 13 for a run whose results the engine
@@ -245,9 +248,21 @@ func (d *OCIDispatcher) commitThroughEngine(ctx context.Context, in *orkstackv1.
 		wait = max(min(wait, time.Until(deadline)-commitWaitMargin), 0)
 	}
 	d.logger().Info("handing the attempt's result to the engine", "run", in.GetRunId(), "task", in.GetTaskId(), "attempt", attempt, "wait", wait)
-	resp, last, f := d.askCommit(ctx, req, false, clock.Boot()+wait)
-	if f != nil || resp != nil {
+	began := clock.Boot()
+	outcome := ResultNotRecorded
+	defer func() {
+		if ctx.Err() == nil || outcome == ResultRecorded {
+			identityObserverOr(d.Identities).CommitWaited(clock.Boot()-began, outcome)
+		}
+	}()
+	resp, last, f := d.askCommit(ctx, req, false, began+wait)
+	switch {
+	case resp != nil:
+		outcome = ResultRecorded
 		return resp, f
+	case f != nil:
+		outcome = ResultRefused
+		return nil, f
 	}
 	// The last look: a record an engine wrote and was not heard about is
 	// this task's result, whichever attempt made it.
@@ -270,6 +285,7 @@ func (d *OCIDispatcher) commitThroughEngine(ctx context.Context, in *orkstackv1.
 	case err != nil:
 		return nil, FailCause(ReasonCommitReadFailed, err, "no engine answered within the attempt's wait, and its record at %s could not be read: %v", uri, err)
 	}
+	outcome = ResultRecorded
 	return &orkstackv1.CommitResultResponse{Commit: &orkstackv1.CommitRef{Uri: uri, Sha256: record.SHA256, Etag: record.ETag},
 		Existing: record.Commit}, nil
 }
@@ -294,7 +310,7 @@ func (d *OCIDispatcher) askCommit(ctx context.Context, req *orkstackv1.CommitRes
 			return nil, commitAnswer{}, beforeClaimStopped(context.Cause(ctx))
 		}
 		ans := mapCommitAnswer(err, preflight, d.BuildID)
-		d.logCommitAnswer(req, preflight, ans)
+		d.logCommitAnswer(req, preflight, ans, err)
 		switch {
 		case ans.Then == commitEnd:
 			return nil, ans, Fail(ans.Reason, "%s", ans.Message)
@@ -316,10 +332,15 @@ func (d *OCIDispatcher) askCommit(ctx context.Context, req *orkstackv1.CommitRes
 	}
 }
 
-func (d *OCIDispatcher) logCommitAnswer(req *orkstackv1.CommitResultRequest, preflight bool, ans commitAnswer) {
+func (d *OCIDispatcher) logCommitAnswer(req *orkstackv1.CommitResultRequest, preflight bool, ans commitAnswer, err error) {
 	attrs := []any{"run", req.GetRunId(), "task", req.GetTaskId(), "attempt", req.GetAttempt(), "preflight", preflight,
 		"reason", ans.Reason, "message", ans.Message}
 	if ans.Refused {
+		how := EngineRefusedOrker
+		if connect.CodeOf(err) == connect.CodeInvalidArgument {
+			how = EngineCouldNotRead
+		}
+		identityObserverOr(d.Identities).EngineRefused(how)
 		d.logger().Error("the engine refused this Orker a task's result", attrs...)
 		return
 	}
@@ -425,37 +446,158 @@ func (d *OCIDispatcher) checkUpstreamRecord(ctx context.Context, in *orkstackv1.
 		return notRecorded("the record at %s is of another activity (idempotency key %q)", uri, rec.GetIdempotencyKey())
 	case rec.GetExitCode() != 0:
 		return notRecorded("the record at %s is of an exit %d, not a success", uri, rec.GetExitCode())
-	case !sameRef(up.GetValues(), rec.GetValues()):
+	}
+	return sameAsRecorded(up, rec.GetValues(), rec.GetArtifacts(), notRecorded)
+}
+
+// RecordReader reads the engine's record of an awaited or a composed task:
+// artifacts.RecordStore.
+type RecordReader interface {
+	ReadUpstreamRecord(ctx context.Context, class artifacts.SlotClass, spacing *artifacts.RecordSpacings, key string, want artifacts.RecordWant) (artifacts.RecordRead[artifacts.UpstreamRecord], error)
+}
+
+// checkUpstreamValues is checkUpstreamRecord for an awaited or a composed
+// upstream: its record must lie at its own key in this run and this store, be
+// that task's under the run's admission, with values and no rejection, and
+// name exactly what the input does.
+func (d *OCIDispatcher) checkUpstreamValues(ctx context.Context, in *orkstackv1.ExecuteTaskInput, up *orkstackv1.UpstreamRef) *Failure {
+	producer := up.GetTaskId()
+	notRecorded := func(format string, args ...any) *Failure {
+		return Fail(ReasonUpstreamNotRecorded, "upstream task %q: %s", producer, fmt.Sprintf(format, args...))
+	}
+	if up.GetCommitUri() != "" {
+		return notRecorded("it names a commit and a record")
+	}
+	root, err := d.recordRoot(in)
+	if err != nil {
+		return notRecorded("this run has no record key for it: %v", err)
+	}
+	want := artifacts.RecordWant{Namespace: artifacts.ResolveNamespace(in.GetNamespace()), RunID: in.GetRunId(), TaskID: producer,
+		AdmissionSHA256: in.GetIdentity().GetAdmissionSha256()}
+	key := ""
+	for _, k := range []struct {
+		kind artifacts.RecordKind
+		of   orkstackv1.RecordedValuesKind
+	}{
+		{artifacts.RecordResolution, orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_RESOLUTION},
+		{artifacts.RecordComposed, orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_COMPOSED},
+	} {
+		if at, err := artifacts.RecordKey(k.kind, want.Namespace, want.RunID, producer, 0); err == nil && up.GetRecordUri() == root+"/"+at {
+			key, want.Kind = at, k.of
+		}
+	}
+	if key == "" {
+		return notRecorded("its record uri %s is not its own record's in this run", up.GetRecordUri())
+	}
+	if d.Records == nil {
+		return notRecorded("this Orker has no record store to read its record from")
+	}
+	read, err := d.Records.ReadUpstreamRecord(ctx, artifacts.SlotRun, nil, key, want)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return beforeClaimStopped(context.Cause(ctx))
+	case err != nil:
+		return FailCause(ReasonCommitReadFailed, err, "upstream task %q: read its record at %s: %v", producer, up.GetRecordUri(), err)
+	case read.Answer == artifacts.RecordNone:
+		return notRecorded("no engine recorded its result at %s", up.GetRecordUri())
+	case read.Answer == artifacts.RecordUnsupported:
+		// A newer release's: retried, within the task's attempts, for an Orker
+		// of that release to take.
+		return Fail(ReasonCommitReadFailed, "upstream task %q: its record at %s is in a newer format than this Orker reads", producer, up.GetRecordUri())
+	case read.Answer != artifacts.RecordFound:
+		return notRecorded("the object at %s is not its record: %s", up.GetRecordUri(), read.Reason)
+	case read.Value.Rejected || read.Value.Values == nil:
+		return notRecorded("its record at %s is a rejection", up.GetRecordUri())
+	}
+	return sameAsRecorded(up, read.Value.Values, read.Value.Artifacts, notRecorded)
+}
+
+// sameAsRecorded holds an upstream's references to the ones its record names.
+func sameAsRecorded(up *orkstackv1.UpstreamRef, values *orkstackv1.ArtifactRef, produced []*orkstackv1.ArtifactRef, notRecorded func(string, ...any) *Failure) *Failure {
+	if !sameRef(up.GetValues(), values) {
 		return notRecorded("the input's values reference is not the one its record names")
-	case len(up.GetArtifacts()) != len(rec.GetArtifacts()):
-		return notRecorded("the input names %d artifacts and its record %d", len(up.GetArtifacts()), len(rec.GetArtifacts()))
+	}
+	if len(up.GetArtifacts()) != len(produced) {
+		return notRecorded("the input names %d artifacts and its record %d", len(up.GetArtifacts()), len(produced))
 	}
 	for i, a := range up.GetArtifacts() {
-		if !sameRef(a, rec.GetArtifacts()[i]) {
+		if !sameRef(a, produced[i]) {
 			return notRecorded("the input's artifact %d is not the one its record names", i)
 		}
 	}
 	return nil
 }
 
+// receives reports whether in stages an artifact its run received.
+func receives(in *orkstackv1.ExecuteTaskInput) bool {
+	return slices.ContainsFunc(in.GetUpstream(), func(up *orkstackv1.UpstreamRef) bool { return up.GetTaskId() == dsl.InputsProducer })
+}
+
+// checkReceived holds the artifacts a task stages of what its run received to
+// the engine's answer: exactly those it answers, each the one it names. One it
+// answers by its name alone is a failure handler's, whose producer left no
+// record, and is staged as the cluster carries it. With no answer nothing is
+// staged.
+func checkReceived(in *orkstackv1.ExecuteTaskInput, up *orkstackv1.UpstreamRef, preflight *orkstackv1.CommitResultResponse) *Failure {
+	refuse := func(format string, args ...any) *Failure {
+		return Fail(ReasonUpstreamNotRecorded, "what the run received, for task %q: %s", in.GetTaskId(), fmt.Sprintf(format, args...))
+	}
+	if preflight == nil {
+		return refuse("the engine was not asked what this task may stage of it")
+	}
+	if up.GetValues() != nil || up.GetCommitUri() != "" || up.GetRecordUri() != "" {
+		return refuse("it names more than artifacts")
+	}
+	answered := make(map[string]*orkstackv1.ArtifactRef, len(preflight.GetInputArtifacts()))
+	for _, a := range preflight.GetInputArtifacts() {
+		answered[a.GetName()] = a
+	}
+	for _, a := range up.GetArtifacts() {
+		switch on, ok := answered[a.GetName()]; {
+		case !ok:
+			return refuse("the engine answered no artifact %q, or the input names it twice", a.GetName())
+		case !unrecorded(on) && !sameRef(a, on):
+			return refuse("the input's artifact %q is not the one on record", a.GetName())
+		}
+		delete(answered, a.GetName())
+	}
+	for _, name := range slices.Sorted(maps.Keys(answered)) {
+		return refuse("the input leaves out artifact %q", name)
+	}
+	return nil
+}
+
+// unrecorded reports whether the engine answered a by its name alone.
+func unrecorded(a *orkstackv1.ArtifactRef) bool {
+	return a.GetUri() == "" && a.GetSha256() == "" && a.GetSizeBytes() == 0
+}
+
 // upstreamRecordURI is the uri of producer's engine record in in's run, from
-// the run's coordinates alone. Its root is this Orker's commit root, or where
-// the Orker was given none (it serves every namespace), the root this task's
-// own commit uri lies under.
+// the run's coordinates alone.
 func (d *OCIDispatcher) upstreamRecordURI(in *orkstackv1.ExecuteTaskInput, producer string) (string, error) {
 	key, err := artifacts.CommitKey(in.GetNamespace(), in.GetRunId(), producer)
 	if err != nil {
 		return "", err
 	}
-	root := strings.TrimSuffix(d.CommitRoot, "/")
-	if root == "" {
-		own, err := commitKeyOf(in.GetCommitUri())
-		if err != nil {
-			return "", err
-		}
-		root = strings.TrimSuffix(in.GetCommitUri(), "/"+own)
+	root, err := d.recordRoot(in)
+	if err != nil {
+		return "", err
 	}
 	return artifacts.AttestedCommitURI(root + "/" + key)
+}
+
+// recordRoot is the root of the store in's records lie in: this Orker's commit
+// root, or where the Orker was given none (it serves every namespace), the
+// root this task's own commit uri lies under.
+func (d *OCIDispatcher) recordRoot(in *orkstackv1.ExecuteTaskInput) (string, error) {
+	if root := strings.TrimSuffix(d.CommitRoot, "/"); root != "" {
+		return root, nil
+	}
+	own, err := commitKeyOf(in.GetCommitUri())
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(in.GetCommitUri(), "/"+own), nil
 }
 
 // sameRef reports whether two artifact references name the same object:

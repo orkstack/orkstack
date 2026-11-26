@@ -43,6 +43,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.RunServiceListRunsProcedure:               true,
 	orkstackv1connect.RunServiceListRunArtifactsProcedure:       true,
 	orkstackv1connect.RunServiceListTaskAttemptsProcedure:       true,
+	orkstackv1connect.RunServiceListRecordedResultsProcedure:    true,
 	orkstackv1connect.RunServiceGetArtifactProvenanceProcedure:  true,
 	orkstackv1connect.RunServiceGetForceCancelProcedure:         true,
 	orkstackv1connect.RunServiceInspectRunProcedure:             true,

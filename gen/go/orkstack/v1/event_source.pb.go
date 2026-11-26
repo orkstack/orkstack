@@ -543,8 +543,11 @@ type EventSource struct {
 	// changes (version, format, max_bytes, match, input, map, artifacts,
 	// rate, reject_breaker), which restarts nothing.
 	JudgingRevision int64 `protobuf:"varint,47,opt,name=judging_revision,json=judgingRevision,proto3" json:"judging_revision,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// deleting_since is output only: when a delete marked the source. A marked
+	// source is stopped, and is gone once its instances have ended.
+	DeletingSince *timestamppb.Timestamp `protobuf:"bytes,48,opt,name=deleting_since,json=deletingSince,proto3" json:"deleting_since,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EventSource) Reset() {
@@ -857,6 +860,13 @@ func (x *EventSource) GetJudgingRevision() int64 {
 	return 0
 }
 
+func (x *EventSource) GetDeletingSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DeletingSince
+	}
+	return nil
+}
+
 // MatchRule is one test of a source's filter: exactly one selector and
 // exactly one test.
 type MatchRule struct {
@@ -1036,9 +1046,12 @@ type EventSourcePause struct {
 	Reason string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
 	Since  *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=since,proto3" json:"since,omitempty"`
 	// principal is who paused it, as recorded; empty for OrkStack's own.
-	Principal     string `protobuf:"bytes,6,opt,name=principal,proto3" json:"principal,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Principal string `protobuf:"bytes,6,opt,name=principal,proto3" json:"principal,omitempty"`
+	// requested_by_orker is the Orker whose instance asked for OrkStack's
+	// pause, as its credential names it; empty where none did.
+	RequestedByOrker string `protobuf:"bytes,7,opt,name=requested_by_orker,json=requestedByOrker,proto3" json:"requested_by_orker,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *EventSourcePause) Reset() {
@@ -1109,6 +1122,13 @@ func (x *EventSourcePause) GetSince() *timestamppb.Timestamp {
 func (x *EventSourcePause) GetPrincipal() string {
 	if x != nil {
 		return x.Principal
+	}
+	return ""
+}
+
+func (x *EventSourcePause) GetRequestedByOrker() string {
+	if x != nil {
+		return x.RequestedByOrker
 	}
 	return ""
 }
@@ -1669,7 +1689,9 @@ func (x *SourceImage) GetInterfaceError() string {
 // broker's error text.
 type Receipt struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is rcp- and the receipt's stamp.
+	// id is rcp- and the instant the Orker took the message. Two receipts may
+	// share one, of one exchange or of two lanes: a receipt is named by its
+	// object's key.
 	Id              string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Namespace       string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	EventSourceId   string `protobuf:"bytes,3,opt,name=event_source_id,json=eventSourceId,proto3" json:"event_source_id,omitempty"`
@@ -2032,7 +2054,7 @@ var File_orkstack_v1_event_source_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_event_source_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorkstack/v1/event_source.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\"orkstack/v1/activity_service.proto\x1a\x18orkstack/v1/common.proto\"\xfd\x0e\n" +
+	"\x1eorkstack/v1/event_source.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\"orkstack/v1/activity_service.proto\x1a\x18orkstack/v1/common.proto\"\xc0\x0f\n" +
 	"\vEventSource\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x12\n" +
@@ -2079,7 +2101,8 @@ const file_orkstack_v1_event_source_proto_rawDesc = "" +
 	"\vcredentials\x18, \x03(\v2\x1a.orkstack.v1.CredentialRefR\vcredentials\x123\n" +
 	"\x03env\x18- \x03(\v2!.orkstack.v1.EventSource.EnvEntryR\x03env\x12)\n" +
 	"\x10service_revision\x18. \x01(\x03R\x0fserviceRevision\x12)\n" +
-	"\x10judging_revision\x18/ \x01(\x03R\x0fjudgingRevision\x1aL\n" +
+	"\x10judging_revision\x18/ \x01(\x03R\x0fjudgingRevision\x12A\n" +
+	"\x0edeleting_since\x180 \x01(\v2\x1a.google.protobuf.TimestampR\rdeletingSince\x1aL\n" +
 	"\bMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12*\n" +
 	"\x05value\x18\x02 \x01(\v2\x14.orkstack.v1.MapRuleR\x05value:\x028\x01\x1aV\n" +
@@ -2103,14 +2126,15 @@ const file_orkstack_v1_event_source_proto_rawDesc = "" +
 	"\aMapRule\x12\x18\n" +
 	"\apointer\x18\x01 \x01(\tR\apointer\x12\x1c\n" +
 	"\tattribute\x18\x02 \x01(\tR\tattribute\x12/\n" +
-	"\x05field\x18\x03 \x01(\x0e2\x19.orkstack.v1.MessageFieldR\x05field\"\xe0\x01\n" +
+	"\x05field\x18\x03 \x01(\x0e2\x19.orkstack.v1.MessageFieldR\x05field\"\x8e\x02\n" +
 	"\x10EventSourcePause\x12-\n" +
 	"\x05cause\x18\x01 \x01(\x0e2\x17.orkstack.v1.PauseCauseR\x05cause\x12\x12\n" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12!\n" +
 	"\frefusal_code\x18\x03 \x01(\tR\vrefusalCode\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x120\n" +
 	"\x05since\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12\x1c\n" +
-	"\tprincipal\x18\x06 \x01(\tR\tprincipal\"\xd4\x01\n" +
+	"\tprincipal\x18\x06 \x01(\tR\tprincipal\x12,\n" +
+	"\x12requested_by_orker\x18\a \x01(\tR\x10requestedByOrker\"\xd4\x01\n" +
 	"\x11EventSourceStatus\x123\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x1d.orkstack.v1.EventSourceStateR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x18\n" +
@@ -2322,34 +2346,35 @@ var file_orkstack_v1_event_source_proto_depIdxs = []int32{
 	33, // 14: orkstack.v1.EventSource.identities:type_name -> orkstack.v1.IdentityRef
 	34, // 15: orkstack.v1.EventSource.credentials:type_name -> orkstack.v1.CredentialRef
 	22, // 16: orkstack.v1.EventSource.env:type_name -> orkstack.v1.EventSource.EnvEntry
-	3,  // 17: orkstack.v1.MatchRule.field:type_name -> orkstack.v1.MessageField
-	35, // 18: orkstack.v1.MatchRule.equals:type_name -> google.protobuf.Value
-	35, // 19: orkstack.v1.MatchRule.in:type_name -> google.protobuf.Value
-	3,  // 20: orkstack.v1.MapRule.field:type_name -> orkstack.v1.MessageField
-	4,  // 21: orkstack.v1.EventSourcePause.cause:type_name -> orkstack.v1.PauseCause
-	29, // 22: orkstack.v1.EventSourcePause.since:type_name -> google.protobuf.Timestamp
-	5,  // 23: orkstack.v1.EventSourceStatus.state:type_name -> orkstack.v1.EventSourceState
-	0,  // 24: orkstack.v1.EventSourceStatus.delivery:type_name -> orkstack.v1.DeliveryClass
-	29, // 25: orkstack.v1.MessageMetadata.published_at:type_name -> google.protobuf.Timestamp
-	23, // 26: orkstack.v1.MessageMetadata.attributes:type_name -> orkstack.v1.MessageMetadata.AttributesEntry
-	24, // 27: orkstack.v1.ServiceInterface.with:type_name -> orkstack.v1.ServiceInterface.WithEntry
-	16, // 28: orkstack.v1.ServiceInterface.event_source:type_name -> orkstack.v1.EventSourceDeclaration
-	0,  // 29: orkstack.v1.EventSourceDeclaration.delivery:type_name -> orkstack.v1.DeliveryClass
-	15, // 30: orkstack.v1.SourceImage.interface:type_name -> orkstack.v1.ServiceInterface
-	6,  // 31: orkstack.v1.Receipt.outcome:type_name -> orkstack.v1.ReceiptOutcome
-	29, // 32: orkstack.v1.Receipt.received_at:type_name -> google.protobuf.Timestamp
-	29, // 33: orkstack.v1.Receipt.decided_at:type_name -> google.protobuf.Timestamp
-	25, // 34: orkstack.v1.Receipt.broker:type_name -> orkstack.v1.Receipt.BrokerEntry
-	29, // 35: orkstack.v1.Receipt.limit_checked_at:type_name -> google.protobuf.Timestamp
-	9,  // 36: orkstack.v1.EventSource.MapEntry.value:type_name -> orkstack.v1.MapRule
-	2,  // 37: orkstack.v1.EventSource.ArtifactsEntry.value:type_name -> orkstack.v1.MessagePart
-	13, // 38: orkstack.v1.MessageMetadata.AttributesEntry.value:type_name -> orkstack.v1.AttributeValues
-	36, // 39: orkstack.v1.ServiceInterface.WithEntry.value:type_name -> orkstack.v1.FieldSchema
-	40, // [40:40] is the sub-list for method output_type
-	40, // [40:40] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	29, // 17: orkstack.v1.EventSource.deleting_since:type_name -> google.protobuf.Timestamp
+	3,  // 18: orkstack.v1.MatchRule.field:type_name -> orkstack.v1.MessageField
+	35, // 19: orkstack.v1.MatchRule.equals:type_name -> google.protobuf.Value
+	35, // 20: orkstack.v1.MatchRule.in:type_name -> google.protobuf.Value
+	3,  // 21: orkstack.v1.MapRule.field:type_name -> orkstack.v1.MessageField
+	4,  // 22: orkstack.v1.EventSourcePause.cause:type_name -> orkstack.v1.PauseCause
+	29, // 23: orkstack.v1.EventSourcePause.since:type_name -> google.protobuf.Timestamp
+	5,  // 24: orkstack.v1.EventSourceStatus.state:type_name -> orkstack.v1.EventSourceState
+	0,  // 25: orkstack.v1.EventSourceStatus.delivery:type_name -> orkstack.v1.DeliveryClass
+	29, // 26: orkstack.v1.MessageMetadata.published_at:type_name -> google.protobuf.Timestamp
+	23, // 27: orkstack.v1.MessageMetadata.attributes:type_name -> orkstack.v1.MessageMetadata.AttributesEntry
+	24, // 28: orkstack.v1.ServiceInterface.with:type_name -> orkstack.v1.ServiceInterface.WithEntry
+	16, // 29: orkstack.v1.ServiceInterface.event_source:type_name -> orkstack.v1.EventSourceDeclaration
+	0,  // 30: orkstack.v1.EventSourceDeclaration.delivery:type_name -> orkstack.v1.DeliveryClass
+	15, // 31: orkstack.v1.SourceImage.interface:type_name -> orkstack.v1.ServiceInterface
+	6,  // 32: orkstack.v1.Receipt.outcome:type_name -> orkstack.v1.ReceiptOutcome
+	29, // 33: orkstack.v1.Receipt.received_at:type_name -> google.protobuf.Timestamp
+	29, // 34: orkstack.v1.Receipt.decided_at:type_name -> google.protobuf.Timestamp
+	25, // 35: orkstack.v1.Receipt.broker:type_name -> orkstack.v1.Receipt.BrokerEntry
+	29, // 36: orkstack.v1.Receipt.limit_checked_at:type_name -> google.protobuf.Timestamp
+	9,  // 37: orkstack.v1.EventSource.MapEntry.value:type_name -> orkstack.v1.MapRule
+	2,  // 38: orkstack.v1.EventSource.ArtifactsEntry.value:type_name -> orkstack.v1.MessagePart
+	13, // 39: orkstack.v1.MessageMetadata.AttributesEntry.value:type_name -> orkstack.v1.AttributeValues
+	36, // 40: orkstack.v1.ServiceInterface.WithEntry.value:type_name -> orkstack.v1.FieldSchema
+	41, // [41:41] is the sub-list for method output_type
+	41, // [41:41] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_event_source_proto_init() }

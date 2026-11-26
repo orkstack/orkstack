@@ -58,7 +58,7 @@ func (s *Service) checkTaskCeilingAtSubmit(wf *orkstackv1.Orkflow) error {
 	if count <= int(s.orkflowMaxTasks) {
 		return nil
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+	return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "TASKS_OVER_CEILING", fmt.Errorf(
 		"orkflow %s declares %d tasks; this deployment allows at most %d (%s was lowered after version %s was applied)",
-		wf.GetName(), count, s.orkflowMaxTasks, orkflowMaxTasksSetting, wf.GetVersion()))
+		wf.GetName(), count, s.orkflowMaxTasks, orkflowMaxTasksSetting, wf.GetVersion())))
 }

@@ -26,6 +26,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/contrib/opentelemetry"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -584,6 +585,21 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 // overlay check passes on its own evidence), in-process Orkers, a real one
 // for a flat shape, and the API at the task-ceiling defaults.
 func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int) (*eachSoak, *latencyHandler) {
+	return startTaskSoakWith(t, ctx, shape, n, nil)
+}
+
+// soakSeams are what a soak of another kind of run replaces of the deployment:
+// what it starts runs with, what its replica also runs, and what a task does.
+type soakSeams struct {
+	starter  engine.RunStarter
+	register func(worker.Worker)
+	behavior func(chaosBehavior) chaosBehavior
+	// api changes what the API is served with.
+	api func(*api.Config)
+}
+
+// startTaskSoakWith is startTaskSoak with seams' parts, made once the stack is.
+func startTaskSoakWith(t *testing.T, ctx context.Context, shape taskSoakShape, n int, seams func(*chaosStack) soakSeams) (*eachSoak, *latencyHandler) {
 	t.Helper()
 	timing := proof.TimingBounds(t)
 	cfg := s3Config()
@@ -607,9 +623,14 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 		Logger: s.logs.logger("replica-a"), MetricsHandler: metrics.handler}, nil))
 	must.OKf(t, err, "dial the replica's client")
 	t.Cleanup(c.Close)
-	s.startReplica("replica-a", replicaOptions{client: c, identity: identity})
+	replica, fast := replicaOptions{client: c, identity: identity}, soakFastTask(shape.run) // one behavior: flat-long's quiet is the fleet's
+	var with soakSeams
+	if seams != nil {
+		with = seams(s)
+		replica.extra, fast = append(replica.extra, with.register), with.behavior(fast)
+	}
+	s.startReplica("replica-a", replica)
 	s.startCapableProjection("soak-projection")
-	fast := soakFastTask(shape.run) // one behavior: flat-long's quiet is the fleet's
 	for i := 1; i <= soakFastOrkers; i++ {
 		s.startOrker(fmt.Sprintf("fast-%d", i), fast)
 	}
@@ -621,11 +642,15 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 	cluster, err := engine.NewTemporalReleaseCluster(s.control, s.reader, s.namespace, task.DefaultDeploymentName,
 		s.runQueue, s.orkerQueue)
 	must.OK(t, err)
-	e.api = s.serveAPI(api.Config{
+	served := api.Config{
 		OrkflowMaxTasks: int32(n), ContinuationEnabled: true,
 		DefinitionByReference: true, DefinitionObjects: s.store, SnapshotOverlays: true,
-		Capabilities: cluster, Catalog: catalog, Resolver: dsl.NewResolver(""), Reader: e.countedReader(),
-	})
+		Capabilities: cluster, Catalog: catalog, Resolver: dsl.NewResolver(""), Reader: e.countedReader(), Starter: with.starter,
+	}
+	if with.api != nil {
+		with.api(&served)
+	}
+	e.api = s.serveAPI(served)
 	return e, metrics
 }
 

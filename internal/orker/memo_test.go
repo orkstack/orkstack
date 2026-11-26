@@ -626,7 +626,7 @@ func TestMemoKey_RunCoordinatesDoNotChangeTheKey(t *testing.T) {
 			in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{ref}}}
 			ws, err := NewWorkspace(t.TempDir())
 			must.OK(t, err)
-			staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil))
+			staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil), nil)
 			if failure != nil {
 				t.Fatal(failure)
 			}
@@ -1296,7 +1296,7 @@ func TestStageInputs_DeferBytesFetchesValuesOnly(t *testing.T) {
 	root := t.TempDir()
 	ws, err := NewWorkspace(root)
 	must.OK(t, err)
-	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil))
+	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil), nil)
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -1326,7 +1326,7 @@ func TestCompleteStaging_FetchesDeferredArtifactsThenSecrets(t *testing.T) {
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:SANDBOX_DEFER_SECRET"}}
 	ws, err := NewWorkspace(t.TempDir())
 	must.OK(t, err)
-	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil))
+	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil), nil)
 	if failure != nil {
 		t.Fatal(failure)
 	}

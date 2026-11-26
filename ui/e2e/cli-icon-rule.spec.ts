@@ -242,6 +242,8 @@ const VISITS: Visit[] = [
 	{ route: 'admin/audit', name: 'audit', url: () => `/admin/audit?ns=${NS}`, ready: 'audit-scope', icon: 'page-cli', labels: ['This listing'] },
 	{ route: 'admin/automation', name: 'automation', url: () => `/admin/automation?ns=${NS}`, ready: 'automation-scope', icon: 'page-cli', labels: ['Export this namespace', 'Plan the document'] },
 	{ route: 'admin/cache', name: 'cache', url: () => `/admin/cache?ns=${NS}`, ready: 'cache-scope', icon: 'page-cli', labels: ['How cached tasks fared'] },
+	{ route: 'admin/concurrency', name: 'concurrency', url: () => `/admin/concurrency?ns=${NS}`, ready: 'concurrency-scope', icon: 'page-cli', labels: ['The keys in use'] },
+	{ route: 'admin/concurrency', name: 'one concurrency key', url: () => `/admin/concurrency?ns=${NS}&key=unused`, ready: 'concurrency-unused', icon: 'page-cli', labels: ['This key'] },
 	{ route: 'admin/image-policy', name: 'image policy', url: () => `/admin/image-policy?ns=${NS}`, ready: 'page-cli-trigger', icon: 'page-cli', labels: ['The policy', 'Change it'] },
 	{ route: 'admin/namespaces/[name]', name: 'one namespace', url: () => `/admin/namespaces/${NS}?ns=${NS}`, ready: 'namespace-facts', icon: 'page-cli', labels: ['This namespace', 'Set this budget'] },
 	{ route: 'admin/namespaces', name: 'namespaces', url: () => `/admin/namespaces?ns=${NS}`, ready: 'namespace-list', icon: 'page-cli', labels: ['The namespaces'] },

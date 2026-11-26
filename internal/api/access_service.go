@@ -123,7 +123,7 @@ func (h accessHandler) GetAccess(ctx context.Context, _ *connect.Request[orkstac
 	}
 	for _, b := range a.Configured {
 		cb := &orkstackv1.Binding{Name: b.Name, Role: b.Role, Scope: b.Scope.String(), FromConfiguration: true,
-			Pin: orkstackv1.BindingPin_BINDING_PIN_NONE}
+			Pin: orkstackv1.BindingPin_BINDING_PIN_NONE, OrkerIdsAny: b.OrkerIDsAny}
 		for _, s := range b.Subjects {
 			cb.Subjects = append(cb.Subjects, s.String())
 		}

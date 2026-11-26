@@ -255,10 +255,11 @@ export function scheduleState(schedule: Schedule): ScheduleState {
 	return schedule.paused ? 'paused' : 'active';
 }
 
-/** What one recent fire's RUN cell reads: a run id, refused, preparing, or unavailable. */
+/** What one recent fire's RUN cell reads: a run id, refused, skipped (a concurrency limit kept it from starting one), preparing, or unavailable. */
 export type FireOutcome =
 	| { kind: 'run'; runId: string }
 	| { kind: 'refused'; refusal: string }
+	| { kind: 'skipped' }
 	| { kind: 'preparing' }
 	| { kind: 'unavailable' };
 
@@ -266,7 +267,14 @@ export function fireOutcome(fire: ScheduleFire): FireOutcome {
 	if (!fire.detailsAvailable) return { kind: 'unavailable' };
 	if (fire.runId) return { kind: 'run', runId: fire.runId };
 	if (fire.refusal) return { kind: 'refused', refusal: fire.refusal };
+	if (fire.skipCode) return { kind: 'skipped' };
 	return { kind: 'preparing' };
+}
+
+/** A fire's note, as `orkctl schedule get` prints it: why it started no run, or why a limit kept it, or its run, from starting. */
+export function fireNote(fire: ScheduleFire): string {
+	if (fire.refusal) return fire.refusal;
+	return fire.skipCode ? `${fire.skipCode}: ${fire.skipMessage}` : '';
 }
 
 /** The newest fire, which the row's LAST RUN reads. */

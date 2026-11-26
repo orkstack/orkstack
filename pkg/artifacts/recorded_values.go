@@ -104,6 +104,14 @@ func (f *RecordedFound) RecordSHA256() string { return f.recordSHA256 }
 // StoredAt is when the store wrote the record: its own Last-Modified.
 func (f *RecordedFound) StoredAt() time.Time { return f.storedAt }
 
+// AskedAt is the instant the record itself holds: when its engine was asked.
+func (f *RecordedFound) AskedAt() time.Time {
+	if f.record.GetRecorded().GetTime() == nil {
+		return time.Time{}
+	}
+	return f.record.GetRecorded().GetTime().AsTime()
+}
+
 // Detail is a resolution's detail; nil for any other kind.
 func (f *RecordedFound) Detail() *orkstackv1.ResolutionDetail { return f.detail }
 
@@ -226,6 +234,34 @@ func (s *RecordStore) ReadRecordedValues(ctx context.Context, class SlotClass, s
 		f.inline = inline
 	}
 	return RecordRead[*RecordedFound]{Answer: RecordFound, Value: f}, nil
+}
+
+// UpstreamRecord is what a dependent stages of an awaited or a composed task:
+// what its record names, and whether it is a rejection.
+type UpstreamRecord struct {
+	Rejected  bool
+	Values    *orkstackv1.ArtifactRef
+	Artifacts []*orkstackv1.ArtifactRef
+}
+
+// ReadUpstreamRecord reads the record at key and nothing it names: an Orker's
+// credential reaches the record, and not a resolution's detail. It decides
+// nothing of a resolution, which its run alone takes; it only says what is on
+// record. Otherwise as ReadRecordedValues.
+func (s *RecordStore) ReadUpstreamRecord(ctx context.Context, class SlotClass, spacing *RecordSpacings, key string, want RecordWant) (RecordRead[UpstreamRecord], error) {
+	body, _, found, err := s.readerWith(spacing).readObject(ctx, class, key, maxRecordedValuesBytes+1)
+	if err != nil {
+		return RecordRead[UpstreamRecord]{}, err
+	}
+	if !found {
+		return RecordRead[UpstreamRecord]{Answer: RecordNone}, nil
+	}
+	rec, read := decodeRecordedValues(body, want)
+	if read.Answer != RecordFound {
+		return RecordRead[UpstreamRecord]{Answer: read.Answer, Object: read.Object, Reason: read.Reason, Version: read.Version}, nil
+	}
+	return RecordRead[UpstreamRecord]{Answer: RecordFound,
+		Value: UpstreamRecord{Rejected: rec.GetRejected(), Values: rec.GetValues(), Artifacts: rec.GetArtifacts()}}, nil
 }
 
 // decodeRecordedValues reads a record's stored bytes and holds them to want,

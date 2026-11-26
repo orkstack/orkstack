@@ -94,6 +94,7 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 		gracePeriod time.Duration
 		timeout     time.Duration
 		keep        bool
+		identity    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "test <image>",
@@ -124,6 +125,7 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 				grace:       gracePeriod,
 				taskTimeout: timeout,
 				keep:        keep,
+				identity:    identity,
 				out:         cmd.OutOrStdout(),
 			}
 			report, err := suite.run(cmd.Context())
@@ -153,6 +155,11 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 		"per-assertion activity timeout")
 	cmd.Flags().BoolVar(&keep, "keep", false,
 		"keep the temporary workspaces for inspection")
+	cmd.Flags().BoolVar(&identity, "with-identity", false,
+		"also check that the image reads an identity's files through current and sees a refresh swap them")
+	if !dsl.TaskIdentityAvailable() {
+		_ = cmd.Flags().MarkHidden("with-identity")
+	}
 	return cmd
 }
 
@@ -182,6 +189,7 @@ type activitySuite struct {
 	grace       time.Duration
 	taskTimeout time.Duration
 	keep        bool
+	identity    bool
 	out         io.Writer
 
 	root       string
@@ -231,6 +239,9 @@ func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
 		s.assertArtifactNamesAreEnforced(ctx),
 		s.assertExitCodesAreNotInterpreted(ctx),
 		s.assertCancellationIsHonoured(ctx),
+	}
+	if s.identity {
+		assertions = append(assertions, s.assertIdentityIsSwapped(ctx))
 	}
 	report := buildActivityTestReport(s.image, assertions)
 	report.Interface = activityInterfaceReport(s.resolution)
@@ -300,20 +311,6 @@ func buildActivityTestReport(image string, assertions []assertion) *activityTest
 
 // build wires a dispatcher against local stores in the suite's temp root.
 func (s *activitySuite) build(ctx context.Context) error {
-	store, err := artifacts.NewLocalStore(filepath.Join(s.root, "artifacts"))
-	if err != nil {
-		return fmt.Errorf("artifact store: %w", err)
-	}
-	commits, err := artifacts.NewLocalCommitStore(filepath.Join(s.root, "commits"))
-	if err != nil {
-		return fmt.Errorf("commit store: %w", err)
-	}
-	work := filepath.Join(s.root, "work")
-	if err := os.MkdirAll(work, 0o700); err != nil {
-		return fmt.Errorf("work root: %w", err)
-	}
-
-	runtime := orker.NewDockerRuntime()
 	// Resolved ONCE, for the same reason the Orker pins: a tag that moved
 	// between two assertions would make the suite report on two different
 	// images and call it one.
@@ -321,26 +318,45 @@ func (s *activitySuite) build(ctx context.Context) error {
 	if s.resolveImage != nil {
 		resolve = s.resolveImage
 	}
+	dispatcher, err := s.newDispatcher()
+	if err != nil {
+		return err
+	}
 	resolution, err := resolve(ctx)
 	if err != nil {
 		return err
 	}
 	s.resolution = resolution
 	s.pinned = resolution.Image
+	s.dispatcher = dispatcher
+	return nil
+}
 
+// newDispatcher is a dispatcher over the suite's own stores and work root.
+func (s *activitySuite) newDispatcher() (*orker.OCIDispatcher, error) {
+	store, err := artifacts.NewLocalStore(filepath.Join(s.root, "artifacts"))
+	if err != nil {
+		return nil, fmt.Errorf("artifact store: %w", err)
+	}
+	commits, err := artifacts.NewLocalCommitStore(filepath.Join(s.root, "commits"))
+	if err != nil {
+		return nil, fmt.Errorf("commit store: %w", err)
+	}
+	work := filepath.Join(s.root, "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		return nil, fmt.Errorf("work root: %w", err)
+	}
 	// The work root is the dispatcher's own, as NewActivitiesWithOptions
 	// makes it an Orker's.
-	policy := orker.SecurityPolicyFromEnv().WithWorkRoot(work)
-	s.dispatcher = &orker.OCIDispatcher{
-		Runtime:  runtime,
+	return &orker.OCIDispatcher{
+		Runtime:  orker.NewDockerRuntime(),
 		Store:    store,
 		Commits:  commits,
 		Refs:     store,
-		Policy:   policy,
+		Policy:   orker.SecurityPolicyFromEnv().WithWorkRoot(work),
 		WorkRoot: work,
 		OrkerID:  "orkctl-activity-test",
-	}
-	return nil
+	}, nil
 }
 
 // resolve pins the image through §4.3's resolver — the SAME one apply uses —

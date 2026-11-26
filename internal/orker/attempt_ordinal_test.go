@@ -419,10 +419,10 @@ func TestExecute_NothingIsCreatedForAnAttemptStoppedAfterItsClaim(t *testing.T) 
 func TestReapReleasesTheAttemptsOfTheContainersItRemoved(t *testing.T) {
 	attempts := artifacts.NewMemoryAttemptStore()
 	a := &Activities{dispatcher: &OCIDispatcher{Claims: attempts, OrkerID: "orker-a"}}
-	own := parseOwnContainers("c1\tork-r1\tbuild\t\t2\n" +
-		"c2\tork-r1\teach\t7\t1\n" +
-		"c3\tork-r1\tstuck\t\t1\n" +
-		"c4\tork-r1\told\t\tnot-a-number\n")
+	own := parseOwnContainers("c1\tork-r1\tbuild\t\t2\t\n" +
+		"c2\tork-r1\teach\t7\t1\t\n" +
+		"c3\tork-r1\tstuck\t\t1\t\n" +
+		"c4\tork-r1\told\t\tnot-a-number\t\n")
 	a.releaseReaped(context.Background(), own, &ReapIncompleteError{Containers: []ContainerID{"c3"}})
 	key := func(task string, item artifacts.Item, n int32) string {
 		k, err := artifacts.AttemptReleasedKey(artifacts.AttemptRef{RunID: "ork-r1", TaskID: task, Item: item, Attempt: n})

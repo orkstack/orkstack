@@ -123,10 +123,26 @@ type EngineClient struct {
 	identity  orkstackv1connect.IdentityServiceClient
 	attempts  orkstackv1connect.AttemptServiceClient
 	transport *http.Transport
+
+	// dial is a client of the engine whose connections are its own.
+	dial func() (*http.Client, *http.Transport)
+	base string
+	opts []connect.ClientOption
 }
 
 // Close releases the client's idle connections to the engine.
 func (c *EngineClient) Close() { c.transport.CloseIdleConnections() }
+
+// hostIdleTimeout is how long a connection to the engine's host service stays
+// open with no call on it.
+const hostIdleTimeout = 90 * time.Second
+
+// DialHost is a client of the engine's host service on connections of its own,
+// and what closes them: a call a replica cannot serve is made again on another.
+func (c *EngineClient) DialHost() (orkstackv1connect.EventSourceHostServiceClient, func()) {
+	client, transport := c.dial()
+	return orkstackv1connect.NewEventSourceHostServiceClient(client, c.base, c.opts...), transport.CloseIdleConnections
+}
 
 // NewEngineClient builds the client the settings describe. It reads the
 // TLS files now and the token file at every request, so a token something
@@ -170,7 +186,7 @@ func NewEngineClient(s EngineSettings) (*EngineClient, error) {
 		opts = append(opts, connect.WithInterceptors(authn.BearerFromFile{Path: s.TokenFile, Label: "orker.engine.auth.token_file"}))
 	}
 	base := strings.TrimSuffix(s.URL, "/")
-	var rt http.RoundTripper = transport
+	wrap := func(t *http.Transport) http.RoundTripper { return t }
 	if s.Method == EngineAuthServiceAccount {
 		// The key is read once, at boot: a service account's key is the
 		// Orker's own, never rotated under a running process.
@@ -180,14 +196,25 @@ func NewEngineClient(s EngineSettings) (*EngineClient, error) {
 		}
 		// The audience is the engine's URL, which is then the deployment's
 		// public URL (auth.public_url): the engine checks both.
-		rt = &authn.AssertionTransport{Base: transport, Signer: signer, Account: s.ServiceAccount, Audience: base}
+		wrap = func(t *http.Transport) http.RoundTripper {
+			return &authn.AssertionTransport{Base: t, Signer: signer, Account: s.ServiceAccount, Audience: base}
+		}
 	}
-	client := &http.Client{Transport: rt}
+	dial := func() (*http.Client, *http.Transport) {
+		own := transport.Clone()
+		// What a call was still on when its client was let go closes after it.
+		own.IdleConnTimeout = hostIdleTimeout
+		return &http.Client{Transport: wrap(own)}, own
+	}
+	client := &http.Client{Transport: wrap(transport)}
 	return &EngineClient{
 		auth:      orkstackv1connect.NewAuthServiceClient(client, base, opts...),
 		identity:  orkstackv1connect.NewIdentityServiceClient(client, base, opts...),
 		attempts:  orkstackv1connect.NewAttemptServiceClient(client, base, opts...),
 		transport: transport,
+		dial:      dial,
+		base:      base,
+		opts:      opts,
 	}, nil
 }
 

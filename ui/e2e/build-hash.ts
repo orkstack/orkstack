@@ -48,12 +48,12 @@ export function buildInputsHash(root: string, inputs: string[] = BUILD_INPUTS): 
 		const full = `${root}/${input}`;
 		let entries: string[] | undefined;
 		try {
-			entries = readdirSync(full, { recursive: true });
+			entries = readdirSync(full, { recursive: true, encoding: 'utf8' });
 		} catch {
 			// A file, or nothing: readdirSync refuses both.
 		}
 		if (entries) {
-			for (const e of entries) files.push(`${input}/${String(e)}`);
+			for (const e of entries) files.push(`${input}/${e}`);
 		} else {
 			files.push(input);
 		}

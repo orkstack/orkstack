@@ -127,6 +127,9 @@ message EventSource {
   // changes (version, format, max_bytes, match, input, map, artifacts,
   // rate, reject_breaker), which restarts nothing.
   int64 judging_revision = 47;
+  // deleting_since is output only: when a delete marked the source. A marked
+  // source is stopped, and is gone once its instances have ended.
+  google.protobuf.Timestamp deleting_since = 48;
 }
 
 // DeliveryClass is what a source's image promises about a message that
@@ -226,6 +229,9 @@ message EventSourcePause {
   google.protobuf.Timestamp since = 5;
   // principal is who paused it, as recorded; empty for OrkStack's own.
   string principal = 6;
+  // requested_by_orker is the Orker whose instance asked for OrkStack's
+  // pause, as its credential names it; empty where none did.
+  string requested_by_orker = 7;
 }
 
 // EventSourceState is what a source is doing, derived on read and never
@@ -367,7 +373,9 @@ enum ReceiptOutcome {
 // decision; it never holds a body, an attribute value, a credential or a
 // broker's error text.
 message Receipt {
-  // id is rcp- and the receipt's stamp.
+  // id is rcp- and the instant the Orker took the message. Two receipts may
+  // share one, of one exchange or of two lanes: a receipt is named by its
+  // object's key.
   string id = 1;
   string namespace = 2;
   string event_source_id = 3;

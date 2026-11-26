@@ -166,10 +166,15 @@ func TestSampler_CoresAreTheRateBetweenItsLastTwoReadings(t *testing.T) {
 type locatingRuntime struct {
 	*phaseCapturingRuntime
 	read cgroupReader
+	// located, when set, is what a locate waits for.
+	located chan struct{}
 }
 
 func (r *locatingRuntime) usageLocator(ContainerID, cgroupHost) func(context.Context) (cgroupReader, usageMethod, error) {
 	return func(context.Context) (cgroupReader, usageMethod, error) {
+		if r.located != nil {
+			<-r.located
+		}
 		return r.read, usageCgroupV2, nil
 	}
 }
@@ -545,9 +550,12 @@ func TestSampler_LogsAReadingEveryLogInterval(t *testing.T) {
 func TestUsageRegistry_SumsTheRunningContainers(t *testing.T) {
 	reg := NewUsageRegistry()
 	ctx := withUsageRegistry(context.Background(), reg)
-	d := &OCIDispatcher{Runtime: &locatingRuntime{phaseCapturingRuntime: &phaseCapturingRuntime{},
+	// A sampler's state has one writer, its own goroutine: each waits to locate
+	// its cgroup while the test writes the states it sums.
+	located := make(chan struct{})
+	d := &OCIDispatcher{Runtime: &locatingRuntime{phaseCapturingRuntime: &phaseCapturingRuntime{}, located: located,
 		read: func(bool) (cgroupReading, error) { return cgroupReading{cpuSeconds: 1, memory: 100}, nil }}}
-	d.UsageSampleInterval = time.Hour // no periodic read in the test's time
+	d.UsageSampleInterval = time.Hour
 	in := &orkstackv1.ExecuteTaskInput{RunId: "r", TaskId: "t"}
 	a, b := d.startUsage(ctx, in, "a"), d.startUsage(ctx, in, "b")
 	a.update(func(st *usageState) {
@@ -557,6 +565,7 @@ func TestUsageRegistry_SumsTheRunningContainers(t *testing.T) {
 	if got := reg.Totals(); got != (UsageTotals{Memory: 150, CPUCores: 0.5, Measured: 2}) {
 		t.Fatalf("totals = %+v, want both containers' memory and the one rate", got)
 	}
+	close(located)
 	a.finish(false)
 	b.finish(false)
 	if got := reg.Totals(); got != (UsageTotals{}) {

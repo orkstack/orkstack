@@ -67,7 +67,9 @@ type eachE2E struct {
 	runWorker  worker.Worker
 	orkers     []worker.Worker
 	containers map[string]int
-	tracing    eachE2ETracing
+	// registerRun registers more on the run worker, before it starts.
+	registerRun func(worker.Worker)
+	tracing     eachE2ETracing
 }
 
 // eachE2ETracing is how a deployment takes part in traces; the zero value is
@@ -84,6 +86,13 @@ func startEachE2E(t *testing.T, withDocker bool) *eachE2E {
 }
 
 func startTracedEachE2E(t *testing.T, withDocker bool, tracing eachE2ETracing) *eachE2E {
+	t.Helper()
+	return startEachE2EOver(t, withDocker, tracing, nil)
+}
+
+// startEachE2EOver is startTracedEachE2E whose engine dials through over, when
+// set: it is given the deployment with its plain client.
+func startEachE2EOver(t *testing.T, withDocker bool, tracing eachE2ETracing, over func(*eachE2E) client.Client) *eachE2E {
 	t.Helper()
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
@@ -137,8 +146,12 @@ func startTracedEachE2E(t *testing.T, withDocker bool, tracing eachE2ETracing) *
 		e.alpine = pinnedAlpineForCommitE2E(t)
 		e.workRoot = bindableWorkRootForCommitE2E(t)
 	}
+	if over != nil {
+		e.temporal = over(e)
+		t.Cleanup(e.temporal.Close)
+	}
 	e.startRunWorker()
-	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
+	eventWorker := worker.New(e.temporal, engine.EventQueue, worker.Options{
 		DisableRegistrationAliasing: true, DisableWorkflowWorker: true,
 	})
 	eventWorker.RegisterActivityWithOptions(
@@ -177,6 +190,9 @@ func (e *eachE2E) startRunWorker() {
 		activity.RegisterOptions{Name: engine.ActivityClaimReceivedArtifacts})
 	w.RegisterActivityWithOptions(claims.ClaimReturnedArtifacts,
 		activity.RegisterOptions{Name: engine.ActivityClaimReturnedArtifacts})
+	if e.registerRun != nil {
+		e.registerRun(w)
+	}
 	must.OKf(e.t, w.Start(), "start run worker")
 	e.mu.Lock()
 	e.runWorker = w

@@ -185,6 +185,7 @@ const PAGES: { name: string; url: string; ready: string }[] = [
 	{ name: 'webhooks', url: `/admin/webhooks?ns=${NS}`, ready: 'webhook-list' },
 	{ name: 'usage', url: `/admin/usage?ns=${NS}`, ready: 'usage-admin-scope' },
 	{ name: 'cache', url: `/admin/cache?ns=${NS}`, ready: 'cache-scope' },
+	{ name: 'concurrency', url: `/admin/concurrency?ns=${NS}`, ready: 'concurrency-scope' },
 	{ name: 'automation', url: `/admin/automation?ns=${NS}`, ready: 'automation-scope' }
 ];
 

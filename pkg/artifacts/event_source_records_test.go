@@ -13,6 +13,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/testsupport/must"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 const recID = "evs-0123456789abcdef"
@@ -92,20 +94,56 @@ func TestStagingKey_NamesNoRun(t *testing.T) {
 func TestSourceLogAndAttemptKeys_HoldTheEpoch(t *testing.T) {
 	a := InstanceAttempt{SourceID: recID, Index: 1, Epoch: 7, Attempt: 2}
 	logKey, err := SourceLogKey(a, 3)
-	if err != nil || logKey != "metadata/logs/"+recID+"/_source/00001/000000000007-0002/3" {
+	if err != nil || logKey != "metadata/logs/"+recID+"/_source/00001/000000000007-0000000002/00000000000000000003" {
 		t.Fatalf("log key %q, %v", logKey, err)
 	}
 	attemptKey, err := SourceAttemptKey(a)
-	if err != nil || attemptKey != "metadata/attempts/"+recID+"/_source/00001/000000000007-0002.json" {
+	if err != nil || attemptKey != "metadata/attempts/"+recID+"/_source/00001/000000000007-0000000002.json" {
 		t.Fatalf("attempt key %q, %v", attemptKey, err)
 	}
-	for _, bad := range []InstanceAttempt{{SourceID: "x"}, {SourceID: recID, Index: -1}, {SourceID: recID, Epoch: 1e12}, {SourceID: recID, Attempt: 10000}} {
+	for _, bad := range []InstanceAttempt{{SourceID: "x"}, {SourceID: recID, Index: -1}, {SourceID: recID, Epoch: 1e12}, {SourceID: recID, Attempt: 1 << 31}, {SourceID: recID, Attempt: -1}} {
 		if _, err := SourceAttemptKey(bad); err == nil {
 			t.Errorf("SourceAttemptKey(%+v) accepted", bad)
 		}
 	}
-	if _, err := SourceLogKey(a, -1); err == nil {
-		t.Error("a negative seq accepted")
+	for _, seq := range []int64{0, -1} {
+		if _, err := SourceLogKey(a, seq); err == nil {
+			t.Errorf("seq %d accepted", seq)
+		}
+	}
+}
+
+// TestInstanceLogAndAttempt: an instance's chunks and record are stored where
+// their keys say; a record already there stands, and an attempt no key holds is
+// refused.
+func TestInstanceLogAndAttempt(t *testing.T) {
+	dir := t.TempDir()
+	logs, err := NewLocalLogStore(dir)
+	must.OK(t, err)
+	attempts, err := NewLocalAttemptStore(dir)
+	must.OK(t, err)
+	a := InstanceAttempt{SourceID: recID, Index: 1, Epoch: 7, Attempt: 2}
+	must.OK(t, logs.PutInstanceLogChunk(t.Context(), a, 1, []byte("hello\n")))
+	must.OK(t, attempts.PutInstanceAttempt(t.Context(), a, eventsources.AttemptRecord{Reason: "SERVICE_FAILED"}))
+	must.OK(t, attempts.PutInstanceAttempt(t.Context(), a, eventsources.AttemptRecord{Reason: "SERVICE_EXITED"}))
+	key, err := SourceLogKey(a, 1)
+	must.OK(t, err)
+	raw, err := os.ReadFile(filepath.Join(dir, key))
+	if err != nil || string(raw) != "hello\n" {
+		t.Errorf("chunk %q, %v", raw, err)
+	}
+	key, err = SourceAttemptKey(a)
+	must.OK(t, err)
+	raw, err = os.ReadFile(filepath.Join(dir, key))
+	must.OK(t, err)
+	if got, ok := eventsources.ReadAttemptRecord(raw); !ok || got.Reason != "SERVICE_FAILED" {
+		t.Errorf("record %q", raw)
+	}
+	if err := logs.PutInstanceLogChunk(t.Context(), InstanceAttempt{SourceID: "x"}, 1, nil); err == nil {
+		t.Error("a chunk of no source stored")
+	}
+	if err := attempts.PutInstanceAttempt(t.Context(), InstanceAttempt{SourceID: "x"}, eventsources.AttemptRecord{}); err == nil {
+		t.Error("a record of no source stored")
 	}
 }
 

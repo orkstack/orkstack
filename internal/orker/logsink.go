@@ -177,6 +177,12 @@ func LogOptionsFromEnv() LogOptions {
 	return opts.withDefaults()
 }
 
+// logChunkStore is where a sink's chunks go: the write half of
+// artifacts.LogStore.
+type logChunkStore interface {
+	PutLogChunk(ctx context.Context, chunk artifacts.LogChunk) error
+}
+
 // logChunkSink turns a task attempt's log lines into numbered store chunks.
 //
 // It is safe for concurrent use: the runtime streams stdout and stderr from
@@ -186,7 +192,7 @@ func LogOptionsFromEnv() LogOptions {
 // a bound rather than a hope.
 type logChunkSink struct {
 	ctx   context.Context
-	store artifacts.LogStore
+	store logChunkStore
 	ref   artifacts.LogRef
 	opts  LogOptions
 	// onError reports an upload that could not be completed. It exists so the
@@ -243,7 +249,7 @@ type logChunkSink struct {
 // still runs tasks, it just has nothing to stream them to.
 func newLogChunkSink(
 	ctx context.Context,
-	store artifacts.LogStore,
+	store logChunkStore,
 	ref artifacts.LogRef,
 	opts LogOptions,
 ) *logChunkSink {

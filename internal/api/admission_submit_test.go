@@ -252,7 +252,8 @@ func TestSubmitRun_AdmitsARunThatHoldsAnIdentity(t *testing.T) {
 		t.Fatalf("started plans %+v; want one naming its admission", plans)
 	}
 	ip := plans[0].Identity
-	if ip.AttemptsExtra != identity.DefaultAttemptsExtra || ip.SpecVersion != task.IdentitySpecVersion || ip.Issuer != admissionIssuer || ip.TokenTTLSeconds != 3600 || ip.CommitWaitSeconds != 120 || len(ip.AdmissionSHA256) != 64 {
+	if ip.AttemptsExtra != identity.DefaultAttemptsExtra || ip.SpecVersion != task.IdentitySpecVersion || ip.Issuer != admissionIssuer || ip.TokenTTLSeconds != 3600 || ip.CommitWaitSeconds != 120 || len(ip.AdmissionSHA256) != 64 ||
+		ip.ValueRecords != artifacts.RecordFormat || ip.RecordBudget == nil || *ip.RecordBudget != engine.DefaultRecordBudget {
 		t.Fatalf("the plan's identity = %+v", ip)
 	}
 	read, err := w.records.ReadAdmission(ctx, artifacts.DefaultNamespace, run.GetId(), ip.AdmissionSHA256)
@@ -773,6 +774,34 @@ func TestSubmitRun_AnAdmissionHoldsWhereReceivedArtifactsComeFrom(t *testing.T) 
 	}
 	if !slices.Equal(c.Tasks["push"].Inputs, []string{"bundle"}) || c.OrkflowNamespace != "platform" {
 		t.Errorf("push names %v, owner %q", c.Tasks["push"].Inputs, c.OrkflowNamespace)
+	}
+}
+
+// TestSubmitRun_AnAdmissionSaysWhichArtifactsAHandlerPassed: an artifact a
+// composed task passes on is a failure handler's where that task is one, and it
+// alone may have no record.
+func TestSubmitRun_AnAdmissionSaysWhichArtifactsAHandlerPassed(t *testing.T) {
+	for _, join := range []orkstackv1.JoinPolicy{orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED, orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED, orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE} {
+		parent, child := composingOrkflows()
+		inputs, err := structpb.NewStruct(map[string]any{"bundle": map[string]any{"type": "artifact", "required": true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		child.Inputs, child.Tasks[0].InputArtifacts = inputs, []string{"bundle"}
+		parent.Tasks[1].Join = join
+		parent.Tasks[1].ChildArtifacts = []*orkstackv1.ChildArtifact{{Input: "bundle", TaskId: "build", Name: "app.tar"}}
+		w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{child, parent}})
+		if _, err := w.submit(t, "release", ""); err != nil {
+			t.Fatalf("%v: submit: %v", join, err)
+		}
+		ship := w.starter.startedPlans()[0].Children["ship"]
+		got, err := w.records.ReadAdmission(context.Background(), artifacts.DefaultNamespace, ship.RunID, ship.Plan.Identity.AdmissionSHA256)
+		if err != nil || got.Answer != artifacts.RecordFound {
+			t.Fatalf("%v: the admission reads %+v, %v", join, got, err)
+		}
+		if want := join != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED; got.Value.StartArtifacts["bundle"].Handler != want {
+			t.Errorf("%v: the child receives %+v, want a handler's: %v", join, got.Value.StartArtifacts["bundle"], want)
+		}
 	}
 }
 

@@ -1,9 +1,11 @@
-// The two Bun modules the unit tests under ui/test use.
+// The two Bun modules, and the Bun globals, the unit tests under ui/test use.
 //
 // `bun-types` is deliberately NOT a dependency: it redeclares the DOM globals
 // this application is written against (WebSocket, fetch, TextDecoder), and
 // svelte-check type-checks the app and these tests together. Declaring the
 // handful of members actually used keeps one runner's types out of the app's.
+// Node's modules come from `@types/node`, which the specs under ui/e2e are
+// checked against (e2e/tsconfig.json).
 declare module 'bun' {
 	export function plugin(spec: {
 		name: string;
@@ -43,78 +45,6 @@ declare module 'bun:test' {
 	};
 }
 
-// The filesystem reads the unit tests make: activityInterface.test.ts reads
-// the first-party images' Dockerfiles, so the UI is tested against the label a
-// real image ships rather than a copy that can drift from it, and
-// sourceTree.ts lists and reads the repository's trees for every test that
-// holds a rule over one, and testidBaseline.test.ts rewrites its fixture on
-// request.
-declare module 'node:fs' {
-	/** A URL too: vite.config.ts reads src/app.html beside itself to hash its theme script. */
-	export function readFileSync(path: string | URL, encoding: 'utf8'): string;
-	/** Without an encoding: the file's bytes (e2e/build-hash.ts hashes them). */
-	export function readFileSync(path: string): Uint8Array;
-	export function readdirSync(path: string, options?: { recursive?: boolean }): string[];
-	/** yamlSchemaSource.test.ts reads files, not the route directories named like one. */
-	export function statSync(path: string): { isFile(): boolean };
-	export function writeFileSync(path: string, data: string): void;
-	// e2e/build-ui.ts and its test (build-ui.test.ts): the build's marker,
-	// and the test's own temporary UI directory.
-	export function existsSync(path: string): boolean;
-	export function rmSync(path: string, options?: { force?: boolean; recursive?: boolean }): void;
-	export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
-	export function mkdtempSync(prefix: string): string;
-	// e2e/processLog.ts and its test (processLog.test.ts): a spec's process
-	// log, opened for appending, and its transcript, kept across a restart.
-	export function appendFileSync(path: string, data: string): void;
-	export interface WriteStream {
-		write(chunk: string): boolean;
-		end(callback?: () => void): void;
-		on(event: 'error', listener: (error: Error) => void): WriteStream;
-	}
-	export function createWriteStream(path: string, options?: { flags?: string }): WriteStream;
-}
-
-// e2e/build-ui.ts runs `bun run build`; build-ui.test.ts imports it.
-declare module 'node:child_process' {
-	export function execFileSync(
-		file: string,
-		args: string[],
-		options: { cwd: string; stdio: 'inherit' | 'ignore' }
-	): unknown;
-}
-declare module 'node:path' {
-	const path: {
-		resolve(...paths: string[]): string;
-		dirname(path: string): string;
-		join(...paths: string[]): string;
-		/** e2e/processLog.ts names a start by its command's file name. */
-		basename(path: string): string;
-	};
-	export default path;
-}
-declare module 'node:url' {
-	export function fileURLToPath(url: string): string;
-}
-// e2e/budget.ts scales a render budget by the host's CPUs; its test under
-// ui/test imports it, so the two members it uses are declared here.
-declare module 'node:os' {
-	export function tmpdir(): string;
-	export function cpus(): unknown[];
-	export function availableParallelism(): number;
-}
-
-// The hash e2e/build-hash.ts takes over the UI build's inputs; its test under
-// ui/test imports that module, so the one member it uses is declared here.
-// vite.config.ts takes the same hash, in base64, of app.html's theme script
-// for the content security policy.
-declare module 'node:crypto' {
-	export function createHash(algorithm: 'sha256'): {
-		update(data: string | Uint8Array): { digest(encoding: 'hex' | 'base64'): string };
-		digest(encoding: 'hex' | 'base64'): string;
-	};
-}
-
 // Bun's built-in YAML 1.2 reader: authoredSchemas.test.ts reads the shipped
 // documents the way an editor's YAML language server does. spawnSync:
 // browser-server-owner.test.ts runs e2e/browser-server.ts's start command.
@@ -131,14 +61,4 @@ interface ImportMeta {
 	readonly dir: string;
 	/** Bun (and Node 24+): whether this module is the entry point. */
 	readonly main: boolean;
-}
-
-// The environment read and the CPU clock the unit tests use: UPDATE_DAG_PINS=1
-// rewrites dag.test.ts's pinned layouts, and cpuTime.ts reads the calling
-// thread's CPU time to bound what code costs. A module, not a global, so the
-// app's code cannot reach a `process` it does not have.
-declare module 'node:process' {
-	export const env: Record<string, string | undefined>;
-	/** The calling thread's CPU time in microseconds (cpuTime.ts bounds code cost on it). */
-	export function threadCpuUsage(): { user: number; system: number };
 }

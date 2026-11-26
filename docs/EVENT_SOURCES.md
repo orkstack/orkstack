@@ -127,7 +127,7 @@ enters a run's input:
 |---|---|---|
 | `input:` | value inputs, with constants | a YAML mapping, converted by the strict mapping ([JSON.md](JSON.md)) |
 | `map:` | value inputs, from the message | one selector per input: `pointer:` (an RFC 6901 JSON Pointer into the body, `format: json` only), `attribute:` (a header or attribute, its first value), or `field:` (`subject`, `id`, `published_at`, `group`, facts the broker supplies) |
-| `artifacts:` | artifact inputs | `body` or `metadata`. A run of an Orkflow with an artifact input is refused in this release, `ARTIFACT_INPUT_UNSUPPORTED` |
+| `artifacts:` | artifact inputs | `body` or `metadata`, each a file the run reads as `_inputs/<name>`; the run, run again, receives the same files |
 
 A name appears under one key only; a `map:` or `input:` name is a value
 input, an `artifacts:` name an artifact input; every artifact input is
@@ -137,8 +137,9 @@ is covered. A source that breaks one of these is refused
 `EVENT_SOURCE_MAPPING_INVALID`, naming the field. For each message, a
 selector that selects nothing or `null` leaves out an input that has a
 default or is not required and otherwise rejects the message
-(`MESSAGE_FIELD_MISSING`); a value of another JSON type rejects it
-(`MESSAGE_FIELD_TYPE`).
+(`MESSAGE_FIELD_MISSING`); a value of another JSON type rejects it, and so does a number a run's input
+would change, one a double does not hold exactly, such as an integer past
+2^53: send it as a string (`MESSAGE_FIELD_TYPE`).
 
 A source cannot bind an Orkflow with an await whose callback nobody would
 receive, nor, yet, one whose tasks ask for identities or credentials:

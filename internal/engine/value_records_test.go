@@ -144,6 +144,34 @@ func TestRenderOutputs_AsTheRunRenders(t *testing.T) {
 	}
 }
 
+// TestRenderOutputs_AParentComputesTheSameBytes: what the engine records of a
+// child's outputs is, for every shape of JSON value, what its parent renders of
+// the result the cluster hands it; the two digests are compared.
+func TestRenderOutputs_AParentComputesTheSameBytes(t *testing.T) {
+	for _, v := range []string{`0`, `-0`, `1`, `-1`, `1.0`, `1.5`, `2.50`, `0.1`, `1e2`, `1e21`, `1E+21`, `1e-7`, `123456789012345680`, `9007199254740991`,
+		`-1.7976931348623157e308`, `5e-324`, `true`, `"<b>&\u2028é"`, `""`, `[]`, `{}`, `[1,2.50,{"z":1e21,"a":null}]`, `{"b":{"y":1.10,"x":[]},"a":0.000001}`} {
+		values := `{"v":` + v + `}`
+		sum := sha256.Sum256([]byte(values))
+		wf := &orkstackv1.Orkflow{Name: "o", Outputs: map[string]string{"v": "{{ .tasks.build.output.v }}", "text": "is {{ .tasks.build.output.v }}"}}
+		got, err := NewComposeActivities(oneValue(values)).RenderOutputs(context.Background(), identity.OutputsRender{Definition: wf, Input: []byte(`{}`),
+			Upstream: map[string]*orkstackv1.ArtifactRef{"build": {Uri: "mem://v", Sha256: hex.EncodeToString(sum[:])}}, MaxBytes: 1 << 12})
+		if err != nil {
+			t.Errorf("%s: %v", v, err)
+			continue
+		}
+		// The child's result, as its parent receives it.
+		output, err := payloadOfJSON(got)
+		if err != nil {
+			t.Errorf("%s: %v", v, err)
+			continue
+		}
+		again, err := canonicalValuesJSON(payloadMap(output))
+		if err != nil || string(again) != string(got) {
+			t.Errorf("%s: the engine recorded %s, its parent computes %s (%v)", v, got, again, err)
+		}
+	}
+}
+
 // oneValue is a store holding one object.
 type oneValue string
 

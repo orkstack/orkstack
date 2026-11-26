@@ -169,7 +169,9 @@ message UpstreamRef {
   // commit_uri and values unset.
   EachUpstream each = 5;
 
-  // record_uri is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  // record_uri is the engine's record of an awaited or a composed task, of a
+  // run whose results the engine records: the Orker stages what it names.
+  // Unset for every other upstream and run.
   string record_uri = 6;
 }
 
@@ -1688,6 +1690,64 @@ message HostEventSourceInput {
   // bounds the Orker applies from the source's carry.
   int32 confirm_unavailable_max_seconds = 12;
   int32 provider_refused_max = 13;
+}
+
+// InstanceEnd is how an event-source instance's activity ended, where it
+// completed. A failure that may pass is an error the cluster retries, and
+// never one of these.
+enum InstanceEnd {
+  INSTANCE_END_UNSPECIFIED = 0;
+  // FAILED_AFTER_HEALTHY: a failure that may pass, after the instance had
+  // been ready long enough to start its back-off afresh.
+  INSTANCE_END_FAILED_AFTER_HEALTHY = 1;
+  // ROTATED: it reached the bound of its age without having been replaced.
+  INSTANCE_END_ROTATED = 2;
+  // STOPPED: the engine answered that it is to stop.
+  INSTANCE_END_STOPPED = 3;
+  // STUCK: its container could not be stopped.
+  INSTANCE_END_STUCK = 4;
+  // JUDGMENT_UNAVAILABLE: what the source's identity rests on could not be
+  // read for longer than its bound.
+  INSTANCE_END_JUDGMENT_UNAVAILABLE = 5;
+  // UNCHANGEABLE: trying again cannot change it.
+  INSTANCE_END_UNCHANGEABLE = 6;
+}
+
+// InstanceEndClass is whose the end is, as the Orker says it.
+enum InstanceEndClass {
+  INSTANCE_END_CLASS_UNSPECIFIED = 0;
+  // HOST: the Orker's, and nothing of the source's.
+  INSTANCE_END_CLASS_HOST = 1;
+  // SOURCE: the source's own.
+  INSTANCE_END_CLASS_SOURCE = 2;
+}
+
+// HostEventSourceResult is what one attempt of an event-source instance
+// completed with. It is an Orker's word: the source's workflow classifies it
+// from its own table by the reason and the fields that are its condition, and
+// an end, a class or a reason it does not know is never a pause.
+message HostEventSourceResult {
+  InstanceEnd end = 1;
+  // reason is the end's reason; empty for ROTATED.
+  string reason = 2;
+  InstanceEndClass class = 3;
+  // past_bound and refused_since are a refused credential's condition: the
+  // refusals have gone on past their bound, and since when.
+  bool past_bound = 4;
+  google.protobuf.Timestamp refused_since = 5;
+  // unread is, for JUDGMENT_UNAVAILABLE, what could not be read: spec or
+  // record.
+  string unread = 6;
+  // fresh_read is an identity reason's condition: the refusal was confirmed
+  // by a read made after the request arrived.
+  bool fresh_read = 7;
+  // cause is the code behind a reason, from a closed set (the identity
+  // reason, the check's reason, the image policy's rule), or empty. Never a
+  // word of a container's.
+  string cause = 8;
+  // attempt is which attempt of the activity ended: used only to look up the
+  // record the engine wrote when it confirmed that attempt.
+  int32 attempt = 9;
 }
 
 // StoreScope is an Orker's verdict on its own storage credential: scoped

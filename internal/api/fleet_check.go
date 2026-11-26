@@ -155,9 +155,9 @@ func (s *Service) requireCapability(ctx context.Context, need capabilityNeed) er
 		s.logger.Warn("fleet check could not read the engine processes",
 			"missing_capability", need.capability, "orkflow", need.wf.GetName(),
 			"version", need.wf.GetVersion(), "error", err)
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+		return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf(
 			"%s; the cluster's list of engine processes could not be read, so whether every engine "+
-				"process can %s is unknown; try again", need.what, need.ability))
+				"process can %s is unknown; try again", need.what, need.ability)))
 	}
 	if len(lacking) == 0 {
 		return nil
@@ -167,9 +167,9 @@ func (s *Service) requireCapability(ctx context.Context, need capabilityNeed) er
 	attrs := append([]any{"missing_capability", need.capability, "identities", lacking,
 		"orkflow", need.wf.GetName(), "version", need.wf.GetVersion()}, need.attrs...)
 	s.logger.Warn("submit refused: engine processes run a release without a capability the run needs", attrs...)
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+	return connect.NewError(connect.CodeFailedPrecondition, refused(refusalWait, waitRollout, fmt.Errorf(
 		"%s; %s a release that cannot %s; finish the rollout first",
-		need.what, processCount(len(lacking)), need.ability))
+		need.what, processCount(len(lacking)), need.ability)))
 }
 
 // processCount is "1 engine process runs" or "N engine processes run".

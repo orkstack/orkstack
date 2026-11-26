@@ -8,7 +8,8 @@
 	import AccessTabs from '../AccessTabs.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { accessClient } from '#lib/clients/access.ts';
-	import { AccessDecision, BindingMatch } from '#lib/gen/orkstack/v1/access_pb.ts';
+	import { matchWord } from '#lib/accessBindings.ts';
+	import { AccessDecision } from '#lib/gen/orkstack/v1/access_pb.ts';
 	import type { ExplainAccessResponse } from '#lib/gen/orkstack/v1/access_service_pb.ts';
 	import type { PageProps } from './$types';
 
@@ -21,14 +22,6 @@
 	let busy = $state(false);
 	let error = $state('');
 	let answer = $state<ExplainAccessResponse | null>(null);
-
-	const matchWords: Record<number, string> = {
-		[BindingMatch.GRANTED]: 'Granted it',
-		[BindingMatch.SUBJECT_DIFFERS]: 'Names someone else',
-		[BindingMatch.SCOPE_DIFFERS]: 'At another scope',
-		[BindingMatch.ROLE_LACKS_PERMISSION]: 'Its role lacks the permission',
-		[BindingMatch.PINNED_ELSEWHERE]: 'Pinned to another incarnation'
-	};
 
 	async function explain() {
 		busy = true;
@@ -95,7 +88,7 @@
 						<tbody>
 							{#each answer.considered as c (c.binding)}
 								<tr data-testid="explain-considered-{c.binding}">
-									<td class="font-mono">{c.binding}</td><td>{c.role}</td><td class="font-mono">{c.scope}</td><td class="font-mono">{c.subject || '—'}</td><td>{matchWords[c.match] ?? ''}</td>
+									<td class="font-mono">{c.binding}</td><td>{c.role}</td><td class="font-mono">{c.scope}</td><td class="font-mono">{c.subject || '—'}</td><td>{matchWord(c.match)}</td>
 								</tr>
 							{/each}
 						</tbody>

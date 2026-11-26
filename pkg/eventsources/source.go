@@ -312,7 +312,7 @@ func validateGrants(src *orkstackv1.EventSource) error {
 	names := map[string]bool{}
 	for i, s := range src.GetSecrets() {
 		field := fmt.Sprintf("secrets[%d]", i)
-		if !secretPattern.MatchString(s.GetName()) {
+		if name := s.GetName(); !secretPattern.MatchString(name) || name == "." || name == ".." {
 			return refuse(field, "a secret's name is ^[A-Za-z0-9._-]{1,128}$")
 		}
 		if names[s.GetName()] {
@@ -393,7 +393,7 @@ var fieldClass = map[string]string{
 	"bound_by": classOutput, "bound_by_verified": classOutput, "consent_stale": classOutput,
 	"asks_for": classOutput, "consented": classOutput,
 	"secrets": classService, "identities": classService, "credentials": classService, "env": classService,
-	"service_revision": classOutput, "judging_revision": classOutput,
+	"service_revision": classOutput, "judging_revision": classOutput, "deleting_since": classOutput,
 }
 
 // submitFields are what a source submits: a change to one makes whoever

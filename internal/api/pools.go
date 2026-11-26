@@ -49,14 +49,14 @@ func (s *Service) namespace(ctx context.Context, name string) (*orkstackv1.Names
 		// request that is wrong, not the deployment.
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, artifacts.ErrNotFound):
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+		return nil, connect.NewError(connect.CodeNotFound, refused(refusalPause, "NAMESPACE_NOT_FOUND", fmt.Errorf(
 			"namespace %q does not exist%s", artifacts.ResolveNamespace(name),
-			s.existingNamespaces(ctx)))
+			s.existingNamespaces(ctx))))
 	case errors.Is(err, engine.ErrNoNamespaceRegistry):
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("read namespace %q: %w", artifacts.ResolveNamespace(name), err))
+			outage(fmt.Errorf("read namespace %q: %w", artifacts.ResolveNamespace(name), err)))
 	}
 }
 

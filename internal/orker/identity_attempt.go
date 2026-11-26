@@ -175,6 +175,7 @@ func (d *OCIDispatcher) writeFirstIdentities(ctx context.Context, in *orkstackv1
 		maskGrace:   cfg.MaskGrace,
 		orkerBuild:  d.BuildID,
 		required:    required,
+		observe:     d.Identities,
 		onSkew: func(skew time.Duration) {
 			logger.Warn("the engine's clock and this Orker's are apart", "skew", skew)
 		},

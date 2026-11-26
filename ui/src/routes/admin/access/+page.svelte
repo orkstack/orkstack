@@ -6,7 +6,6 @@
 	// a mode record that went missing, Orkers whose storage credential reaches
 	// the control plane.
 	import { invalidateAll } from '$app/navigation';
-	import { create } from '@bufbuild/protobuf';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
@@ -16,8 +15,8 @@
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { accessClient } from '#lib/clients/access.ts';
-	import { BindingSchema, type Binding } from '#lib/gen/orkstack/v1/access_pb.ts';
-	import { keep, parseSubjects, pinWords, type BindingFilter } from '#lib/accessBindings.ts';
+	import type { Binding } from '#lib/gen/orkstack/v1/access_pb.ts';
+	import { bindingEdit, keep, pinWords, savedBinding, sharedCredentialMark, type BindingEdit, type BindingFilter } from '#lib/accessBindings.ts';
 	import { conflictWords, grantsMe, isConflict } from '#lib/accessSelf.ts';
 	import { can, canAnywhere } from '#lib/permissions.ts';
 	import type { PageProps } from './$types';
@@ -37,7 +36,15 @@
 	const notEnforcing = $derived((status?.engines ?? []).filter((e) => e.mode !== 'enforce' || e.settingsDiffer.length > 0));
 
 	// ── the edit dialog ─────────────────────────────────────────────────
-	let editing = $state<{ creating: boolean; name: string; role: string; scope: string; subjects: string } | null>(null);
+	let editing = $state<({ creating: boolean } & BindingEdit) | null>(null);
+	// The binding the dialog opened on, as it was stored.
+	let editingFrom = $state.raw<Binding | null>(null);
+	// The binding a save replaces: after a conflict the document was read again, and holds it as it is now.
+	const replaced = $derived.by(() => {
+		const name = editing?.name;
+		return editing && !editing.creating ? ((doc?.bindings ?? []).find((b) => b.name === name) ?? editingFrom) : null;
+	});
+	const replacedMark = $derived(replaced ? sharedCredentialMark(replaced) : null);
 	let saveBusy = $state(false);
 	let saveError = $state('');
 	// The document changed under the page: read it again and keep what the
@@ -51,12 +58,14 @@
 		actError = data.accessError ?? '';
 	}
 	function openCreate() {
+		editingFrom = null;
 		editing = { creating: true, name: '', role: roles[0] ?? 'viewer', scope: 'deployment', subjects: '' };
 		saveError = '';
 		conflict = false;
 	}
 	function openEdit(b: Binding) {
-		editing = { creating: false, name: b.name, role: b.role, scope: b.scope, subjects: b.subjects.join('\n') };
+		editingFrom = b;
+		editing = { creating: false, ...bindingEdit(b) };
 		saveError = '';
 		conflict = false;
 	}
@@ -65,7 +74,7 @@
 		saveBusy = true;
 		saveError = '';
 		conflict = false;
-		const binding = create(BindingSchema, { name: editing.name.trim(), role: editing.role, scope: editing.scope.trim(), subjects: parseSubjects(editing.subjects) });
+		const binding = savedBinding(editing, replaced);
 		try {
 			if (editing.creating) await accessClient(fetch).createBinding({ binding, etag: doc.etag });
 			else await accessClient(fetch).updateBinding({ binding, etag: doc.etag });
@@ -227,6 +236,7 @@
 				<tbody>
 					{#each rows as b ((b.fromConfiguration ? 'c:' : 's:') + b.name)}
 						{@const pin = pinWords(b)}
+						{@const shared = sharedCredentialMark(b)}
 						<tr data-testid="binding-{b.name}">
 							<td class="font-mono">{b.name}</td>
 							<td data-label="Role">{b.role}</td>
@@ -234,7 +244,8 @@
 								<span class="font-mono">{b.scope}</span>
 								{#if pin}<span class="ml-2 {pin.stale ? 'stamp stamp-sm pill-outline' : 'tag'}" data-tip={pin.tip}>{pin.word}</span>{/if}
 							</td>
-							<td data-label="Subjects"><ul class="font-mono text-sm break-all">{#each b.subjects as s (s)}<li>{s}</li>{/each}</ul></td>
+							<td data-label="Subjects"><ul class="font-mono text-sm break-all">{#each b.subjects as s (s)}<li>{s}</li>{/each}</ul>
+								{#if shared}<span class="tag mt-1.5" data-testid="binding-shared-{b.name}">{shared.word}</span><span class="mt-1 block text-sm text-ink-3">{shared.why}</span>{/if}</td>
 							<td class="row-acts text-right whitespace-nowrap max-sm:col-span-2">
 								{#if b.fromConfiguration}
 									<span class="pill-plain stamp stamp-sm" data-tip="Made by the engine’s configuration (auth.admins, auth.orkers); change it there.">From configuration</span>
@@ -276,6 +287,9 @@
 					<textarea class="field font-mono" rows="4" bind:value={editing!.subjects} required data-testid="binding-subjects" aria-describedby="binding-subjects-hint"></textarea>
 					<span id="binding-subjects-hint" class="text-sm text-ink-3"><code>user:ISSUER:NAME</code>, <code>group:ISSUER:GROUP</code>, <code>serviceaccount:NAME</code>…</span>
 				</label>
+				{#if replacedMark}
+					<p class="alert" data-testid="binding-shared-note"><span class="alert-ic"><Icon name="info" /></span><span class="min-w-0 flex-1">{editing!.role === 'orker' ? `${replacedMark.why} Saving keeps that.` : 'Its Orkers share one credential. Only the orker role may be bound that way, so saving it with another role ends that.'}</span></p>
+				{/if}
 				{#if !editing!.creating && mine(editing!.name)}
 					<p class="alert" data-testid="binding-self"><span class="alert-ic"><Icon name="info" /></span><span class="min-w-0 flex-1">You hold <strong>{mine(editing!.name)}</strong> by this binding. A change to it changes what you can do.</span></p>
 				{/if}

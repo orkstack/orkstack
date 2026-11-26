@@ -138,7 +138,12 @@ func (s *Service) idError(what string, err error) error {
 	if code == connect.CodeUnavailable || code == connect.CodeInternal {
 		s.logger.Warn("an id of a namespace or an Orkflow could not be read or written", "what", what, "error", err)
 	}
-	return connect.NewError(code, fmt.Errorf("%s: %s", what, said))
+	// The store's error is not kept in the answer, so how it is classified is.
+	v := outageVerdict(err)
+	if code == connect.CodeInternal || code == connect.CodeInvalidArgument {
+		v = verdict{class: refusalUncertain, code: codeUnclassified}
+	}
+	return connect.NewError(code, &refusalMark{verdict: v, err: fmt.Errorf("%s: %s", what, said)})
 }
 
 func idErrorCode(err error) (connect.Code, string) {

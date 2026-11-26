@@ -35,6 +35,7 @@ func TestMapMintAnswer(t *testing.T) {
 		count  string // the ork.identity.engine_refused counting, "" for none
 	}{
 		{"a transport error", errors.New("dial tcp: connection refused"), "IDENTITY_UNAVAILABLE", CategoryInfrastructureError, mintAskAgain, ""},
+		{"a followed result not recorded", refusal(connect.CodeFailedPrecondition, "REQUIRED_RESULT_NOT_RECORDED", ""), "REQUIRED_RESULT_NOT_RECORDED", CategoryInfrastructureError, mintEnd, ""},
 		{"a timeout", context.DeadlineExceeded, "IDENTITY_UNAVAILABLE", CategoryInfrastructureError, mintAskAgain, ""},
 		{"unavailable", refusal(connect.CodeUnavailable, "IDENTITY_UNAVAILABLE", ""), "IDENTITY_UNAVAILABLE", CategoryInfrastructureError, mintAskAgain, ""},
 		{"resource_exhausted", refusal(connect.CodeResourceExhausted, "IDENTITY_UNAVAILABLE", ""), "IDENTITY_UNAVAILABLE", CategoryInfrastructureError, mintAskAgain, ""},
@@ -79,7 +80,7 @@ func TestMapMintAnswer_ReasonsAreClassified(t *testing.T) {
 	for reason, retryable := range map[string]bool{
 		"IDENTITY_UNAVAILABLE": true, "IDENTITY_ENGINE_REFUSED": true, "ATTEMPT_NOT_HELD": true,
 		"IDENTITY_NOT_ADMITTED": false, "TASK_NOT_AS_ADMITTED": false, "IDENTITY_SPEC_SKEW": true,
-		"IDENTITY_ATTEMPTS_EXHAUSTED": false, "IDENTITY_ATTEMPT_EXPIRED": false, "IDENTITY_REVOKED": false,
+		"IDENTITY_ATTEMPTS_EXHAUSTED": false, "IDENTITY_ATTEMPT_EXPIRED": false, "IDENTITY_REVOKED": false, "REQUIRED_RESULT_NOT_RECORDED": false,
 	} {
 		if _, ok := reasonCategory[reason]; !ok {
 			t.Errorf("%s has no category", reason)
