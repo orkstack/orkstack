@@ -6,6 +6,7 @@ import (
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	failurepb "go.temporal.io/api/failure/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -315,12 +316,97 @@ func TestScanResumeBase_ContinuedGeneration(t *testing.T) {
 	if !h.Continued || h.ResetPoint != want {
 		t.Fatalf("continued %v, R %+v, want %+v", h.Continued, h.ResetPoint, want)
 	}
+	if _, err := h.Facts(&orkstackv1.Run{}); err == nil {
+		t.Fatal("facts of a run that carried on, its saved state not read")
+	}
+	h.ReadSavedState(&orkstackv1.Run{TaskRuns: []*orkstackv1.TaskRun{prow("old", sOK), prow("late", sPend), prow("next", sPend)}})
 	f, err := h.Facts(&orkstackv1.Run{TaskRuns: []*orkstackv1.TaskRun{prow("old", sOK), prow("late", sFail), prow("next", sPend)}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !f.Earlier["old"] || f.Earlier["late"] || f.Earlier["next"] {
 		t.Errorf("earlier = %v, want only old", f.Earlier)
+	}
+}
+
+// A resume whose plan could not be run says so, and which execution it was
+// reset from: the newest reset in its history, past the copied ones.
+func TestScanResumeBase_AResumeThatNeverRan(t *testing.T) {
+	reset := func(base, run string) *historypb.HistoryEvent {
+		return &historypb.HistoryEvent{EventType: enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED,
+			Attributes: &historypb.HistoryEvent_WorkflowTaskFailedEventAttributes{WorkflowTaskFailedEventAttributes: &historypb.WorkflowTaskFailedEventAttributes{
+				Cause: enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW, BaseRunId: base, NewRunId: run}}}
+	}
+	for name, tc := range map[string]struct {
+		code           string
+		resumed, never bool
+	}{
+		"invalid":                         {ReasonResumePlanInvalid, false, true},
+		"unreadable":                      {ReasonResumePlanUnreadable, false, true},
+		"failed":                          {"RUN_FAILED", false, false},
+		"its limit could not be taken":    {RunConcurrencyUnsupportedCode, false, true},
+		"its limit failed it, once going": {RunConcurrencyUnsupportedCode, true, false},
+	} {
+		code, never := tc.code, tc.never
+		b := &historyBuilder{t: t}
+		b.start(nil)
+		b.wft()
+		b.events = append(b.events, reset("exec-0", "exec-1"), reset("exec-1", "exec-2"))
+		if tc.resumed {
+			b.publish(orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED, 42, "")
+		}
+		b.closed()
+		last := b.events[len(b.events)-1]
+		last.EventType = enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED
+		last.Attributes = &historypb.HistoryEvent_WorkflowExecutionFailedEventAttributes{WorkflowExecutionFailedEventAttributes: &historypb.WorkflowExecutionFailedEventAttributes{
+			Failure: &failurepb.Failure{FailureInfo: &failurepb.Failure_ApplicationFailureInfo{ApplicationFailureInfo: &failurepb.ApplicationFailureInfo{Type: code}}}}}
+		for i, e := range b.events {
+			e.EventId = int64(i + 1)
+		}
+		h, err := ScanResumeBase(b.events, nil)
+		if err != nil || h.NeverRan != never || h.ResetFrom != "exec-1" {
+			t.Fatalf("%s: never ran %v, reset from %q, %v", name, h != nil && h.NeverRan, func() string {
+				if h == nil {
+					return ""
+				}
+				return h.ResetFrom
+			}(), err)
+		}
+	}
+	// What the executions it was reset from dispatched is what it did.
+	h := &ResumeHistory{NeverRan: true, Dispatched: map[ResumeUnit]bool{}}
+	h.AddEarlier(&ResumeHistory{Dispatched: map[ResumeUnit]bool{nodeUnit("b"): true}, DispatchedBefore: map[ResumeUnit]bool{nodeUnit("a"): true}})
+	f, err := h.Facts(&orkstackv1.Run{Error: &orkstackv1.Error{Code: ReasonResumePlanInvalid}})
+	if err != nil || !f.Dispatched[nodeUnit("a")] || !f.Dispatched[nodeUnit("b")] {
+		t.Fatalf("dispatched %v, %v; want a and b", f.Dispatched, err)
+	}
+}
+
+// What an earlier part of a run settled is what had ended in the saved state,
+// whatever the base published: a kept task publishes nothing, and neither does
+// any task of a base whose plan could not be run.
+func TestResumeFacts_EarlierIsWhatTheSavedStateHeld(t *testing.T) {
+	saved := &orkstackv1.Run{TaskRuns: []*orkstackv1.TaskRun{prow("old", sOK), prow("skipped", sSkip), prow("kept", sPend), prow("failed", sPend)}}
+	rows := []*orkstackv1.TaskRun{prow("old", sOK), prow("skipped", sSkip), prow("kept", sOK), prow("failed", sFail)}
+	for name, tc := range map[string]struct {
+		code      string
+		published []string
+	}{
+		"resumed again":      {"RUN_FAILED", []string{"failed"}},
+		"its plan never ran": {ReasonResumePlanInvalid, nil},
+		"the old published":  {"RUN_FAILED", []string{"old", "failed"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := &ResumeHistory{Continued: true, Published: map[string]bool{}}
+			for _, id := range tc.published {
+				h.Published[id] = true
+			}
+			h.ReadSavedState(saved)
+			f, err := h.Facts(&orkstackv1.Run{TaskRuns: rows, Error: &orkstackv1.Error{Code: tc.code}})
+			if err != nil || len(f.Earlier) != 2 || !f.Earlier["old"] || !f.Earlier["skipped"] {
+				t.Fatalf("earlier = %v, %v; want old and skipped", f.Earlier, err)
+			}
+		})
 	}
 }
 

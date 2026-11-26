@@ -266,8 +266,8 @@ enum CacheOutcome {
   CACHE_OUTCOME_HIT = 1;
   // No usable memo: the container ran. CacheResult.miss_reason says why.
   CACHE_OUTCOME_MISS = 2;
-  // The run was submitted with no_cache: no memo was read; the container ran
-  // and its memo was refreshed.
+  // The run was submitted with no_cache, or resumed for another result of
+  // this task: no memo was read; the container ran and its memo was refreshed.
   CACHE_OUTCOME_BYPASSED = 3;
 }
 
@@ -282,8 +282,9 @@ message CacheContext {
   // deployment's ORK_CACHE_MAX_TTL, or the cap when the task set none. Always
   // positive.
   int64 ttl_seconds = 2;
-  // refresh is true when the run was submitted with no_cache: the Orker reads
-  // no memo, runs the container, and writes the memo from its fresh commit.
+  // refresh is true when the run was submitted with no_cache, and for a task
+  // or item a resume runs again for another result: the Orker reads no memo,
+  // runs the container, and writes the memo from its fresh commit.
   bool refresh = 3;
   // orkflow_namespace is set only when the task belongs to an Orkflow another
   // namespace shared through composition: the namespace that owns the
@@ -615,6 +616,10 @@ message AdoptEntry {
   ExpectedCommit expected = 5;
   // record_scope is the resume scope a RESOLUTION or COMPOSED record lives under.
   uint64 record_scope = 6;
+  // values is the values.json a VALUES entry reads, and inline_limit the most
+  // bytes of one it reads: a larger one is kept by reference alone.
+  ArtifactRef values = 7;
+  int64 inline_limit = 8;
 }
 
 // AdoptEntryKind is what a read-back entry reads.
@@ -626,6 +631,9 @@ enum AdoptEntryKind {
   ADOPT_ENTRY_KIND_RESOLUTION = 2;
   // COMPOSED is a composed task's record of its child's values.
   ADOPT_ENTRY_KIND_COMPOSED = 3;
+  // VALUES is the values.json of an awaited or composed task of a run whose
+  // results are not recorded.
+  ADOPT_ENTRY_KIND_VALUES = 4;
 }
 
 // ExpectedCommit is the identity a commit must name to be an activity's

@@ -19,8 +19,9 @@ import (
 // TestIntegration_S3_IdentityRecords: on the real store, a record laid down
 // by the test writer is read back found, held to the store's own instant,
 // which lies between when its create was sent and when it answered
-// (verify 49); a run's tasks are found on record by a delimited listing
-// that folds each task's objects into one entry (verify 51); a resume's
+// (verify 49); a run's tasks are found on record by a listing of their
+// objects (verify 51), and a task whose record was removed is not, though
+// the store keeps its directory; a resume's
 // record created just before its scope is listed is in the
 // listing (D26), and a stale second writer of a linked scope is refused
 // (D8); and a record of format 2 is unsupported until the binary
@@ -91,6 +92,23 @@ func TestIntegration_S3_IdentityRecords(t *testing.T) {
 	onRecord, err := store.TasksOnRecord(ctx, artifacts.SlotRun, ns, run, []string{"approve", "t0", "t1", "t2"})
 	if err != nil || !onRecord["approve"] || !onRecord["t0"] || !onRecord["t1"] || onRecord["t2"] {
 		t.Fatalf("verify 51: on record = %v, %v", onRecord, err)
+	}
+
+	// A record removed is no longer on record, on a store that keeps the
+	// directory it lay in (SeaweedFS lists an empty directory as a common
+	// prefix): what is on record is an object, never a directory. "t1" is
+	// removed while "t0" stays, and "t1" is asked among the others and
+	// alone.
+	if err := w.Remove(ctx, keyOf["t1"]); err != nil {
+		t.Fatal(err)
+	}
+	onRecord, err = store.TasksOnRecord(ctx, artifacts.SlotRun, ns, run, []string{"approve", "t0", "t1", "t2"})
+	if err != nil || !onRecord["approve"] || !onRecord["t0"] || onRecord["t1"] || onRecord["t2"] {
+		t.Fatalf("a removed record: on record = %v, %v", onRecord, err)
+	}
+	onRecord, err = store.TasksOnRecord(ctx, artifacts.SlotRun, ns, run, []string{"t1"})
+	if err != nil || onRecord["t1"] {
+		t.Fatalf("a removed record, alone: on record = %v, %v", onRecord, err)
 	}
 
 	// D26: a scope's record is found by listing it, so a record created just

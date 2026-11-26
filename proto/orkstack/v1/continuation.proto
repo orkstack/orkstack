@@ -4,7 +4,6 @@ package orkstack.v1;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
-import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -130,6 +129,33 @@ message RunCheckpointPart {
 
   // loss_events is set from E92; unset until it lands (v0.4.0 proto batch).
   RunLossEvents loss_events = 4;
+
+  // resume_state is set on part 0 only, for a resumed run with units still to
+  // run that read no memo.
+  RunResumeState resume_state = 5;
+}
+
+// RunResumeState is what a resumed run carries of its resume beside its rows.
+message RunResumeState {
+  // fresh are the units a resume runs again that read no memo, of those still
+  // to run, in task order.
+  repeated ResumeFreshUnits fresh = 1;
+}
+
+// ResumeFreshUnits are one task's: the task itself, every item of a fan-out
+// included, or some of its items.
+message ResumeFreshUnits {
+  // task is its index in the definition.
+  int32 task = 1;
+  bool all = 2;
+  // items are ranges of its items, ascending and apart.
+  repeated ResumeItemRange items = 3;
+}
+
+// ResumeItemRange is count items from first.
+message ResumeItemRange {
+  int32 first = 1;
+  int32 count = 2;
 }
 
 // RunEventSegment is the body of one event segment, gzip-compressed.
@@ -219,6 +245,8 @@ message RunResumeCarry {
   int64 resumed_after = 2;
   // resume_count is how many resumes of the run got going.
   int32 resume_count = 3;
+  // resume is the run's newest resume, as each of its snapshots lists it.
+  RunResume resume = 4;
 }
 
 // ResumeBlock is one resume's plan as the reset run executes it (E85 §4.1,
@@ -264,6 +292,12 @@ message ResumeUnits {
   repeated int64 encoded_sizes = 6;
   // recorded is, for each SETTLE or SLEEP_UNTIL unit, in unit order, its record.
   repeated ResumeRecordedUnit recorded = 7;
+  // run_fresh says, for each run, that its units read no memo (a task that
+  // succeeded before, so a person asked for another result) and write theirs
+  // from the result they make. Only units of cached tasks that run again are
+  // fresh; a fan-out's own unit being so, so is each item. Empty when no unit
+  // is.
+  repeated bool run_fresh = 8;
 }
 
 // ResumeFanOutItems is how many items a fan-out's base had.
@@ -275,10 +309,13 @@ message ResumeFanOutItems {
 
 // ResumeRecordedUnit is what a SETTLE or SLEEP_UNTIL unit is kept from.
 message ResumeRecordedUnit {
-  // values_ref is a SETTLE unit's recorded values, when it has any.
-  ArtifactRef values_ref = 1;
-  // wake_at is a SLEEP_UNTIL unit's recorded wake-up time.
-  google.protobuf.Timestamp wake_at = 2;
+  reserved 1, 2;
+  reserved "values_ref", "wake_at";
+  // row is the unit's row as the base ended, cut to what the resumed run
+  // cannot read back or derive (engine.cutRecordedRow): its times; a SETTLE
+  // unit's values_ref, artifacts, and who answered it or the child run it
+  // started with the artifacts it passed; a SLEEP_UNTIL unit's wake-up.
+  TaskRun row = 3;
 }
 
 // ResumeReadback is the read-back's pinned bounds (E85 §4.1).

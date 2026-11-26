@@ -30,6 +30,9 @@ type ConcurrencySettings struct {
 	FireUnavailableRetry      time.Duration
 	EventHoldersShown         int
 	APIHoldersShown           int
+	// FreezeMargin is how long before a reset's freeze ends it no longer
+	// starts the gate that replaces the frozen one.
+	FreezeMargin time.Duration
 }
 
 // DefaultConcurrencySettings are §9.6's defaults.
@@ -52,6 +55,7 @@ func DefaultConcurrencySettings() ConcurrencySettings {
 		FireUnavailableRetry:      5 * time.Minute,
 		EventHoldersShown:         5,
 		APIHoldersShown:           10,
+		FreezeMargin:              20 * time.Second,
 	}
 }
 
@@ -89,6 +93,7 @@ func (s ConcurrencySettings) Check(g GateTunables) error {
 		{"acquire_backoff_max", s.AcquireBackoffMax}, {"requeue_interval", s.RequeueInterval},
 		{"requeue_interval_max", s.RequeueIntervalMax}, {"retry_after", s.RetryAfter},
 		{"fire_unavailable_retry", s.FireUnavailableRetry},
+		{"freeze_margin", s.FreezeMargin},
 	} {
 		if c.v <= 0 {
 			return fmt.Errorf("engine.concurrency.%s is %s; it must be above zero", c.name, c.v)
@@ -105,6 +110,9 @@ func (s ConcurrencySettings) Check(g GateTunables) error {
 	case s.AcquireBackoffMin >= g.AcquireTimeout:
 		return fmt.Errorf("engine.concurrency.acquire_backoff_min (%s) must be below acquire_timeout (%s): a run could not ask its gate twice",
 			s.AcquireBackoffMin, g.AcquireTimeout)
+	case s.FreezeMargin >= g.FreezeTimeout:
+		return fmt.Errorf("engine.concurrency.freeze_margin (%s) must be below freeze_timeout (%s): no reset could be made within it",
+			s.FreezeMargin, g.FreezeTimeout)
 	case s.RequeueIntervalMax < s.RequeueInterval:
 		return fmt.Errorf("engine.concurrency.requeue_interval_max (%s) is below requeue_interval (%s)", s.RequeueIntervalMax, s.RequeueInterval)
 	case s.MaxRunSlotEntries > g.MaxEntries:

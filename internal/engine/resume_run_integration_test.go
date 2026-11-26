@@ -6,18 +6,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	archivecleanup "github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -131,6 +135,11 @@ func TestIntegration_ResumeRunResetsOnceHoweverItsSendsInterleave(t *testing.T) 
 		w.RegisterActivityWithOptions(acts.LoadResumePlan, activity.RegisterOptions{Name: engine.ActivityLoadResumePlan})
 		w.RegisterActivityWithOptions(acts.AdoptRecorded, activity.RegisterOptions{Name: engine.ActivityAdoptRecorded})
 	})
+	// What the reset sets aside is read from the archive of the ending before.
+	endings, err := artifacts.NewRunArchive(s3Config())
+	must.OKf(t, err, "run archive")
+	archiver := engine.NewRunArchiver(endings)
+	s.reader.WithEndings(archiver)
 	runID := fmt.Sprintf("ork-resume-run-%d", time.Now().UnixNano())
 	must.OKf(t, s.starter.StartRun(ctx, runID, compile(t, resumeTwoTaskDocument), nil, s.plan(10_000, nil)), "StartRun")
 	base := s.client.GetWorkflow(ctx, runID, "")
@@ -155,6 +164,7 @@ func TestIntegration_ResumeRunResetsOnceHoweverItsSendsInterleave(t *testing.T) 
 		ResumeSettings: settings,
 		Reader:         s.reader, Starter: s.starter, Pools: servedPools{}, Commits: commits, ArtifactStore: store,
 		Attempts: artifacts.NewMemoryAttemptStore(), Resume: cluster, ResumeRecords: records, ResumeClaims: claims, ResumeSnapshots: s.snapshots,
+		ResumeEndings: endings.(artifacts.RunEndingStore), ResumeArchiver: engine.NewHistoryArchiver(s.reader, archiver),
 		Releases: runningRelease{build: s.deployment.BuildID},
 		Now: func() time.Time {
 			clockMu.Lock()
@@ -227,6 +237,8 @@ func TestIntegration_ResumeRunResetsOnceHoweverItsSendsInterleave(t *testing.T) 
 	if after.ResetRunID != landed || current.ExecutionRunID != landed || current.BuildID != s.deployment.BuildID || after.BuildID != s.deployment.BuildID {
 		t.Fatalf("base %+v, current %+v; want the one reset %s, both on build %s", after, current, landed, s.deployment.BuildID)
 	}
+	checkResumedRunArchived(t, ctx, s, endings, archiver, runID, baseExecution, preview)
+
 	mu.Lock()
 	defer mu.Unlock()
 	reruns := 0
@@ -237,6 +249,93 @@ func TestIntegration_ResumeRunResetsOnceHoweverItsSendsInterleave(t *testing.T) 
 	}
 	if reruns != 1 {
 		t.Fatalf("dispatched %v, want deploy run again once", dispatched)
+	}
+}
+
+// checkResumedRunArchived is a resumed run that succeeded, from its end to its
+// retirement: its stream is whole, the sweep archives its second ending beside
+// its first and once, every list has it once as it ended last, and deleting it
+// deletes every execution of it.
+func checkResumedRunArchived(t *testing.T, ctx context.Context, s *canStack, endings artifacts.RunArchive,
+	archiver *engine.RunArchiver, runID, baseExecution string, resumed *orkstackv1.ResumeRunResponse,
+) {
+	t.Helper()
+	numbered := func(events []*orkstackv1.Event) []string {
+		var out []string
+		for _, e := range events {
+			out = append(out, fmt.Sprintf("%d:%s", e.GetSequence(), e.GetType()))
+		}
+		return out
+	}
+	live, err := s.reader.Events(ctx, runID, 0)
+	must.OKf(t, err, "the live stream")
+	for i, e := range live {
+		if e.GetSequence() != int64(i+1) {
+			t.Fatalf("the live stream is not whole: %v", numbered(live))
+		}
+	}
+	terminal, base := resumed.GetTerminalSequence(), resumed.GetSeqBase()
+	if live[terminal-1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED || live[base-1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED ||
+		live[len(live)-1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
+		t.Fatalf("the live stream = %v, want the failure at %d, the resume at %d and a success", numbered(live), terminal, base)
+	}
+
+	store := endings.(artifacts.RunEndingStore)
+	newest := archivecleanup.NewNewestEndings(store, s.reader, s.namespace)
+	if has, err := newest.HasRun(ctx, runID); err != nil || has {
+		t.Fatalf("archived before the sweep = %v, %v; only the ending set aside is", has, err)
+	}
+	sweeper := archivecleanup.NewSweeper(archivecleanup.CleanupConfig{TemporalNamespace: s.namespace, Interval: time.Hour, BatchSize: 10},
+		s.reader, endings, engine.NewHistoryArchiver(s.reader, archiver), s.reader, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithEndings(store, newest).WithClock(func() time.Time { return time.Now().Add(2 * time.Hour) })
+	sweepUntil(t, ctx, sweeper, func(r archivecleanup.SweepResult) bool { return r.Archived == 1 })
+	if again, err := sweeper.RunOnce(ctx); err != nil || again.Archived != 0 {
+		t.Fatalf("a second pass = %+v, %v; want nothing more archived", again, err)
+	}
+	if has, err := newest.HasRun(ctx, runID); err != nil || !has {
+		t.Fatalf("archived after the sweep = %v, %v", has, err)
+	}
+	body, err := store.GetEnding(ctx, runID, uint64(base))
+	must.OKf(t, err, "the second ending's body")
+	run, archived, err := engine.UnmarshalRunArchive(body)
+	must.OKf(t, err, "decode it")
+	gaps, err := engine.UnmarshalRunArchiveGaps(body)
+	if err != nil || len(gaps) != 0 || run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || fmt.Sprint(numbered(archived)) != fmt.Sprint(numbered(live)) {
+		t.Fatalf("archived %v %v, gaps %v, %v; want the live stream %v", run.GetStatus(), numbered(archived), gaps, err, numbered(live))
+	}
+	first, err := store.GetEnding(ctx, runID, 0)
+	must.OKf(t, err, "the first ending's body")
+	if run, events, err := engine.UnmarshalRunArchive(first); err != nil || run.GetStatus() != orkstackv1.Status_STATUS_FAILED || int64(len(events)) != terminal {
+		t.Fatalf("the first ending = %v with %d events, %v; want FAILED with %d", run.GetStatus(), len(events), err, terminal)
+	}
+	for status, want := range map[orkstackv1.Status]int{orkstackv1.Status_STATUS_FAILED: 0, orkstackv1.Status_STATUS_SUCCEEDED: 1} {
+		if runs, err := archiver.ListRuns(ctx, engine.ArchiveQuery{Namespace: "default", Status: status}); err != nil || len(runs) != want {
+			t.Errorf("the archive lists %d %v runs, %v; want %d", len(runs), status, err, want)
+		}
+	}
+
+	must.OKf(t, s.reader.DeleteWorkflow(ctx, s.namespace, runID), "DeleteWorkflow")
+	awaitWorkflowGone(t, ctx, s.reader, s.namespace, runID)
+	for {
+		_, err := s.client.DescribeWorkflow(ctx, runID, baseExecution)
+		var gone *serviceerror.NotFound
+		if errors.As(err, &gone) {
+			break
+		}
+		must.OKf(t, ctx.Err(), "the execution the resume set aside was not deleted (%v)", err)
+		select {
+		case <-ctx.Done():
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if has, err := newest.HasRun(ctx, runID); err != nil || !has {
+		t.Errorf("with the cluster's copy gone, archived = %v, %v", has, err)
+	}
+	if after, err := archivecleanup.NewEndingRecords(store).ResumedAfter(ctx, runID, time.Time{}); err != nil || after {
+		t.Errorf("resumed after its newest archived ending = %v, %v", after, err)
+	}
+	if run, err := archiver.LoadRun(ctx, runID); err != nil || run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Errorf("with the cluster's copy gone the run reads %v, %v", run.GetStatus(), err)
 	}
 }
 

@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	enumspb "go.temporal.io/api/enums/v1"
+	failurepb "go.temporal.io/api/failure/v1"
+	historypb "go.temporal.io/api/history/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -450,10 +453,11 @@ func TestResumeRun_ResumeAgainAfterAPlanThatCouldNotRun(t *testing.T) {
 			ended := f.cluster.executions[""]
 			ended.Status, ended.CloseTime = enumspb.WORKFLOW_EXECUTION_STATUS_FAILED, resumeEpoch.Add(2*time.Hour)
 			f.cluster.executions[""], f.cluster.executions[ended.ExecutionRunID] = ended, ended
-			// It dispatched nothing; its rows are its base's, which did.
-			f.cluster.histories[ended.ExecutionRunID] = failedHistory(t)
+			// It dispatched nothing; its rows are its base's, which did, and
+			// say nothing of that: a failed task's row holds no attempt.
+			f.cluster.histories[ended.ExecutionRunID] = resetFrom(t, failedHistory(t), "exec-1", ended.ExecutionRunID, code)
 			for _, row := range f.run.TaskRuns {
-				row.Attempt = 1
+				row.Attempt = 0
 			}
 			preview := f.preview(t)
 			if preview.GetResumesUsed() != 0 || preview.GetTerminalSequence() != 10 {
@@ -467,6 +471,82 @@ func TestResumeRun_ResumeAgainAfterAPlanThatCouldNotRun(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestResumeRun_APlanThatCouldNotRunWhoseBaseIsGone: where the execution a
+// resume that could not be carried out was reset from is no longer kept,
+// nothing says what was dispatched, and the run is refused for good, never
+// planned from its rows; as is one whose resumes failed so in a row more
+// often than are followed back.
+func TestResumeRun_APlanThatCouldNotRunWhoseBaseIsGone(t *testing.T) {
+	never := func(t *testing.T, resets int) *resumeFixture {
+		f := newResumeFixture(t, nil)
+		f.resets(true)
+		if _, err := f.confirm(t, nil); err != nil {
+			t.Fatal(err)
+		}
+		f.reader.mu.Lock()
+		f.run.Status, f.run.Error = orkstackv1.Status_STATUS_FAILED, &orkstackv1.Error{Code: engine.ReasonResumePlanInvalid}
+		f.reader.mu.Unlock()
+		ended := f.cluster.executions[""]
+		ended.Status, ended.CloseTime = enumspb.WORKFLOW_EXECUTION_STATUS_FAILED, resumeEpoch.Add(2*time.Hour)
+		f.cluster.executions[""], f.cluster.executions[ended.ExecutionRunID] = ended, ended
+		// Each execution was reset from the one before, none of which ran.
+		base := "exec-1"
+		for i := range resets {
+			own := ended.ExecutionRunID
+			if i < resets-1 {
+				own = fmt.Sprintf("never-%d", i)
+			}
+			f.cluster.histories[own] = resetFrom(t, failedHistory(t), base, own, engine.ReasonResumePlanInvalid)
+			base = own
+		}
+		return f
+	}
+	for name, tt := range map[string]struct {
+		resets int
+		gone   bool
+		reason string
+	}{
+		"its base is no longer kept":                        {1, true, "HISTORY_UNAVAILABLE"},
+		"its resumes failed in a row past what is followed": {engine.MaxResumesPerRun + 1, false, "STATE_UNREADABLE"},
+		"as many in a row as are followed":                  {engine.MaxResumesPerRun, false, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := never(t, tt.resets)
+			if tt.gone {
+				delete(f.cluster.histories, "exec-1")
+			}
+			_, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true})
+			if tt.reason == "" {
+				if err != nil {
+					t.Fatalf("= %v; want it planned from what exec-1 dispatched", err)
+				}
+				return
+			}
+			if r := refusalOf(t, err); r.GetReason() != tt.reason || r.GetClass() != orkstackv1.ResumeRefusalClass_RESUME_REFUSAL_CLASS_PERMANENT {
+				t.Fatalf("refusal = %v, want %s, for good", r, tt.reason)
+			}
+		})
+	}
+}
+
+// resetFrom is history as the reset run made from base ended it: its copied
+// prefix, its reset, and its close with code.
+func resetFrom(t testing.TB, history []*historypb.HistoryEvent, base, run, code string) []*historypb.HistoryEvent {
+	t.Helper()
+	out := slices.Clone(history[:len(history)-1])
+	out = append(out, &historypb.HistoryEvent{EventType: enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED,
+		Attributes: &historypb.HistoryEvent_WorkflowTaskFailedEventAttributes{WorkflowTaskFailedEventAttributes: &historypb.WorkflowTaskFailedEventAttributes{
+			Cause: enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW, BaseRunId: base, NewRunId: run,
+			Failure: &failurepb.Failure{Message: "ork-resume:v1:..."}}}},
+		&historypb.HistoryEvent{EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED, EventTime: history[len(history)-1].GetEventTime(),
+			Attributes: &historypb.HistoryEvent_WorkflowExecutionFailedEventAttributes{WorkflowExecutionFailedEventAttributes: &historypb.WorkflowExecutionFailedEventAttributes{
+				Failure: &failurepb.Failure{Message: code, FailureInfo: &failurepb.Failure_ApplicationFailureInfo{ApplicationFailureInfo: &failurepb.ApplicationFailureInfo{Type: code}}}}}})
+	for i, e := range out {
+		e.EventId = int64(i + 1)
+	}
+	return out
 }
 
 // TestResumeRun_ResetUnderAPlanWhoseRecordIsGone: a run reset under a plan

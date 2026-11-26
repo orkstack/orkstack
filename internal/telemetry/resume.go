@@ -60,9 +60,9 @@ const (
 // resumed. A resume gives every row a disposition before anything else, so
 // one row of a resumed run says it; a plan that could not be run says it by
 // its reason. The one ending neither names is a resume refused, before its
-// dispositions, for its concurrency limit: RUN_CONCURRENCY_UNSUPPORTED ends
-// runs never resumed too. ResumeRun refuses such a run, and the path goes
-// with resumeConcurrencyBuilt (internal/engine).
+// dispositions, because its tasks are held to a concurrency limit:
+// RUN_CONCURRENCY_UNSUPPORTED ends runs never resumed too. ResumeRun refuses
+// such a run (engine.ResumeLimitUnbuilt).
 func resumptionAttr(run *orkstackv1.Run) []attribute.KeyValue {
 	resumed := slices.ContainsFunc(run.GetTaskRuns(), func(row *orkstackv1.TaskRun) bool {
 		return row.GetResumeDisposition() != orkstackv1.ResumeDisposition_RESUME_DISPOSITION_UNSPECIFIED

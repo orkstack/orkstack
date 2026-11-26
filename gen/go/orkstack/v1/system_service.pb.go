@@ -996,7 +996,10 @@ type Release struct {
 	OpenIdentityRuns int64 `protobuf:"varint,16,opt,name=open_identity_runs,json=openIdentityRuns,proto3" json:"open_identity_runs,omitempty"`
 	// queued_runs is set from E88; unset until it lands (v0.4.0 proto batch).
 	QueuedRuns int64 `protobuf:"varint,17,opt,name=queued_runs,json=queuedRuns,proto3" json:"queued_runs,omitempty"`
-	// resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch).
+	// resumable_runs is how many failed runs are pinned to this release and
+	// still held by the cluster: one that can be resumed, can be only while the
+	// release runs. It counts child runs, which are never resumed themselves. 0
+	// where the engine resumes no runs.
 	ResumableRuns int64 `protobuf:"varint,18,opt,name=resumable_runs,json=resumableRuns,proto3" json:"resumable_runs,omitempty"`
 	// paused_runs is how many of runs_in_flight are paused: each keeps this
 	// release from draining until its pause ends (at most the deployment's

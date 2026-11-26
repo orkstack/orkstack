@@ -445,6 +445,28 @@ func TestGetStats_CountsTheRunsWaitingForASlot(t *testing.T) {
 	}
 }
 
+// TestGetStats_CountsAResumedRunOnce: a run that was resumed is counted once,
+// as it ended, whichever of the two records holds it.
+func TestGetStats_CountsAResumedRunOnce(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	fixture := newStatsFixture(t, now, "payments")
+	created := now.Add(-time.Hour)
+	fixture.archiveRun(t, "payments", "charge", orkstackv1.Status_STATUS_FAILED, created)
+	if err := fixture.archive.PutRun(context.Background(), artifacts.RunRecord{
+		RunID: "ork-resumed", Namespace: "payments", Orkflow: "charge", Status: "succeeded", Time: created, Scope: 7, JSONL: []byte("{}\n"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fixture.reader.executions["payments"] = engine.Executions{
+		Running: []*orkstackv1.Run{liveRun("ork-going-on", "payments", "charge", created)},
+		Resumed: map[string]struct{}{"ork-resumed": {}, "ork-going-on": {}},
+	}
+	got := getStats(t, api.NewStatsHandler(fixture.svc, 0), &orkstackv1.GetStatsRequest{Namespace: "payments"})
+	if got.GetResumedRuns() != 2 || got.GetRunsByStatus()["succeeded"] != 1 || got.GetRunsByStatus()["failed"] != 1 || got.GetRunsByStatus()["running"] != 1 {
+		t.Fatalf("resumed %d, by status %v; want 2 resumed, each run once", got.GetResumedRuns(), got.GetRunsByStatus())
+	}
+}
+
 // TestGetStats_ACachedAnswerEqualsTheUncachedOne holds the cache to the only
 // promise that makes one acceptable here: it is an optimisation, so it cannot
 // change an answer.

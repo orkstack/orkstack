@@ -76,6 +76,11 @@ type fakeConcReader struct {
 	// gates are the namespace's gates ConcurrencyService lists.
 	gates    []engine.GateView
 	gatesErr error
+	// waiting are the runs that wait in a line; describedRuns every run
+	// asked about.
+	waiting       map[string]bool
+	waitingErr    error
+	describedRuns []string
 }
 
 func (f *fakeConcReader) ClosedRuns(_ context.Context, runs []string) ([]string, error) {
@@ -88,6 +93,22 @@ func (f *fakeConcReader) ClosedRuns(_ context.Context, runs []string) ([]string,
 	var out []string
 	for _, r := range runs {
 		if f.closed[r] {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeConcReader) WaitingRuns(_ context.Context, runs []string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.describedRuns = append(f.describedRuns, runs...)
+	if f.waitingErr != nil {
+		return nil, f.waitingErr
+	}
+	var out []string
+	for _, r := range runs {
+		if f.waiting[r] {
 			out = append(out, r)
 		}
 	}
@@ -353,22 +374,99 @@ tasks:
     with: { op: eval, command: ["true"] }
 `
 
-// TestSubmitRun_RefusesALimitInAComposedChild: a child run's limit is not
-// planned by this release, so a tree that would start one is refused rather
-// than run the child outside its limit.
-func TestSubmitRun_RefusesALimitInAComposedChild(t *testing.T) {
+// composingYAML is an Orkflow name that composes inner@1.0.0, held to key
+// itself when key is set.
+func composingYAML(name, key string) string {
+	doc := "apiVersion: orkstack/v1\nkind: Orkflow\nname: " + name + "\nversion: \"1.0.0\"\n"
+	if key != "" {
+		doc += "concurrency:\n  key: \"" + key + "\"\n  limit: 1\n"
+	}
+	return doc + "tasks:\n  - id: release\n    uses: orkflow:inner@1.0.0\n"
+}
+
+// TestSubmitRun_PlansAComposedChildsLimit: a child's limit is planned with its
+// key as it is written, for its parent to render; the deployment is asked once
+// whether it can hold one, and a run whose tree holds none asks nothing.
+func TestSubmitRun_PlansAComposedChildsLimit(t *testing.T) {
+	inner := strings.Replace(limitedChildYAML, "concurrency:\n  limit: 1", "inputs:\n  env:\n    type: string\n    default: prod\n"+
+		"concurrency:\n  key: \"db:{{ .inputs.env }}\"\n  limit: 2\n  on_limit: refuse\n  max_queued: 0", 1)
+	for name, c := range map[string]struct {
+		inner, key, label string
+	}{
+		"its own key":       {limitedChildYAML, "ork:orkflow:default/inner", "ork:orkflow:default/inner"},
+		"a key from inputs": {inner, "db:{{ .inputs.env }}", "db:{{ .inputs.env }}"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			starter, caps := &concStarter{fakeStarter: &fakeStarter{}, indexed: true}, &fakeCapabilities{}
+			svc := concService(t, starter, caps, nil)
+			must.OK(t, applyDoc(t, svc, c.inner))
+			must.OK(t, applyDoc(t, svc, composingYAML("outer", "")))
+			must.OK(t, submitName(svc, "outer"))
+			plan := starter.plans[0]
+			child := plan.Children["release"].Concurrency
+			if plan.Concurrency != nil || child == nil || child.Slot.Key != c.key || child.Slot.Label != c.label || child.Slot.GateID != "" ||
+				child.Plan.Namespace != "default" || child.Plan.Orkflow != "inner" || len(child.Plan.Slots) != 0 || child.MaxActiveKeys != 1000 ||
+				child.Slot.QueueTimeoutSeconds != 7200 {
+				t.Fatalf("plan %+v, child %+v", plan.Concurrency, child)
+			}
+			if caps.questions() == 0 {
+				t.Fatal("the deployment was not asked whether it can hold a limit")
+			}
+		})
+	}
+	starter, caps := &concStarter{fakeStarter: &fakeStarter{}, indexed: true}, &fakeCapabilities{}
+	svc := concService(t, starter, caps, nil)
+	must.OK(t, applyDoc(t, svc, strings.Replace(limitedChildYAML, "concurrency:\n  limit: 1\n", "", 1)))
+	must.OK(t, applyDoc(t, svc, composingYAML("outer", "")))
+	must.OK(t, submitName(svc, "outer"))
+	if starter.plans[0].Children["release"].Concurrency != nil || caps.questions() != 0 {
+		t.Fatalf("a tree with no limit planned %+v and asked %d questions", starter.plans[0].Children["release"].Concurrency, caps.questions())
+	}
+}
+
+// TestSubmitRun_AChildsLimitRefusals: a deployment that cannot hold a child's
+// limit, a child key its parent holds, and one a run above its parent holds,
+// are refused before a run exists.
+func TestSubmitRun_AChildsLimitRefusals(t *testing.T) {
+	keyed := strings.Replace(limitedChildYAML, "concurrency:\n", "concurrency:\n  key: db\n", 1)
+	for name, c := range map[string]struct {
+		docs    []string
+		submit  string
+		indexed bool
+		code    connect.Code
+		says    []string
+	}{
+		"not indexed": {docs: []string{limitedChildYAML, composingYAML("outer", "")}, submit: "outer", code: connect.CodeFailedPrecondition,
+			says: []string{"CONCURRENCY_UNSUPPORTED", "cause=index"}},
+		"its parent's key": {docs: []string{keyed, composingYAML("outer", "db")}, submit: "outer", indexed: true, code: connect.CodeInvalidArgument,
+			says: []string{"CONCURRENCY_KEY_CONFLICT", "task release", "inner@1.0.0", "key db"}},
+		"a key two runs above": {docs: []string{keyed, composingYAML("middle", ""),
+			strings.Replace(composingYAML("top", "db"), "orkflow:inner@1.0.0", "orkflow:middle@1.0.0", 1)}, submit: "top", indexed: true,
+			code: connect.CodeInvalidArgument, says: []string{"CONCURRENCY_KEY_CONFLICT", "inner@1.0.0"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			starter := &concStarter{fakeStarter: &fakeStarter{}, indexed: c.indexed}
+			svc := concService(t, starter, &fakeCapabilities{}, nil)
+			for _, doc := range c.docs {
+				must.OK(t, applyDoc(t, svc, doc))
+			}
+			err := submitName(svc, c.submit)
+			if connect.CodeOf(err) != c.code || len(starter.startedRuns()) != 0 {
+				t.Fatalf("submit = %v, %d runs started; want %v and none", err, len(starter.startedRuns()), c.code)
+			}
+			for _, says := range c.says {
+				if !strings.Contains(err.Error(), says) {
+					t.Errorf("%v; want it to say %q", err, says)
+				}
+			}
+		})
+	}
+	// Two children on one key, neither above the other, share its line.
 	starter := &concStarter{fakeStarter: &fakeStarter{}, indexed: true}
 	svc := concService(t, starter, &fakeCapabilities{}, nil)
-	must.OK(t, applyDoc(t, svc, limitedChildYAML))
-	must.OK(t, applyDoc(t, svc, outerYAML("")))
-	err := submitName(svc, "outer")
-	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "CONCURRENCY_UNSUPPORTED") ||
-		!strings.Contains(err.Error(), "inner@1.0.0") {
-		t.Fatalf("submit = %v; want CONCURRENCY_UNSUPPORTED naming inner@1.0.0", err)
-	}
-	if len(starter.startedRuns()) != 0 {
-		t.Fatal("a refused submit started a run")
-	}
+	must.OK(t, applyDoc(t, svc, keyed))
+	must.OK(t, applyDoc(t, svc, composingYAML("outer", "other")+"  - id: again\n    uses: orkflow:inner@1.0.0\n"))
+	must.OK(t, submitName(svc, "outer"))
 }
 
 // TestSubmitRun_AKeyedRetryReturnsItsRunWhateverTheLimitChecks: a retry

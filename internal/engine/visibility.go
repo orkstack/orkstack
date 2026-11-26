@@ -205,12 +205,20 @@ func (r *TemporalRunReader) resolveChains(
 // listChainRecords lists every record of ids and returns the latest of each.
 func (r *TemporalRunReader) listChainRecords(ctx context.Context, ids []string) (map[string]*workflowpb.WorkflowExecutionInfo, error) {
 	latest := make(map[string]*workflowpb.WorkflowExecutionInfo, len(ids))
-	keep := func(info *workflowpb.WorkflowExecutionInfo) {
+	err := r.eachRecordOf(ctx, fmt.Sprintf("WorkflowType = %q", RunWorkflowType), ids, func(info *workflowpb.WorkflowExecutionInfo) {
 		id := info.GetExecution().GetWorkflowId()
 		if current, ok := latest[id]; !ok || laterRecord(info, current) {
 			latest[id] = info
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
+	return latest, nil
+}
+
+// eachRecordOf hands visit every record of ids that base selects.
+func (r *TemporalRunReader) eachRecordOf(ctx context.Context, base string, ids []string, visit func(*workflowpb.WorkflowExecutionInfo)) error {
 	for start := 0; start < len(ids); start += resolveChainsBatch {
 		batch := ids[start:min(start+resolveChainsBatch, len(ids))]
 		if !r.chainINUnsupported.Load() {
@@ -218,25 +226,23 @@ func (r *TemporalRunReader) listChainRecords(ctx context.Context, ids []string) 
 			for i, id := range batch {
 				quoted[i] = strconv.Quote(id)
 			}
-			query := fmt.Sprintf("WorkflowType = %q AND WorkflowId IN (%s)", RunWorkflowType, strings.Join(quoted, ", "))
-			err := r.listAll(ctx, query, keep)
+			err := r.listAll(ctx, fmt.Sprintf("%s AND WorkflowId IN (%s)", base, strings.Join(quoted, ", ")), visit)
 			if err == nil {
 				continue
 			}
 			var invalid *serviceerror.InvalidArgument
 			if !errors.As(err, &invalid) {
-				return nil, err
+				return err
 			}
 			r.chainINUnsupported.Store(true)
 		}
 		for _, id := range batch {
-			query := fmt.Sprintf("WorkflowType = %q AND WorkflowId = %q", RunWorkflowType, id)
-			if err := r.listAll(ctx, query, keep); err != nil {
-				return nil, err
+			if err := r.listAll(ctx, fmt.Sprintf("%s AND WorkflowId = %q", base, id), visit); err != nil {
+				return err
 			}
 		}
 	}
-	return latest, nil
+	return nil
 }
 
 // chainStillLive describes a chain caught mid-switch: live when its current

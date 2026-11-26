@@ -313,3 +313,64 @@ func TestAdoptRecorded_ReportsTheTriesOfACallThatIsOver(t *testing.T) {
 		})
 	}
 }
+
+// A call's failure names the unit it is of, whichever entry of the call that
+// is, so no other is blamed for it.
+func TestAdoptRecorded_AFailureNamesItsUnit(t *testing.T) {
+	f := newAdoptFixture(t)
+	f.commit(t, "mem://c/build", `{}`)
+	gone := entry("mem://c/gone", adoptExpected)
+	gone.TaskId, gone.Item = "convert", 4
+	for name, tc := range map[string]struct {
+		commits artifacts.CommitStore
+		entries []*orkstackv1.AdoptEntry
+		want    adoptFailedUnit
+	}{
+		"final":           {f.commits, []*orkstackv1.AdoptEntry{entry("mem://c/build", adoptExpected), gone}, adoptFailedUnit{"convert", 4}},
+		"will be retried": {unansweringCommits{}, []*orkstackv1.AdoptEntry{entry("mem://c/build", adoptExpected)}, adoptFailedUnit{"build", -1}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewResumeActivities(tc.commits, f.values).AdoptRecorded(context.Background(), adoptInput(tc.entries...))
+			var got adoptFailedUnit
+			if !categoryOf(err).appDetails(&got) || got != tc.want {
+				t.Fatalf("error %v names %+v, want %+v", err, got, tc.want)
+			}
+			if categoryOf(err).nonRetryable() != (name == "final") {
+				t.Fatalf("error %v is retryable = %v", err, !categoryOf(err).nonRetryable())
+			}
+		})
+	}
+}
+
+// stallingCommits answers no read: those of uri wait until they are given up,
+// every other is refused at once.
+type stallingCommits struct{ uri string }
+
+func (stallingCommits) Create(context.Context, string, *orkstackv1.ActivityCommit) (artifacts.CommitRecord, error) {
+	return artifacts.CommitRecord{}, errors.New("connection refused")
+}
+func (s stallingCommits) Get(ctx context.Context, uri string) (artifacts.CommitRecord, error) {
+	if uri == s.uri {
+		<-ctx.Done()
+		return artifacts.CommitRecord{}, ctx.Err()
+	}
+	return artifacts.CommitRecord{}, errors.New("connection refused")
+}
+
+// A store that answers no read fails the call on the first entry it did not
+// read back (§4.3), whichever read gave up first; a final failure still names
+// its own.
+func TestAdoptRecorded_AnOutageFailsTheFirstEntryNotReadBack(t *testing.T) {
+	f := newAdoptFixture(t)
+	lint := entry("mem://c/lint", adoptExpected)
+	lint.TaskId = "lint"
+	_, err := NewResumeActivities(stallingCommits{uri: "mem://c/build"}, f.values).AdoptRecorded(context.Background(),
+		adoptInput(entry("mem://c/build", adoptExpected), lint))
+	var got adoptFailedUnit
+	if !categoryOf(err).appDetails(&got) || got != (adoptFailedUnit{"build", -1}) || categoryOf(err).nonRetryable() {
+		t.Fatalf("error %v names %+v, retryable %v; want build, retryable", err, got, !categoryOf(err).nonRetryable())
+	}
+	if categoryOf(err).appType() != ReasonCommitReadFailed {
+		t.Fatalf("error %v is %q, want %s", err, categoryOf(err).appType(), ReasonCommitReadFailed)
+	}
+}

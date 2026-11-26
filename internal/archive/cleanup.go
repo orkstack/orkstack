@@ -370,6 +370,7 @@ func (s CleanupStats) missingHeld() bool {
 type Cleaner struct {
 	config     CleanupConfig
 	archive    artifacts.RunArchive
+	bodies     RunBodyChecker
 	cluster    RunRetirer
 	namespaces NamespaceLister
 	retention  *RetentionController
@@ -428,7 +429,7 @@ func NewCleaner(
 			"retention_buffer", config.RetentionBuffer, "interval", config.Interval)
 	}
 	c := &Cleaner{
-		config: config, archive: archive, cluster: cluster,
+		config: config, archive: archive, bodies: archive, cluster: cluster,
 		namespaces: namespaces, retention: retention, logger: logger, now: time.Now,
 		ticker: func(d time.Duration) (<-chan time.Time, func()) {
 			t := time.NewTicker(d)
@@ -449,6 +450,26 @@ func (c *Cleaner) WithFinishReader(r RunFinishReader) *Cleaner {
 		c.finish = r
 	}
 	return c
+}
+
+// WithBodies sets how the cleaner asks whether a run's archive is whole before
+// its execution is deleted (NewestEndings, for runs that may be resumed).
+func (c *Cleaner) WithBodies(b RunBodyChecker) *Cleaner {
+	if b != nil {
+		c.bodies = b
+	}
+	return c
+}
+
+// resumed reports whether a resume marked the run.
+func (c *Cleaner) resumed(ctx context.Context, runID string) (bool, error) {
+	asker, ok := c.bodies.(interface {
+		Resumed(ctx context.Context, runID string) (bool, error)
+	})
+	if !ok {
+		return false, nil // an archive with one ending a run resumes none
+	}
+	return asker.Resumed(ctx, runID)
 }
 
 // WithObserver sets where each pass's tally goes. Nil keeps the logs only.
@@ -766,6 +787,18 @@ func (c *Cleaner) passDetailed(ctx context.Context, startAfter string) (p Cleanu
 				// executions are missing early (missingHeld).
 				missingDue = append(missingDue, dueRun{entry: entry, dueAt: finishedAt.Add(retention)})
 			case closedAt.IsZero():
+				resumed, err := c.resumed(ctx, entry.RunID)
+				if err != nil {
+					fail(entry, CleanupStepArchiveCheck, fmt.Errorf("it is running, and whether it was resumed cannot be told: %w", err),
+						"artifact cleanup kept a running run it could not tell was resumed")
+					break
+				}
+				if resumed {
+					// It ended, and a resume started it again: its row is on
+					// its way out, and it is retired once it ends for good.
+					c.logger.Info("artifact cleanup left a resumed run that is running", "run_id", entry.RunID, "namespace", entry.Namespace)
+					break
+				}
 				// Impossible by construction — the archive is written by the
 				// terminal PublishEvent, or by the sweep once the run has
 				// closed — and the one case where deletion would TERMINATE a
@@ -782,7 +815,7 @@ func (c *Cleaner) passDetailed(ctx context.Context, startAfter string) (p Cleanu
 				// be there. An index row with no body is an archive write that
 				// stopped short, which Sweeper finishes.
 				dueAt = closedAt.Add(retention)
-				has, err := c.archive.HasRun(ctx, entry.RunID)
+				has, err := c.bodies.HasRun(ctx, entry.RunID)
 				if err != nil {
 					fail(entry, CleanupStepArchiveCheck, fmt.Errorf("check its archive body: %w", err), "artifact cleanup archive check failed")
 					break

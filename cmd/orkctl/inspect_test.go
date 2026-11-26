@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,6 +452,10 @@ func TestRunInspect_UnknownTaskAndOtherNamespaceAreNotFound(t *testing.T) {
 }
 
 // RunDefinition is a fake's: the start record's own definition.
+func (*liveReader) RunSavedState(context.Context, string, string, *orkstackv1.RunContinuation) (*orkstackv1.Run, error) {
+	return nil, errors.New("no saved state")
+}
+
 func (l *liveReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
 	return start.Orkflow, nil
 }

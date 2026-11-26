@@ -272,6 +272,8 @@ message ResumeTask {
   ResumeCategory category = 3;
   // why is the sentence the plan lists the task with.
   string why = 4;
+  // previous_outcome is how it ended before: SUCCEEDED for a result an
+  // earlier resume kept and did not read back.
   Status previous_outcome = 5;
   ResumeMemoState memo = 6;
   // callback_works: an awaited task's callback token accepts one more
@@ -325,7 +327,7 @@ enum ResumeCategory {
   RESUME_CATEGORY_SETTLED = 9;
   // Stays skipped.
   RESUME_CATEGORY_SKIPPED = 10;
-  // Waits again, from the resume, with a fresh deadline.
+  // Waits again, in full, once what it needs is done.
   RESUME_CATEGORY_WAITS_AGAIN = 11;
   // A sleep that already started: it wakes when it would have.
   RESUME_CATEGORY_SLEEP_KEPT = 12;
@@ -341,10 +343,10 @@ enum ResumeCategory {
 enum ResumeMemoState {
   // Not a cached task.
   RESUME_MEMO_STATE_UNSPECIFIED = 0;
-  // It succeeded before: it runs again, and its memo points at the new
-  // result.
+  // It succeeded before, or an earlier resume was to run it again: it runs
+  // again, and its memo points at the new result.
   RESUME_MEMO_STATE_BYPASSED = 1;
-  // It never succeeded: its memo is looked up as on any run.
+  // Neither: its memo is looked up as on any run.
   RESUME_MEMO_STATE_LOOKED_UP = 2;
 }
 
@@ -383,6 +385,8 @@ enum ResumeWarningKind {
   RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN = 4;
   // The force cancel of the run is still finishing.
   RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING = 5;
+  // The run has a timeout, and gets a fresh one.
+  RESUME_WARNING_KIND_FRESH_TIMEOUT = 6;
 }
 
 // ResumeRefusal is the error detail of a refused ResumeRun.
@@ -398,6 +402,10 @@ message ResumeRefusal {
   string message = 6;
   // diff: for PLAN_CHANGED, what changed since the preview.
   ResumeDiff diff = 7;
+  // highest_sequence: the run's highest stored event, which accepting a gap
+  // in its events names (accepted_highest_seq); set with cause
+  // events_above_terminal, and when that event moved on since.
+  int64 highest_sequence = 8;
 }
 
 // ResumeRefusalClass is what a refused caller can do.

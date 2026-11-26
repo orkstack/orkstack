@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -365,6 +366,48 @@ func TestReader_ARunsNamespaceWaitsLittleForItsKey(t *testing.T) {
 	})
 }
 
+// A resume reads its base's history with the base's own payloads' converter,
+// and only once the execution's start is held to the run: a sealed base is
+// scanned like any other, and a keyless one, another run's start or no start
+// is an error before anything of it is read.
+func TestReader_PayloadsOfAHeldStart(t *testing.T) {
+	ctx := context.Background()
+	r, rk, h := sealedReaderFixture(t, nil, nil)
+	r.WithPayloadKeys(rk)
+	dc, err := r.PayloadsOf(ctx, "ork-read", h.events[0])
+	must.OK(t, err)
+	var wf *orkstackv1.Orkflow
+	must.OK(t, dc.FromPayload(h.events[0].GetWorkflowExecutionStartedEventAttributes().GetInput().GetPayloads()[1], &wf))
+	event, _, err := decodePublishEvent(dc, "ork-read", h.events[1])
+	if err != nil || wf.GetName() != "flow" || event.GetMessage() != Canary {
+		t.Fatalf("read %v and %v, %v", wf, event, err)
+	}
+	plain := &historypb.HistoryEvent{Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
+		WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{}}}
+	if _, err := r.PayloadsOf(ctx, "ork-plain", plain); err != nil {
+		t.Errorf("a run that is not sealed: %v", err)
+	}
+	if _, err := newRunReader(h, nil).WithPayloadKeys(failingKeys{errors.New("down")}).PayloadsOf(ctx, "ork-read", h.events[0]); !errors.Is(err, errPayloadKeyUnavailable) {
+		t.Errorf("a key that cannot be had = %v, want errPayloadKeyUnavailable", err)
+	}
+	for name, ask := range map[string]func() error{
+		"another run's start": func() error { _, err := r.PayloadsOf(ctx, "ork-other", h.events[0]); return err },
+		"no start":            func() error { _, err := r.PayloadsOf(ctx, "ork-read", h.events[1]); return err },
+		"nothing":             func() error { _, err := r.PayloadsOf(ctx, "ork-read", nil); return err },
+		"a keyless run": func() error {
+			cut := proto.Clone(h.events[0]).(*historypb.HistoryEvent)
+			in := cut.GetWorkflowExecutionStartedEventAttributes().GetInput()
+			in.Payloads = in.Payloads[:3]
+			_, err := r.PayloadsOf(ctx, "ork-read", cut)
+			return err
+		},
+	} {
+		if err := ask(); err == nil {
+			t.Errorf("%s gave a converter", name)
+		}
+	}
+}
+
 // What started a run is never guessed: a key that could not be had is said,
 // and a start that does not open is an error.
 func TestReader_WhatStartedARunIsNotGuessed(t *testing.T) {
@@ -572,6 +615,9 @@ func TestReader_EveryReadHoldsTheStartFirst(t *testing.T) {
 			_, own, _, args := readerFixture(t)
 			attrs.ContinuedExecutionRunId = "r0"
 			attrs.Input.Payloads = append(attrs.Input.Payloads, args(own, &orkstackv1.RunContinuation{Generation: 1, EventSequence: 7}).Payloads...)
+			if lineage, err := r.lineage(ctx, "ork-read", "r1"); err != nil || !slices.Equal(lineage, []string{"r1"}) {
+				t.Fatalf("its lineage, as it was started = %v, %v", lineage, err)
+			}
 			spoil(t, attrs)
 			store := &countingSnapshots{}
 			r.WithSnapshotStore(store)
@@ -580,7 +626,7 @@ func TestReader_EveryReadHoldsTheStartFirst(t *testing.T) {
 				"GetRun":    func() error { _, err := r.GetRun(ctx, "ork-read"); return err },
 				"RunStart":  func() error { _, err := r.RunStart(ctx, "ork-read"); return err },
 				"startPlan": func() error { _, _, err := r.startPlan(ctx, "ork-read", "r1"); return err },
-				"carryOf":   func() error { _, err := r.carryOf(ctx, "ork-read", "r1"); return err },
+				"lineage":   func() error { _, err := r.lineage(ctx, "ork-read", "r1"); return err },
 				"live tasks": func() error {
 					h.events = append(h.events, &historypb.HistoryEvent{EventId: 9, EventType: enumspb.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED,
 						Attributes: &historypb.HistoryEvent_ActivityTaskScheduledEventAttributes{ActivityTaskScheduledEventAttributes: &historypb.ActivityTaskScheduledEventAttributes{

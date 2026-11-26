@@ -120,10 +120,13 @@ func refuseOpenRuns(id string, open []string) *resumeRefusal {
 const causePinLeasesHeld = "pin_leases_held"
 
 // refusePinLeases refuses while a pin that runs again could open nowhere in
-// its pool because the run's own old pin still holds a host (design §24.14):
-// that ends by itself, at the lease. It is best effort: a pool it cannot
-// read, or one that other runs fill, refuses nothing here. rerun's tasks name
-// the pools they were resolved to.
+// its pool because the run's own old pin still holds a host (design §24.14).
+// That ends by itself: a host counts the pins it is running, and frees a
+// closed run's at the pin's next answered heartbeat, about ten seconds, long
+// before its lease, so the caller is asked to try again within
+// resumeCheckRetry, or at the lease if that comes first. It is best effort:
+// a pool it cannot read, or one that other runs fill, refuses nothing here.
+// rerun's tasks name the pools they were resolved to.
 func (s *Service) refusePinLeases(ctx context.Context, base *resumeBase, rerun *orkstackv1.Orkflow) error {
 	if s.fleet == nil || !slices.ContainsFunc(rerun.GetTasks(), func(t *orkstackv1.Task) bool { return t.GetPin() != "" }) {
 		return nil
@@ -153,9 +156,9 @@ func (s *Service) refusePinLeases(ctx context.Context, base *resumeBase, rerun *
 			}
 		}
 		if !free && !own.IsZero() {
-			r := waitStopping(causePinLeasesHeld, own.Sub(now),
-				"pin %s of run %s still holds its old slot until %s, and no other pin host of pool %s is free; try again then",
-				t.GetPin(), base.run.GetId(), own.UTC().Format(time.RFC3339), pool)
+			r := waitStopping(causePinLeasesHeld, min(own.Sub(now), resumeCheckRetry),
+				"pin %s of run %s still holds its old slot on the last free pin host of pool %s, which frees it shortly; try again then",
+				t.GetPin(), base.run.GetId(), pool)
 			r.Tasks = []string{t.GetId()}
 			return r
 		}

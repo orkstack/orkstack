@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -61,61 +60,33 @@ type scanState struct {
 	// lastResort: a force cancel's record that cannot be verified now is read
 	// as that, not as an error: the archive's last chance.
 	lastResort bool
+	// scope is the resume that made the execution being read, 0 for none, and
+	// filledTo the last event read of the ending it set aside, 0 when that
+	// was not read.
+	scope    uint64
+	filledTo int64
+	// began: the run published an event since the reset its scope is of.
+	began bool
 	// carryRefused: a carry failed verification, so nothing it names was read.
 	carryRefused bool
 	// recordLoss says what of the run's record could not be recovered.
 	recordLoss string
-	// resetScope is the sequence the resume that made the execution being read
-	// starts at, 0 for none: every event below it is one of the executions
-	// before, whether or not this one's history holds it.
-	resetScope int64
+	// resetFrom is the execution the newest reset read was made from, and
+	// publishedSinceReset whether this execution published anything after it.
+	resetFrom           string
+	publishedSinceReset bool
+	// endedAsBase is how an execution ended that ran nothing of its own: a
+	// reset whose reason names a plan it could not read ended it with no
+	// event (asBase), and the run reads as its base left it, ended so.
+	endedAsBase *asBaseEnding
+	// readAsBase: the walk read the run from the base of such an execution.
+	readAsBase bool
 }
 
-// noteReset notes the reset a resume made the execution with. An execution
-// reset again holds the reset of the one before too, where it goes back to a
-// point after it: the newest resume's holds then, and one by hand changes
-// nothing, since what that resume set aside is still not in this history.
-func (st *scanState) noteReset(attrs *historypb.WorkflowTaskFailedEventAttributes) {
-	if attrs.GetCause() != enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW {
-		return
-	}
-	if key, ok := ParseResumePlanKey(attrs.GetFailure().GetMessage()); ok {
-		st.resetScope = int64(key.Scope)
-	}
-}
-
-// snapshotNamer names a run's snapshot by its sequence, without reading it.
-type snapshotNamer interface {
-	SnapshotURI(namespace, runID string, sequence int64) (string, error)
-}
-
-// endAfterReset readies the ending of a resumed run that was ended before it
-// recorded anything of its own: its last recorded state, and its last event,
-// are those its resume set aside, which end just below the resume's scope. Its
-// history holds neither.
-func (r *TemporalRunReader) endAfterReset(
-	ctx context.Context, runID string, start, closing *historypb.HistoryEvent, fromSequence int64, wantRun bool, send func(*orkstackv1.Event) error, st *scanState,
-) error {
-	before := st.resetScope - 1
-	if before <= st.lastSequence {
-		return nil
-	}
-	if namer, ok := r.snapshots.(snapshotNamer); ok {
-		namespace, err := r.runNamespace(ctx, runID, start.GetWorkflowExecutionStartedEventAttributes())
-		if err != nil {
-			return err
-		}
-		uri, err := namer.SnapshotURI(artifacts.ResolveNamespace(namespace), runID, before)
-		if err != nil {
-			return fmt.Errorf("engine: run %s: the record its resume set aside: %w", runID, err)
-		}
-		st.projection.priorSnapshotURI, st.projection.snapshotURI = st.projection.snapshotURI, uri
-	}
-	if err := st.noteSkipped(runID, before, closing.GetEventTime(), fromSequence, wantRun, send); err != nil {
-		return err
-	}
-	st.lastSequence = before
-	return nil
+// asBaseEnding is the close of an execution read as its base (endedAsBase).
+type asBaseEnding struct {
+	closedAt *timestamppb.Timestamp
+	cause    *orkstackv1.Error
 }
 
 func newScanState(tolerateLostSegments bool) *scanState {
@@ -274,6 +245,15 @@ func (r *TemporalRunReader) adoptCarry(
 		}
 	}
 	st.lastSequence = max(st.lastSequence, carry.GetEventSequence())
+	// Which ending this is stands even where what the carry names of its events,
+	// its state or its resume does not: an ending archived as the run's first
+	// would be another's (NewestEnding says the same).
+	if scope := carry.GetResume().GetSeqBase(); scope > 0 {
+		st.scope = scope
+	}
+	// Its RUN_RESUMED is in an earlier history, so what it publishes no longer
+	// says whether it began.
+	st.began = true
 	projection := st.projection
 	projection.snapshotLoaded = false
 	if st.carryRefused {
@@ -382,6 +362,9 @@ func validateCarry(runID, namespace string, carry *orkstackv1.RunContinuation) e
 		}
 		next = seg.GetLastSequence() + 1
 	}
+	if why := resumeCarryFault(carry); why != "" {
+		return fmt.Errorf("the saved state's resume is none: %s", why)
+	}
 	if carry.GetEventSequence() != next-1 {
 		return fmt.Errorf("the saved state's last event sequence %d is not the last earlier event's %d",
 			carry.GetEventSequence(), next-1)
@@ -440,6 +423,16 @@ func (r *TemporalRunReader) replaySegments(
 			return err
 		}
 		for _, event := range events {
+			if event.GetResumed() != nil {
+				// The resume whose reset made that history set aside what its
+				// base published after R.
+				if err := r.adoptScope(ctx, runID, uint64(event.GetSequence()), fromSequence, true, send, st); err != nil {
+					return err
+				}
+				if err := st.checkSetAside(event); err != nil {
+					return err
+				}
+			}
 			stop, err := st.deliver(event, fromSequence, false, send)
 			if err != nil {
 				return err

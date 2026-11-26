@@ -66,7 +66,9 @@ type runPayloads struct {
 // carry included: at every read, whether or not the run's key is already
 // held, because a start can be copied under another memo. A start that fails
 // it is a keyless run's, whatever its key opens, and nothing of the run is
-// opened from there on. A key that could not be had is an error.
+// opened from there on. A key that could not be had is an error. A reader
+// with no key source holds nothing, because it opens nothing: its own
+// converter is never given keys.
 func (p *runPayloads) holdStart(started *historypb.WorkflowExecutionStartedEventAttributes) error {
 	field, keyed := started.GetMemo().GetFields()[payloadcrypt.MemoField]
 	if p.key == nil || !sealedStart(started) {
@@ -161,6 +163,23 @@ func (r *TemporalRunReader) runConverter(ctx context.Context, runID string) *run
 		return key.Key, err
 	})
 	return p
+}
+
+// PayloadsOf is what opens the payloads of one execution of runID, for a read
+// of its whole history that another type makes (a resume's, of its base),
+// once start, that execution's first event, is held to the run. A keyless run
+// is an error, and so is a key that cannot be had. What it gives is one read's:
+// good while ctx lives, and one goroutine's.
+func (r *TemporalRunReader) PayloadsOf(ctx context.Context, runID string, start *historypb.HistoryEvent) (converter.DataConverter, error) {
+	attrs := start.GetWorkflowExecutionStartedEventAttributes()
+	if attrs == nil {
+		return nil, fmt.Errorf("engine: run %s: its history does not begin with a start", runID)
+	}
+	dc := r.runConverter(ctx, runID)
+	if err := holdOrKeyless(dc, attrs); err != nil {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, err)
+	}
+	return dc, nil
 }
 
 // runNamespace is the namespace of the run whose start attrs is: its

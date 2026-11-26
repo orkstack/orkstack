@@ -528,7 +528,10 @@ export type Release = Message<"orkstack.v1.Release"> & {
   queuedRuns: bigint;
 
   /**
-   * resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch).
+   * resumable_runs is how many failed runs are pinned to this release and
+   * still held by the cluster: one that can be resumed, can be only while the
+   * release runs. It counts child runs, which are never resumed themselves. 0
+   * where the engine resumes no runs.
    *
    * @generated from field: int64 resumable_runs = 18;
    */

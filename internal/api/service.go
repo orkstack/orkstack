@@ -97,6 +97,13 @@ type Config struct {
 	// ResumeSnapshots answers the highest sequence stored for a run; nil
 	// serves no resume.
 	ResumeSnapshots ResumeSnapshots
+	// ResumeEndings and ResumeArchiver keep the ending a resume sets aside;
+	// nil and ResumeRun resumes no run.
+	ResumeEndings  ResumeEndings
+	ResumeArchiver ResumeArchiver
+	// NewestEndings keeps an evidence export from taking an ending a resume
+	// set aside for the run's newest; nil checks nothing.
+	NewestEndings NewestEndings
 
 	// Reader is the system of record for live runs. `ork` wires
 	// engine.TemporalRunReader, and every read then leaves the process. Nil
@@ -456,6 +463,9 @@ type Config struct {
 	// names (engine.TemporalConcurrencyReader). Nil refuses every limited
 	// run CONCURRENCY_CHECK_UNAVAILABLE and counts no queued run.
 	ConcurrencyReader engine.ConcurrencyAdmissionReader
+	// ConcurrencyResetter resets a key's limit
+	// (engine.TemporalConcurrencyResetter). Nil refuses every reset.
+	ConcurrencyResetter engine.ConcurrencyResetter
 
 	// RunTimeoutHandlerGrace is engine.run_timeout_handler_grace: how long
 	// after a run's deadline its failure handlers may still run. Zero is a
@@ -789,9 +799,10 @@ type Service struct {
 	interruptions *engine.InterruptionBudgets
 	// concurrency and gateTunables are Config.Concurrency and
 	// Config.GateTunables, the defaults for zero values.
-	concurrency       engine.ConcurrencySettings
-	gateTunables      engine.GateTunables
-	concurrencyReader engine.ConcurrencyAdmissionReader
+	concurrency         engine.ConcurrencySettings
+	gateTunables        engine.GateTunables
+	concurrencyReader   engine.ConcurrencyAdmissionReader
+	concurrencyResetter engine.ConcurrencyResetter
 	// resumeSettings are engine.resume.*.
 	resumeSettings ResumeSettings
 	// resumes is whether this engine resumes runs (Config.Resume).
@@ -801,6 +812,9 @@ type Service struct {
 	resumeObserver  ResumeObserver
 	resumeGate      resumeGate
 	resumeSnapshots ResumeSnapshots
+	resumeEndings   ResumeEndings
+	newestEndings   NewestEndings
+	resumeArchiver  ResumeArchiver
 	// queuedWarn spaces GetRun's warnings that a queued run's gate could
 	// not be read (applyLiveQueued): a run page polls GetRun.
 	queuedWarn warnLimiter
@@ -968,12 +982,16 @@ func NewService(cfg Config) *Service {
 		concurrency:              concurrencySettingsOf(cfg.Concurrency),
 		gateTunables:             gateTunablesOf(cfg.GateTunables),
 		concurrencyReader:        cfg.ConcurrencyReader,
+		concurrencyResetter:      cfg.ConcurrencyResetter,
 		resumeSettings:           resumeSettingsOf(cfg.ResumeSettings),
 		resumes:                  cfg.Resume != nil,
 		resumeRecords:            cfg.ResumeRecords,
 		resumeClaims:             cfg.ResumeClaims,
 		resumeObserver:           cfg.ResumeObserver,
 		resumeSnapshots:          cfg.ResumeSnapshots,
+		resumeEndings:            cfg.ResumeEndings,
+		newestEndings:            cfg.NewestEndings,
+		resumeArchiver:           cfg.ResumeArchiver,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -3165,6 +3183,7 @@ func (s *Service) GetRun(
 	SetRunTiming(run, time.Now())
 	s.applyCensusPendingReasons(ctx, run)
 	s.applyLiveQueued(ctx, run)
+	s.applyChildQueued(ctx, run)
 	if s.resumes && s.resumeRecords != nil {
 		run.ResumeHint = engine.ResumeHintOf(run)
 	}

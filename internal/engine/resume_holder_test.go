@@ -10,6 +10,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"go.temporal.io/sdk/activity"
@@ -39,13 +40,43 @@ type resetHarness struct {
 	planCalls atomic.Int32
 	commits   *artifacts.MemoryCommitStore
 	hasConc   bool
+	// runTimeout is the plan's, when the document declares a timeout.
+	runTimeout *engine.RunTimeoutPlan
+	children   map[string]*engine.ChildRunPlan
+	inFlight   *engine.InFlightLimit
+	// adjust changes the plan last.
+	adjust   func(*engine.RunPlan)
+	identity *engine.IdentityPlan
+	// behave answers a task, when set; every task succeeds otherwise.
+	behave func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)
+	// index answers IndexEachLines.
+	index   func(*orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error)
+	indexed []*orkstackv1.IndexEachLinesInput
+	// adopting is called before each read-back call, whose failure it may be.
+	adopting func() error
+	// carried: the base had carried on, so its plan may leave a unit as it was.
+	carried bool
 }
 
 func newResetHarness(t *testing.T) *resetHarness {
 	t.Helper()
-	h := &resetHarness{harness: newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	return newResetHarnessOn(t, newTestSnapshotStore(), &memValues{objects: map[string][]byte{}})
+}
+
+// newResetHarnessOn is newResetHarness over stores an earlier history wrote.
+func newResetHarnessOn(t *testing.T, snapshots *testSnapshotStore, values *memValues) *resetHarness {
+	t.Helper()
+	h := &resetHarness{}
+	h.harness = newHarnessShared(t, nil, snapshots, values, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if h.behave != nil {
+			return h.behave(in)
+		}
 		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
-	})}
+	})
+	h.env.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error) {
+		h.indexed = append(h.indexed, in)
+		return h.index(in)
+	}, activity.RegisterOptions{Name: task.ActivityIndexEachLines})
 	h.env.RegisterActivityWithOptions(func(context.Context, engine.ReadResetFactsInput) (engine.ResetFacts, error) {
 		return h.facts, h.factsErr
 	}, activity.RegisterOptions{Name: engine.ActivityReadResetFacts})
@@ -57,8 +88,14 @@ func newResetHarness(t *testing.T) *resetHarness {
 		return nil, temporal.NewNonRetryableApplicationError("no such plan", engine.ReasonResumePlanInvalid, nil)
 	}, activity.RegisterOptions{Name: engine.ActivityLoadResumePlan})
 	h.commits = artifacts.NewMemoryCommitStore()
-	h.env.RegisterActivityWithOptions(engine.NewResumeActivities(h.commits, h.values).AdoptRecorded,
-		activity.RegisterOptions{Name: engine.ActivityAdoptRecorded})
+	h.env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.AdoptRecordedInput) (*orkstackv1.AdoptRecordedResult, error) {
+		if h.adopting != nil {
+			if err := h.adopting(); err != nil {
+				return nil, err
+			}
+		}
+		return engine.NewResumeActivities(h.commits, h.values).AdoptRecorded(ctx, in)
+	}, activity.RegisterOptions{Name: engine.ActivityAdoptRecorded})
 	h.env.RegisterActivityWithOptions(engine.NewSnapshotActivities(h.snapshots).WriteResumeEnding,
 		activity.RegisterOptions{Name: engine.ActivityWriteResumeEnding})
 	h.env.RegisterWorkflowWithOptions(engine.ResetRunWorkflow(false), workflow.RegisterOptions{Name: "ResetRunWorkflow"})
@@ -73,13 +110,30 @@ func (h *resetHarness) runReset(t *testing.T) error {
 
 func (h *resetHarness) runResetOf(t *testing.T, document string) error {
 	t.Helper()
+	return h.runResetWith(t, document, nil)
+}
+
+func (h *resetHarness) runResetWith(t *testing.T, document string, input map[string]any) error {
+	t.Helper()
+	return h.runResetWf(t, compile(t, document), input)
+}
+
+func (h *resetHarness) runResetWf(t *testing.T, wf *orkstackv1.Orkflow, input map[string]any) error {
+	t.Helper()
 	plan := defaultPlan()
 	plan.CommitRoot = "mem://commits"
+	plan.Cache = &engine.CachePlan{MaxTTLSeconds: 604800}
+	plan.EachLines = engine.DefaultEachLinesPolicy()
+	plan.RunTimeout = h.runTimeout
+	plan.Children, plan.Identity = h.children, h.identity
+	if h.adjust != nil {
+		h.adjust(&plan)
+	}
 	name := "ResetRunWorkflow"
 	if h.hasConc {
 		name = "ResetRunWorkflowWithConcurrency"
 	}
-	h.env.ExecuteWorkflow(name, "ork-reset-1", compile(t, document), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
+	h.env.ExecuteWorkflow(name, "ork-reset-1", wf, payload(t, input), plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the reset run did not complete")
 	}
@@ -203,7 +257,12 @@ func rerunUnit(task string) engine.ResumeUnitPlan {
 // pack gives the harness's plan these units of document.
 func (h *resetHarness) pack(t *testing.T, document string, units ...engine.ResumeUnitPlan) {
 	t.Helper()
-	must.OK(t, engine.EncodeResumeUnits(compile(t, document), h.plan.Block, units, false))
+	h.packOf(t, compile(t, document), units...)
+}
+
+func (h *resetHarness) packOf(t *testing.T, wf *orkstackv1.Orkflow, units ...engine.ResumeUnitPlan) {
+	t.Helper()
+	must.OK(t, engine.EncodeResumeUnits(wf, h.plan.Block, units, h.carried))
 }
 
 // keepBuildRerunDeploy is the plan of a run whose build succeeded and whose
@@ -291,44 +350,18 @@ func TestResetRun_AKeptResultThatIsGoneFailsBeforeAnythingRunsAgain(t *testing.T
 		t.Fatalf("deploy ran %d times although build could not be read back", len(calls))
 	}
 	run, _ := h.store.Get("ork-reset-1")
+	if m := run.GetError().GetMessage(); m == "" || strings.Contains(m, "scheduledEventID") || strings.Contains(m, "activity error") {
+		t.Errorf("the run's message %q names how the result was read, not what happened", m)
+	}
 	for _, row := range run.GetTaskRuns() {
 		if row.GetTaskId() == "build" && (row.GetStatus() != orkstackv1.Status_STATUS_FAILED || row.GetError().GetCode() != "COMMIT_MISSING" ||
 			row.GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR) {
 			t.Fatalf("build row = %v %v, want FAILED COMMIT_MISSING, an infrastructure error", row.GetStatus(), row.GetError())
 		}
-	}
-}
-
-const resumeAwaitDocument = `
-apiVersion: orkstack/v1
-kind: Orkflow
-name: resume-await
-tasks:
-  - id: build
-    uses: shell
-    with: {op: exec, command: "echo build"}
-  - id: approve
-    needs: [build]
-    await: {timeout_seconds: 3600}
-  - id: deploy
-    uses: shell
-    needs: [approve]
-    with: {op: exec, command: "echo deploy"}
-`
-
-// A plan needing a part this build has not built is never resumed half-way.
-func TestResetRun_APlanNeedingAnUnbuiltPartIsNotRun(t *testing.T) {
-	h := newResetHarness(t)
-	h.keepBuildRerunDeploy(t, true)
-	h.pack(t, resumeAwaitDocument, keptUnit("build"),
-		engine.ResumeUnitPlan{Task: "approve", Item: -1, Disposition: orkstackv1.ResumeDisposition_RESUME_DISPOSITION_WAIT}, rerunUnit("deploy"))
-	err := h.runResetOf(t, resumeAwaitDocument)
-	var app *temporal.ApplicationError
-	if !errors.As(err, &app) || app.Type() != engine.ReasonResumePlanInvalid || !strings.Contains(app.Error(), "resume_unsupported:wait_again") {
-		t.Fatalf("error = %v, want RESUME_PLAN_INVALID resume_unsupported:wait_again", err)
-	}
-	if n := len(h.taskCalls("deploy")) + len(h.taskCalls("build")); n != 0 {
-		t.Fatalf("%d tasks ran", n)
+		// What tells the next resume to check the result again.
+		if row.GetTaskId() == "build" && row.GetResumeDisposition() != orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT {
+			t.Fatalf("build row = %v, want still to be kept", row.GetResumeDisposition())
+		}
 	}
 }
 
@@ -363,8 +396,8 @@ func packedUnits(t *testing.T, u *orkstackv1.ResumeUnits) []byte {
 	return raw
 }
 
-// While a resumed run cannot retake its concurrency slot, a run held to a
-// limit is never resumed past it; a run with none resumes (§5.3 step 4).
+// A run held to a limit a resumed run cannot retake is never resumed past it
+// (§5.3 step 4).
 func TestResetRun_ARunWithConcurrencyIsNotResumedWithoutItsSlot(t *testing.T) {
 	h := newResetHarness(t)
 	h.hasConc = true
@@ -444,8 +477,7 @@ tasks:
 // its unread rows end CANCELED RESUME_NOT_READ_BACK, still reading back.
 func TestResetRun_AReadBackFailureStartsNoFailureHandler(t *testing.T) {
 	h := newResetHarness(t)
-	h.keepBuildRerunDeploy(t, false)
-	h.pack(t, resumeHandlerDocument, keptUnit("build"), rerunUnit("deploy"), keptUnit("notify"))
+	h.resume(t, resumeHandlerDocument, []string{"build"}, keptUnit("build"), rerunUnit("deploy"), keptUnit("notify"))
 	if err := h.runResetOf(t, resumeHandlerDocument); err == nil {
 		t.Fatal("the run succeeded without its kept results")
 	}

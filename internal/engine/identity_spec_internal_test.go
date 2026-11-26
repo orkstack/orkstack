@@ -57,7 +57,7 @@ func TestIdentitySpecDigest_FromTheInterpreterInput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		in := s.executeTaskInput(tk, tk.GetId(), tk.GetPool(), nil)
+		in := s.executeTaskInput(tk, tk.GetId(), -1, tk.GetPool(), nil)
 		// The profiles reach the input at dispatch, as taskDispatch sets them.
 		if in.Devices, err = s.deviceRefs(tk.GetPool(), tk); err != nil {
 			t.Fatal(err)
@@ -104,7 +104,7 @@ func TestExecuteTaskInput_IdentityContext(t *testing.T) {
 	}
 	s := &runState{runID: "ork-id", wf: &orkstackv1.Orkflow{Name: "w", Version: "1", Tasks: tasks}, tasks: map[string]*orkstackv1.Task{}, plan: plan}
 	for _, tk := range tasks {
-		got := s.executeTaskInput(tk, tk.GetId(), "", nil).GetIdentity()
+		got := s.executeTaskInput(tk, tk.GetId(), -1, "", nil).GetIdentity()
 		if got.GetIssuer() != "https://ork.example" || got.GetAdmissionSha256() != strings.Repeat("c", 64) || got.GetDigestVersion() != 1 ||
 			got.GetCommitWaitSeconds() != 60 || got.GetRootScope() != 0 || got.GetResumeScope() != 0 ||
 			len(got.GetIdentities()) != len(tk.GetIdentities()) || len(got.GetCredentials()) != len(tk.GetCredentials()) {
@@ -118,7 +118,7 @@ func TestExecuteTaskInput_IdentityContext(t *testing.T) {
 		}
 	}
 	s.plan.Identity = nil
-	if got := s.executeTaskInput(tasks[0], "holds", "", nil).GetIdentity(); got != nil {
+	if got := s.executeTaskInput(tasks[0], "holds", -1, "", nil).GetIdentity(); got != nil {
 		t.Fatalf("a run with no admission: %v", got)
 	}
 }
@@ -135,7 +135,7 @@ func TestExecuteTaskInput_AnUpstreamsCommitUriIsWhatItsResultReported(t *testing
 		tasks:   map[string]*orkstackv1.Task{"apply": tasks[0], "report": tasks[1]},
 		plan:    RunPlan{Namespace: "default", CommitRoot: "s3://bucket"},
 		results: map[string]*orkstackv1.ExecuteTaskResult{"apply": {TaskId: "apply", Commit: &orkstackv1.CommitRef{Uri: reported}}}}
-	up := s.executeTaskInput(tasks[1], "report", "", nil).GetUpstream()
+	up := s.executeTaskInput(tasks[1], "report", -1, "", nil).GetUpstream()
 	if len(up) != 1 || up[0].GetTaskId() != "apply" || up[0].GetCommitUri() != reported {
 		t.Fatalf("upstream = %v; want apply at %s", up, reported)
 	}

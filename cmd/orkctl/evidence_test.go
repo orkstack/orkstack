@@ -569,3 +569,76 @@ func TestRenderVerifyReport_WithheldIsItsOwnState(t *testing.T) {
 		}
 	}
 }
+
+// A run resumed since the export is told as that: its earlier endings are
+// compared, and nothing else is, because what a bundle of it holds now is
+// another ending's.
+func TestCompareWithStore_ResumedSinceExport(t *testing.T) {
+	body := func(path string, kind evidence.Kind, sum string) evidence.Member {
+		return evidence.Member{Path: path, Kind: kind, SHA256: sum, State: evidence.StatePresent}
+	}
+	first := &evidence.Manifest{Members: []evidence.Member{body("run.jsonl", evidence.KindRun, "a"), body("tasks/t/attempts/1.json", evidence.KindAttempt, "x")}}
+	resumed := func(firstSum string) *evidence.Manifest {
+		return &evidence.Manifest{
+			Members: []evidence.Member{body("run.jsonl", evidence.KindRun, "b"), body(evidence.EndingPath(0), evidence.KindEnding, firstSum)},
+			Endings: []evidence.Ending{{Path: evidence.EndingPath(0)}, {Scope: 5, Path: "run.jsonl"}},
+		}
+	}
+	if c := compareWithStore(first, resumed("a")); len(c.Failures) != 0 || len(c.Findings) != 1 || !strings.Contains(c.Findings[0].Reason, "resumed since export") {
+		t.Errorf("= %+v", c)
+	}
+	if c := compareWithStore(first, resumed("z")); len(c.Failures) != 1 || c.Failures[0].Reason != "store digest differs" || c.Failures[0].Path != "run.jsonl" {
+		t.Errorf("another first ending = %+v", c)
+	}
+	// A member the store still names from the same object never changed.
+	attempt := func(origin, sum string) evidence.Member {
+		m := body("tasks/t/attempts/1.json", evidence.KindAttempt, sum)
+		m.Origin = origin
+		return m
+	}
+	for name, tc := range map[string]struct {
+		now      evidence.Member
+		failures int
+	}{"as it was": {attempt("a", "x"), 0}, "altered": {attempt("a", "y"), 1}, "another object's": {attempt("b", "y"), 0}} {
+		was, now := *first, resumed("a")
+		was.Members = []evidence.Member{first.Members[0], attempt("a", "x")}
+		now.Members = append(now.Members, tc.now)
+		if c := compareWithStore(&was, now); len(c.Failures) != tc.failures || len(c.Findings) != 1 {
+			t.Errorf("a member %s = %+v", name, c)
+		}
+	}
+	gone := resumed("")
+	gone.Members[1].State, gone.Members[1].Reason = evidence.StateReclaimed, evidence.ReasonEndingMissing
+	if c := compareWithStore(first, gone); len(c.Failures) != 0 || len(c.Findings) != 2 || c.Findings[0].Reason != "reclaimed since export" {
+		t.Errorf("a first ending gone = %+v", c)
+	}
+	if c := compareWithStore(resumed("a"), resumed("a")); len(c.Failures)+len(c.Findings) != 0 {
+		t.Errorf("the same ending = %+v", c)
+	}
+}
+
+// A bundle is a file anyone may have written: nothing in it reaches the
+// terminal as more than text.
+func TestRenderVerifyReport_IsTerminalSafe(t *testing.T) {
+	const evil = "a\x1b[2J\nFAILED"
+	member := evidence.Member{Path: evil, Reason: evil}
+	out := renderVerifyReport(&evidence.Report{
+		Reclaimed: []evidence.Member{member}, Withheld: []evidence.Member{member}, Failures: []evidence.Failure{{Path: evil, Reason: evil, Want: evil}},
+		Manifest: &evidence.Manifest{RunID: evil, RunStatus: evil, Endings: []evidence.Ending{{RunStatus: evil, Reason: evil, Path: evil}, {}}}})
+	out += renderStoreComparison(&storeComparison{Findings: []evidence.Failure{{Path: evil, Reason: evil, Got: evil}}})
+	if strings.Contains(out, "\x1b") || strings.Contains(out, "\nFAILED\n") || !strings.Contains(out, `a\u001b[2J\u000aFAILED`) {
+		t.Errorf("rendered\n%q", out)
+	}
+}
+
+// verify names how a resumed run ended each time before.
+func TestRenderVerifyReport_EarlierEndings(t *testing.T) {
+	out := renderVerifyReport(&evidence.Report{Manifest: &evidence.Manifest{Endings: []evidence.Ending{
+		{Path: evidence.EndingPath(0), RunStatus: "FAILED", Reason: "EXIT_1"}, {Scope: 3, Path: evidence.EndingPath(3)}, {Scope: 9, Path: "run.jsonl"}}}})
+	for _, want := range []string{"  resumed after   FAILED EXIT_1           endings/00000000000000000000.jsonl\n",
+		"its archive is not in the bundle endings/00000000000000000003.jsonl\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}

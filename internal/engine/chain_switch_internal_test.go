@@ -23,17 +23,17 @@ func TestWriteCheckpoint_CompletesAnAdmittedRootsChain(t *testing.T) {
 	})
 	run := observedRun()
 	want := run.GetNamespace() + "/" + run.GetId() + "/" + sha
-	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<30, ContinuationObservationInput{}, nil, sha); err != nil {
+	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<30, ContinuationObservationInput{}, nil, nil, sha); err != nil {
 		t.Fatal(err)
 	}
 	answer = errors.New("store down")
-	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<30, ContinuationObservationInput{}, nil, sha); err != nil {
+	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<30, ContinuationObservationInput{}, nil, nil, sha); err != nil {
 		t.Fatalf("a failed completion failed the checkpoint: %v", err)
 	}
-	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 8, ContinuationObservationInput{}, nil, sha); err != nil {
+	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 8, ContinuationObservationInput{}, nil, nil, sha); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<30, ContinuationObservationInput{}, nil, ""); err != nil {
+	if _, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<30, ContinuationObservationInput{}, nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(asked) != 2 || asked[0] != want || asked[1] != want {
@@ -43,7 +43,7 @@ func TestWriteCheckpoint_CompletesAnAdmittedRootsChain(t *testing.T) {
 	// nothing more.
 	short, cancel := context.WithTimeout(context.Background(), chainCompleteBound)
 	defer cancel()
-	if _, err := a.WriteCheckpoint(short, run, 0, 1<<30, ContinuationObservationInput{}, nil, sha); err != nil {
+	if _, err := a.WriteCheckpoint(short, run, 0, 1<<30, ContinuationObservationInput{}, nil, nil, sha); err != nil {
 		t.Fatal(err)
 	}
 	if len(asked) != 2 {

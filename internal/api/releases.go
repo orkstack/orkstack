@@ -99,6 +99,9 @@ type releaseRunCount struct {
 	// queued is how many wait for a concurrency slot, where the cluster
 	// indexes queued runs.
 	queued int64
+	// resumable is how many failed runs of it could be resumed while it runs;
+	// 0 where this engine resumes none.
+	resumable int64
 }
 
 // ListReleases is the deployment's releases as the cluster routes them.
@@ -202,6 +205,11 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 				}
 				counts[i].queued = queued
 			}
+			if s.resumes && err == nil {
+				// A drained release's 0 says nothing is lost by stopping it, so
+				// a count that could not be read makes its runs unknown.
+				counts[i].resumable, counts[i].err = s.releases.ReleaseResumableRuns(ctx, counted[i])
+			}
 		})
 		if obs.Routing.Current == "" {
 			running, runningErr = s.releases.RunningRuns(ctx)
@@ -283,6 +291,7 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 			release.Runs = withoutTraceparents(count.runs)
 			release.PausedRuns = count.paused
 			release.QueuedRuns = count.queued
+			release.ResumableRuns = count.resumable
 		} else {
 			release.RunsUnavailableReason = releaseMsgRunsUnknown
 		}

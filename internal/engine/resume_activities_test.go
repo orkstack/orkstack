@@ -35,9 +35,9 @@ func TestVerifyResumePlan_RunsOnlyThePlanTheResetNames(t *testing.T) {
 		{"the plan", record(nil), testDigest, 42, linked, ""},
 		{"no record", artifacts.RecordRead[*orkstackv1.ResumePlanRecord]{Answer: artifacts.RecordNone}, "", 42, linked, "no record"},
 		{"another digest", record(nil), strings.Repeat("cd", 32), 42, linked, "hashes to"},
-		{"another base", record(func(r *orkstackv1.ResumePlanRecord) { r.BaseExecutionRunId = "other" }), testDigest, 42, linked, "resets execution"},
+		{"another base", record(func(r *orkstackv1.ResumePlanRecord) { r.BaseExecutionRunId = "other" }), testDigest, 42, linked, `of the ending of "other"`},
 		// resume-plan-key-at-wrong-reset-point-invalid
-		{"another reset point", record(func(r *orkstackv1.ResumePlanRecord) { r.RStartedEventId = 15 }), testDigest, 42, linked, "workflow task"},
+		{"another reset point", record(func(r *orkstackv1.ResumePlanRecord) { r.RStartedEventId = 15 }), testDigest, 42, linked, "starts from point 8/15"},
 		{"a block of another scope", record(func(r *orkstackv1.ResumePlanRecord) { r.Block.Scope = 7 }), testDigest, 42, linked, "scope 7"},
 		// A stored digest is never trusted: it is the plan's own, or the plan is not run.
 		{"a digest of another plan", record(func(r *orkstackv1.ResumePlanRecord) { r.PlanDigest = strings.Repeat("ef", 32) }), testDigest, 42, linked, "not the one it was confirmed as"},

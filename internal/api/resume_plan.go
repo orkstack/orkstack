@@ -25,7 +25,7 @@ const resumeSequenceRoom = 1 << 32
 
 // The causes a refused plan carries (docs/REASONS.md).
 const (
-	// causeConcurrencySlot: the run is held to a concurrency limit, whose
+	// causeConcurrencySlot: the run's tasks are held to a concurrency limit, whose
 	// slot a resumed run cannot take yet.
 	causeConcurrencySlot = "concurrency_slot"
 	// causeEventsAboveTerminal: the run's stored events go on above its
@@ -77,7 +77,7 @@ func (s *Service) planResume(ctx context.Context, base *resumeBase, msg *orkstac
 	if p.plan, err = engine.PlanResume(p.input); err != nil {
 		return nil, err
 	}
-	if err := refuseUnbuilt(base, p.plan); err != nil {
+	if err := refuseUnbuilt(base); err != nil {
 		return nil, err
 	}
 	if err := s.planSequence(ctx, base, msg, p); err != nil {
@@ -103,21 +103,17 @@ func (s *Service) planResume(ctx context.Context, base *resumeBase, msg *orkstac
 	return p, nil
 }
 
-// refuseUnbuilt refuses a plan this release's engine does not carry out.
-func refuseUnbuilt(base *resumeBase, plan *engine.ResumePlan) error {
+// refuseUnbuilt refuses a run this release's engine does not resume.
+func refuseUnbuilt(base *resumeBase) error {
 	unsupported := func(cause, format string, args ...any) error {
 		r := refuseResume(resumeReleaseUnsupport, engine.RefusalPermanent, format, args...)
 		r.Cause = cause
 		return r
 	}
-	if engine.PlanHasConcurrency(base.start.Plan) {
-		return unsupported(causeConcurrencySlot, "run %s is held to a concurrency limit, which this release can't resume a run under; Run again", base.run.GetId())
+	if engine.ResumeLimitUnbuilt(base.start.Plan) {
+		return unsupported(causeConcurrencySlot, "run %s's tasks are held to a concurrency limit, which this release can't resume a run under; Run again", base.run.GetId())
 	}
-	needs := make([]engine.ResumeUnitNeed, 0, len(plan.Units))
-	for _, u := range plan.Units {
-		needs = append(needs, engine.ResumeUnitNeed{Task: u.Unit.Task, Item: int32(u.Unit.Item), Disposition: u.Disposition.Proto()})
-	}
-	if part, why, unbuilt := engine.ResumeNeedsUnbuilt(base.definition, needs, base.history.Continued); unbuilt {
+	if part, why, unbuilt := engine.ResumeNeedsUnbuilt(base.definition, base.start.Plan); unbuilt {
 		return unsupported(string(part), "run %s can't be resumed by this release: %s", base.run.GetId(), why)
 	}
 	return nil
@@ -137,13 +133,15 @@ func (s *Service) planSequence(ctx context.Context, base *resumeBase, msg *orkst
 	p.highest = max(base.sequence, base.history.MaxPublishedSequence, snapshot)
 	switch {
 	case msg.GetAcceptSequenceGap() && msg.GetAcceptedHighestSeq() != p.highest:
-		return refuseResume(resumePlanChanged, engine.RefusalReplan,
+		r := refuseResume(resumePlanChanged, engine.RefusalReplan,
 			"run %s's stored events now go up to %d; preview again", id, p.highest)
+		r.Highest = p.highest
+		return r
 	case !msg.GetAcceptSequenceGap() && p.highest-base.sequence > s.resumeSettings.MaxSequenceGap:
 		r := refuseResume(engine.RefuseStateUnreadable, engine.RefusalReplan,
-			"events up to %d above run %s's ending at %d were not written by it; resume with --accept-sequence-gap to continue above them, or Run again",
+			"events up to %d above run %s's ending at %d were not written by it; accept the gap to continue above them, or Run again",
 			p.highest, id, base.sequence)
-		r.Cause = causeEventsAboveTerminal
+		r.Cause, r.Highest = causeEventsAboveTerminal, p.highest
 		s.resumeAnomaly(ctx, base.namespace, anomalyEventsAboveTerminal)
 		return r
 	case p.highest > maxEventSequence-resumeSequenceRoom:
@@ -189,6 +187,9 @@ func (s *Service) admitResume(ctx context.Context, base *resumeBase, p *resumePl
 	if err := s.releaseRunning(ctx, base); err != nil {
 		return err
 	}
+	if err := s.admitResumeSlot(ctx, base); err != nil {
+		return err
+	}
 	rerun := rerunDefinition(base.definition, p.plan)
 	if len(rerun.GetTasks()) == 0 {
 		return nil
@@ -208,6 +209,37 @@ func (s *Service) admitResume(ctx context.Context, base *resumeBase, p *resumePl
 		return resumePoolError(err)
 	}
 	return s.refusePinLeases(ctx, base, planned)
+}
+
+// admitResumeSlot asks of the run's concurrency limit what a submit would be
+// asked (E88 §7.1), under the plan the run was submitted with: a resumed run
+// asks for its slot anew, and may wait in line for it. Best-effort, as a
+// submit's is: one that loses the race after it ends on the limit, and has
+// used a resume.
+func (s *Service) admitResumeSlot(ctx context.Context, base *resumeBase) error {
+	slot, ok := base.start.Plan.RunConcurrencySlot()
+	if !ok {
+		return nil
+	}
+	err := s.concurrencySupport(ctx, base.definition, base.binding.Starter)
+	if err == nil {
+		err = s.lineChecks(ctx, base.namespace, slot.GateID, slot.Key, slot.Strategy,
+			&orkstackv1.ConcurrencySpec{Limit: int32(slot.Limit), MaxQueued: int32(slot.MaxQueued)})
+	}
+	if err == nil {
+		return nil
+	}
+	text := plainError(err)
+	for _, code := range []string{engine.ConcurrencyLimitReachedCode, engine.ConcurrencyQueueFullCode, engine.ConcurrencyKeysExhaustedCode,
+		engine.ConcurrencyUnsupportedCode} {
+		if strings.HasPrefix(text, code) {
+			return waitRefusal(engine.ResumeRefusalCode(code), "%s", text)
+		}
+	}
+	// The limit could not be read: the cluster's own error is logged, never
+	// answered.
+	s.logger.WarnContext(ctx, "resume: a run's concurrency limit could not be checked", "run_id", base.run.GetId(), "key", slot.Key, "error", err)
+	return resumeUnavailable("whether run %s's concurrency limit can take it can't be checked; try again shortly", base.run.GetId())
 }
 
 // plainError is err's own sentence, without its wire code.

@@ -155,7 +155,7 @@ func TestCheckConcurrencyKey(t *testing.T) {
 		"has space":              "offset 3",
 		"tab\tin":                "offset 3",
 	} {
-		err := CheckConcurrencyKey(key)
+		err := CheckConcurrencyKey(key, KeyAuthored)
 		switch {
 		case want == "" && err != nil:
 			t.Errorf("%q refused: %v", key, err)
@@ -165,9 +165,9 @@ func TestCheckConcurrencyKey(t *testing.T) {
 	}
 }
 
-// TestCheckStoredConcurrencyKey: a key read back is an authored one, or exactly
+// TestCheckConcurrencyKey_Planned: a key read back is an authored one, or exactly
 // one OrkStack makes for an Orkflow or a task that declares none.
-func TestCheckStoredConcurrencyKey(t *testing.T) {
+func TestCheckConcurrencyKey_Planned(t *testing.T) {
 	long := strings.Repeat("a", MaxSlug)
 	for key, ok := range map[string]bool{
 		"db-migrate:prod":                            true,
@@ -192,7 +192,7 @@ func TestCheckStoredConcurrencyKey(t *testing.T) {
 		"ork:orkflow:default/mi grate":  false,
 		"ork:orkflow:default/migrate\n": false,
 	} {
-		err := CheckStoredConcurrencyKey(key)
+		err := CheckConcurrencyKey(key, KeyPlanned)
 		if (err == nil) != ok || err != nil && !strings.Contains(err.Error(), "CONCURRENCY_KEY_INVALID") {
 			t.Errorf("%q = %v; want accepted %v", key, err, ok)
 		}

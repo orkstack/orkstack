@@ -1308,76 +1308,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err := task.WaitNamespaceVisible(indexCtx, temporalClient, cfg.temporalNamespace); err != nil {
 		return err
 	}
-	// The run index, provisioned beside the namespace: it is what makes "list
-	// this namespace's runs" a question the cluster answers, instead of a
-	// filter over whatever page walk another tenant's traffic left room for.
-	// A cluster that will not register it is not a reason to refuse to boot —
-	// everything else works, and the reader falls back to reading the whole
-	// index — but it IS worth a line, because that fallback is slow and its
-	// limit is an error a client would otherwise have to explain.
-	namespaceIndexed, err := task.EnsureRunSearchAttributes(indexCtx, temporalClient, cfg.temporalNamespace)
-	if errors.Is(err, task.ErrNamespaceNotVisible) {
-		return err
-	}
+	index, err := task.EnsureSearchAttributes(indexCtx, temporalClient, cfg.temporalNamespace, logger)
 	if err != nil {
-		logger.Warn("visibility does not index a run's orkflow namespace",
-			"search_attribute", task.SearchAttrOrkflowNamespace,
-			"consequence", "listing a namespace's live runs scans the whole index",
-			"error", err)
-	}
-	// The origin index is a separate answer on purpose: a cluster that
-	// accepted OrkflowNamespace in an earlier release and refuses the two
-	// origin attributes now keeps its namespace predicate, and only an
-	// origin-filtered list falls back to the bounded walk.
-	originIndexed, err := task.EnsureRunOriginSearchAttributes(indexCtx, temporalClient, cfg.temporalNamespace)
-	if errors.Is(err, task.ErrNamespaceNotVisible) {
 		return err
-	}
-	if err != nil {
-		logger.Warn("visibility does not index a run's origin",
-			"search_attribute", task.SearchAttrOrkflowOriginKind+","+task.SearchAttrOrkflowOriginId,
-			"consequence", "filtering runs by origin walks the whole index",
-			"error", err)
-	}
-	// The root index is a third answer, for the same reason: a cluster at its
-	// limit of custom attributes keeps the two it already has.
-	rootIndexed, err := task.EnsureRunRootSearchAttribute(indexCtx, temporalClient, cfg.temporalNamespace)
-	if errors.Is(err, task.ErrNamespaceNotVisible) {
-		return err
-	}
-	if err != nil {
-		logger.Warn("visibility does not index a run's composed chain",
-			"search_attribute", task.SearchAttrOrkflowOriginRootRunId,
-			"consequence", "filtering runs by root run walks the whole index",
-			"error", err)
-	}
-	// The paused attribute is a fourth answer, for the same reason, and the
-	// one a run itself writes: submit pins it Indexed only when this boot
-	// found it usable, so the cluster never refuses a run's write. Every
-	// boot registers it again, which is also how an operator restores it if
-	// it was removed while runs were open (docs/LIMITATIONS.md).
-	pausedIndexed, err := task.EnsureRunPausedSearchAttribute(indexCtx, temporalClient, cfg.temporalNamespace)
-	if errors.Is(err, task.ErrNamespaceNotVisible) {
-		return err
-	}
-	if err != nil {
-		logger.Warn("visibility does not index a paused run",
-			"search_attribute", task.SearchAttrOrkflowRunPaused,
-			"consequence", "a paused run is listed as running",
-			"error", err)
-	}
-	// The concurrency limit's attributes are a fifth answer, all four as one:
-	// a limit cannot hold, queue or rebuild with any of them missing. Unusable
-	// is not fatal: the engine boots, and submit refuses concurrency limits
-	// with cause=index once it reads this answer (E88 §9.7, P3).
-	concurrencyIndexed, err := task.EnsureConcurrencySearchAttributes(indexCtx, temporalClient, cfg.temporalNamespace)
-	if errors.Is(err, task.ErrNamespaceNotVisible) {
-		return err
-	}
-	if err != nil {
-		logger.Warn("visibility does not index concurrency limits",
-			"consequence", "concurrency limits cannot be held on this cluster",
-			"error", err)
 	}
 	// The concurrency census schedule: created by any replica that finds it
 	// absent, updated only when its settings differ (E88 §22.6). It only
@@ -1386,11 +1319,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	go ensureCensusSchedule(ctx, logger, temporalClient, cfg.censusSettings)
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace,
-		"run_namespace_index", namespaceIndexed,
-		"run_origin_index", originIndexed,
-		"run_root_index", rootIndexed,
-		"run_paused_index", pausedIndexed,
-		"concurrency_index", concurrencyIndexed && namespaceIndexed)
+		"run_namespace_index", index.Namespace,
+		"run_origin_index", index.Origin,
+		"run_root_index", index.Root,
+		"run_paused_index", index.Paused,
+		"concurrency_index", index.Limits())
 
 	// Every read is answered by Temporal and the archive (AGENTS.md §7), so
 	// the bus and the store are write-side helpers here: each forgets a run
@@ -1551,6 +1484,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	// A run has an archive for each of its endings; every store
+	// NewRunArchive opens keeps them.
+	endings, ok := archiveStore.(artifacts.RunEndingStore)
+	if !ok {
+		return fmt.Errorf("the run archive %T keeps one ending a run", archiveStore)
+	}
 	// What signs and verifies force cancels, and the authentication mode that
 	// says what an unsigned record of one counts as.
 	deployed := newDeployedMode()
@@ -1646,11 +1585,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	reader := engine.NewTemporalRunReader(temporalClient).
 		WithSnapshotStore(snapshots).
 		WithBaseCache(snapshotBases).
-		WithNamespaceIndex(namespaceIndexed).
-		WithOriginIndex(originIndexed).
-		WithRootIndex(rootIndexed).
-		WithPausedIndex(pausedIndexed).
-		WithQueuedIndex(concurrencyIndexed && namespaceIndexed).
+		WithEndings(archive).
+		WithNamespaceIndex(index.Namespace).
+		WithOriginIndex(index.Origin).
+		WithRootIndex(index.Root).
+		WithPausedIndex(index.Paused).
+		WithQueuedIndex(index.Limits()).
 		WithForceCancelVerifier(forceCancels, deployed.Mode)
 
 	// The retention policy store and controller: the deployment's maximum run
@@ -1665,7 +1605,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	retention := archivecleanup.NewRetentionController(
 		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger).
-		WithKeyLife(engine.ClaimLife(cfg.idempotencyTTL)).WithObserver(telemetry.NewRetentionObserver(sinks.Default(), logger))
+		WithKeyLife(backstopLife(cfg.idempotencyTTL, cfg.gateTunables)).WithObserver(telemetry.NewRetentionObserver(sinks.Default(), logger))
 	policy, err := retention.Ensure(ctx)
 	if err != nil {
 		// Fail closed: an engine that cannot establish the ceiling must not
@@ -1768,9 +1708,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// local activities of the worker that runs their workflow tasks (E88
 	// §5.1.8). The census reports nowhere until the telemetry gauges read it.
 	gateActivities := engine.NewGateActivities(temporalClient)
+	auditVerified := func() bool { return cfg.auth.enabled() }
+	gateActivities.WithResetRecords(auditStore, auditVerified, nil)
 	engine.RegisterGateActivities(runWorker, gateActivities)
 	concurrencyGauges := telemetry.NewConcurrencyGauges(sinks.Default(), cfg.censusSettings.Interval,
-		cfg.censusSettings.Timeout, !concurrencyIndexed || !namespaceIndexed, logger)
+		cfg.censusSettings.Timeout, !index.Limits(), logger)
 	engine.RegisterCensusActivities(runWorker, engine.NewCensusActivities(temporalClient, censusSink{gauges: concurrencyGauges}))
 
 	// The engine's telemetry observer: a run's spans, metrics and one log
@@ -1828,8 +1770,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	forceCancelRecords := engine.NewForceCancelActivities(engine.ForceCancelDeps{Client: temporalClient, ClusterNamespace: cfg.temporalNamespace,
 		Reader: reader, Keys: forceCancels, Mode: deployed.Mode, Audit: auditStore, Settings: cfg.forceCancel, Counter: forceCancelInstruments})
 	historyArchiver := engine.NewHistoryArchiver(reader, archive).WithForceCancelBackfill(forceCancelRecords.Backfill)
+	newestEndings := archivecleanup.NewNewestEndings(endings, reader, cfg.temporalNamespace)
 	sweeper := archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, historyArchiver,
-		reader, archiveSweepObserver, logger)
+		reader, archiveSweepObserver, logger).WithEndings(endings, newestEndings)
 	// Not before the deployment's mode is known: an archive is written once,
 	// and a force cancel's unsigned record is judged by it.
 	go func() {
@@ -1865,6 +1808,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		triggerMetrics  *telemetry.TriggerMetrics
 		scheduleMetrics *telemetry.ScheduleMetrics
 		concMetrics     *telemetry.ConcurrencyMetrics
+		resetMetrics    engine.ResetObserver
 	)
 	if wireEventObserver(tcfg) {
 		route := func(ctx context.Context, namespace string) (*telemetry.Providers, bool) {
@@ -1881,6 +1825,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		scheduleMetrics = telemetry.NewScheduleMetrics(sinks.Default(), route, objectLabels, logger)
 		concMetrics = telemetry.NewConcurrencyMetrics(sinks.Default(), route, tcfg.OrkflowLabel, logger)
 		gateActivities.WithArrivalObserver(arrivalObserver{concMetrics}).WithGateReportObserver(gateReportObserver{concMetrics})
+		resetMetrics = resetObserver{concMetrics}
+		gateActivities.WithResetRecords(auditStore, auditVerified, resetMetrics)
 		observer.WithConcurrencyMetrics(concMetrics)
 		hooks := telemetry.NewWebhookMetrics(sinks.Default(), route, objectLabels, logger)
 		webhookMetrics.Store(hooks)
@@ -1890,7 +1836,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// A run whose execution is missing is dated from its archive body
 		// before cleanup retires it (docs/DEPLOY.md, "Retention cleanup").
 		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, namespaces, retention, logger)
-		cleaner.WithFinishReader(archive)
+		cleaner.WithFinishReader(archive).WithBodies(newestEndings)
 		if wireEventObserver(tcfg) {
 			cleaner.WithObserver(cleanupMetrics)
 		}
@@ -1904,11 +1850,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			reclaimer = archivecleanup.NewReclaimer(archivecleanup.ReclaimConfig{
 				Mode: gcMode, Grace: cfg.cleanup.ArtifactGCGrace,
 				Batch: cfg.cleanup.ArtifactGCBatch, Interval: cfg.cleanup.Interval,
-			}, reclaimStore, archive, reader, sweeper, namespaces, retention, cfg.temporalNamespace, logger).
+			}, newestEndings.Reclaim(reclaimStore), archive, reader, sweeper, namespaces, retention, cfg.temporalNamespace, logger).
 				WithMissingHold(cleaner).
-				// No run can be resumed in this release; E85 replaces this
-				// with its resume records before any resume ships.
-				WithResumes(archivecleanup.NoResumes{}).
+				WithResumes(archivecleanup.NewEndingRecords(endings)).
 				WithAcceptedRuns(acceptedRuns)
 			if gcObserver != nil {
 				reclaimer.WithObserver(gcObserver)
@@ -1917,8 +1861,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			// The composed-artifacts hold comes with E87, where no composed
 			// reference exists before it; say so rather than be silent.
 			logger.Info("artifact gc started", "mode", reclaimer.Mode(), "grace", reclaimer.Grace(),
-				"batch", cfg.cleanup.ArtifactGCBatch, "composed_artifacts_hold", "inactive: no engine passes artifacts between runs",
-				"resume_check", "no run can be resumed in this release")
+				"batch", cfg.cleanup.ArtifactGCBatch, "composed_artifacts_hold", "inactive: no engine passes artifacts between runs")
 		}
 	}
 	// ork.store.clock_skew: this engine's clock against the store's, probed
@@ -1985,7 +1928,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			// The paused-run census reads through a counting client of its own,
 			// so each census is charged only what it made.
 			pausedClient, pausedRequests := telemetry.CountingTemporalClient(temporalClient)
-			pausedReader := engine.NewTemporalRunReader(pausedClient).WithPausedIndex(pausedIndexed)
+			pausedReader := engine.NewTemporalRunReader(pausedClient).WithPausedIndex(index.Paused)
 			sources.PausedRunsRequests = pausedRequests
 			sources.PausedRuns = func(ctx context.Context) (map[string]telemetry.PausedSummary, error) {
 				read, err := pausedReader.PausedRuns(ctx)
@@ -2056,14 +1999,17 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	engine.RegisterWebhookDeliveryActivities(eventWorker, webhookActivities)
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
-		WithNamespaceIndex(namespaceIndexed).
-		WithOriginIndex(originIndexed).
-		WithRootIndex(rootIndexed).
+		WithNamespaceIndex(index.Namespace).
+		WithOriginIndex(index.Origin).
+		WithRootIndex(index.Root).
 		// A gate is rebuilt from the limit's attributes and the namespace's.
-		WithConcurrencyIndex(concurrencyIndexed && namespaceIndexed).
+		WithConcurrencyIndex(index.Limits()).
 		// What the client was dialed with: a cancellation that records who
 		// asked names them on the cluster itself (TemporalStarter.CancelRun).
-		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity)
+		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity).
+		// A resume reads a run's history with the run's own payloads, so a
+		// sealed run's start opens with its key.
+		WithPayloads(reader.PayloadsOf)
 	forceCancelDeps := engine.ForceCancelDeps{
 		Counter: forceCancelInstruments,
 		Client:  temporalClient, ClusterNamespace: cfg.temporalNamespace, Starter: starter, Reader: reader,
@@ -2140,7 +2086,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// cluster (docs/RUNBOOKS.md, "Backup and disaster recovery").
 	var restoreReconciler api.RestoreReconciler
 	if store, ok := archiveStore.(archivecleanup.RestoreStore); ok {
-		restoreReconciler = archivecleanup.NewRestoreReconciler(store, reader, cfg.temporalNamespace)
+		restoreReconciler = archivecleanup.NewRestoreReconciler(newestEndings.Restore(store), reader, cfg.temporalNamespace)
 	} else {
 		logger.Warn("the run archive cannot be listed for a restore reconcile; ReconcileRestore answers FAILED_PRECONDITION")
 	}
@@ -2190,6 +2136,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		ResumeObserver:         observer,
 		ResumeClaims:           engine.NewTemporalIdempotency(temporalClient, q.run, api.ResumeClaimTTL),
 		ResumeSnapshots:        resumeSnapshots,
+		ResumeEndings:          endings,
+		ResumeArchiver:         historyArchiver,
+		NewestEndings:          newestEndings,
 		Pools:                  pools,
 		Orkers:                 starter,
 		Fleet:                  starter,
@@ -2200,8 +2149,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Concurrency:       cfg.concurrency,
 		GateTunables:      cfg.gateTunables,
 		ConcurrencyReader: engine.NewTemporalConcurrencyReader(temporalClient, 0),
-		Catalog:           cfg.activityCatalog,
-		Resolver:          resolver,
+		ConcurrencyResetter: engine.NewTemporalConcurrencyResetter(temporalClient, cfg.temporalNamespace, clusterIdentity, task.DefaultQueue,
+			engine.ConcurrencyResetSettings{Tunables: cfg.gateTunables, FreezeMargin: cfg.concurrency.FreezeMargin}, resetMetrics, logger),
+		Catalog:  cfg.activityCatalog,
+		Resolver: resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
 		ImagePolicies:            imagePolicies,
@@ -2274,7 +2225,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		RunPauseTimeout:               cfg.runPauseTimeout,
 		RunPauseTimeoutMax:            cfg.runPauseTimeoutMax,
 		ForceCancels:                  engine.NewForceCancelStarter(forceCancelDeps, cfg.forceCancel),
-		RunPauseIndexed:               pausedIndexed,
+		RunPauseIndexed:               index.Paused,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
 		RunContexts:                   runContexts,

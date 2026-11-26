@@ -420,6 +420,9 @@ func (s *runState) expandCounted(ctx, runCtx workflow.Context, id string, count 
 	if eerr := eachTooMany(count, spec, s.taskIndex(id)); eerr != nil {
 		return s.failExpansion(ctx, id, eerr.Code, eerr.Message)
 	}
+	if message, ok := s.resumedCount(id, count); !ok {
+		return s.failExpansion(ctx, id, ResumeFanOutChangedCode, message)
+	}
 
 	// Routed before anything about the node changes: a pool this run's plan
 	// has no route for fails the node with the routing reason (INVALID_POOL
@@ -438,6 +441,7 @@ func (s *runState) expandCounted(ctx, runCtx workflow.Context, id string, count 
 
 	taskRun := s.taskRuns[id]
 	now := timestamppb.New(workflow.Now(ctx))
+	resumed := s.keptItems(id)
 	e.expanded = true
 	e.count = count
 	taskRun.Each = &orkstackv1.TaskEach{Expanded: true, Count: count, Lines: e.lines}
@@ -460,15 +464,27 @@ func (s *runState) expandCounted(ctx, runCtx workflow.Context, id string, count 
 		taskRun.ScheduledAt = now // a lines fan-out's is its index's
 	}
 	taskRun.Pool = pool
-	taskRun.Items = make([]*orkstackv1.TaskRun, count)
-	for i := int32(0); i < count; i++ {
-		taskRun.Items[i] = &orkstackv1.TaskRun{
-			TaskId: id,
-			Item:   proto.Int32(i),
-			Status: orkstackv1.Status_STATUS_PENDING,
+	kept := int32(0)
+	if resumed {
+		kept = s.resumeItems(id)
+	} else {
+		taskRun.Items = make([]*orkstackv1.TaskRun, count)
+		for i := int32(0); i < count; i++ {
+			taskRun.Items[i] = &orkstackv1.TaskRun{
+				TaskId: id,
+				Item:   proto.Int32(i),
+				Status: orkstackv1.Status_STATUS_PENDING,
+				// A fan-out a resume runs again whole: each item runs under
+				// its scope. Both are unset in every other run.
+				ResultEpoch:       taskRun.GetResultEpoch(),
+				ResumeDisposition: taskRun.GetResumeDisposition(),
+			}
 		}
 	}
 	scheduled := fmt.Sprintf("fan-out of %d items scheduled on pool %s", count, pool)
+	if kept > 0 {
+		scheduled += fmt.Sprintf(", %d of them kept", kept)
+	}
 	if e.limit < count {
 		scheduled += fmt.Sprintf(", at most %d at a time", e.limit)
 	}
@@ -483,7 +499,7 @@ func (s *runState) expandCounted(ctx, runCtx workflow.Context, id string, count 
 			orkstackv1.Status_STATUS_RUNNING, started); err != nil {
 			return err
 		}
-		return s.dispatchItems(ctx, runCtx, id, inFlight)
+		return s.dispatchExpanded(ctx, runCtx, id, inFlight)
 	}
 	// As in schedule: nothing changes between these two events, so on the lean
 	// event path TASK_STARTED reuses TASK_SCHEDULED's snapshot.
@@ -497,10 +513,23 @@ func (s *runState) expandCounted(ctx, runCtx workflow.Context, id string, count 
 	}
 	reuse := s.startedSnapshotURI(ctx, scheduledURI)
 	if _, err := s.emitWithSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
-		orkstackv1.Status_STATUS_RUNNING, fmt.Sprintf("dispatching %d items to orkers", count), reuse); err != nil {
+		orkstackv1.Status_STATUS_RUNNING, fmt.Sprintf("dispatching %d items to orkers", count-kept), reuse); err != nil {
 		return err
 	}
-	return s.dispatchItems(ctx, runCtx, id, inFlight)
+	return s.dispatchExpanded(ctx, runCtx, id, inFlight)
+}
+
+// dispatchExpanded starts an expanded fan-out's items. One a resume keeps
+// every item of, though its own unit runs again, has none to start.
+func (s *runState) dispatchExpanded(ctx, runCtx workflow.Context, id string, inFlight map[string]workflow.Future) error {
+	if e := s.eaches[id]; e.settled < e.count {
+		return s.dispatchItems(ctx, runCtx, id, inFlight)
+	}
+	node := s.taskRuns[id]
+	node.Status = orkstackv1.Status_STATUS_SUCCEEDED
+	node.FinishedAt = timestamppb.New(workflow.Now(ctx))
+	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, id,
+		orkstackv1.Status_STATUS_SUCCEEDED, fmt.Sprintf("all %d items succeeded", s.eaches[id].count))
 }
 
 // taskIndex is id's position in the definition, for a rule-anchored sentence.
@@ -699,7 +728,7 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 	if err != nil {
 		return nil, err
 	}
-	input := s.executeTaskInput(t, id, pool, nil)
+	input := s.executeTaskInput(t, id, int(index), pool, nil)
 	devices, err := s.deviceRefs(pool, t)
 	if err != nil {
 		return nil, err
@@ -989,6 +1018,7 @@ func (s *runState) finishFanOutOnRunEnd(ctx workflow.Context, id string) {
 	if node != nil {
 		node.DispatchHeld = false // the run is ending: nothing of it waits now
 	}
+	s.cancelUnexpandedItems(ctx, id)
 	if e == nil || !e.expanded || e.count == 0 || node.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
 		return
 	}

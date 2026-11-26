@@ -967,6 +967,16 @@ Severity info; fires after 30m. The runs marked queued and the limits' lines dis
 - **Fix:** Nothing at once: the runs re-assert their place and the limits check their holders. If it persists, read the engines' logs.
 - **Related:** [OrkStackConcurrencyCensusPartial](#orkstackconcurrencycensuspartial)
 
+### OrkStackConcurrencyResetIncomplete
+
+Severity warning; fires after 5m. A concurrency limit's reset does not finish.
+
+- **What it means:** The limit was reset and still cannot read which runs hold or wait for its key.
+- **Impact:** The key grants no slot: runs wait in line, and `refuse` and `skip` runs fail `RUN_CONCURRENCY_UNAVAILABLE`.
+- **Confirm:** `orkctl admin audit -F 'action^concurrency.reset.'` names the key; `orkctl concurrency get KEY` shows the limit reading its holders.
+- **Fix:** See ConcurrencyRebuildFailing: the limit keeps trying, and the reset completes once it can read its runs.
+- **Related:** [OrkStackConcurrencyRebuildFailing](#orkstackconcurrencyrebuildfailing), [OrkStackTemporalUnreachable](#orkstacktemporalunreachable)
+
 ### OrkStackConcurrencyUnavailable
 
 Severity warning; fires after 5m. Concurrency limits do not answer.
@@ -1147,3 +1157,47 @@ Severity info; fires at once. A commit appeared after a run retired; its objects
 - **Fix:** Nothing is required. Frequent late commits mean Orkers that keep working long after their runs end.
 
 <!-- END GENERATED ALERTS -->
+
+## Resetting a concurrency limit
+
+A key's limit checks the runs it holds by itself, and reclaims a slot whose run
+has ended within one sweep (`engine.concurrency.holder_sweep_interval`). Reset
+one only when it does not answer, or keeps showing a holder that is not there.
+
+1. Read it: `orkctl concurrency get KEY`. A holder that is not making progress
+   is a run to end, not a limit to reset.
+2. See what a reset would do: `orkctl admin concurrency reset KEY --dry-run`.
+   It names how many runs keep their slots and their place in line, and how
+   many entries are dropped because their run has ended.
+3. Reset it: `orkctl admin concurrency reset KEY`. No run is stopped, restarted
+   or moved in line. Runs that ask for the key meanwhile wait for the new
+   record; a `refuse` or `skip` run not answered within
+   `engine.concurrency.acquire_timeout` fails `RUN_CONCURRENCY_UNAVAILABLE`.
+
+**A limit that does not answer** is refused `CONCURRENCY_RESET_UNANSWERED`.
+Look at Temporal and the engines first: a limit does not answer while no engine
+can run its workflow, and a reset then changes nothing. If engines are healthy
+and it still does not answer, `--force-unanswered` ends it and rebuilds it from
+the runs' own records. A run whose record is not found yet may be missed, so
+until it is, up to the limit's number of extra runs may hold the key.
+
+**Asking again.** A reset that is still running when the command gives up
+prints the `--request-id` and `--issued-at` to ask about it with. The two
+together name the request, and it acts once, however often it is asked;
+the same id with another time, or asking something else, is refused, and a
+request older than `engine.concurrency.reset_audit_window` (24h) never acts.
+A key remembers the 32 resets of that window; a 33rd is refused until the
+oldest is past it. After a limit's earlier record could not be read, or a reset
+reached the cluster later than it should have, the key takes no reset until
+the window has passed. It keeps granting slots meanwhile.
+For `engine.concurrency.freeze_timeout` after a reset starts, another of the
+same key is refused and can be asked again. A copy of a reset's own start that
+reaches the cluster after that may start the limit's record once more. No run
+loses its slot or its place and none is granted twice, and a reset applied in
+between is then answered refused rather than with how it ended.
+
+**What is recorded.** The call that starts a reset, or is refused one, is
+audited `concurrency.reset.requested`, with who asked. The limit audits what it
+then did: `concurrency.reset.applied`, and `.completed` or `.failed`
+(`orkctl admin audit -F 'action^concurrency.reset.'`). The records report;
+the limit itself decides whether a request has acted.

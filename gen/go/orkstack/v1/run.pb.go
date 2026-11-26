@@ -977,7 +977,7 @@ const (
 	ResumeDisposition_RESUME_DISPOSITION_KEEP_SKIPPED ResumeDisposition = 4
 	// WAIT waits again, from the resume, with a fresh deadline.
 	ResumeDisposition_RESUME_DISPOSITION_WAIT ResumeDisposition = 5
-	// SLEEP_UNTIL sleeps until its recorded wake-up time.
+	// SLEEP_UNTIL keeps a sleep that had woken, as it was.
 	ResumeDisposition_RESUME_DISPOSITION_SLEEP_UNTIL ResumeDisposition = 6
 )
 
@@ -1403,8 +1403,12 @@ type TaskChild struct {
 	// they are resolved and claimed, before the child is started, so a start
 	// refused afterwards still records what this run claimed.
 	InputArtifacts []*NamedArtifact `protobuf:"bytes,6,rep,name=input_artifacts,json=inputArtifacts,proto3" json:"input_artifacts,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// concurrency_limited says the child Orkflow declares a concurrency limit
+	// of its own, so the child run may wait in line for its slot
+	// (TaskRun.queued).
+	ConcurrencyLimited bool `protobuf:"varint,7,opt,name=concurrency_limited,json=concurrencyLimited,proto3" json:"concurrency_limited,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *TaskChild) Reset() {
@@ -1477,6 +1481,13 @@ func (x *TaskChild) GetInputArtifacts() []*NamedArtifact {
 		return x.InputArtifacts
 	}
 	return nil
+}
+
+func (x *TaskChild) GetConcurrencyLimited() bool {
+	if x != nil {
+		return x.ConcurrencyLimited
+	}
+	return false
 }
 
 // TaskRun is the execution record of a single Task within a Run.
@@ -1638,7 +1649,10 @@ type TaskRun struct {
 	Sleep *TaskSleep `protobuf:"bytes,27,opt,name=sleep,proto3" json:"sleep,omitempty"`
 	// interruptions is set from E92; unset until it lands (v0.4.0 proto batch).
 	Interruptions *TaskInterruptions `protobuf:"bytes,28,opt,name=interruptions,proto3" json:"interruptions,omitempty"`
-	// queued is set from E88's task-level limits; unset until they land.
+	// queued is present while a composed task's child run waits in line for a
+	// slot of its concurrency limit: the child's own Run.queued, read live by
+	// GetRun only, for at most engine.concurrency.api_holders_shown of a run's
+	// composed tasks and for a caller who may read the child run.
 	Queued *ConcurrencyQueued `protobuf:"bytes,29,opt,name=queued,proto3" json:"queued,omitempty"`
 	// pending_reason says why a task, or a fan-out item, of a live run is not
 	// running yet. GetRun derives it on read and nothing stores it. It is one
@@ -3376,7 +3390,9 @@ type Run struct {
 	Queued *ConcurrencyQueued `protobuf:"bytes,24,opt,name=queued,proto3" json:"queued,omitempty"`
 	// superseded_by is set from E88; unset until it lands (v0.4.0 proto batch).
 	SupersededBy string `protobuf:"bytes,25,opt,name=superseded_by,json=supersededBy,proto3" json:"superseded_by,omitempty"`
-	// resumes is set from E85; unset until it lands (v0.4.0 proto batch).
+	// resumes are the run's resumes, oldest first, each with how the run ended
+	// after it. A resume that never got going has no entry, nor has one whose
+	// ending's archive was lost before the next.
 	Resumes []*RunResume `protobuf:"bytes,26,rep,name=resumes,proto3" json:"resumes,omitempty"`
 	// resume_hint is set from E85; unset until it lands (v0.4.0 proto batch).
 	ResumeHint *ResumeHint `protobuf:"bytes,27,opt,name=resume_hint,json=resumeHint,proto3" json:"resume_hint,omitempty"`
@@ -6203,14 +6219,15 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\bTaskEach\x12\x1a\n" +
 	"\bexpanded\x18\x01 \x01(\bR\bexpanded\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\x05R\x05count\x12,\n" +
-	"\x05lines\x18\x03 \x01(\v2\x16.orkstack.v1.EachLinesR\x05lines\"\x9c\x02\n" +
+	"\x05lines\x18\x03 \x01(\v2\x16.orkstack.v1.EachLinesR\x05lines\"\xcd\x02\n" +
 	"\tTaskChild\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12'\n" +
 	"\x0forkflow_version\x18\x02 \x01(\tR\x0eorkflowVersion\x12:\n" +
 	"\x19orkflow_definition_digest\x18\x03 \x01(\tR\x17orkflowDefinitionDigest\x12\x15\n" +
 	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12+\n" +
 	"\x11orkflow_namespace\x18\x05 \x01(\tR\x10orkflowNamespace\x12C\n" +
-	"\x0finput_artifacts\x18\x06 \x03(\v2\x1a.orkstack.v1.NamedArtifactR\x0einputArtifacts\"\xf3\f\n" +
+	"\x0finput_artifacts\x18\x06 \x03(\v2\x1a.orkstack.v1.NamedArtifactR\x0einputArtifacts\x12/\n" +
+	"\x13concurrency_limited\x18\a \x01(\bR\x12concurrencyLimited\"\xf3\f\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12+\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +

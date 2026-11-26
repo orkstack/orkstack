@@ -45,6 +45,11 @@ var (
 		"concurrency-gate-grant-without-n-matches-zero-v1.json",
 		"concurrency-gate-rebuild-first-v1.json",
 		"concurrency-gate-fenced-v1.json",
+		"concurrency-gate-freeze-replaced-v1.json",
+		"concurrency-gate-freeze-expired-v1.json",
+		"concurrency-gate-reset-records-v1.json",
+		"concurrency-gate-rebuild-seeded-v1.json",
+		"concurrency-gate-reset-lapsed-v1.json",
 	}
 	censusFixtures = []string{
 		"concurrency-census-pass-v1.json",
@@ -96,6 +101,10 @@ func TestConcurrencyFixtures_EveryOneIsReplayed(t *testing.T) {
 	for _, f := range concurrencyRunFixtures {
 		listed[filepath.Base(f.path())] = true
 	}
+	for _, f := range concurrencyChildFixtures {
+		listed[filepath.Base(f.path())] = true
+	}
+	listed[filepath.Base(concurrencyResumeFixture)] = true
 	for _, path := range found {
 		if !listed[filepath.Base(path)] {
 			t.Errorf("%s is committed but no replay test reads it", path)

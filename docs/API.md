@@ -159,6 +159,18 @@ Defined in `proto/orkstack/v1/cache.proto`.
 | `GetCacheStats` | [`GetCacheStatsRequest`](#getcachestatsrequest) | [`GetCacheStatsResponse`](#getcachestatsresponse) | GetCacheStats reports one namespace's memo inventory, as the store lists it now, and how its cached tasks fared over one window of finished runs, derived on read from the run archive. Nothing is counted or stored. |
 | `PurgeCache` | [`PurgeCacheRequest`](#purgecacherequest) | [`PurgeCacheResponse`](#purgecacheresponse) | PurgeCache deletes memos. It never touches a commit, run, attempt, log or artifact. |
 
+### ConcurrencyAdminService
+
+ConcurrencyAdminService changes a concurrency limit's own record: an
+operator's remedy for a limit that does not answer, or holds what it should
+not (docs/RUNBOOKS.md). Reading limits is ConcurrencyService.
+
+Defined in `proto/orkstack/v1/concurrencyadmin_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `ResetConcurrencyLimit` | [`ResetConcurrencyLimitRequest`](#resetconcurrencylimitrequest) | [`ResetConcurrencyLimitResponse`](#resetconcurrencylimitresponse) | ResetConcurrencyLimit rebuilds one key's record from the runs that hold or wait for it. A limit that answers keeps every run that is still running: no run is stopped, restarted or moved in line. The request is named by request_id and issued_at together and acts once: the same request asked again answers how the reset stands, which is how a client waits for it. Refused with FAILED_PRECONDITION (CONCURRENCY_RESET_CONFLICT, _UNANSWERED or _REFUSED), and with UNAVAILABLE when the same request may be asked again as it is. |
+
 ### ConcurrencyService
 
 ConcurrencyService reads a namespace's concurrency limits as they stand:
@@ -2518,6 +2530,7 @@ No fields.
 | `paused` | `int64` | paused is how many runs executing now are paused (orkctl run pause): not in runs_by_status["running"], and in the running list. 0 where the cluster does not index paused runs, which then count as running. A series bucket counts a paused run it created as running. |
 | `queued` | `int64` | queued is how many of the running runs wait for a concurrency slot. |
 | `executing` | `int64` | executing is how many of the running runs do not: running minus queued. |
+| `resumed_runs` | `int64` | resumed_runs is how many of the window's runs were resumed at least once, finished or running. A resumed run is counted once everywhere in this answer, as it is now. |
 
 ### GetSystemInfoRequest
 
@@ -4319,7 +4332,7 @@ as a pool and a pin are (§7.1).
 | `blockers` | repeated [`ReleaseBlocker`](#releaseblocker) | blockers are every reason this release may not take new runs now, in a stable order. Always empty for CURRENT. Empty for any other role means RampRelease and PromoteRelease would pass their check at the moment of this read. |
 | `open_identity_runs` | `int64` | open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `queued_runs` | `int64` | queued_runs is set from E88; unset until it lands (v0.4.0 proto batch). |
-| `resumable_runs` | `int64` | resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `resumable_runs` | `int64` | resumable_runs is how many failed runs are pinned to this release and still held by the cluster: one that can be resumed, can be only while the release runs. It counts child runs, which are never resumed themselves. 0 where the engine resumes no runs. |
 | `paused_runs` | `int64` | paused_runs is how many of runs_in_flight are paused: each keeps this release from draining until its pause ends (at most the deployment's engine.run_pause_timeout_max). 0 where the cluster does not index paused runs. |
 | `event_source_instances` | `int64` | event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch). |
 | `event_sources` | `int32` | event_sources is set from E90; unset until it lands (v0.4.0 proto batch). |
@@ -4378,6 +4391,37 @@ of it the workload used.
 | `cpu` | `double` | cpu is the cpu limit in cores: "2" is 2, "500m" is 0.5. |
 | `memory_bytes` | `int64` | memory_bytes is the memory limit in bytes: "4Gi" is 4294967296. |
 | `gpu` | `int64` | gpu is the gpu units the Orker granted the attempt; 0 for none. |
+
+### ResetConcurrencyLimitRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | empty = the default namespace |
+| `key` | `string` |  |
+| `request_id` | `string` | request_id names the request, with issued_at; at most 48 bytes. Required unless dry_run. |
+| `expected_epoch` | optional `int64` | expected_epoch refuses the reset of a limit that has been rebuilt since the epoch was read; 0 expects a key with no record. |
+| `dry_run` | `bool` | dry_run answers what a reset would do, and changes nothing. |
+| `force_unanswered` | `bool` | force_unanswered resets a limit that does not answer, accepting that more runs than the limit may hold the key until every run that holds it is found. |
+| `issued_at` | `google.protobuf.Timestamp` | issued_at is when the client issued the request; the same value on every repeat of it. One older than the reset window (engine.concurrency.reset_audit_window), or more than five minutes in the future, is refused. Required unless dry_run. |
+
+### ResetConcurrencyLimitResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `request_id` | `string` |  |
+| `state` | [`ConcurrencyResetState`](#concurrencyresetstate) |  |
+| `epoch` | `int64` | epoch is the limit's epoch as the reset read it; new_epoch the one it starts. |
+| `new_epoch` | `int64` |  |
+| `holders` | `int32` | holders and queued are the entries the reset keeps; dropped are those whose run has ended or moved to a newer execution; adopted are the kept holders whose own record could not be read. |
+| `queued` | `int32` |  |
+| `dropped` | `int32` |  |
+| `adopted` | `int32` |  |
+| `seeded` | `int32` | seeded is how many entries the new record begins with, before the runs' own records add to it. |
+| `consequence_code` | [`ConcurrencyResetConsequence`](#concurrencyresetconsequence) | consequence_code and consequence say what the reset does; clients show consequence as it is. |
+| `consequence` | `string` |  |
+| `reason_code` | `string` | reason_code and reason say why a reset ended otherwise than completed. |
+| `reason` | `string` |  |
+| `note` | `string` | note says what else is worth knowing while it runs. |
 
 ### ResolveAwaitRequest
 
@@ -4558,7 +4602,7 @@ ResumeTask is one task, or one fan-out item, of a resume's plan.
 | `item` | optional `int32` | item is set for one item of a fan-out. |
 | `category` | [`ResumeCategory`](#resumecategory) |  |
 | `why` | `string` | why is the sentence the plan lists the task with. |
-| `previous_outcome` | [`Status`](#status) |  |
+| `previous_outcome` | [`Status`](#status) | previous_outcome is how it ended before: SUCCEEDED for a result an earlier resume kept and did not read back. |
 | `memo` | [`ResumeMemoState`](#resumememostate) |  |
 | `callback_works` | `bool` | callback_works: an awaited task's callback token accepts one more resolution once the run waits for it again. |
 | `detail` | `string` |  |
@@ -4698,7 +4742,7 @@ Run is one execution of an Orkflow.
 | `canceled_by_verified` | `bool` | canceled_by_verified says canceled_by is a principal OrkStack authenticated (auth.mode observe or enforce). Unset, canceled_by is what the deployment's gateway asserted in Ork-Principal, unauthenticated. |
 | `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while the run waits in line for a slot of its concurrency limit's key (docs/DSL.md "Concurrency limits"): status PENDING, or RUNNING when an unpaused or resumed run waits again. |
 | `superseded_by` | `string` | superseded_by is set from E88; unset until it lands (v0.4.0 proto batch). |
-| `resumes` | repeated [`RunResume`](#runresume) | resumes is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `resumes` | repeated [`RunResume`](#runresume) | resumes are the run's resumes, oldest first, each with how the run ended after it. A resume that never got going has no entry, nor has one whose ending's archive was lost before the next. |
 | `resume_hint` | [`ResumeHint`](#resumehint) | resume_hint is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `interruptions_off_reason` | `string` | interruptions_off_reason is set from E92; unset until it lands (v0.4.0 proto batch). |
 | `pause` | [`RunPause`](#runpause) | pause is the run's own pause, present while it lasts. Never on a finished run. |
@@ -5450,6 +5494,7 @@ was before this message existed.
 | `run_id` | `string` | run_id is the child run, set once its start is CONFIRMED and never before: an id whose start was refused names no run. The child run's own Run.origin is {PARENT_RUN, &lt;this run's id>}. |
 | `orkflow_namespace` | `string` | orkflow_namespace is the namespace that owns the child Orkflow when it is not the namespace the run executes in: a child composed from another namespace through shared_with. Empty for a child of the run's own namespace. |
 | `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts are the artifacts this task passed its child, by the name of the child's artifact input each binds (artifacts:): set once they are resolved and claimed, before the child is started, so a start refused afterwards still records what this run claimed. |
+| `concurrency_limited` | `bool` | concurrency_limited says the child Orkflow declares a concurrency limit of its own, so the child run may wait in line for its slot (TaskRun.queued). |
 
 ### TaskEach
 
@@ -5548,7 +5593,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `timing` | [`TaskTiming`](#tasktiming) | timing is where this task's time went, derived from scheduled_at, started_at and finished_at above (TaskTiming). It is DERIVED ON READ: GetRun sets it on every row, a fan-out's items included, and nothing stores it — the engine never writes it, and a copy read back from anywhere else is not one GetRun answered. |
 | `sleep` | [`TaskSleep`](#tasksleep) | sleep is this task's sleep state, set for a task whose definition declares `sleep:` and unset otherwise (see TaskSleep). |
 | `interruptions` | [`TaskInterruptions`](#taskinterruptions) | interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88's task-level limits; unset until they land. |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while a composed task's child run waits in line for a slot of its concurrency limit: the child's own Run.queued, read live by GetRun only, for at most engine.concurrency.api_holders_shown of a run's composed tasks and for a caller who may read the child run. |
 | `pending_reason` | `string` | pending_reason says why a task, or a fan-out item, of a live run is not running yet. GetRun derives it on read and nothing stores it. It is one of: the instant the task waits for to run again after an interruption; that no Orker of its pool (on a versioned fleet, of its run's release) takes work, for a task the run dispatched that no Orker has started; or that its pin waits for a pin host. It is empty when none applies, and when the reason cannot be known: the Orker inventory or the run's release could not be read, or a live Orker did not answer. |
 | `result_epoch` | `int64` | result_epoch is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_disposition` | [`ResumeDisposition`](#resumedisposition) | resume_disposition is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -6069,7 +6114,7 @@ CacheOutcome is what one attempt's memo step decided.
 | `CACHE_OUTCOME_UNSPECIFIED` | 0 |  |
 | `CACHE_OUTCOME_HIT` | 1 | A memoized SUCCEEDED commit was reused: no image pulled, no secret read, no container run. CacheResult.source names it. |
 | `CACHE_OUTCOME_MISS` | 2 | No usable memo: the container ran. CacheResult.miss_reason says why. |
-| `CACHE_OUTCOME_BYPASSED` | 3 | The run was submitted with no_cache: no memo was read; the container ran and its memo was refreshed. |
+| `CACHE_OUTCOME_BYPASSED` | 3 | The run was submitted with no_cache, or resumed for another result of this task: no memo was read; the container ran and its memo was refreshed. |
 
 ### CacheScope
 
@@ -6105,6 +6150,31 @@ after its record was lost or on its first use.
 | `CONCURRENCY_REBUILD_READING` | 2 | READING: it is reading which runs hold the key. |
 | `CONCURRENCY_REBUILD_SETTLING` | 3 | SETTLING: it has read them, and waits a moment before it grants. |
 | `CONCURRENCY_REBUILD_FAILING` | 4 | FAILING: the reading has failed for longer than its bound, and it keeps trying. |
+
+### ConcurrencyResetConsequence
+
+ConcurrencyResetConsequence is which consequence a reset has.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_RESET_CONSEQUENCE_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_RESET_CONSEQUENCE_ANSWERING` | 1 |  |
+| `CONCURRENCY_RESET_CONSEQUENCE_ABSENT` | 2 |  |
+| `CONCURRENCY_RESET_CONSEQUENCE_UNANSWERED_FORCED` | 3 |  |
+
+### ConcurrencyResetState
+
+ConcurrencyResetState is how a reset stands.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_RESET_STATE_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_RESET_STATE_DRY_RUN` | 1 | DRY_RUN: nothing was changed. |
+| `CONCURRENCY_RESET_STATE_RUNNING` | 2 | RUNNING: the reset was applied and the new record is being rebuilt. |
+| `CONCURRENCY_RESET_STATE_COMPLETED` | 3 | COMPLETED: the new record is rebuilt. |
+| `CONCURRENCY_RESET_STATE_FAILED` | 4 | FAILED: the new record could not be rebuilt in time; the limit keeps trying, and the same request reports COMPLETED once it has. |
+| `CONCURRENCY_RESET_STATE_INTERRUPTED` | 5 | INTERRUPTED: the limit was started again before the reset finished. |
+| `CONCURRENCY_RESET_STATE_NOT_APPLIED` | 6 | NOT_APPLIED: the reset never took effect and never will; start a new one. |
 
 ### ConcurrencyStrategy
 
@@ -6813,7 +6883,7 @@ ResumeCategory is the section of the plan a task is listed in.
 | `RESUME_CATEGORY_KEPT` | 8 | Kept: its saved result is read back. |
 | `RESUME_CATEGORY_SETTLED` | 9 | Already done: an awaited or composed task's result is kept. |
 | `RESUME_CATEGORY_SKIPPED` | 10 | Stays skipped. |
-| `RESUME_CATEGORY_WAITS_AGAIN` | 11 | Waits again, from the resume, with a fresh deadline. |
+| `RESUME_CATEGORY_WAITS_AGAIN` | 11 | Waits again, in full, once what it needs is done. |
 | `RESUME_CATEGORY_SLEEP_KEPT` | 12 | A sleep that already started: it wakes when it would have. |
 | `RESUME_CATEGORY_EARLIER` | 13 | Finished in an earlier part of the run, before it carried on. |
 | `RESUME_CATEGORY_RESOLVED_ON_RECORD` | 14 | Answered and on record: the answer given is used. |
@@ -6831,7 +6901,7 @@ ResumeDisposition is how a resume treats one task or item (E85 §3.4).
 | `RESUME_DISPOSITION_SETTLE` | 3 | SETTLE keeps an awaited or composed task's recorded result. |
 | `RESUME_DISPOSITION_KEEP_SKIPPED` | 4 | KEEP_SKIPPED keeps it skipped. |
 | `RESUME_DISPOSITION_WAIT` | 5 | WAIT waits again, from the resume, with a fresh deadline. |
-| `RESUME_DISPOSITION_SLEEP_UNTIL` | 6 | SLEEP_UNTIL sleeps until its recorded wake-up time. |
+| `RESUME_DISPOSITION_SLEEP_UNTIL` | 6 | SLEEP_UNTIL keeps a sleep that had woken, as it was. |
 
 ### ResumeFromState
 
@@ -6861,8 +6931,8 @@ ResumeMemoState is what a cached task that reruns does with its memo.
 | Value | Number | Description |
 |---|---|---|
 | `RESUME_MEMO_STATE_UNSPECIFIED` | 0 | Not a cached task. |
-| `RESUME_MEMO_STATE_BYPASSED` | 1 | It succeeded before: it runs again, and its memo points at the new result. |
-| `RESUME_MEMO_STATE_LOOKED_UP` | 2 | It never succeeded: its memo is looked up as on any run. |
+| `RESUME_MEMO_STATE_BYPASSED` | 1 | It succeeded before, or an earlier resume was to run it again: it runs again, and its memo points at the new result. |
+| `RESUME_MEMO_STATE_LOOKED_UP` | 2 | Neither: its memo is looked up as on any run. |
 
 ### ResumeWarningKind
 
@@ -6876,6 +6946,7 @@ ResumeWarningKind is a ResumeWarning's kind.
 | `RESUME_WARNING_KIND_PIN_LEASE_HELD` | 3 | A pin's host may still hold its old slot until the lease expires. |
 | `RESUME_WARNING_KIND_ATTEMPT_OUTCOME_UNKNOWN` | 4 | An earlier attempt may still be running on an Orker that is gone. |
 | `RESUME_WARNING_KIND_FORCE_CANCEL_FINISHING` | 5 | The force cancel of the run is still finishing. |
+| `RESUME_WARNING_KIND_FRESH_TIMEOUT` | 6 | The run has a timeout, and gets a fresh one. |
 
 ### RetryState
 

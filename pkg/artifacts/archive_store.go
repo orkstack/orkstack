@@ -42,7 +42,7 @@ var _ RunArchive = (*BlobRunArchive)(nil)
 
 // runArchiveDirs are the key families a local archive creates up front.
 var runArchiveDirs = []string{
-	RunArchiveNamespace, RunIndexNamespace, RunOriginIndexNamespace, RunRootIndexNamespace,
+	RunArchiveNamespace, RunResumeNamespace, RunIndexNamespace, RunOriginIndexNamespace, RunRootIndexNamespace,
 	RunObjectRefNamespace, RunObjectListNamespace, RunCleanupNamespace,
 }
 
@@ -101,27 +101,16 @@ func (a *BlobRunArchive) TrimBucketURI(uri string) (string, bool) {
 // of the run was written (HasRun): an index row with no body is an interrupted
 // write, which every reader of the index skips and the archive sweep finishes.
 //
-// The body is immutable. A run that already has one keeps it — this is what
-// makes an activity retry, a workflow replay and a second engine writing the
-// same terminal event converge instead of racing.
+// A run has a body for each of its endings (run_endings.go); rec.Scope says
+// which this is. The body is immutable. An ending that already has one keeps
+// it — this is what makes an activity retry, a workflow replay and a second
+// engine writing the same terminal event converge instead of racing.
 func (a *BlobRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
-	bodyKey, err := RunArchiveKey(rec.RunID)
+	bodyKey, err := RunEndingKey(rec.RunID, rec.Scope)
 	if err != nil {
 		return err
 	}
-	indexKey, err := RunIndexKey(rec)
-	if err != nil {
-		return err
-	}
-	originKey, hasOrigin, err := RunOriginIndexKey(rec)
-	if err != nil {
-		return err
-	}
-	rootKey, hasRoot, err := RunRootIndexKey(rec)
-	if err != nil {
-		return err
-	}
-	recentKey, err := RunRecentIndexKey(rec)
+	rowKeys, err := runRowKeys(rec)
 	if err != nil {
 		return err
 	}
@@ -166,31 +155,30 @@ func (a *BlobRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err := a.putObjectRefs(ctx, refKeys); err != nil {
 		return fmt.Errorf("artifacts: archive run %q: %w", rec.RunID, err)
 	}
-	// The origin and root rows go before the run-index row, which is what
-	// lets cleanup see every record but the body before it sees the run. It
-	// checks for the body itself before it retires one.
-	if hasOrigin {
-		if err := a.b.put(ctx, originKey, "", nil); err != nil {
-			return fmt.Errorf("artifacts: archive run %q: write origin index %q: %w", rec.RunID, originKey, err)
+	if exists {
+		// The archive is whole: its rows were written before its body, and
+		// rows written again could replace a later ending's.
+		return nil
+	}
+	// An ending a later one followed has no row: the run did not end that way.
+	// A mark alone says nothing of it: its reset may never run.
+	endings, err := a.RunEndings(ctx, rec.RunID)
+	if err != nil {
+		return fmt.Errorf("artifacts: archive run %q: %w", rec.RunID, err)
+	}
+	if lastScope(endings.Archived) <= rec.Scope {
+		if err := a.putRows(ctx, rec, rowKeys); err != nil {
+			return err
+		}
+		if rec.Scope > 0 {
+			if err := a.retireSuperseded(ctx, rec); err != nil {
+				return fmt.Errorf("artifacts: archive run %q: %w", rec.RunID, err)
+			}
 		}
 	}
-	if hasRoot {
-		if err := a.b.put(ctx, rootKey, "", nil); err != nil {
-			return fmt.Errorf("artifacts: archive run %q: write root index %q: %w", rec.RunID, rootKey, err)
-		}
-	}
-	if err := a.b.put(ctx, recentKey, "", nil); err != nil {
-		return fmt.Errorf("artifacts: archive run %q: write recent index %q: %w", rec.RunID, recentKey, err)
-	}
-	if err := a.b.put(ctx, indexKey, "", nil); err != nil {
-		return fmt.Errorf("artifacts: archive run %q: write index %q: %w", rec.RunID, indexKey, err)
-	}
-	// The body last: it is what says the archive is whole (HasRun). A body
-	// already there is immutable.
-	if !exists {
-		if err := a.b.put(ctx, bodyKey, RunArchiveContentType, rec.JSONL); err != nil {
-			return fmt.Errorf("artifacts: archive run %q: write body %q: %w", rec.RunID, bodyKey, err)
-		}
+	// The body last: it is what says the archive is whole (HasRun).
+	if err := a.b.put(ctx, bodyKey, RunArchiveContentType, rec.JSONL); err != nil {
+		return fmt.Errorf("artifacts: archive run %q: write body %q: %w", rec.RunID, bodyKey, err)
 	}
 	return nil
 }
@@ -232,20 +220,13 @@ func (a *BlobRunArchive) putObjectRefs(ctx context.Context, refKeys []string) er
 	return errors.Join(errs...)
 }
 
-// GetRun returns the archived JSONL body for runID.
+// GetRun returns the archived JSONL body of runID's newest ending.
 func (a *BlobRunArchive) GetRun(ctx context.Context, runID string) ([]byte, error) {
-	key, err := RunArchiveKey(runID)
+	endings, err := a.RunEndings(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	body, _, err := a.b.get(ctx, key, 0)
-	if err != nil {
-		if errors.Is(err, errBlobNotFound) {
-			return nil, fmt.Errorf("artifacts: archive get %q: %w", runID, ErrNotFound)
-		}
-		return nil, fmt.Errorf("artifacts: archive get %q: %w", runID, err)
-	}
-	return body, nil
+	return a.GetEnding(ctx, runID, lastScope(endings.Archived))
 }
 
 // CleanupState returns a run's immutable cleanup sidecar.
@@ -591,6 +572,9 @@ func (a *BlobRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEn
 		if !ok || !q.Matches(entry) {
 			return false, nil
 		}
+		if object.Size > 0 {
+			entry.rowKey = object.Key
+		}
 		entries = append(entries, entry)
 		full = q.KeyOrder && q.Limit > 0 && len(entries) >= q.Limit
 		return full, nil
@@ -599,9 +583,10 @@ func (a *BlobRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEn
 		return nil, fmt.Errorf("artifacts: archive list %q: %w", prefix, err)
 	}
 	if q.KeyOrder {
-		return entries, nil
+		// Never shortened: a short page ends a key-ordered walk.
+		return a.withScopes(ctx, entries, false)
 	}
-	return q.finish(entries), nil
+	return a.withScopes(ctx, q.finish(entries), true)
 }
 
 // listRecent walks the newest-first family from the cursor and stops at the
@@ -615,12 +600,12 @@ func (a *BlobRunArchive) listRecent(ctx context.Context, q RunQuery) ([]RunIndex
 	walk := newRecentWalk(q)
 	err = listObjects(ctx, a.b, blobListInput{Prefix: prefix, StartAfter: startAfter}, func(object blobObject) (bool, error) {
 		a.indexKeysScanned.Add(1)
-		return walk.add(object.Key), nil
+		return walk.add(object), nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: archive list %q: %w", prefix, err)
 	}
-	return walk.page(), nil
+	return a.withScopes(ctx, walk.page(), true)
 }
 
 // IndexKeysScanned reports how many index keys this archive has enumerated
@@ -630,18 +615,10 @@ func (a *BlobRunArchive) listRecent(ctx context.Context, q RunQuery) ([]RunIndex
 // cache. Tests assert on it; nothing in the running system reads it.
 func (a *BlobRunArchive) IndexKeysScanned() int64 { return a.indexKeysScanned.Load() }
 
-// HasRun reports whether runID has an archive body, without reading it.
-// PutRun writes the body last, so a body means the run's archive is whole.
+// HasRun reports whether runID's first ending has an archive body, without
+// reading it; HasEnding asks about a later one. PutRun writes the body last, so a body means the run's archive is whole.
 func (a *BlobRunArchive) HasRun(ctx context.Context, runID string) (bool, error) {
-	key, err := RunArchiveKey(runID)
-	if err != nil {
-		return false, err
-	}
-	exists, err := a.exists(ctx, key)
-	if err != nil {
-		return false, fmt.Errorf("artifacts: archive has %q: %w", runID, err)
-	}
-	return exists, nil
+	return a.HasEnding(ctx, runID, 0)
 }
 
 func (a *BlobRunArchive) exists(ctx context.Context, key string) (bool, error) {

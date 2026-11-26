@@ -64,7 +64,7 @@
 	import RunForceCancelDialog from '#lib/components/RunForceCancelDialog.svelte';
 	import { awaited, forceCancelOffer, POLL_MS, requestNotes } from '#lib/forceCancel.ts';
 	import type { GetForceCancelResponse } from '#lib/gen/orkstack/v1/run_service_pb.ts';
-	import { can, runTarget } from '#lib/permissions.ts';
+	import { can, missing, runTarget } from '#lib/permissions.ts';
 	import RunQueuedCard from '#lib/components/RunQueuedCard.svelte';
 	import { limitHref, waitsOnArrival } from '#lib/concurrency.ts';
 	import { howLastPauseEnded, pausedChildCount } from '#lib/pause.ts';
@@ -146,6 +146,7 @@
 	import DrawingFrame from '#lib/components/DrawingFrame.svelte';
 	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
 	import MoreMenu from '#lib/components/MoreMenu.svelte';
+	import { ACCEPT_GAP_PERMISSION, resumeOffer } from '#lib/resume.ts';
 	import ActivitySymbol from '#lib/components/ActivitySymbol.svelte';
 	import { safeIcon } from '#lib/activityIcon.ts';
 	import { activityKind } from '#lib/activityIcon.ts';
@@ -675,6 +676,27 @@
 	// "Evidence" is a dialog that exists only while open: the manifest it
 	// shows is fetched per opening and kept nowhere (docs/RUN_EVIDENCE.md).
 	let evidenceDialogOpen = $state(false);
+	// Resume and Retry from here (docs/RESUME.md): what the run's advisory
+	// hint offers, and the dialog that previews and confirms. `from` is the
+	// task retried from, empty for Resume.
+	const offer = $derived(resumeOffer(run?.resumeHint));
+	// run.resume.accept_gap is checked at the run's Orkflow, as the engine checks it.
+	const acceptTarget = $derived({ namespace: namespaceLabel(data.namespace), orkflow: run?.orkflowName });
+	let resumeDialog = $state<{ from: string } | undefined>(undefined);
+	// A resumed run is live again under the same id: the page forgets the
+	// ending it showed (its terminal state is sticky otherwise), and the event
+	// stream reconnects from the last sequence it read, so RUN_RESUMED and the
+	// reruns arrive as they happen.
+	async function resumed(): Promise<void> {
+		resumeDialog = undefined;
+		runStatus = Status.RUNNING;
+		runErrorMessage = '';
+		finishedAt = undefined;
+		terminalFactsRead = false;
+		failedWhileWatched = false;
+		socketEpoch++;
+		await invalidateAll();
+	}
 	let compareCandidates = $state<Run[]>([]);
 	let compareSelected = $state('');
 	let comparePasted = $state('');
@@ -2665,6 +2687,12 @@
 					>
 				{/if}
 			{/if}
+			{#if offer.fromTaskOnly}
+				<span class="text-dense text-ink-3" data-testid="run-resume-from-task">Force-cancelled: pick a task and choose Retry from here to resume it.</span>
+			{/if}
+			{#if offer.header}
+				<button type="button" data-testid="run-resume" onclick={() => (resumeDialog = { from: '' })} class="btn"><Icon name="retry" />Resume</button>
+			{/if}
 			<button type="button" data-testid="run-again" onclick={() => (runAgainDialogOpen = true)} class="btn btn-primary"><Icon name="play" />Run again</button>
 			<CliPopover testid="run-inspect-cli" title="Command line: this run" commands={[...runCli, ...activeCli]} />
 		</div>
@@ -3283,6 +3311,14 @@
 					join={!current && joinWords(activeView.join) ? { words: joinWords(activeView.join), tip: joinTitle(activeView.join, def?.needs ?? []) } : undefined}
 					waitsFor={!current && rowKind(activeView).waiting ? blockingNeeds(activeView) : undefined}
 				>
+					{@const resumeActs = current ? undefined : offer.tasks.get(activeView.id)}
+					{#if resumeActs && (resumeActs.resume || resumeActs.retryFrom)}
+						{@const taskId = activeView.id}
+						<div class="insp-row flex flex-wrap gap-2" data-testid="task-resume-actions">
+							{#if resumeActs.resume}<button type="button" class="btn btn-sm" data-testid="task-resume" onclick={() => (resumeDialog = { from: '' })}><Icon name="retry" />Resume run</button>{/if}
+							{#if resumeActs.retryFrom}<button type="button" class="btn btn-sm" data-testid="task-retry-from" onclick={() => (resumeDialog = { from: taskId })}><Icon name="retry" />Retry from here</button>{/if}
+						</div>
+					{/if}
 					{#if activeWaiter?.storeOutageWait}
 						<WaitsFor label={waiterLabel(activeWaiter)} outage={activeWaiter.storeOutageWait} namespace={data.namespace} />
 					{:else if activeWaiter?.capacityWait}
@@ -3513,6 +3549,11 @@
 		</Dialog>
 	{/if}
 
+	{#if resumeDialog}
+		{#await import('#lib/components/ResumeDialog.svelte') then { default: ResumeDialog }}
+			<ResumeDialog runId={run.id} namespace={data.namespace} fromTask={resumeDialog.from} mayAccept={can(data.grants, ACCEPT_GAP_PERMISSION, acceptTarget)} mayAcceptWhy={missing(ACCEPT_GAP_PERMISSION, acceptTarget)} onclose={() => (resumeDialog = undefined)} onresumed={() => void resumed()} onchanged={() => void invalidateAll()} />
+		{/await}
+	{/if}
 	{#if evidenceDialogOpen}
 		{#await import('#lib/components/RunEvidenceDialog.svelte') then { default: RunEvidenceDialog }}
 			<RunEvidenceDialog runId={run.id} namespace={data.namespace} onclose={() => (evidenceDialogOpen = false)} />

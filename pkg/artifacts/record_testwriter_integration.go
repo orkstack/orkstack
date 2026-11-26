@@ -79,6 +79,16 @@ func (w *RecordTestWriter) Raw(ctx context.Context, key string, body []byte) err
 	return w.b.create(ctx, key, "application/json", body)
 }
 
+// Remove deletes the record at key, as the run's cleanup would: on a store
+// that keeps empty directories (SeaweedFS) the directory it lay in stays.
+// Only identity record keys are removed.
+func (w *RecordTestWriter) Remove(ctx context.Context, key string) error {
+	if !isRecordKey(key) || strings.Contains("/"+key+"/", "/../") || strings.Contains("/"+key+"/", "/./") {
+		return fmt.Errorf("artifacts: test writer: %q is no identity record key: %w", key, ErrInvalidRecordKey)
+	}
+	return w.b.remove(ctx, key)
+}
+
 // Resume writes a resume's record and link as WriteResume does.
 func (w *RecordTestWriter) Resume(ctx context.Context, r ResumeRecord) error {
 	return newRecordStore(w.b).WriteResume(ctx, r)

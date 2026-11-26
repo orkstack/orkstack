@@ -324,6 +324,9 @@ func compareWithStore(file, live *evidence.Manifest) *storeComparison {
 	for _, m := range live.Members {
 		liveByPath[m.Path] = m
 	}
+	if compareResumed(c, file, live, liveByPath) {
+		return c
+	}
 	fileByPath := map[string]bool{}
 	for _, m := range file.Members {
 		fileByPath[m.Path] = true
@@ -356,6 +359,45 @@ func compareWithStore(file, live *evidence.Manifest) *storeComparison {
 	return c
 }
 
+// compareResumed compares a bundle whose run was resumed since it was
+// exported, and reports whether it was. What the store holds of the run now is
+// its newest ending's, so a member is compared when the store still has it
+// from the same object, which never changes, and the endings the bundle holds
+// must each be there.
+func compareResumed(c *storeComparison, file, live *evidence.Manifest, liveByPath map[string]evidence.Member) bool {
+	was := newestEnding(file)
+	if newestEnding(live) <= was {
+		return false
+	}
+	for _, m := range file.Members {
+		path, ending := m.Path, m.Kind == evidence.KindEnding
+		if m.Kind == evidence.KindRun {
+			path, ending = evidence.EndingPath(was), true
+		}
+		now, ok := liveByPath[path]
+		switch {
+		case !ending && (!ok || now.Origin != m.Origin):
+			continue
+		case !ok:
+			c.Failures = append(c.Failures, evidence.Failure{Path: m.Path, Reason: "member set differs", Want: "in bundle", Got: "not in store"})
+		case m.SHA256 != "" && now.SHA256 != "" && m.SHA256 != now.SHA256:
+			c.Failures = append(c.Failures, evidence.Failure{Path: m.Path, Reason: "store digest differs", Want: m.SHA256, Got: now.SHA256})
+		case m.State != now.State:
+			c.Findings = append(c.Findings, evidence.Failure{Path: m.Path, Reason: fmt.Sprintf("%s since export", now.State), Got: now.Reason})
+		}
+	}
+	c.Findings = append(c.Findings, evidence.Failure{Path: "run", Reason: "resumed since export: only what the store still holds of this bundle was compared"})
+	return true
+}
+
+// newestEnding is the scope of the ending a bundle is of, 0 for a run's first.
+func newestEnding(m *evidence.Manifest) uint64 {
+	if n := len(m.Endings); n > 0 {
+		return m.Endings[n-1].Scope
+	}
+	return 0
+}
+
 func renderStoreComparison(c *storeComparison) string {
 	var b strings.Builder
 	b.WriteString("store:\n")
@@ -368,7 +410,7 @@ func renderStoreComparison(c *storeComparison) string {
 		if f.Got != "" {
 			line += " (" + f.Got + ")"
 		}
-		b.WriteString(line + "\n")
+		b.WriteString(terminalSafe(line) + "\n")
 	}
 	if len(c.Failures) > 0 {
 		fmt.Fprintf(&b, "FAILED: %s the store\n", pluralForms(len(c.Failures), "member disagrees with", "members disagree with"))
@@ -401,7 +443,7 @@ func renderVerifyReport(r *evidence.Report) string {
 		if rest != "" {
 			line = fmt.Sprintf("  %-15s %-23s %s", label, value, rest)
 		}
-		b.WriteString(strings.TrimRight(line, " ") + "\n")
+		b.WriteString(terminalSafe(strings.TrimRight(line, " ")) + "\n")
 	}
 	row("run", m.RunID, "namespace "+m.Namespace)
 	row("definition", m.DefinitionDigest, fmt.Sprintf("%s@%s (%s)", ownedLabel(m.OrkflowNamespace, m.OrkflowName), m.OrkflowVersion, definitionState(m.Definition)))
@@ -411,6 +453,16 @@ func renderVerifyReport(r *evidence.Report) string {
 	}
 	row("status", m.RunStatus, exported)
 	row("tasks", taskSummary(m.Tasks), "")
+	for i, e := range m.Endings[:max(0, len(m.Endings)-1)] {
+		label, ended := "", "its archive is not in the bundle"
+		if i == 0 {
+			label = "resumed after"
+		}
+		if e.RunStatus != "" {
+			ended = strings.TrimSpace(e.RunStatus + " " + e.Reason)
+		}
+		row(label, ended, e.Path)
+	}
 	if len(r.Reclaimed) > 0 {
 		row("reclaimed", pluralForms(len(r.Reclaimed), "member", "members")+", recorded sha256 preserved:", "")
 		width := 0
@@ -418,7 +470,7 @@ func renderVerifyReport(r *evidence.Report) string {
 			width = max(width, len(member.Path))
 		}
 		for _, member := range r.Reclaimed {
-			fmt.Fprintf(&b, "                    %-*s  (%s)\n", width, member.Path, member.Reason)
+			b.WriteString(terminalSafe(fmt.Sprintf("                    %-*s  (%s)", width, member.Path, member.Reason)) + "\n")
 		}
 	}
 	if len(r.Unrecorded) > 0 {
@@ -475,7 +527,7 @@ func writeFailures(b *strings.Builder, failures []evidence.Failure) {
 		if f.Want != "" || f.Got != "" {
 			line += fmt.Sprintf("   want %s   got %s", f.Want, f.Got)
 		}
-		b.WriteString(strings.TrimRight(line, " ") + "\n")
+		b.WriteString(terminalSafe(strings.TrimRight(line, " ")) + "\n")
 	}
 }
 

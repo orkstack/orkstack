@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -451,6 +452,29 @@ func TestRunOnce_RefusesAStillRunningArchivedRun(t *testing.T) {
 	}
 	if stats.Errors != 1 || stats.RunsCleaned != 0 {
 		t.Fatalf("stats = %+v", stats)
+	}
+}
+
+// TestRunOnce_LeavesAResumedRunThatRuns: a run a resume marked may still have
+// a row of the ending it set aside while it runs. It is left alone, which is no
+// failure; one that cannot be asked about is kept, and said to be.
+func TestRunOnce_LeavesAResumedRunThatRuns(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	run := func(bodies *endingStore) (CleanupStats, *fakeArchive, *fakeCluster, error) {
+		store := newFakeArchive(artifacts.RunIndexEntry{RunID: "resumed", Namespace: "default", Time: now.Add(-100 * time.Hour)})
+		cluster := newFakeCluster()
+		cluster.found["resumed"] = true
+		stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).
+			WithBodies(NewNewestEndings(bodies, &endingCluster{}, "ork-main")).RunOnce(context.Background())
+		return stats, store, cluster, err
+	}
+	stats, store, cluster, err := run(&endingStore{endings: map[string]artifacts.RunEndings{"resumed": marked("resumed", []uint64{7}, nil)}})
+	if err != nil || stats.Errors != 0 || cluster.deleteCalls["resumed"] != 0 || store.deletes["resumed"] != 0 {
+		t.Fatalf("stats = %+v, %v; want it left alone", stats, err)
+	}
+	if stats, _, cluster, err = run(&endingStore{listErr: errors.New("down")}); err == nil || !strings.Contains(err.Error(), "whether it was resumed") ||
+		stats.Errors != 1 || cluster.deleteCalls["resumed"] != 0 {
+		t.Fatalf("stats = %+v, %v; want it kept, saying what could not be told", stats, err)
 	}
 }
 

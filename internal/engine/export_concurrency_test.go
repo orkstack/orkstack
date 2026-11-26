@@ -12,6 +12,7 @@ type (
 	GateAnswerForTest    = gateAnswer
 	GateMemoEntryForTest = gateMemoEntry
 	GateEntryForTest     = gateEntry
+	GateResetForTest     = gateReset
 )
 
 const (

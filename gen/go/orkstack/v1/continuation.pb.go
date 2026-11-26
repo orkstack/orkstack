@@ -479,7 +479,10 @@ type RunCheckpointPart struct {
 	// index) order.
 	Items []*TaskRun `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
 	// loss_events is set from E92; unset until it lands (v0.4.0 proto batch).
-	LossEvents    *RunLossEvents `protobuf:"bytes,4,opt,name=loss_events,json=lossEvents,proto3" json:"loss_events,omitempty"`
+	LossEvents *RunLossEvents `protobuf:"bytes,4,opt,name=loss_events,json=lossEvents,proto3" json:"loss_events,omitempty"`
+	// resume_state is set on part 0 only, for a resumed run with units still to
+	// run that read no memo.
+	ResumeState   *RunResumeState `protobuf:"bytes,5,opt,name=resume_state,json=resumeState,proto3" json:"resume_state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -542,6 +545,177 @@ func (x *RunCheckpointPart) GetLossEvents() *RunLossEvents {
 	return nil
 }
 
+func (x *RunCheckpointPart) GetResumeState() *RunResumeState {
+	if x != nil {
+		return x.ResumeState
+	}
+	return nil
+}
+
+// RunResumeState is what a resumed run carries of its resume beside its rows.
+type RunResumeState struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// fresh are the units a resume runs again that read no memo, of those still
+	// to run, in task order.
+	Fresh         []*ResumeFreshUnits `protobuf:"bytes,1,rep,name=fresh,proto3" json:"fresh,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunResumeState) Reset() {
+	*x = RunResumeState{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunResumeState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunResumeState) ProtoMessage() {}
+
+func (x *RunResumeState) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunResumeState.ProtoReflect.Descriptor instead.
+func (*RunResumeState) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *RunResumeState) GetFresh() []*ResumeFreshUnits {
+	if x != nil {
+		return x.Fresh
+	}
+	return nil
+}
+
+// ResumeFreshUnits are one task's: the task itself, every item of a fan-out
+// included, or some of its items.
+type ResumeFreshUnits struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// task is its index in the definition.
+	Task int32 `protobuf:"varint,1,opt,name=task,proto3" json:"task,omitempty"`
+	All  bool  `protobuf:"varint,2,opt,name=all,proto3" json:"all,omitempty"`
+	// items are ranges of its items, ascending and apart.
+	Items         []*ResumeItemRange `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeFreshUnits) Reset() {
+	*x = ResumeFreshUnits{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeFreshUnits) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeFreshUnits) ProtoMessage() {}
+
+func (x *ResumeFreshUnits) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeFreshUnits.ProtoReflect.Descriptor instead.
+func (*ResumeFreshUnits) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ResumeFreshUnits) GetTask() int32 {
+	if x != nil {
+		return x.Task
+	}
+	return 0
+}
+
+func (x *ResumeFreshUnits) GetAll() bool {
+	if x != nil {
+		return x.All
+	}
+	return false
+}
+
+func (x *ResumeFreshUnits) GetItems() []*ResumeItemRange {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+// ResumeItemRange is count items from first.
+type ResumeItemRange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	First         int32                  `protobuf:"varint,1,opt,name=first,proto3" json:"first,omitempty"`
+	Count         int32                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeItemRange) Reset() {
+	*x = ResumeItemRange{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeItemRange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeItemRange) ProtoMessage() {}
+
+func (x *ResumeItemRange) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeItemRange.ProtoReflect.Descriptor instead.
+func (*ResumeItemRange) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ResumeItemRange) GetFirst() int32 {
+	if x != nil {
+		return x.First
+	}
+	return 0
+}
+
+func (x *ResumeItemRange) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
 // RunEventSegment is the body of one event segment, gzip-compressed.
 type RunEventSegment struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -558,7 +732,7 @@ type RunEventSegment struct {
 
 func (x *RunEventSegment) Reset() {
 	*x = RunEventSegment{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[5]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -570,7 +744,7 @@ func (x *RunEventSegment) String() string {
 func (*RunEventSegment) ProtoMessage() {}
 
 func (x *RunEventSegment) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[5]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -583,7 +757,7 @@ func (x *RunEventSegment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunEventSegment.ProtoReflect.Descriptor instead.
 func (*RunEventSegment) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{5}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *RunEventSegment) GetRunId() string {
@@ -653,7 +827,7 @@ type RunSnapshotOverlay struct {
 
 func (x *RunSnapshotOverlay) Reset() {
 	*x = RunSnapshotOverlay{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[6]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -665,7 +839,7 @@ func (x *RunSnapshotOverlay) String() string {
 func (*RunSnapshotOverlay) ProtoMessage() {}
 
 func (x *RunSnapshotOverlay) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[6]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -678,7 +852,7 @@ func (x *RunSnapshotOverlay) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunSnapshotOverlay.ProtoReflect.Descriptor instead.
 func (*RunSnapshotOverlay) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{6}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *RunSnapshotOverlay) GetBaseUri() string {
@@ -732,7 +906,7 @@ type RunConcurrencyCarry struct {
 
 func (x *RunConcurrencyCarry) Reset() {
 	*x = RunConcurrencyCarry{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[7]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -744,7 +918,7 @@ func (x *RunConcurrencyCarry) String() string {
 func (*RunConcurrencyCarry) ProtoMessage() {}
 
 func (x *RunConcurrencyCarry) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[7]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -757,7 +931,7 @@ func (x *RunConcurrencyCarry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunConcurrencyCarry.ProtoReflect.Descriptor instead.
 func (*RunConcurrencyCarry) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{7}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RunConcurrencyCarry) GetAttempted() []string {
@@ -793,7 +967,7 @@ type HeldSlot struct {
 
 func (x *HeldSlot) Reset() {
 	*x = HeldSlot{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -805,7 +979,7 @@ func (x *HeldSlot) String() string {
 func (*HeldSlot) ProtoMessage() {}
 
 func (x *HeldSlot) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -818,7 +992,7 @@ func (x *HeldSlot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeldSlot.ProtoReflect.Descriptor instead.
 func (*HeldSlot) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{8}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *HeldSlot) GetGateId() string {
@@ -848,7 +1022,7 @@ type SlotOrdinal struct {
 
 func (x *SlotOrdinal) Reset() {
 	*x = SlotOrdinal{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -860,7 +1034,7 @@ func (x *SlotOrdinal) String() string {
 func (*SlotOrdinal) ProtoMessage() {}
 
 func (x *SlotOrdinal) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -873,7 +1047,7 @@ func (x *SlotOrdinal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SlotOrdinal.ProtoReflect.Descriptor instead.
 func (*SlotOrdinal) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{9}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SlotOrdinal) GetGateId() string {
@@ -911,7 +1085,7 @@ type RunLossEvents struct {
 
 func (x *RunLossEvents) Reset() {
 	*x = RunLossEvents{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -923,7 +1097,7 @@ func (x *RunLossEvents) String() string {
 func (*RunLossEvents) ProtoMessage() {}
 
 func (x *RunLossEvents) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -936,7 +1110,7 @@ func (x *RunLossEvents) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunLossEvents.ProtoReflect.Descriptor instead.
 func (*RunLossEvents) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{10}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *RunLossEvents) GetCount() int32 {
@@ -964,7 +1138,7 @@ type OpenLossEvent struct {
 
 func (x *OpenLossEvent) Reset() {
 	*x = OpenLossEvent{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[11]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -976,7 +1150,7 @@ func (x *OpenLossEvent) String() string {
 func (*OpenLossEvent) ProtoMessage() {}
 
 func (x *OpenLossEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[11]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -989,7 +1163,7 @@ func (x *OpenLossEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenLossEvent.ProtoReflect.Descriptor instead.
 func (*OpenLossEvent) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{11}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *OpenLossEvent) GetOrkerId() string {
@@ -1014,14 +1188,16 @@ type RunResumeCarry struct {
 	// resumed_after is the sequence of the ending the resume set aside.
 	ResumedAfter int64 `protobuf:"varint,2,opt,name=resumed_after,json=resumedAfter,proto3" json:"resumed_after,omitempty"`
 	// resume_count is how many resumes of the run got going.
-	ResumeCount   int32 `protobuf:"varint,3,opt,name=resume_count,json=resumeCount,proto3" json:"resume_count,omitempty"`
+	ResumeCount int32 `protobuf:"varint,3,opt,name=resume_count,json=resumeCount,proto3" json:"resume_count,omitempty"`
+	// resume is the run's newest resume, as each of its snapshots lists it.
+	Resume        *RunResume `protobuf:"bytes,4,opt,name=resume,proto3" json:"resume,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunResumeCarry) Reset() {
 	*x = RunResumeCarry{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[12]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1033,7 +1209,7 @@ func (x *RunResumeCarry) String() string {
 func (*RunResumeCarry) ProtoMessage() {}
 
 func (x *RunResumeCarry) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[12]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1046,7 +1222,7 @@ func (x *RunResumeCarry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResumeCarry.ProtoReflect.Descriptor instead.
 func (*RunResumeCarry) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{12}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *RunResumeCarry) GetSeqBase() uint64 {
@@ -1068,6 +1244,13 @@ func (x *RunResumeCarry) GetResumeCount() int32 {
 		return x.ResumeCount
 	}
 	return 0
+}
+
+func (x *RunResumeCarry) GetResume() *RunResume {
+	if x != nil {
+		return x.Resume
+	}
+	return nil
 }
 
 // ResumeBlock is one resume's plan as the reset run executes it (E85 §4.1,
@@ -1096,7 +1279,7 @@ type ResumeBlock struct {
 
 func (x *ResumeBlock) Reset() {
 	*x = ResumeBlock{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[13]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1108,7 +1291,7 @@ func (x *ResumeBlock) String() string {
 func (*ResumeBlock) ProtoMessage() {}
 
 func (x *ResumeBlock) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[13]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1121,7 +1304,7 @@ func (x *ResumeBlock) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeBlock.ProtoReflect.Descriptor instead.
 func (*ResumeBlock) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{13}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ResumeBlock) GetSeqBase() uint64 {
@@ -1207,14 +1390,20 @@ type ResumeUnits struct {
 	// encoded size, as ResumeRun measured it.
 	EncodedSizes []int64 `protobuf:"varint,6,rep,packed,name=encoded_sizes,json=encodedSizes,proto3" json:"encoded_sizes,omitempty"`
 	// recorded is, for each SETTLE or SLEEP_UNTIL unit, in unit order, its record.
-	Recorded      []*ResumeRecordedUnit `protobuf:"bytes,7,rep,name=recorded,proto3" json:"recorded,omitempty"`
+	Recorded []*ResumeRecordedUnit `protobuf:"bytes,7,rep,name=recorded,proto3" json:"recorded,omitempty"`
+	// run_fresh says, for each run, that its units read no memo (a task that
+	// succeeded before, so a person asked for another result) and write theirs
+	// from the result they make. Only units of cached tasks that run again are
+	// fresh; a fan-out's own unit being so, so is each item. Empty when no unit
+	// is.
+	RunFresh      []bool `protobuf:"varint,8,rep,packed,name=run_fresh,json=runFresh,proto3" json:"run_fresh,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResumeUnits) Reset() {
 	*x = ResumeUnits{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[14]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1226,7 +1415,7 @@ func (x *ResumeUnits) String() string {
 func (*ResumeUnits) ProtoMessage() {}
 
 func (x *ResumeUnits) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[14]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1239,7 +1428,7 @@ func (x *ResumeUnits) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeUnits.ProtoReflect.Descriptor instead.
 func (*ResumeUnits) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{14}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ResumeUnits) GetFanOuts() []*ResumeFanOutItems {
@@ -1291,6 +1480,13 @@ func (x *ResumeUnits) GetRecorded() []*ResumeRecordedUnit {
 	return nil
 }
 
+func (x *ResumeUnits) GetRunFresh() []bool {
+	if x != nil {
+		return x.RunFresh
+	}
+	return nil
+}
+
 // ResumeFanOutItems is how many items a fan-out's base had.
 type ResumeFanOutItems struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1303,7 +1499,7 @@ type ResumeFanOutItems struct {
 
 func (x *ResumeFanOutItems) Reset() {
 	*x = ResumeFanOutItems{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[15]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1315,7 +1511,7 @@ func (x *ResumeFanOutItems) String() string {
 func (*ResumeFanOutItems) ProtoMessage() {}
 
 func (x *ResumeFanOutItems) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[15]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1328,7 +1524,7 @@ func (x *ResumeFanOutItems) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeFanOutItems.ProtoReflect.Descriptor instead.
 func (*ResumeFanOutItems) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{15}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ResumeFanOutItems) GetTask() int32 {
@@ -1348,17 +1544,18 @@ func (x *ResumeFanOutItems) GetItemCount() int32 {
 // ResumeRecordedUnit is what a SETTLE or SLEEP_UNTIL unit is kept from.
 type ResumeRecordedUnit struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// values_ref is a SETTLE unit's recorded values, when it has any.
-	ValuesRef *ArtifactRef `protobuf:"bytes,1,opt,name=values_ref,json=valuesRef,proto3" json:"values_ref,omitempty"`
-	// wake_at is a SLEEP_UNTIL unit's recorded wake-up time.
-	WakeAt        *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=wake_at,json=wakeAt,proto3" json:"wake_at,omitempty"`
+	// row is the unit's row as the base ended, cut to what the resumed run
+	// cannot read back or derive (engine.cutRecordedRow): its times; a SETTLE
+	// unit's values_ref, artifacts, and who answered it or the child run it
+	// started with the artifacts it passed; a SLEEP_UNTIL unit's wake-up.
+	Row           *TaskRun `protobuf:"bytes,3,opt,name=row,proto3" json:"row,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResumeRecordedUnit) Reset() {
 	*x = ResumeRecordedUnit{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[16]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1370,7 +1567,7 @@ func (x *ResumeRecordedUnit) String() string {
 func (*ResumeRecordedUnit) ProtoMessage() {}
 
 func (x *ResumeRecordedUnit) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[16]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1383,19 +1580,12 @@ func (x *ResumeRecordedUnit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRecordedUnit.ProtoReflect.Descriptor instead.
 func (*ResumeRecordedUnit) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{16}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{19}
 }
 
-func (x *ResumeRecordedUnit) GetValuesRef() *ArtifactRef {
+func (x *ResumeRecordedUnit) GetRow() *TaskRun {
 	if x != nil {
-		return x.ValuesRef
-	}
-	return nil
-}
-
-func (x *ResumeRecordedUnit) GetWakeAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.WakeAt
+		return x.Row
 	}
 	return nil
 }
@@ -1419,7 +1609,7 @@ type ResumeReadback struct {
 
 func (x *ResumeReadback) Reset() {
 	*x = ResumeReadback{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[17]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1431,7 +1621,7 @@ func (x *ResumeReadback) String() string {
 func (*ResumeReadback) ProtoMessage() {}
 
 func (x *ResumeReadback) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[17]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1444,7 +1634,7 @@ func (x *ResumeReadback) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeReadback.ProtoReflect.Descriptor instead.
 func (*ResumeReadback) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{17}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ResumeReadback) GetDeadline() *durationpb.Duration {
@@ -1552,7 +1742,7 @@ type ResumePlanRecord struct {
 
 func (x *ResumePlanRecord) Reset() {
 	*x = ResumePlanRecord{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[18]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1564,7 +1754,7 @@ func (x *ResumePlanRecord) String() string {
 func (*ResumePlanRecord) ProtoMessage() {}
 
 func (x *ResumePlanRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[18]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1577,7 +1767,7 @@ func (x *ResumePlanRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumePlanRecord.ProtoReflect.Descriptor instead.
 func (*ResumePlanRecord) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{18}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ResumePlanRecord) GetFormat() int32 {
@@ -1717,7 +1907,7 @@ var File_orkstack_v1_continuation_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorkstack/v1/continuation.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\"~\n" +
+	"\x1eorkstack/v1/continuation.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15orkstack/v1/run.proto\"~\n" +
 	"\x10ContinuationPart\x12\x16\n" +
 	"\x06offset\x18\x01 \x01(\x03R\x06offset\x12\x1d\n" +
 	"\n" +
@@ -1767,13 +1957,23 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\x17deferred_pause_requests\x18\x11 \x03(\v2\x1b.orkstack.v1.RunPauseSignalR\x15deferredPauseRequests\x1aC\n" +
 	"\x15VersionDecisionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\xd9\x01\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\x99\x02\n" +
 	"\x11RunCheckpointPart\x12(\n" +
 	"\x06header\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x06header\x121\n" +
 	"\ttask_runs\x18\x02 \x03(\v2\x14.orkstack.v1.TaskRunR\btaskRuns\x12*\n" +
 	"\x05items\x18\x03 \x03(\v2\x14.orkstack.v1.TaskRunR\x05items\x12;\n" +
 	"\vloss_events\x18\x04 \x01(\v2\x1a.orkstack.v1.RunLossEventsR\n" +
-	"lossEvents\"\xc0\x01\n" +
+	"lossEvents\x12>\n" +
+	"\fresume_state\x18\x05 \x01(\v2\x1b.orkstack.v1.RunResumeStateR\vresumeState\"E\n" +
+	"\x0eRunResumeState\x123\n" +
+	"\x05fresh\x18\x01 \x03(\v2\x1d.orkstack.v1.ResumeFreshUnitsR\x05fresh\"l\n" +
+	"\x10ResumeFreshUnits\x12\x12\n" +
+	"\x04task\x18\x01 \x01(\x05R\x04task\x12\x10\n" +
+	"\x03all\x18\x02 \x01(\bR\x03all\x122\n" +
+	"\x05items\x18\x03 \x03(\v2\x1c.orkstack.v1.ResumeItemRangeR\x05items\"=\n" +
+	"\x0fResumeItemRange\x12\x14\n" +
+	"\x05first\x18\x01 \x01(\x05R\x05first\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x05R\x05count\"\xc0\x01\n" +
 	"\x0fRunEventSegment\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1e\n" +
 	"\n" +
@@ -1805,11 +2005,12 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\x04open\x18\x02 \x03(\v2\x1a.orkstack.v1.OpenLossEventR\x04open\"a\n" +
 	"\rOpenLossEvent\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x125\n" +
-	"\bfirst_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\afirstAt\"s\n" +
+	"\bfirst_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\afirstAt\"\xa3\x01\n" +
 	"\x0eRunResumeCarry\x12\x19\n" +
 	"\bseq_base\x18\x01 \x01(\x04R\aseqBase\x12#\n" +
 	"\rresumed_after\x18\x02 \x01(\x03R\fresumedAfter\x12!\n" +
-	"\fresume_count\x18\x03 \x01(\x05R\vresumeCount\"\xff\x02\n" +
+	"\fresume_count\x18\x03 \x01(\x05R\vresumeCount\x12.\n" +
+	"\x06resume\x18\x04 \x01(\v2\x16.orkstack.v1.RunResumeR\x06resume\"\xff\x02\n" +
 	"\vResumeBlock\x12\x19\n" +
 	"\bseq_base\x18\x01 \x01(\x04R\aseqBase\x12\x14\n" +
 	"\x05scope\x18\x02 \x01(\x04R\x05scope\x121\n" +
@@ -1821,7 +2022,7 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\x11previous_seq_base\x18\t \x01(\x04R\x0fpreviousSeqBase\x12'\n" +
 	"\x0freopened_awaits\x18\n" +
 	" \x03(\tR\x0ereopenedAwaits\x12\x14\n" +
-	"\x05units\x18\v \x01(\fR\x05unitsJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\x05rerunR\fdispositions\"\xcd\x02\n" +
+	"\x05units\x18\v \x01(\fR\x05unitsJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\x05rerunR\fdispositions\"\xea\x02\n" +
 	"\vResumeUnits\x129\n" +
 	"\bfan_outs\x18\x01 \x03(\v2\x1e.orkstack.v1.ResumeFanOutItemsR\afanOuts\x12\x1f\n" +
 	"\vrun_lengths\x18\x02 \x03(\x05R\n" +
@@ -1831,15 +2032,15 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"run_epochs\x18\x04 \x03(\x05R\trunEpochs\x12\x16\n" +
 	"\x06epochs\x18\x05 \x03(\x04R\x06epochs\x12#\n" +
 	"\rencoded_sizes\x18\x06 \x03(\x03R\fencodedSizes\x12;\n" +
-	"\brecorded\x18\a \x03(\v2\x1f.orkstack.v1.ResumeRecordedUnitR\brecorded\"F\n" +
+	"\brecorded\x18\a \x03(\v2\x1f.orkstack.v1.ResumeRecordedUnitR\brecorded\x12\x1b\n" +
+	"\trun_fresh\x18\b \x03(\bR\brunFresh\"F\n" +
 	"\x11ResumeFanOutItems\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\x05R\x04task\x12\x1d\n" +
 	"\n" +
-	"item_count\x18\x02 \x01(\x05R\titemCount\"\x82\x01\n" +
-	"\x12ResumeRecordedUnit\x127\n" +
-	"\n" +
-	"values_ref\x18\x01 \x01(\v2\x18.orkstack.v1.ArtifactRefR\tvaluesRef\x123\n" +
-	"\awake_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06wakeAt\"\xcc\x03\n" +
+	"item_count\x18\x02 \x01(\x05R\titemCount\"]\n" +
+	"\x12ResumeRecordedUnit\x12&\n" +
+	"\x03row\x18\x03 \x01(\v2\x14.orkstack.v1.TaskRunR\x03rowJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\n" +
+	"values_refR\awake_at\"\xcc\x03\n" +
 	"\x0eResumeReadback\x125\n" +
 	"\bdeadline\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\bdeadline\x12\x16\n" +
 	"\x06budget\x18\x02 \x01(\x03R\x06budget\x12\x1f\n" +
@@ -1892,86 +2093,92 @@ func file_orkstack_v1_continuation_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_continuation_proto_rawDescData
 }
 
-var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*ContinuationPart)(nil),      // 0: orkstack.v1.ContinuationPart
 	(*ContinuationObject)(nil),    // 1: orkstack.v1.ContinuationObject
 	(*EventSegmentRef)(nil),       // 2: orkstack.v1.EventSegmentRef
 	(*RunContinuation)(nil),       // 3: orkstack.v1.RunContinuation
 	(*RunCheckpointPart)(nil),     // 4: orkstack.v1.RunCheckpointPart
-	(*RunEventSegment)(nil),       // 5: orkstack.v1.RunEventSegment
-	(*RunSnapshotOverlay)(nil),    // 6: orkstack.v1.RunSnapshotOverlay
-	(*RunConcurrencyCarry)(nil),   // 7: orkstack.v1.RunConcurrencyCarry
-	(*HeldSlot)(nil),              // 8: orkstack.v1.HeldSlot
-	(*SlotOrdinal)(nil),           // 9: orkstack.v1.SlotOrdinal
-	(*RunLossEvents)(nil),         // 10: orkstack.v1.RunLossEvents
-	(*OpenLossEvent)(nil),         // 11: orkstack.v1.OpenLossEvent
-	(*RunResumeCarry)(nil),        // 12: orkstack.v1.RunResumeCarry
-	(*ResumeBlock)(nil),           // 13: orkstack.v1.ResumeBlock
-	(*ResumeUnits)(nil),           // 14: orkstack.v1.ResumeUnits
-	(*ResumeFanOutItems)(nil),     // 15: orkstack.v1.ResumeFanOutItems
-	(*ResumeRecordedUnit)(nil),    // 16: orkstack.v1.ResumeRecordedUnit
-	(*ResumeReadback)(nil),        // 17: orkstack.v1.ResumeReadback
-	(*ResumePlanRecord)(nil),      // 18: orkstack.v1.ResumePlanRecord
-	nil,                           // 19: orkstack.v1.RunContinuation.VersionDecisionsEntry
-	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
-	(*RunPause)(nil),              // 21: orkstack.v1.RunPause
-	(*InheritedPause)(nil),        // 22: orkstack.v1.InheritedPause
-	(*RunPauseSignal)(nil),        // 23: orkstack.v1.RunPauseSignal
-	(*Run)(nil),                   // 24: orkstack.v1.Run
-	(*TaskRun)(nil),               // 25: orkstack.v1.TaskRun
-	(*Event)(nil),                 // 26: orkstack.v1.Event
-	(ResumeAction)(0),             // 27: orkstack.v1.ResumeAction
-	(ResumeDisposition)(0),        // 28: orkstack.v1.ResumeDisposition
-	(*ArtifactRef)(nil),           // 29: orkstack.v1.ArtifactRef
-	(*durationpb.Duration)(nil),   // 30: google.protobuf.Duration
+	(*RunResumeState)(nil),        // 5: orkstack.v1.RunResumeState
+	(*ResumeFreshUnits)(nil),      // 6: orkstack.v1.ResumeFreshUnits
+	(*ResumeItemRange)(nil),       // 7: orkstack.v1.ResumeItemRange
+	(*RunEventSegment)(nil),       // 8: orkstack.v1.RunEventSegment
+	(*RunSnapshotOverlay)(nil),    // 9: orkstack.v1.RunSnapshotOverlay
+	(*RunConcurrencyCarry)(nil),   // 10: orkstack.v1.RunConcurrencyCarry
+	(*HeldSlot)(nil),              // 11: orkstack.v1.HeldSlot
+	(*SlotOrdinal)(nil),           // 12: orkstack.v1.SlotOrdinal
+	(*RunLossEvents)(nil),         // 13: orkstack.v1.RunLossEvents
+	(*OpenLossEvent)(nil),         // 14: orkstack.v1.OpenLossEvent
+	(*RunResumeCarry)(nil),        // 15: orkstack.v1.RunResumeCarry
+	(*ResumeBlock)(nil),           // 16: orkstack.v1.ResumeBlock
+	(*ResumeUnits)(nil),           // 17: orkstack.v1.ResumeUnits
+	(*ResumeFanOutItems)(nil),     // 18: orkstack.v1.ResumeFanOutItems
+	(*ResumeRecordedUnit)(nil),    // 19: orkstack.v1.ResumeRecordedUnit
+	(*ResumeReadback)(nil),        // 20: orkstack.v1.ResumeReadback
+	(*ResumePlanRecord)(nil),      // 21: orkstack.v1.ResumePlanRecord
+	nil,                           // 22: orkstack.v1.RunContinuation.VersionDecisionsEntry
+	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
+	(*RunPause)(nil),              // 24: orkstack.v1.RunPause
+	(*InheritedPause)(nil),        // 25: orkstack.v1.InheritedPause
+	(*RunPauseSignal)(nil),        // 26: orkstack.v1.RunPauseSignal
+	(*Run)(nil),                   // 27: orkstack.v1.Run
+	(*TaskRun)(nil),               // 28: orkstack.v1.TaskRun
+	(*Event)(nil),                 // 29: orkstack.v1.Event
+	(*RunResume)(nil),             // 30: orkstack.v1.RunResume
+	(ResumeAction)(0),             // 31: orkstack.v1.ResumeAction
+	(ResumeDisposition)(0),        // 32: orkstack.v1.ResumeDisposition
+	(*durationpb.Duration)(nil),   // 33: google.protobuf.Duration
 }
 var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ContinuationObject.parts:type_name -> orkstack.v1.ContinuationPart
 	1,  // 1: orkstack.v1.EventSegmentRef.object:type_name -> orkstack.v1.ContinuationObject
-	20, // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
-	20, // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
+	23, // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
+	23, // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
 	1,  // 4: orkstack.v1.RunContinuation.checkpoint:type_name -> orkstack.v1.ContinuationObject
 	2,  // 5: orkstack.v1.RunContinuation.segments:type_name -> orkstack.v1.EventSegmentRef
-	19, // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
+	22, // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
 	1,  // 7: orkstack.v1.RunContinuation.snapshot:type_name -> orkstack.v1.ContinuationObject
-	12, // 8: orkstack.v1.RunContinuation.resume:type_name -> orkstack.v1.RunResumeCarry
-	21, // 9: orkstack.v1.RunContinuation.pause:type_name -> orkstack.v1.RunPause
-	21, // 10: orkstack.v1.RunContinuation.last_pause:type_name -> orkstack.v1.RunPause
-	22, // 11: orkstack.v1.RunContinuation.paused_by_parent:type_name -> orkstack.v1.InheritedPause
-	7,  // 12: orkstack.v1.RunContinuation.concurrency:type_name -> orkstack.v1.RunConcurrencyCarry
-	23, // 13: orkstack.v1.RunContinuation.deferred_pause_requests:type_name -> orkstack.v1.RunPauseSignal
-	24, // 14: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
-	25, // 15: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
-	25, // 16: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
-	10, // 17: orkstack.v1.RunCheckpointPart.loss_events:type_name -> orkstack.v1.RunLossEvents
-	26, // 18: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
-	24, // 19: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
-	25, // 20: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
-	25, // 21: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
-	8,  // 22: orkstack.v1.RunConcurrencyCarry.held:type_name -> orkstack.v1.HeldSlot
-	9,  // 23: orkstack.v1.RunConcurrencyCarry.ordinals:type_name -> orkstack.v1.SlotOrdinal
-	11, // 24: orkstack.v1.RunLossEvents.open:type_name -> orkstack.v1.OpenLossEvent
-	20, // 25: orkstack.v1.OpenLossEvent.first_at:type_name -> google.protobuf.Timestamp
-	27, // 26: orkstack.v1.ResumeBlock.action:type_name -> orkstack.v1.ResumeAction
-	17, // 27: orkstack.v1.ResumeBlock.readback:type_name -> orkstack.v1.ResumeReadback
-	15, // 28: orkstack.v1.ResumeUnits.fan_outs:type_name -> orkstack.v1.ResumeFanOutItems
-	28, // 29: orkstack.v1.ResumeUnits.run_dispositions:type_name -> orkstack.v1.ResumeDisposition
-	16, // 30: orkstack.v1.ResumeUnits.recorded:type_name -> orkstack.v1.ResumeRecordedUnit
-	29, // 31: orkstack.v1.ResumeRecordedUnit.values_ref:type_name -> orkstack.v1.ArtifactRef
-	20, // 32: orkstack.v1.ResumeRecordedUnit.wake_at:type_name -> google.protobuf.Timestamp
-	30, // 33: orkstack.v1.ResumeReadback.deadline:type_name -> google.protobuf.Duration
-	30, // 34: orkstack.v1.ResumeReadback.get_timeout:type_name -> google.protobuf.Duration
-	30, // 35: orkstack.v1.ResumeReadback.call_timeout:type_name -> google.protobuf.Duration
-	30, // 36: orkstack.v1.ResumeReadback.retry_initial:type_name -> google.protobuf.Duration
-	20, // 37: orkstack.v1.ResumePlanRecord.at:type_name -> google.protobuf.Timestamp
-	20, // 38: orkstack.v1.ResumePlanRecord.expires_at:type_name -> google.protobuf.Timestamp
-	13, // 39: orkstack.v1.ResumePlanRecord.block:type_name -> orkstack.v1.ResumeBlock
-	40, // [40:40] is the sub-list for method output_type
-	40, // [40:40] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	15, // 8: orkstack.v1.RunContinuation.resume:type_name -> orkstack.v1.RunResumeCarry
+	24, // 9: orkstack.v1.RunContinuation.pause:type_name -> orkstack.v1.RunPause
+	24, // 10: orkstack.v1.RunContinuation.last_pause:type_name -> orkstack.v1.RunPause
+	25, // 11: orkstack.v1.RunContinuation.paused_by_parent:type_name -> orkstack.v1.InheritedPause
+	10, // 12: orkstack.v1.RunContinuation.concurrency:type_name -> orkstack.v1.RunConcurrencyCarry
+	26, // 13: orkstack.v1.RunContinuation.deferred_pause_requests:type_name -> orkstack.v1.RunPauseSignal
+	27, // 14: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
+	28, // 15: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
+	28, // 16: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
+	13, // 17: orkstack.v1.RunCheckpointPart.loss_events:type_name -> orkstack.v1.RunLossEvents
+	5,  // 18: orkstack.v1.RunCheckpointPart.resume_state:type_name -> orkstack.v1.RunResumeState
+	6,  // 19: orkstack.v1.RunResumeState.fresh:type_name -> orkstack.v1.ResumeFreshUnits
+	7,  // 20: orkstack.v1.ResumeFreshUnits.items:type_name -> orkstack.v1.ResumeItemRange
+	29, // 21: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
+	27, // 22: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
+	28, // 23: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
+	28, // 24: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
+	11, // 25: orkstack.v1.RunConcurrencyCarry.held:type_name -> orkstack.v1.HeldSlot
+	12, // 26: orkstack.v1.RunConcurrencyCarry.ordinals:type_name -> orkstack.v1.SlotOrdinal
+	14, // 27: orkstack.v1.RunLossEvents.open:type_name -> orkstack.v1.OpenLossEvent
+	23, // 28: orkstack.v1.OpenLossEvent.first_at:type_name -> google.protobuf.Timestamp
+	30, // 29: orkstack.v1.RunResumeCarry.resume:type_name -> orkstack.v1.RunResume
+	31, // 30: orkstack.v1.ResumeBlock.action:type_name -> orkstack.v1.ResumeAction
+	20, // 31: orkstack.v1.ResumeBlock.readback:type_name -> orkstack.v1.ResumeReadback
+	18, // 32: orkstack.v1.ResumeUnits.fan_outs:type_name -> orkstack.v1.ResumeFanOutItems
+	32, // 33: orkstack.v1.ResumeUnits.run_dispositions:type_name -> orkstack.v1.ResumeDisposition
+	19, // 34: orkstack.v1.ResumeUnits.recorded:type_name -> orkstack.v1.ResumeRecordedUnit
+	28, // 35: orkstack.v1.ResumeRecordedUnit.row:type_name -> orkstack.v1.TaskRun
+	33, // 36: orkstack.v1.ResumeReadback.deadline:type_name -> google.protobuf.Duration
+	33, // 37: orkstack.v1.ResumeReadback.get_timeout:type_name -> google.protobuf.Duration
+	33, // 38: orkstack.v1.ResumeReadback.call_timeout:type_name -> google.protobuf.Duration
+	33, // 39: orkstack.v1.ResumeReadback.retry_initial:type_name -> google.protobuf.Duration
+	23, // 40: orkstack.v1.ResumePlanRecord.at:type_name -> google.protobuf.Timestamp
+	23, // 41: orkstack.v1.ResumePlanRecord.expires_at:type_name -> google.protobuf.Timestamp
+	16, // 42: orkstack.v1.ResumePlanRecord.block:type_name -> orkstack.v1.ResumeBlock
+	43, // [43:43] is the sub-list for method output_type
+	43, // [43:43] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_continuation_proto_init() }
@@ -1979,7 +2186,6 @@ func file_orkstack_v1_continuation_proto_init() {
 	if File_orkstack_v1_continuation_proto != nil {
 		return
 	}
-	file_orkstack_v1_common_proto_init()
 	file_orkstack_v1_run_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1987,7 +2193,7 @@ func file_orkstack_v1_continuation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_continuation_proto_rawDesc), len(file_orkstack_v1_continuation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

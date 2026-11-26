@@ -160,8 +160,27 @@ func TestPreflightResume(t *testing.T) {
 			}
 		})
 	}
-	// Only what reruns is charged a pending task's reserve.
+	// What a history that carried on copies in again after its reset point is
+	// charged too: its saved state, and a definition passed by reference.
+	carried := history(15, 40<<10)
+	carried.Continued, carried.Carry = true, &orkstackv1.RunContinuation{Checkpoint: &orkstackv1.ContinuationObject{SizeBytes: 6 << 20}}
+	copies := &ContinuationBudget{HoldPercent: 60, ChunkBytes: 128 << 10, ChunksPerTask: 4, Restore: RestorePolicy{TimeoutSeconds: 300}}
 	in, plan, ver := kept(100, 600)
+	plain, err := PreflightResume(in, RunPlan{History: limit, Continuation: copies}, history(15, 40<<10), plan, ver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := PreflightResume(in, RunPlan{History: limit, Continuation: copies, Definition: &DefinitionRef{SizeBytes: 1 << 20}}, carried, plan, ver)
+	if err != nil || restored.Bytes-plain.Bytes < 7<<20 || restored.Events-plain.Events < 56 {
+		t.Fatalf("a saved state of 6 MiB and a definition of 1 MiB add %d bytes and %d events, %v; want both, in 56 reads", restored.Bytes-plain.Bytes, restored.Events-plain.Events, err)
+	}
+	near := history(15, 28<<20)
+	near.Continued, near.Carry = true, carried.Carry
+	if _, err := PreflightResume(in, RunPlan{History: limit, Continuation: copies}, near, plan, ver); err == nil {
+		t.Fatal("near-line-continued: a saved state that takes the run past its line was admitted")
+	}
+	// Only what reruns is charged a pending task's reserve.
+	in, plan, ver = kept(100, 600)
 	few, err := PreflightResume(in, RunPlan{History: limit, Continuation: budget}, history(15, 1), plan, ver)
 	if err != nil {
 		t.Fatal(err)

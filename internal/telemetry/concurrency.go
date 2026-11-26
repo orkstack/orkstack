@@ -44,6 +44,7 @@ type ConcurrencyCensus struct {
 	Unanswered        int
 	Truncated         bool
 	Unavailable       bool
+	ResetsIncomplete  int
 }
 
 // ConcurrencyRow is one (namespace, limit, level) aggregate.
@@ -128,6 +129,7 @@ func NewConcurrencyGauges(p *Providers, interval, timeout time.Duration, indexUn
 	intGauge("ork.concurrency.fence_degraded", "{gate}", "Gates checking new holders because they dropped a live tombstone.")
 	intGauge("ork.concurrency.rebuilding", "{gate}", "Gates rebuilding their record, by namespace and state.")
 	intGauge("ork.concurrency.queued_runs", "{run}", "Runs queued for a slot, by namespace.")
+	intGauge("ork.concurrency.resets_incomplete", "{reset}", "Resets of a concurrency limit that have run past reset_incomplete_after.")
 	intGauge("ork.concurrency.census.partial", "{flag}", "1 when a gate of the namespace did not answer the census.")
 	intGauge("ork.concurrency.census.gates", "{gate}", "Gates the census read.")
 	intGauge("ork.concurrency.census.unanswered", "{gate}", "Gates that did not answer the census.")
@@ -236,6 +238,7 @@ func (g *ConcurrencyGauges) observe(o metric.Observer, ints map[string]metric.In
 	for n, partial := range c.Partial {
 		obsInt("ork.concurrency.census.partial", flag(partial), ns(n))
 	}
+	obsInt("ork.concurrency.resets_incomplete", c.ResetsIncomplete)
 	obsInt("ork.concurrency.census.gates", c.Gates)
 	obsInt("ork.concurrency.census.unanswered", c.Unanswered)
 	obsInt("ork.concurrency.census.truncated", flag(c.Truncated))

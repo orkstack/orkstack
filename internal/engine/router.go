@@ -42,6 +42,9 @@ type RunReader interface {
 	// for an inline one, the verified object for one passed by reference
 	// (TemporalRunReader.RunDefinition). Only the await doors call it.
 	RunDefinition(ctx context.Context, runID string, start *RunStartRecord) (*orkstackv1.Orkflow, error)
+	// RunSavedState reads the verified saved state a run carried on with
+	// (TemporalRunReader.RunSavedState). Only ResumeRun calls it.
+	RunSavedState(ctx context.Context, namespace, runID string, carry *orkstackv1.RunContinuation) (*orkstackv1.Run, error)
 }
 
 // RunStarter starts and cancels runs, as the router hands it out. Same reason

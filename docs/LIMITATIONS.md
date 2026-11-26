@@ -46,6 +46,7 @@ Workflow payloads are small by contract. Anything large is an artifact, which is
 | Sleep length | From 1 second to 30 days; a longer wait is two runs or a schedule. A sleep produces no values and no artifacts, so nothing may read one | `sleep.seconds` on the task | [DSL.md](./DSL.md), "Validation rules", rules 50 and 51 |
 | Failure handler that runs a container | At most 32 needs | none, fixed | [DSL.md](./DSL.md), "Validation rules", rule 42 |
 | Failure handler | Cannot be pinned, fanned out or cached | none, fixed | [DSL.md](./DSL.md), "Validation rules", rule 39 |
+| Concurrency keys across runs | A child run may not hold a key a run above it holds, but nothing stops a cycle between two runs: run A holds key G and composes a child keyed H while run B holds H and composes a child keyed G. Each waits until its `queue_timeout` | `queue_timeout` (`engine.concurrency.default_queue_timeout`) | [DSL.md](./DSL.md#concurrency-limits-concurrency), "Concurrency limits" |
 
 ## Run history and saved state
 

@@ -374,6 +374,7 @@ func (h *StatsHandler) compute(
 	// states it rather than trusting it.
 	response.Queued = queuedAmong(running, executions.Queued)
 	response.Executing = max(0, int64(len(running))-paused-response.Queued)
+	response.ResumedRuns = resumedRuns(tally, executions)
 	if finished := tally.Finished(); finished > 0 {
 		response.SuccessRate = float64(tally.Succeeded()) / float64(finished)
 		response.SuccessRateDefined = true
@@ -665,4 +666,16 @@ func (h *StatsHandler) now() time.Time { return h.svc.now().UTC() }
 
 func cloneStats(response *orkstackv1.GetStatsResponse) *orkstackv1.GetStatsResponse {
 	return proto.Clone(response).(*orkstackv1.GetStatsResponse)
+}
+
+// resumedRuns counts the window's runs that were resumed: those the archive
+// holds and those the cluster does, each once.
+func resumedRuns(tally engine.RunTally, executions engine.Executions) int64 {
+	n := int64(len(tally.ResumedIDs))
+	for id := range executions.Resumed {
+		if _, counted := tally.ResumedIDs[id]; !counted {
+			n++
+		}
+	}
+	return n
 }

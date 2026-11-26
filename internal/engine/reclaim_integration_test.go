@@ -143,7 +143,7 @@ func (f *gcFixture) reclaimer(mode archivecleanup.ReclaimMode, store archiveclea
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	namespaces := staticNamespaceLister{docs: []*orkstackv1.Namespace{{Name: gcNamespace, RunRetention: durationpb.New(time.Minute)}}}
 	return archivecleanup.NewReclaimer(archivecleanup.ReclaimConfig{Mode: mode, Batch: 100, Interval: time.Hour},
-		store, f.runs, f.reader, f.sweeper, namespaces, f.retention, f.namespace, logger).WithGrace(gcTestGrace).WithResumes(archivecleanup.NoResumes{})
+		store, f.runs, f.reader, f.sweeper, namespaces, f.retention, f.namespace, logger).WithGrace(gcTestGrace).WithResumes(archivecleanup.NewEndingRecords(f.archive))
 }
 
 func (f *gcFixture) present(t *testing.T, ref *orkstackv1.ArtifactRef) bool {

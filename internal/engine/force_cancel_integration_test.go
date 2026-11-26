@@ -46,6 +46,8 @@ type fcStack struct {
 	deps     engine.ForceCancelDeps
 	settings engine.ForceCancelSettings
 	force    *engine.ForceCancelStarter
+	// endings hold the marks ResumeRun leaves.
+	endings artifacts.RunEndingStore
 
 	mu sync.Mutex
 	// terminal are the last events published of each run, by sequence.
@@ -84,6 +86,9 @@ func newFCStack(t *testing.T, ctx context.Context, scenario string) *fcStack {
 	s.reader = engine.NewTemporalRunReader(s.control).WithSnapshotStore(s.store).WithNamespaceIndex(true).WithOriginIndex(true).WithRootIndex(true).
 		WithForceCancelVerifier(keys, enforce)
 	s.archive = engine.NewRunArchiver(local).WithForceCancelVerifier(keys, enforce)
+	// What a resume set aside is read from the archive of the ending before.
+	s.reader.WithEndings(s.archive)
+	f.endings = local
 	f.settings = engine.DefaultForceCancelSettings()
 	// The least they may be, so a test waits little more than one grace.
 	f.settings.Grace = 30 * time.Second

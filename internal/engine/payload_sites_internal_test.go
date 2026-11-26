@@ -34,7 +34,10 @@ var plainSites = map[string]string{
 	"schedule_fire.go:ScheduleFireWorkflow (memo)":                "the fire's memo fields and its run's start memo",
 	"schedule_fire.go:refuseFire (memo)":                          "a refused fire's reason memo field: fixed words",
 	"schedule_fire.go:completeNotStarted (memo)":                  "a fire's skip code, a closed vocabulary, and its message: fixed words",
+	"resume_holder.go:(*runState).resumeConcurrency (memo)":       "the slot records' removal, and the run's incarnation at its gates",
+	"resume_holder.go:(*runState).resumeConcurrency":              "a release to the gate: ids and a sequence",
 	"resume_holder.go:loadResumeAtR (memo)":                       "the run's created_at memo field: a time",
+	"concurrency_reset_gate.go:(*gateRun).rememberResets (memo)":  "a gate is no run: the resets it remembers, as ids, digests and times",
 	"schedule_fire.go:ScheduleFireWorkflow":                       "a fire's run start: never under the schedule's key (P20b hands a sealed start on)",
 	"payload_start.go:keylessEnding":                              "a keyless run's one event: fixed words, and its memo's plaintext",
 	"continuation.go:(*runState).endUnrestorable":                 "an event publish's dedupe key: the run id and a sequence",
@@ -157,6 +160,7 @@ var crossSites = map[string]string{
 	"pause_cascade.go:(*runState).goSend SignalChildWorkflow":                 "sealed for the child's own id (sealedForChild)",
 	"compose.go:(*runState).startChild ExecuteChildWorkflow":                  "sealed for the child's own id",
 	"schedule_fire.go:ScheduleFireWorkflow ExecuteChildWorkflow":              "PlainIn: never under the schedule's key",
+	"resume_holder.go:(*runState).resumeConcurrency SignalExternalWorkflow":   "plaintext: the gate is not sealed and reads ids and a sequence",
 	"concurrency_gate.go:(*gateRun).grant SignalExternalWorkflow":             "the gate is not sealed: it writes plaintext",
 	"workflow.go:(*runState).schedule ExecuteActivity":                        "ExecuteTask: a raw payload, sealed by the dispatch",
 	"each.go:(*runState).scheduleItem ExecuteActivity":                        "ExecuteTask: a raw payload, sealed by the dispatch",
@@ -263,6 +267,7 @@ var localReads = map[string]string{
 	"concurrency_gate_report.go:(*gateRun).sendReport": "a gate is no run, and is never sealed",
 	"force_cancel_workflow.go:(*forceCancel).stepOn":   "a force cancel is no run, and is never sealed",
 	"force_cancel_cascade_workflow.go:(*cascade).step": "a force cancel is no run, and is never sealed",
+	"concurrency_reset_gate.go:(*gateRun).recordReset": "a gate is no run, and is never sealed",
 }
 
 // TestPayloads_EveryLocalActivityReadOpens: a local activity's failure is

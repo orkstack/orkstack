@@ -79,9 +79,9 @@ type ConcurrencyArrival struct {
 }
 
 type concurrencyInstruments struct {
-	arrivals, exits                         metric.Int64Counter
-	wait                                    metric.Float64Histogram
-	reclaimed, verifyErrors, rebuilt, gates metric.Int64Counter
+	arrivals, exits                                 metric.Int64Counter
+	wait                                            metric.Float64Histogram
+	reclaimed, verifyErrors, rebuilt, gates, resets metric.Int64Counter
 }
 
 // ConcurrencyMetrics records arrivals, exits and what the gates report on

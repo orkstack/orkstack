@@ -361,6 +361,8 @@ type RunArchiver struct {
 	// forceCancel and authMode check the record a force-canceled run carries.
 	forceCancel ForceCancelVerifier
 	authMode    func() string
+	// resumes are what earlier endings list.
+	resumes resumeLists
 }
 
 // WithForceCancelVerifier wires what checks the record of a force-canceled
@@ -392,37 +394,93 @@ func NewRunArchiver(archive artifacts.RunArchive) *RunArchiver {
 // gaps are the ranges missing from the stream when it is archived, lost or
 // never published (EventsForArchive); each becomes a gap line, so the archive
 // says what it is missing.
+//
+// It archives a run's first ending; ArchiveEnding archives any.
 func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...EventGap) error {
+	return a.ArchiveEnding(ctx, run, 0, events, gaps...)
+}
+
+// ArchiveEnding is Archive for the ending under scope: 0 for the run's first,
+// else that of the resume it followed. Each ending has a body of its own.
+func (a *RunArchiver) ArchiveEnding(ctx context.Context, run *orkstackv1.Run, scope uint64, events []*orkstackv1.Event, gaps ...EventGap) error {
 	if a == nil {
 		return nil
 	}
 	if run.GetOrkflowName() == "" {
 		return fmt.Errorf("engine: archive run %q: orkflow name is required", run.GetId())
 	}
+	if scope > 0 {
+		listed, err := a.withResumes(ctx, run, scope)
+		if err != nil {
+			return fmt.Errorf("engine: archive run %q ending %d: %w", run.GetId(), scope, err)
+		}
+		run = listed
+	}
 	body, err := MarshalRunArchive(run, events, gaps...)
 	if err != nil {
 		return err
 	}
-	record := artifacts.RunRecord{
+	record := runRecordOf(run)
+	record.Scope, record.JSONL, record.ObjectIDs = scope, body, runObjectIDs(run)
+	if record.Status == "" {
+		return fmt.Errorf("engine: archive run %q: status is unspecified", run.GetId())
+	}
+	if _, keeps := a.archive.(artifacts.RunEndingStore); scope > 0 && !keeps {
+		return fmt.Errorf("engine: archive run %q ending %d: the archive keeps one ending a run", run.GetId(), scope)
+	}
+	if err := a.archive.PutRun(ctx, record); err != nil {
+		return fmt.Errorf("engine: archive run %q: %w", run.GetId(), err)
+	}
+	return nil
+}
+
+// runRecordOf is run's archive record without its body: what its index rows
+// are rendered from.
+func runRecordOf(run *orkstackv1.Run) artifacts.RunRecord {
+	return artifacts.RunRecord{
 		RunID:     run.GetId(),
 		Namespace: run.GetNamespace(),
 		// A shared child is indexed under "<owner>/<name>" (OrkflowKey).
-		Orkflow:   OrkflowKey(run),
-		Status:    archiveStatus(run.GetStatus()),
-		Time:      RunIndexTime(run),
-		JSONL:     body,
-		ObjectIDs: runObjectIDs(run),
+		Orkflow: OrkflowKey(run),
+		Status:  archiveStatus(run.GetStatus()),
+		Time:    RunIndexTime(run),
 		// The origin row is written from the snapshot's own origin, so the
 		// index carries exactly what the archived body says.
 		OriginKind: run.GetOrigin().GetKind(),
 		OriginID:   run.GetOrigin().GetId(),
 		RootRunID:  run.GetOrigin().GetRootRunId(),
 	}
-	if record.Status == "" {
-		return fmt.Errorf("engine: archive run %q: status is unspecified", run.GetId())
+}
+
+// RetireEarlierRows removes the index rows of the endings a resume under scope
+// set aside: run goes on, so no list says it ended. It does nothing once that
+// resume's own ending is archived, whose rows have replaced them.
+func (a *RunArchiver) RetireEarlierRows(ctx context.Context, run *orkstackv1.Run, scope uint64) error {
+	if a == nil || scope == 0 || run.GetOrkflowName() == "" {
+		return nil
 	}
-	if err := a.archive.PutRun(ctx, record); err != nil {
-		return fmt.Errorf("engine: archive run %q: %w", run.GetId(), err)
+	store, ok := a.archive.(artifacts.RunEndingStore)
+	if !ok {
+		return fmt.Errorf("engine: retire the earlier rows of run %q: the archive keeps one ending a run", run.GetId())
+	}
+	endings, err := store.RunEndings(ctx, run.GetId())
+	if err != nil {
+		return fmt.Errorf("engine: retire the earlier rows of run %q: %w", run.GetId(), err)
+	}
+	for _, archived := range endings.Archived {
+		if archived >= scope {
+			return nil
+		}
+	}
+	record := runRecordOf(run)
+	record.Scope = scope - 1
+	for _, status := range []orkstackv1.Status{
+		orkstackv1.Status_STATUS_SUCCEEDED, orkstackv1.Status_STATUS_FAILED, orkstackv1.Status_STATUS_CANCELED,
+	} {
+		record.Status = archiveStatus(status)
+		if err := store.RetireRows(ctx, record); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -652,11 +710,11 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 	for i, entry := range entries {
 		wg.Add(1)
 		slots <- struct{}{}
-		go func(i int, runID string) {
+		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			runs[i], errs[i] = a.LoadRun(ctx, runID)
-		}(i, entry.RunID)
+			runs[i], errs[i] = a.loadEntry(ctx, entry)
+		}()
 	}
 	wg.Wait()
 
@@ -674,6 +732,24 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		out = append(out, run)
 	}
 	return out, nil
+}
+
+// loadEntry loads the ending an index entry is of.
+func (a *RunArchiver) loadEntry(ctx context.Context, entry artifacts.RunIndexEntry) (*orkstackv1.Run, error) {
+	store, keeps := a.archive.(artifacts.RunEndingStore)
+	if !keeps {
+		return a.LoadRun(ctx, entry.RunID)
+	}
+	body, err := store.GetEnding(ctx, entry.RunID, entry.Scope)
+	if err != nil {
+		return nil, err
+	}
+	run, err := UnmarshalRunLine(body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: load run %q: %w", entry.RunID, err)
+	}
+	a.show(ctx, run)
+	return run, nil
 }
 
 // archiveKeep adapts a residual run filter to the index scan: the filter sees

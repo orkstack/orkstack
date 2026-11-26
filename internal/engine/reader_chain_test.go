@@ -52,6 +52,9 @@ type chainSpec struct {
 	// skip holds numbers the run used without publishing an event. Each
 	// counts toward its generation's count.
 	skip map[int64]bool
+	// resumed is the sequence of a RUN_RESUMED, of an ending whose last event
+	// was resumedAfter: the generations after it carry that resume.
+	resumed, resumedAfter int64
 }
 
 type chainFixture struct {
@@ -128,6 +131,10 @@ func newChain(t *testing.T, spec chainSpec) *chainFixture {
 				Message:   fmt.Sprintf("event %d", sequence),
 				Timestamp: timestamppb.New(chainCreatedAt.Add(time.Duration(sequence) * time.Second)),
 			}
+			if spec.resumed > 0 && sequence == spec.resumed {
+				event.Type = orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED
+				event.Resumed = &orkstackv1.RunResumed{ResumedAfterSequence: spec.resumedAfter}
+			}
 			published = append(published, event)
 			history = append(history, f.publish(int64(len(history)+1), event))
 		}
@@ -169,6 +176,9 @@ func newChain(t *testing.T, spec chainSpec) *chainFixture {
 			CreatedAt: f.state.GetCreatedAt(), StartedAt: f.state.GetStartedAt(),
 			Checkpoint: cpObj, Snapshot: snapObj,
 			Segments: proto.Clone(&orkstackv1.RunContinuation{Segments: f.segments}).(*orkstackv1.RunContinuation).GetSegments(),
+		}
+		if spec.resumed > 0 && sequence >= spec.resumed {
+			carry.Resume = carriedResume(spec.resumed, spec.resumedAfter)
 		}
 		history = append(history, &historypb.HistoryEvent{
 			EventId:   int64(len(history) + 1),

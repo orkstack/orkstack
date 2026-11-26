@@ -9,10 +9,12 @@ import (
 
 	"connectrpc.com/connect"
 	enumspb "go.temporal.io/api/enums/v1"
+	historypb "go.temporal.io/api/history/v1"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -191,11 +193,10 @@ type resumeBase struct {
 	history    *engine.ResumeHistory
 	facts      engine.ResumeBaseFacts
 	// resumesUsed counts the resumes of the run that got going, and previous
-	// is the plan of the last; nil when none did.
+	// is the sequence the last began at; 0 when none did.
 	resumesUsed int
-	previous    *orkstackv1.ResumePlanRecord
-	// scope is the resume scope the base's own reset names; 0 for a base no
-	// resume made.
+	previous    uint64
+	// scope is that of the resume the base is of; 0 for a base no resume made.
 	scope uint64
 }
 
@@ -236,6 +237,7 @@ func (s *Service) resumeBase(ctx context.Context, msg *orkstackv1.ResumeRunReque
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("this engine resumes no runs"))
 	}
 	if binding.Reader == nil || s.resumeRecords == nil || s.resumeClaims == nil || s.resumeSnapshots == nil ||
+		s.resumeEndings == nil || s.resumeArchiver == nil ||
 		s.commits == nil || s.artifactStore == nil || !s.listsClaims() {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("this engine resumes no runs: one of its stores is not configured"))
 	}
@@ -280,10 +282,16 @@ func (s *Service) readHistory(ctx context.Context, b *resumeBase) error {
 	if err != nil {
 		return s.historyReadError(ctx, id, err)
 	}
-	if b.history, err = engine.ScanResumeBase(events, nil); err != nil {
+	if b.history, err = s.scanBase(ctx, b, id, events); err != nil {
+		return err
+	}
+	if err := s.readEarlier(ctx, b); err != nil {
 		return err
 	}
 	if err := s.readDefinition(ctx, b); err != nil {
+		return err
+	}
+	if err := s.readSavedState(ctx, b); err != nil {
 		return err
 	}
 	if b.resumesUsed, err = s.resumesUsed(ctx, b); err != nil {
@@ -325,7 +333,7 @@ func (s *Service) resumesUsed(ctx context.Context, b *resumeBase) (int, error) {
 	}
 	key, resumed := engine.ParseResumePlanKey(reason)
 	if !reset || !resumed {
-		return 0, nil
+		return b.carriedResumes(), nil
 	}
 	b.scope = key.Scope
 	read, digest, err := s.resumeRecords.ReadResumePlan(ctx, b.namespace, id, key.Scope, key.N)
@@ -342,14 +350,26 @@ func (s *Service) resumesUsed(ctx context.Context, b *resumeBase) (int, error) {
 		return 0, r
 	case read.Answer != artifacts.RecordFound || digest != key.PlanDigest:
 		s.logger.WarnContext(ctx, "resume: a run was reset under a resume plan whose record does not match; its earlier resumes are not counted", "run_id", id)
-		return 0, nil
+		return b.carriedResumes(), nil
 	}
-	b.previous = read.Value
+	b.previous = read.Value.GetBlock().GetSeqBase()
 	used := int(read.Value.GetBlock().GetResumesBefore())
-	if engine.ResumePlanNeverRan(b.run.GetError().GetCode()) {
+	if b.history.NeverRan || engine.ResumePlanNeverRan(b.run.GetError().GetCode()) {
 		return used, nil
 	}
 	return used + 1, nil
+}
+
+// carriedResumes is how many resumes of the run its saved state counts, where
+// no record says: none for a run that never carried on. The base is of the
+// last of them unless a later one reset it, whose plan then never ran.
+func (b *resumeBase) carriedResumes() int {
+	r := b.history.Carry.GetResume()
+	b.previous = r.GetSeqBase()
+	if b.scope == 0 {
+		b.scope = b.previous
+	}
+	return int(r.GetResumeCount())
 }
 
 // resumeRetentionMargin is how long before a run is retired it can still be
@@ -425,15 +445,87 @@ func (s *Service) readDefinition(ctx context.Context, b *resumeBase) error {
 	return r
 }
 
+// readEarlier reads, of a base that ended as a resume whose plan could not be
+// run, what the executions it was reset from dispatched: it dispatched nothing
+// itself, so its history alone would call every failed task one that failed
+// before it ran. Where one of them is no longer kept, nothing says what was
+// dispatched, and the run is refused rather than planned from a guess; so is
+// one whose resumes failed more times in a row than are followed back.
+func (s *Service) readEarlier(ctx context.Context, b *resumeBase) error {
+	id := b.run.GetId()
+	at := b.history
+	for n := 0; at.NeverRan && at.ResetFrom != ""; n++ {
+		if n == engine.MaxResumesPerRun {
+			return refuseResume(engine.RefuseStateUnreadable, engine.RefusalPermanent,
+				"more than %d of run %s's resumes in a row could not be carried out, and what it ran before them is not read further. Run again", n, id)
+		}
+		events, err := b.binding.Resume.ResumeExecutionHistory(ctx, id, at.ResetFrom)
+		if err != nil {
+			return s.historyReadError(ctx, id, err)
+		}
+		if at, err = s.scanBase(ctx, b, id, events); err != nil {
+			return err
+		}
+		b.history.AddEarlier(at)
+	}
+	return nil
+}
+
+// scanBase reads one execution's history with the run's own payloads: a
+// sealed run's are opened with its key (historyReadError says what a failure
+// to open them means).
+func (s *Service) scanBase(ctx context.Context, b *resumeBase, id string, events []*historypb.HistoryEvent) (*engine.ResumeHistory, error) {
+	if len(events) == 0 {
+		return engine.ScanResumeBase(events, nil)
+	}
+	dc, err := b.binding.Resume.ExecutionPayloads(ctx, id, events[0])
+	if err != nil {
+		return nil, s.historyReadError(ctx, id, err)
+	}
+	return engine.ScanResumeBase(events, dc)
+}
+
+// readSavedState reads what the base's history started from, when the run had
+// carried on: the tasks that had ended in it are not the resume's to run
+// again. One that does not verify could not be read by the resumed run
+// either; a store that does not answer is a wait.
+func (s *Service) readSavedState(ctx context.Context, b *resumeBase) error {
+	if !b.history.Continued {
+		return nil
+	}
+	id := b.run.GetId()
+	saved, err := b.binding.Reader.RunSavedState(ctx, b.namespace, id, b.history.Carry)
+	switch {
+	case err == nil:
+		b.history.ReadSavedState(saved)
+		return nil
+	case errors.Is(err, engine.ErrContinuationObjectInvalid), errors.Is(err, artifacts.ErrNotFound):
+		s.logger.WarnContext(ctx, "resume: a run's saved state does not verify", "run_id", id, "error", err)
+		return refuseResume(engine.RefuseStateUnreadable, engine.RefusalPermanent, "this run's saved state can't be read back. Run again")
+	}
+	if ctx.Err() != nil {
+		return ctxError(ctx)
+	}
+	s.logger.WarnContext(ctx, "resume: a run's saved state could not be read", "run_id", id, "error", err)
+	return resumeUnavailable("this run's saved state can't be read right now; try again shortly")
+}
+
 // historyReadError is a failed read of a run's history: gone, which is
-// permanent, or a cluster that did not answer.
+// permanent, or a cluster that did not answer, which is a wait: whatever was
+// being read, no reset was sent for it.
 func (s *Service) historyReadError(ctx context.Context, runID string, err error) error {
 	if errors.Is(err, engine.ErrResumeExecutionNotFound) || errors.Is(err, engine.ErrRunNotFound) {
 		return refuseResume(resumeHistoryGone, engine.RefusalPermanent, "run %s's history is no longer kept. Run again", runID)
+	}
+	// A sealed run whose key is gone, or whose payloads do not open, never
+	// can be read; a key that cannot be had now is a wait, as below.
+	if errors.Is(err, payloadcrypt.ErrKeyless) || errors.Is(err, payloadcrypt.ErrUnreadable) {
+		s.logger.WarnContext(ctx, "resume: a run's history cannot be opened", "run_id", runID, "error", err)
+		return refuseResume(engine.RefuseStateUnreadable, engine.RefusalPermanent, "run %s's history cannot be opened. Run again", runID)
 	}
 	if ctx.Err() != nil {
 		return ctxError(ctx)
 	}
 	s.logger.WarnContext(ctx, "resume: a run could not be read from the cluster", "run_id", runID, "error", err)
-	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("run %q can't be read right now; try again shortly", runID))
+	return resumeUnavailable("run %s can't be read right now; try again shortly", runID)
 }

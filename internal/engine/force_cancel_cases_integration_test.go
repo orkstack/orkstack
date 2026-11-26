@@ -356,8 +356,9 @@ func forceCancelResumed(t *testing.T, began bool) {
 			t.Errorf("execution %s is %v, %v; want %s", exec, d.GetWorkflowExecutionInfo().GetStatus(), err, want)
 		}
 	}
-	// What the resume set aside is a gap of this execution's own history; the
-	// rest is in order, and the end comes last, above every event before it.
+	// What the resume set aside is read from the archive of that ending, so the
+	// stream is whole and in order, and the end comes last, above every event
+	// before it.
 	events, err := f.reader.Events(ctx, runID, 0)
 	must.OK(t, err)
 	var gaps, resumes int
@@ -376,7 +377,7 @@ func forceCancelResumed(t *testing.T, began bool) {
 		}
 	}
 	last := events[len(events)-1]
-	if gaps != 1 || (resumes == 1) != began || last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED || last.GetSequence() <= terminal || !began && last.GetSequence() != terminal+1 {
+	if gaps != 0 || int64(len(events)) != last.GetSequence() || (resumes == 1) != began || last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED || last.GetSequence() <= terminal || !began && last.GetSequence() != terminal+1 {
 		t.Errorf("%d gaps, %d resumes, and it ends %v at %d after %d", gaps, resumes, last.GetType(), last.GetSequence(), terminal)
 	}
 	if published := f.lastEvents(runID); !slices.Equal(published, []int64{terminal, last.GetSequence()}) {
@@ -421,6 +422,7 @@ func (f *fcStack) resumeDeploy(runID, base string, terminal int64, records *arti
 	digest, err := records.WriteResumePlan(ctx, record)
 	must.OKf(t, err, "write the plan")
 	must.OKf(t, records.WriteResume(ctx, artifacts.ResumeRecord{Namespace: "default", RunID: runID, Scope: scope, Tasks: []string{"deploy"}}), "write the identity record")
+	must.OKf(t, f.endings.MarkResumed(ctx, runID, scope, 0), "mark the run resumed")
 	reset, err := f.control.WorkflowService().ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{
 		Namespace: f.namespace, WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: runID, RunId: base},
 		Reason:                    engine.ResumePlanKey{Scope: scope, PlanDigest: digest}.String(),

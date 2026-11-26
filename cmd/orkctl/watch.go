@@ -71,6 +71,16 @@ var (
 // the watch as finished.
 // Each resume is said on stderr; stdout carries only the watch's output.
 func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int64) error {
+	run, err := watchRunFinal(cmd, g, runID, fromSequence)
+	if err != nil {
+		return err
+	}
+	return runExitError(run)
+}
+
+// watchRunFinal streams a run's events after fromSequence until it ends and
+// returns the run as it ended, leaving the exit code to the caller.
+func watchRunFinal(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int64) (*orkstackv1.Run, error) {
 	out := cmd.OutOrStdout()
 	client := g.runClient()
 
@@ -105,7 +115,7 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 			if !started {
 				if err := sink.start(); err != nil {
 					_ = stream.Close()
-					return err
+					return nil, err
 				}
 				started = true
 			}
@@ -117,7 +127,7 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 				lastSequence, resumes = event.GetSequence(), 0
 				if err := sink.event(event); err != nil {
 					_ = stream.Close()
-					return err
+					return nil, err
 				}
 			}
 			err = stream.Err()
@@ -125,7 +135,7 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 		}
 		if err != nil {
 			if !engineInterrupted(streamCtx, err) {
-				return rpcError("watch run", err)
+				return nil, rpcError("watch run", err)
 			}
 		} else {
 			run, err = finalRun(cmd, g, client, runID)
@@ -134,14 +144,14 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 			case err == nil:
 				err = fmt.Errorf("the stream ended with the run still %s", statusLabel(run.GetStatus()))
 			case !engineInterrupted(streamCtx, err):
-				return rpcError("get run", err)
+				return nil, rpcError("get run", err)
 			}
 		}
 		if err == nil {
 			break
 		}
 		if resumes >= watchResumeLimit {
-			return rpcError("watch run", err)
+			return nil, rpcError("watch run", err)
 		}
 		delay := min(watchResumeDelay<<resumes, watchResumeMaxDelay)
 		resumes++
@@ -151,7 +161,7 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 		select {
 		case <-streamCtx.Done():
 			wait.Stop()
-			return fmt.Errorf("watch run: %w", streamCtx.Err())
+			return nil, fmt.Errorf("watch run: %w", streamCtx.Err())
 		case <-wait.C:
 		}
 	}
@@ -159,9 +169,9 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 
 	closed = true
 	if err := sink.finish(run); err != nil {
-		return err
+		return nil, err
 	}
-	return runExitError(run)
+	return run, nil
 }
 
 // finalRun reads the run a stream has just ended on.

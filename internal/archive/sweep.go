@@ -59,6 +59,10 @@ type Sweeper struct {
 	// retention, guarded by mu, is the cluster's as last read: a pass that
 	// cannot read it dates a run's last chance by it.
 	retention time.Duration
+	// resumed and newest are the resumed runs and their newest endings
+	// (WithEndings); nil asks every run the same.
+	resumed ResumedRunLister
+	newest  *NewestEndings
 }
 
 // LastCompletedSweep reports this replica's latest pass that ran to its end.
@@ -180,6 +184,32 @@ func NewSweeper(
 	}
 }
 
+// ResumedRunLister lists the runs a resume marked (artifacts.BlobRunArchive).
+type ResumedRunLister interface {
+	EachResumedRun(ctx context.Context, visit func(artifacts.RunEndings) error) error
+}
+
+// WithEndings makes the sweep ask about the newest ending of each run resumed
+// lists, which it reads once a pass. Every other run has one ending.
+func (s *Sweeper) WithEndings(resumed ResumedRunLister, newest *NewestEndings) *Sweeper {
+	s.resumed, s.newest = resumed, newest
+	return s
+}
+
+// resumedRuns are the runs a resume marked; the value is whether this pass has
+// looked at the run.
+func (s *Sweeper) resumedRuns(ctx context.Context) (map[string]bool, error) {
+	if s.resumed == nil {
+		return nil, nil
+	}
+	out := map[string]bool{}
+	err := s.resumed.EachResumedRun(ctx, func(e artifacts.RunEndings) error {
+		out[e.RunID] = false
+		return nil
+	})
+	return out, err
+}
+
 // WithClock replaces the wall clock, which decides how recently closed a run
 // is. It keeps a test from waiting out an interval.
 func (s *Sweeper) WithClock(now func() time.Time) *Sweeper {
@@ -268,6 +298,13 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 		s.logger.Error("the cleanup interval leaves the archive sweep no time: a run can be deleted before a pass looks at it",
 			"interval", s.config.Interval, "cluster_retention", retention)
 	}
+	resumed, err := s.resumedRuns(ctx)
+	if err != nil {
+		storeErr = fmt.Errorf("archive sweep: object storage did not list the resumed runs: %w", err)
+		result.StoreFailed = true
+		note(storeErr)
+		s.logger.Error("archive sweep: object storage did not answer; counting the runs without asking it", "error", err)
+	}
 	walkErr := s.runs.EachFinishedRun(ctx, s.now().Add(-s.config.Interval), s.config.BatchSize,
 		func(runID string, closedAt time.Time) error {
 			if err := ctx.Err(); err != nil {
@@ -276,6 +313,15 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 			result.Examined++
 			if storeErr != nil {
 				risk(runID, closedAt)
+				return nil
+			}
+			if seen, isResumed := resumed[runID]; isResumed {
+				// Each of its closed executions is listed; it is one run, and
+				// its newest ending is what a listing of it stands for.
+				if !seen {
+					resumed[runID] = true
+					s.sweepResumed(ctx, runID, closedAt, dated, &result, note, risk)
+				}
 				return nil
 			}
 			askCtx, cancel := context.WithTimeout(ctx, s.questionBudget)
@@ -315,6 +361,31 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 		s.observer.ObserveSweep(ctx, result)
 	}
 	return result, firstErr
+}
+
+// sweepResumed looks at the newest ending of a run a resume marked. listedAt is
+// when the execution that was listed closed, which may be an earlier one, and
+// retention the cluster's, which dates its last chance.
+func (s *Sweeper) sweepResumed(
+	ctx context.Context, runID string, listedAt time.Time, retention time.Duration, result *SweepResult, note func(error), risk func(string, time.Time),
+) {
+	askCtx, cancel := context.WithTimeout(ctx, s.questionBudget)
+	run, err := s.newest.newest(askCtx, runID)
+	cancel()
+	switch {
+	case err != nil:
+		note(fmt.Errorf("archive sweep: run %q: %w", runID, err))
+		s.logger.Error("archive sweep could not tell whether a resumed run's newest ending is archived", "run_id", runID, "error", err)
+		risk(runID, listedAt)
+	case run.has:
+	case !run.closedAt.IsZero() && !run.closedAt.Before(s.now().Add(-s.config.Interval)):
+		// It closed a moment ago: its own terminal publish archives it.
+	case run.closedAt.IsZero():
+		s.archive(ctx, runID, listedAt, s.lastChance(listedAt, retention), result, note, risk)
+	default:
+		// The cluster deletes its newest execution, and what that holds, last.
+		s.archive(ctx, runID, run.closedAt, s.lastChance(run.closedAt, retention), result, note, risk)
+	}
 }
 
 // archive writes one run's archive and counts what became of it.

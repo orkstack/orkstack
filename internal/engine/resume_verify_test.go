@@ -202,7 +202,46 @@ func TestResumeVerifier_ValuesOfAwaitsAndComposedTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if k := got.Evidence.Kept; k[nodeUnit("w")] != KeptValid || k[nodeUnit("c")] != KeptGone || k[nodeUnit("none")] != KeptValid {
+	if k := got.Evidence.Kept; k[nodeUnit("w")] != KeptValid || k[nodeUnit("c")] != KeptGone || k[nodeUnit("none")] != KeptGone {
 		t.Fatalf("answers = %v (%v)", k, got.Evidence.Why)
+	}
+	if got.Sizes[nodeUnit("w")] < 2 || got.Sizes[nodeUnit("c")] != 0 {
+		t.Fatalf("sizes = %v, want the await's entry measured", got.Sizes)
+	}
+}
+
+// A composed task's values are read back whole, and its artifacts are asked
+// for: one over a call's budget cannot be kept, and an await's that large is
+// kept by reference.
+func TestResumeVerifier_MeasuresSettledValues(t *testing.T) {
+	store, err := artifacts.NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(body string) *orkstackv1.ArtifactRef {
+		ref, err := store.Put(context.Background(), "values.json", strings.NewReader(body), artifacts.PutOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &orkstackv1.ArtifactRef{Name: "values.json", Uri: ref.URI, Sha256: ref.SHA256, SizeBytes: ref.SizeBytes}
+	}
+	large := put(`{"a":"` + strings.Repeat("x", 120<<10) + `"}`)
+	f := newPlan([]*orkstackv1.Task{awaitTask("w"), composedTask("small"), composedTask("big"), composedTask("lost"), ptask("x")},
+		prow("w", sOK), prow("small", sOK), prow("big", sOK), prow("lost", sOK), prow("x", sFail))
+	for i, ref := range []*orkstackv1.ArtifactRef{large, put(`{"ok":true}`), large, put(`{}`)} {
+		f.in.Base.TaskRuns[i].ValuesRef = ref
+	}
+	f.in.Base.TaskRuns[3].Artifacts = []*orkstackv1.ArtifactRef{{Name: "report", Uri: strings.Replace(large.Uri, large.Sha256[:8], "00000000", 1)}}
+	f.in.Evidence = ResumeEvidence{}
+	got, err := NewResumeVerifier(artifacts.NewMemoryCommitStore(), store).Verify(context.Background(), f.in, verifyRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := func(task string) int64 { return got.Sizes[nodeUnit(task)] }
+	if size("w") <= 0 || size("w") > 4096 || size("small") <= 0 || size("big") <= MaxReadbackEntryBytes() {
+		t.Fatalf("sizes = %v, want the await kept by reference and the large composed task over a call", got.Sizes)
+	}
+	if got.Evidence.Kept[nodeUnit("lost")] != KeptGone || got.Evidence.Why[nodeUnit("lost")] != "its report is gone" {
+		t.Fatalf("lost = %v (%s), want its report gone", got.Evidence.Kept[nodeUnit("lost")], got.Evidence.Why[nodeUnit("lost")])
 	}
 }

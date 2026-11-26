@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -85,6 +87,9 @@ type Executions struct {
 	// waiting for a concurrency slot (OrkflowRunQueued). GetStats' queued
 	// bucket counts the ones it keeps as running.
 	Queued map[string]struct{}
+	// Resumed holds the ids of the runs the window created that were resumed
+	// at least once, as the cluster holds them.
+	Resumed map[string]struct{}
 }
 
 // ErrSeriesInconsistent reports a series that does not fit the scan it was
@@ -125,11 +130,11 @@ func (r *TemporalRunReader) Executions(ctx context.Context, w StatsWindow) (Exec
 	if err != nil {
 		return Executions{}, err
 	}
-	durations, err := r.windowRunDurations(ctx, w)
+	durations, resumed, err := r.windowRunDurations(ctx, w)
 	if err != nil {
 		return Executions{}, err
 	}
-	return Executions{Running: running, Durations: durations, Queued: queued}, nil
+	return Executions{Running: running, Durations: durations, Queued: queued, Resumed: resumed}, nil
 }
 
 // runningExecutions lists the namespace's unfinished runs as shallow
@@ -330,15 +335,23 @@ func (r *TemporalRunReader) countRunning(ctx context.Context, namespace string, 
 //     still latest-ContinuedAsNew is described. This is bounded by the chains
 //     created in the window, and exact for as long as cluster retention holds
 //     generation 0's record.
+//
+// A resumed run is one run too, with one record per execution. Its newest is
+// what it counts as, so:
+//
+//  3. Query A keeps one record per run, the latest; and Query C lists every
+//     record of those a resume marked, because the newest may have started
+//     after the window. A deployment that resumes nothing asks no Query C.
 func (r *TemporalRunReader) windowRunDurations(
 	ctx context.Context,
 	w StatsWindow,
-) ([]time.Duration, error) {
+) ([]time.Duration, map[string]struct{}, error) {
 	inWindow := func(at time.Time) bool { return !at.Before(w.Since) && at.Before(w.Until) }
 	query := fmt.Sprintf("WorkflowType = %q AND StartTime >= %q AND StartTime < %q AND ExecutionStatus != %q",
 		RunWorkflowType, statsTime(w.Since), statsTime(w.Until), executionStatusContinuedAsNew)
-	out := []time.Duration{}
 	sampled := map[string]bool{}
+	newest := map[string]*workflowpb.WorkflowExecutionInfo{}
+	var order []string
 	err := r.walkExecutions(ctx, w, query, func(info *workflowpb.WorkflowExecutionInfo) {
 		if !inNamespace(r.memoString(info.GetMemo(), MemoNamespace), w.Namespace) {
 			return
@@ -351,36 +364,93 @@ func (r *TemporalRunReader) windowRunDurations(
 			started.AsTime().Before(w.Since) || !started.AsTime().Before(w.Until) {
 			return
 		}
-		created, carried := r.memoTime(info.GetMemo(), MemoCreatedAt)
-		if carried && !inWindow(created) {
+		if created, carried := r.memoTime(info.GetMemo(), MemoCreatedAt); carried && !inWindow(created) {
 			// A chain created before the window whose final generation
 			// started inside it: the window did not create it.
 			return
 		}
-		sampled[info.GetExecution().GetWorkflowId()] = true
+		id := info.GetExecution().GetWorkflowId()
+		sampled[id] = true
+		current, seen := newest[id]
+		if !seen {
+			order = append(order, id)
+		}
+		if !seen || laterRecord(info, current) {
+			newest[id] = info
+		}
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	resumed, err := r.windowResumed(ctx, order, newest)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := []time.Duration{}
+	for _, id := range order {
+		info := newest[id]
 		// Unfinished runs come back from this query too — the window's own
 		// runs are a mix — and one has no duration to sample.
 		if info.GetCloseTime() == nil || isContinuedAsNew(info) {
-			return
+			continue
 		}
 		sample := executionDuration(info)
-		if carried {
+		if created, carried := r.memoTime(info.GetMemo(), MemoCreatedAt); carried {
 			sample = info.GetCloseTime().AsTime().Sub(created)
 		}
 		if sample > 0 {
 			out = append(out, sample)
 		}
-	})
-	if err != nil {
-		return nil, err
 	}
 	chains, err := r.windowChainDurations(ctx, w, sampled)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out = append(out, chains...)
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out, nil
+	return out, resumed, nil
+}
+
+// windowResumed is windowRunDurations' Query C: it replaces the record of each
+// marked run in newest with its latest of all, and names the runs whose latest
+// record a resume made.
+func (r *TemporalRunReader) windowResumed(
+	ctx context.Context, order []string, newest map[string]*workflowpb.WorkflowExecutionInfo,
+) (map[string]struct{}, error) {
+	if r.endings == nil {
+		return nil, nil
+	}
+	marked, err := r.endings.ResumedRuns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("engine: which runs of the window were resumed: %w", err)
+	}
+	var ids []string
+	for _, id := range order {
+		if marked[id] {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	latest, err := r.listChainRecords(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	resumed := map[string]struct{}{}
+	for _, id := range ids {
+		if info, ok := latest[id]; ok && laterRecord(info, newest[id]) {
+			newest[id] = info
+		}
+		// Only a resume's reset starts an execution after the run was created
+		// and carries that creation: a marked run never carried on into a
+		// later history.
+		created, carried := r.memoTime(newest[id].GetMemo(), MemoCreatedAt)
+		if carried && newest[id].GetStartTime().AsTime().After(created) {
+			resumed[id] = struct{}{}
+		}
+	}
+	return resumed, nil
 }
 
 // windowChainDurations is windowRunDurations' Query B: the chains the window
@@ -558,6 +628,8 @@ type RunTally struct {
 	// after the archive holds the run, and for that moment the run would
 	// otherwise be counted twice, finished and running.
 	FinishedIDs map[string]struct{}
+	// ResumedIDs is the id of each of them a resume ended up in this ending.
+	ResumedIDs map[string]struct{}
 	// ByBucket counts the same runs by status again, one map per bucket of a
 	// series, in the order of the edges the tally was asked for. It is nil
 	// for a tally asked for no series (TallyRuns), and every map is empty for
@@ -608,6 +680,12 @@ func (t *RunTally) add(entry artifacts.RunIndexEntry) string {
 	status := artifacts.NormalizeRunStatus(entry.Status)
 	t.ByStatus[status]++
 	t.FinishedIDs[entry.RunID] = struct{}{}
+	if entry.Scope > 0 {
+		if t.ResumedIDs == nil {
+			t.ResumedIDs = map[string]struct{}{}
+		}
+		t.ResumedIDs[entry.RunID] = struct{}{}
+	}
 	per := t.ByOrkflow[entry.Orkflow]
 	per.Total++
 	if status == StatusKeyFailed {
@@ -806,6 +884,50 @@ func PercentileDuration(ascending []time.Duration, p int) time.Duration {
 func releaseRunsQuery(indexedVersion string) string {
 	return fmt.Sprintf("WorkflowType = %q AND %s = %q",
 		RunWorkflowType, task.SearchAttrDeploymentVersion, indexedVersion)
+}
+
+// ReleaseResumableRuns counts the failed runs pinned to one release that the
+// cluster still holds, child runs among them: no more than these could be
+// resumed, and stopping it ends that. It is one count, less the failures a
+// resume set aside, which only marked runs have.
+func (r *TemporalRunReader) ReleaseResumableRuns(ctx context.Context, deployment, buildID string) (int64, error) {
+	indexed, err := task.IndexedVersion(deployment, buildID)
+	if err != nil {
+		return 0, err
+	}
+	failed := fmt.Sprintf("%s AND ExecutionStatus = %q", releaseRunsQuery(indexed), "Failed")
+	n, err := r.countAll(ctx, failed)
+	if err != nil {
+		return 0, fmt.Errorf("engine: count the resumable runs of release %s: %w", buildID, err)
+	}
+	if n == 0 || r.endings == nil {
+		return n, nil
+	}
+	marked, err := r.endings.ResumedRuns(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("engine: count the resumable runs of release %s: %w", buildID, err)
+	}
+	ids := slices.Sorted(maps.Keys(marked))
+	records := map[string][]string{}
+	err = r.eachRecordOf(ctx, failed, ids, func(info *workflowpb.WorkflowExecutionInfo) {
+		id := info.GetExecution().GetWorkflowId()
+		records[id] = append(records[id], info.GetExecution().GetRunId())
+	})
+	if err != nil {
+		return 0, fmt.Errorf("engine: count the resumable runs of release %s: %w", buildID, err)
+	}
+	latest, err := r.listChainRecords(ctx, slices.Sorted(maps.Keys(records)))
+	if err != nil {
+		return 0, fmt.Errorf("engine: count the resumable runs of release %s: %w", buildID, err)
+	}
+	for id, executions := range records {
+		for _, execution := range executions {
+			if newest, ok := latest[id]; ok && newest.GetExecution().GetRunId() != execution {
+				n--
+			}
+		}
+	}
+	return max(n, 0), nil
 }
 
 // ReleaseRuns counts the runs executing on one release (liveRunCount: at

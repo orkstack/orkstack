@@ -2057,6 +2057,9 @@ whenever that run changes.
 - **`--no-cache`.** `orkctl run submit --no-cache` (and `run again`, and the
   submit panel's *Ignore cached results*) runs every cached task's container
   and refreshes its memo. It applies to the whole tree, child runs included.
+- **A resume.** A cached task or item that succeeded before and that a resume
+  runs again reads no memo, which would hand back the result it runs again to
+  replace; its new result refreshes the memo.
 - **A memo is a pointer, deletable at any time.** `orkctl cache purge` — or
   deleting the whole `metadata/memo/` prefix — changes no result, only whether
   the next run's containers run. `orkctl cache stats` reports the hit rate and
@@ -2159,6 +2162,9 @@ What the run does with it:
   `RUN_STARTED` event on, and kept when a long run carries on, so a run never
   gets more time by carrying on. A child run of a composed task has only its
   own Orkflow's `timeout:`, never its parent's.
+- **A resume** starts the clock again, in full, once the results it keeps are
+  in and the run goes on: `timeout:` bounds the run each time it goes on, so a
+  run resumed several times can take that many timeouts in all.
 - **At the deadline** a run that is not already failing fails
   `RUN_TIMED_OUT` (category `TimedOut`), with a terminal event and an
   archive like any other failure: every task still running, waiting or
@@ -2251,10 +2257,26 @@ tasks:
   7d) is refused at validate and create, and at submit for a version created
   before the bounds tightened. A deployment that cannot hold a limit refuses
   the run `CONCURRENCY_UNSUPPORTED`, naming why (`cause=index`,
-  `cause=fleet`). An Orkflow that declares a limit cannot yet run as a
-  composed child: a tree that would start one is refused
-  `CONCURRENCY_UNSUPPORTED`. A retry under an idempotency key its first
+  `cause=fleet`). A retry under an idempotency key its first
   submit bound returns that run without these checks.
+- **A composed Orkflow keeps its own limit.** A child run asks for its slot as
+  it starts, and waits in line inside its parent's composed task, which stays
+  `RUNNING`. The parent's run says where the child stands (`orkctl run get`),
+  to a caller who may read the child, for the first
+  `engine.concurrency.api_holders_shown` running children that have a limit.
+  Its key is rendered from the child's own inputs when the parent
+  starts it, so a key that does not render then, a namespace with no key left,
+  or a limit that cannot be checked fails the composed task
+  (`TASK_CONCURRENCY_KEY_INVALID`, `_KEYS_EXHAUSTED`, `_CHECK_UNAVAILABLE`)
+  after the tasks before it have run. A child may not hold a key its parent, or
+  any run above it, declares: it would wait for a slot its own parent keeps. A
+  key with no template is refused for that at submit
+  (`CONCURRENCY_KEY_CONFLICT`), and one that renders to it fails the composed
+  task (`TASK_CONCURRENCY_KEY_CONFLICT`). Two runs that each hold the key the
+  other's child asks for are not refused: each waits until its `queue_timeout`.
+  A composed task has no timeout, so a queued child's wait is bounded by its
+  `queue_timeout`, and by the `timeout:` of a run above it, which stops it. Its
+  own `timeout:` starts once it has its slot.
 - **A full line is refused at submit**, `CONCURRENCY_QUEUE_FULL`: a run that
   would wait, when its line already holds `max_queued` waiting runs, or its
   key the most one key holds (`engine.concurrency.max_entries`), or its

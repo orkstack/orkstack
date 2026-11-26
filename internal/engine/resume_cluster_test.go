@@ -19,10 +19,13 @@ import (
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 )
 
 // resumeClient is a cluster for the resume seam: it answers Describe,
@@ -151,7 +154,8 @@ func TestResumeExecutionHistory(t *testing.T) {
 // TestResetKeyOf: the key a reset run was started under is the reason of the
 // reset that made it: the workflow-task failure that names it as the new run.
 // A run reset again copied its base's history, whose own reset event names
-// the base; a run no reset started has none.
+// the base: by hand, it stays of the resume its base was (NewestEnding). A run
+// no reset started has none.
 func TestResetKeyOf(t *testing.T) {
 	reset := func(id int64, newRun, reason string) *historypb.HistoryEvent {
 		return &historypb.HistoryEvent{EventId: id, EventType: enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED,
@@ -159,10 +163,13 @@ func TestResetKeyOf(t *testing.T) {
 				Cause: enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW, NewRunId: newRun, Failure: &failurepb.Failure{Message: reason},
 			}}}
 	}
+	first := engine.ResumePlanKey{Scope: 41, PlanDigest: strings.Repeat("ab", 32)}.String()
+	second := engine.ResumePlanKey{Scope: 60, PlanDigest: strings.Repeat("cd", 32)}.String()
 	svc := &resumeService{history: map[string][]*historypb.HistoryEvent{
-		"reset-run":   {{EventId: 1}, {EventId: 10}, {EventId: 11}, reset(12, "reset-run", "first"), {EventId: 13}},
-		"reset-again": {{EventId: 1}, {EventId: 10}, {EventId: 11}, reset(12, "reset-run", "first"), {EventId: 13}, reset(14, "reset-again", "second"), {EventId: 15}},
-		"plain-run":   {{EventId: 1}, {EventId: 2}},
+		"reset-run":     {{EventId: 1}, {EventId: 10}, {EventId: 11}, reset(12, "reset-run", first), {EventId: 13}},
+		"reset-again":   {{EventId: 1}, {EventId: 10}, {EventId: 11}, reset(12, "reset-run", first), {EventId: 13}, reset(14, "reset-again", "second"), {EventId: 15}},
+		"resumed-again": {{EventId: 1}, {EventId: 10}, reset(12, "reset-run", first), {EventId: 13}, reset(14, "resumed-again", second), {EventId: 15}},
+		"plain-run":     {{EventId: 1}, {EventId: 2}},
 	}}
 	started := func(original string) *historypb.HistoryEvent {
 		return &historypb.HistoryEvent{EventId: 1, EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
@@ -175,8 +182,37 @@ func TestResetKeyOf(t *testing.T) {
 		t.Errorf("a run no reset started = found %v, %v after %d pages; want none after one", found, err, svc.pages["own-run"])
 	}
 	svc.history["reset-run"][0] = started("base-run")
-	for run, want := range map[string]string{"reset-run": "first", "reset-again": "second", "plain-run": ""} {
+	// A run that carried on is of the resume its earlier history was reset
+	// under, however often it carried on; one the cluster no longer holds that
+	// history of answers none.
+	carried := func(segments ...string) *historypb.HistoryEvent {
+		e, carry := started(""), &orkstackv1.RunContinuation{Resume: &orkstackv1.RunResumeCarry{SeqBase: 41}}
+		for i, id := range segments {
+			// The second published the resume's first event, 41.
+			carry.Segments = append(carry.Segments, &orkstackv1.EventSegmentRef{ExecutionId: id, FirstSequence: int64(1 + 40*i), LastSequence: int64(40 + 40*i)})
+		}
+		input, err := engine.DataConverter().ToPayloads("", (*orkstackv1.Orkflow)(nil), (*orkstackv1.Payload)(nil), engine.RunPlan{}, carry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.GetWorkflowExecutionStartedEventAttributes().Input = input
+		return e
+	}
+	own := func(id string, e *historypb.HistoryEvent) *historypb.HistoryEvent {
+		e.GetWorkflowExecutionStartedEventAttributes().OriginalExecutionRunId = id
+		return e
+	}
+	svc.history["carried"] = []*historypb.HistoryEvent{own("carried", carried("own-run", "reset-run"))}
+	svc.history["carried-twice"] = []*historypb.HistoryEvent{own("carried-twice", carried("own-run", "reset-run", "carried"))}
+	svc.history["carried-by-hand"] = []*historypb.HistoryEvent{carried("own-run", "reset-run"), reset(2, "carried-by-hand", "by hand")}
+	svc.history["carried-lost"] = []*historypb.HistoryEvent{own("carried-lost", carried("own-run", "gone-run"))}
+	for run, want := range map[string]string{"reset-run": first, "resumed-again": second, "reset-again": first, "plain-run": "", "carried": first, "carried-twice": first,
+		"carried-by-hand": first, "carried-lost": ""} {
+		svc.pages = map[string]int{}
 		key, found, err := resumeStarter(svc).ResetKeyOf(context.Background(), "ork-run", run)
+		if run == "carried-twice" && (svc.pages["carried"] != 0 || svc.pages["own-run"] != 0) {
+			t.Errorf("it read %v; want the resume's own history alone", svc.pages)
+		}
 		if err != nil || found != (want != "") || key != want {
 			t.Errorf("%s: key = %q, %v, %v; want %q", run, key, found, err, want)
 		}
@@ -300,5 +336,27 @@ func TestNoRetryingResetOutsideResumeCluster(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A sealed run's start is opened with the run's own payloads, given its start;
+// one that cannot be opened answers no reset key.
+func TestResetKeyOf_ReadsTheRunsOwnPayloads(t *testing.T) {
+	start := &historypb.HistoryEvent{EventId: 1, EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
+		Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{OriginalExecutionRunId: "base-run"}}}
+	svc := &resumeService{history: map[string][]*historypb.HistoryEvent{"sealed": {start, {EventId: 2}}}}
+	var given *historypb.HistoryEvent
+	starter := resumeStarter(svc).WithPayloads(func(_ context.Context, runID string, ev *historypb.HistoryEvent) (converter.DataConverter, error) {
+		if runID != "ork-run" {
+			t.Errorf("payloads asked of %q", runID)
+		}
+		given = ev
+		return nil, payloadcrypt.ErrKeyless
+	})
+	if _, found, err := starter.ResetKeyOf(context.Background(), "ork-run", "sealed"); !errors.Is(err, payloadcrypt.ErrKeyless) || found {
+		t.Fatalf("ResetKeyOf = found %v, %v; want ErrKeyless", found, err)
+	}
+	if given != start {
+		t.Fatalf("payloads given %v, want the start", given)
 	}
 }

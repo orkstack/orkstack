@@ -75,6 +75,7 @@ var ScopeCheckedPrefixes = []string{
 	DeliveryPrefix,
 	DeliveryBodyPrefix,
 	RunArchiveNamespace,
+	RunResumeNamespace,
 	"metadata/index",
 	SnapshotPrefix,
 	ScheduleBindingPrefix,

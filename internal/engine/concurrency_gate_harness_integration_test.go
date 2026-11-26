@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // The concurrency gate's integration harness (E88 P2). P2 has the gate and
@@ -105,6 +107,8 @@ type gateStack struct {
 	gateQueue  string
 	idleQueue  string
 	census     *censusSnapshots
+	// audit holds the resets' records.
+	audit *artifacts.MemoryAuditStore
 
 	mu     sync.Mutex
 	worker worker.Worker
@@ -114,10 +118,10 @@ func newGateStack(t *testing.T, ctx context.Context, label string) *gateStack {
 	t.Helper()
 	namespace := chaosNamespace("conc-" + label)
 	c := dialRoutingCluster(t, ctx, temporalAddress(), namespace)
-	usable, err := task.EnsureConcurrencySearchAttributes(ctx, c, namespace)
-	must.OKf(t, err, "register the concurrency attributes in %s", namespace)
-	if !usable {
-		t.Fatalf("the concurrency attributes are not usable in %s", namespace)
+	index, err := task.EnsureSearchAttributes(ctx, c, namespace, slog.Default())
+	must.OKf(t, err, "register the attributes in %s", namespace)
+	if !index.Limits() {
+		t.Fatalf("the attributes a limit is kept by are not usable in %s", namespace)
 	}
 	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	return &gateStack{
@@ -125,6 +129,7 @@ func newGateStack(t *testing.T, ctx context.Context, label string) *gateStack {
 		gateQueue: "ork-conc-" + label + "-engine-" + suffix,
 		idleQueue: "ork-conc-" + label + "-idle-" + suffix,
 		census:    &censusSnapshots{},
+		audit:     artifacts.NewMemoryAuditStore(),
 	}
 }
 
@@ -135,7 +140,7 @@ func (s *gateStack) startWorker() {
 	w := worker.New(s.c, s.gateQueue, worker.Options{})
 	w.RegisterWorkflowWithOptions(engine.ConcurrencyGateWorkflow, workflow.RegisterOptions{Name: engine.ConcurrencyGateWorkflowType})
 	w.RegisterWorkflowWithOptions(engine.ConcurrencyCensusWorkflow, workflow.RegisterOptions{Name: engine.ConcurrencyCensusWorkflowType})
-	engine.RegisterGateActivities(w, engine.NewGateActivities(s.activities))
+	engine.RegisterGateActivities(w, engine.NewGateActivities(s.activities).WithResetRecords(s.audit, nil, nil))
 	engine.RegisterCensusActivities(w, engine.NewCensusActivities(s.activities, s.census))
 	must.OKf(s.t, w.Start(), "start the engine worker")
 	s.mu.Lock()

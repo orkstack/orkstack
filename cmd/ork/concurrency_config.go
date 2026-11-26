@@ -45,6 +45,10 @@ func concurrencySettingsFromEnv() (engine.GateTunables, engine.CensusSettings, e
 	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_REBUILD_BACKOFF_MAX", "engine.concurrency.rebuild_backoff_max", &t.RebuildBackoffMax))
 	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_REBUILD_TIMEOUT", "engine.concurrency.rebuild_timeout", &t.RebuildTimeout))
 	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_FREEZE_TIMEOUT", "engine.concurrency.freeze_timeout", &t.FreezeTimeout))
+	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_FREEZE_MARGIN", "engine.concurrency.freeze_margin", &r.FreezeMargin))
+	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_RESET_AUDIT_WINDOW", "engine.concurrency.reset_audit_window", &t.ResetWindow))
+	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_RESET_INCOMPLETE_AFTER", "engine.concurrency.reset_incomplete_after", &c.ResetIncompleteAfter))
+	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_RECORD_TIMEOUT", "engine.concurrency.record_timeout", &t.RecordTimeout))
 	errs = append(errs, concurrencyDuration("ORK_CONCURRENCY_DRAIN_MARGIN", "engine.concurrency.drain_margin", &t.DrainMargin))
 	errs = append(errs, concurrencyInt("ORK_CONCURRENCY_GATE_CONTINUE_EVENTS", "engine.concurrency.gate_continue_events", &t.ContinueEvents))
 	errs = append(errs, concurrencyInt("ORK_CONCURRENCY_GATE_CONTINUE_UPDATES", "engine.concurrency.gate_continue_updates", &t.ContinueUpdates))
@@ -83,6 +87,13 @@ func concurrencySettingsFromEnv() (engine.GateTunables, engine.CensusSettings, e
 		return fail(err)
 	}
 	return t, c, r, nil
+}
+
+// backstopLife is how long the cluster must keep a finished execution whatever
+// the runs' retention: an idempotency key's life, or what a closed concurrency
+// limit remembers of its resets when that is longer (CR-1).
+func backstopLife(idempotencyTTL time.Duration, t engine.GateTunables) time.Duration {
+	return max(engine.ClaimLife(idempotencyTTL), engine.ResetMemoryLife(t))
 }
 
 // concurrencyDuration reads one duration into dst, leaving it unset when

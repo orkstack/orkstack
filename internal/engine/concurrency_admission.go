@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
+	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -74,6 +77,10 @@ type ConcurrencyAdmissionReader interface {
 	// has: holders a full key still counts that free it once the gate
 	// checks them.
 	ClosedRuns(ctx context.Context, runs []string) ([]string, error)
+	// WaitingRuns is those of runs that wait in a line now; a run the cluster
+	// no longer has, or that has ended, waits for nothing. The runs found are
+	// returned beside the error of any that could not be described.
+	WaitingRuns(ctx context.Context, runs []string) ([]string, error)
 	// Verify asks the gate to check its holders now.
 	Verify(ctx context.Context, gateID string) error
 	// Gates lists a namespace's open gates a page at a time, each read
@@ -166,6 +173,48 @@ func (r *TemporalConcurrencyReader) ClosedRuns(ctx context.Context, runs []strin
 	return closed, nil
 }
 
+// WaitingRuns describes each run, all at once, within one query timeout for
+// them all.
+func (r *TemporalConcurrencyReader) WaitingRuns(ctx context.Context, runs []string) ([]string, error) {
+	dctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+	waiting, errs := make([]bool, len(runs)), make([]error, len(runs))
+	var wg sync.WaitGroup
+	for i, run := range runs {
+		wg.Go(func() {
+			described, err := r.client.DescribeWorkflow(dctx, run, "")
+			var missing *serviceerror.NotFound
+			switch {
+			case errors.As(err, &missing):
+			case err != nil:
+				errs[i] = fmt.Errorf("engine: describe run %s, which may wait for a concurrency slot: %w", run, err)
+			case described == nil || described.RawResponse.GetWorkflowExecutionInfo() == nil:
+				errs[i] = fmt.Errorf("engine: describe run %s, which may wait for a concurrency slot: the cluster returned no execution", run)
+			default:
+				waiting[i] = runWaits(described.RawResponse.GetWorkflowExecutionInfo())
+			}
+		})
+	}
+	wg.Wait()
+	var out []string
+	for i, run := range runs {
+		if waiting[i] {
+			out = append(out, run)
+		}
+	}
+	return out, errors.Join(errs...)
+}
+
+// runWaits reports that a running execution says it waits in a line.
+func runWaits(info *workflowpb.WorkflowExecutionInfo) bool {
+	p := info.GetSearchAttributes().GetIndexedFields()[task.SearchAttrOrkflowRunQueued]
+	if p == nil || info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		return false
+	}
+	var queued string
+	return converter.GetDefaultDataConverter().FromPayload(p, &queued) == nil && queued == "true"
+}
+
 // Verify signals the gate to run a check pass.
 func (r *TemporalConcurrencyReader) Verify(ctx context.Context, gateID string) error {
 	sctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
@@ -224,11 +273,9 @@ func gateLineOf(g gateState) GateLine {
 			line.StalledRuns = append(line.StalledRuns, e.Run)
 		}
 	}
-	switch g.Rebuild.State {
-	case gateRebuildListing, gateRebuildSettling:
-		line.Rebuilding = true
-	case gateRebuildFailing:
-		line.Rebuilding = true
+	// Every state but none is a rebuild not yet done, a newer release's too.
+	line.Rebuilding = g.Rebuild.State != gateRebuildNone
+	if g.Rebuild.State == gateRebuildFailing {
 		line.RebuildFailingSince = g.Rebuild.Since
 	}
 	return line

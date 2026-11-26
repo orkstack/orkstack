@@ -249,6 +249,8 @@ type TemporalRunReader struct {
 	// none.
 	payloadKeys RunKeySource
 	snapshots   SnapshotStore
+	// endings reads what a resume set aside (WithEndings); nil has none.
+	endings EarlierEndings
 	// bases resolves snapshot overlays (WithBaseCache); nil caches none.
 	bases *SnapshotBaseCache
 
@@ -358,7 +360,8 @@ func (r *TemporalRunReader) LookupWorkflow(ctx context.Context, namespace, workf
 // DeleteWorkflow removes one finished run's history and visibility records
 // from the cluster now, ahead of the backstop retention: every generation of
 // it. A run that continued as new is a chain of executions under one workflow
-// id, and its current generation's carry names every earlier one; they are
+// id, and its current generation's carry names every earlier one; a resumed
+// run's executions each name the one its resume set aside. They are
 // deleted oldest first, then the current one by its own run id, so a read in
 // between never resolves to a stale generation and a partially retired chain
 // converges on the next pass (LookupWorkflow then finds the newest surviving
@@ -382,20 +385,23 @@ func (r *TemporalRunReader) DeleteWorkflow(ctx context.Context, namespace, workf
 		}
 		return err
 	}
-	current := described.GetWorkflowExecutionInfo().GetExecution().GetRunId()
-	carry, err := r.carryOf(ctx, workflowID, current)
+	info := described.GetWorkflowExecutionInfo()
+	if info.GetCloseTime() == nil {
+		// A resume may have started it since it was looked up, and the
+		// cluster would end it.
+		return fmt.Errorf("engine: run %s is running; nothing of it is deleted", workflowID)
+	}
+	current := info.GetExecution().GetRunId()
+	executions, err := r.lineage(ctx, workflowID, current)
 	if err != nil {
 		return err
 	}
-	for _, seg := range carry.GetSegments() {
-		if seg.GetExecutionId() == "" {
-			continue
-		}
-		if err := r.deleteExecution(ctx, namespace, workflowID, seg.GetExecutionId()); err != nil {
+	for _, execution := range executions {
+		if err := r.deleteExecution(ctx, namespace, workflowID, execution); err != nil {
 			return err
 		}
 	}
-	return r.deleteExecution(ctx, namespace, workflowID, current)
+	return nil
 }
 
 // deleteExecution deletes one execution of workflowID; NotFound is success.
@@ -412,40 +418,6 @@ func (r *TemporalRunReader) deleteExecution(ctx context.Context, namespace, work
 		return err
 	}
 	return nil
-}
-
-// carryOf decodes the carry of one execution's start: nil for a generation 0,
-// and for an execution the cluster no longer holds.
-func (r *TemporalRunReader) carryOf(ctx context.Context, workflowID, execution string) (*orkstackv1.RunContinuation, error) {
-	if r.client == nil {
-		return nil, fmt.Errorf("engine: workflow deletion reader has no Temporal client")
-	}
-	iter := r.client.GetWorkflowHistory(ctx, workflowID, execution, false,
-		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
-	if !iter.HasNext() {
-		return nil, nil
-	}
-	historyEvent, err := iter.Next()
-	if err != nil {
-		var notFound *serviceerror.NotFound
-		if errors.As(err, &notFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("engine: read the start of run %s: %w", workflowID, err)
-	}
-	attrs := historyEvent.GetWorkflowExecutionStartedEventAttributes()
-	if attrs == nil {
-		return nil, nil
-	}
-	dc := r.runConverter(ctx, workflowID)
-	if err := dc.holdStart(attrs); err != nil {
-		return nil, err
-	}
-	carry, err := decodeCarry(dc, attrs)
-	if err != nil {
-		return nil, fmt.Errorf("engine: run %s: %w", workflowID, err)
-	}
-	return carry, nil
 }
 
 // NamespaceRetention returns Temporal's configured workflow retention period,
@@ -693,7 +665,7 @@ func (r *TemporalRunReader) EventsForArchive(
 	if err != nil {
 		return ArchiveRead{}, err
 	}
-	return ArchiveRead{Events: projection.events, Gaps: st.gaps, CanceledBy: projection.canceledBy}, nil
+	return ArchiveRead{Events: projection.events, Gaps: st.gaps, CanceledBy: projection.canceledBy, Scope: st.scope, AsBase: st.readAsBase}, nil
 }
 
 // StreamEvents delivers a run's events after fromSequence to send, and ends at
@@ -1269,10 +1241,28 @@ func (r *TemporalRunReader) scanWith(
 	st *scanState,
 ) (*runProjection, error) {
 	execution := "" // the workflow id's CURRENT execution; earlier ones come from segments
-	for {
+	var ending *asBaseEnding
+	for hops := 0; ; {
 		successor, err := r.scanExecution(ctx, runID, execution, follow, fromSequence, wantRun, send, st)
 		if err != nil {
 			return nil, err
+		}
+		if e := st.endedAsBase; e != nil && !st.stopped {
+			// Read it as its base: what this execution read is the start of
+			// the base's own history, which the base holds whole.
+			if hops++; hops > maxLineage {
+				return nil, fmt.Errorf("engine: run %s: its resets name more executions than its resumes can have made", runID)
+			}
+			if ending == nil {
+				ending = e
+			}
+			if send != nil {
+				fromSequence = max(fromSequence, st.lastSequence) // a stream has had those
+			}
+			execution = st.resetFrom
+			*st = scanState{projection: &runProjection{}, seen: map[int64]struct{}{},
+				tolerateLostSegments: st.tolerateLostSegments, forArchive: st.forArchive, lastResort: st.lastResort, readAsBase: true}
+			continue
 		}
 		if st.stopped || successor == "" {
 			break
@@ -1281,6 +1271,17 @@ func (r *TemporalRunReader) scanWith(
 		execution = successor
 	}
 	projection := st.projection
+	if ending != nil && projection.run != nil {
+		cause := proto.Clone(ending.cause).(*orkstackv1.Error)
+		if st.recordLoss != "" {
+			// What of the base's record is lost stays said.
+			cause.Details = st.recordLoss
+		}
+		projection.run.Status, projection.run.Error, projection.run.FinishedAt =
+			orkstackv1.Status_STATUS_FAILED, cause, ending.closedAt
+		projection.run.CanceledBy, projection.run.CanceledByVerified, projection.run.ForceCancelRecord = "", false, ""
+		projection.canceledBy, projection.cancelSeen = CanceledBy{}, false
+	}
 	if st.stopped {
 		return projection, nil
 	}
@@ -1331,6 +1332,11 @@ func (r *TemporalRunReader) scanWith(
 	}
 	if projection.run == nil && len(projection.events) == 0 {
 		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
+	}
+	if wantRun && projection.run != nil {
+		if err := r.listResumes(ctx, projection.run, st.scope); err != nil {
+			return nil, err
+		}
 	}
 	return projection, nil
 }
@@ -1488,8 +1494,13 @@ func (r *TemporalRunReader) scanExecution(
 			projection.canceledBy, projection.cancelSeen = CanceledBy{}, false
 			return attrs.GetNewExecutionRunId(), nil
 		}
-		if attrs := historyEvent.GetWorkflowTaskFailedEventAttributes(); attrs != nil {
-			st.noteReset(attrs)
+		if failed := historyEvent.GetWorkflowTaskFailedEventAttributes(); failed != nil {
+			if failed.GetCause() == enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW {
+				st.resetFrom, st.publishedSinceReset = failed.GetBaseRunId(), false
+			}
+			if err := r.adoptReset(ctx, runID, historyEvent, fromSequence, wantRun, send, st); err != nil {
+				return "", err
+			}
 			continue
 		}
 		if r.isPublishEvent(historyEvent) {
@@ -1514,6 +1525,10 @@ func (r *TemporalRunReader) scanExecution(
 			if isRunLevelEvent(event) && event.GetStatus() != orkstackv1.Status_STATUS_UNSPECIFIED {
 				projection.lastRunStatus = event.GetStatus()
 			}
+			st.began, st.publishedSinceReset = true, true
+			if err := st.checkSetAside(event); err != nil {
+				return "", err
+			}
 			stop, err := st.deliver(event, fromSequence, wantRun, send)
 			if err != nil {
 				return "", err
@@ -1528,6 +1543,12 @@ func (r *TemporalRunReader) scanExecution(
 			return "", err
 		}
 		if status, cause, closed := closedExecution(closing, st.carried); closed {
+			if asBase(st, status, cause) {
+				// Its base's events and state are the run's: they are read from
+				// its base (scanWith), and this close is laid over them.
+				st.endedAsBase = &asBaseEnding{closedAt: cloneTime(historyEvent.GetEventTime()), cause: cause}
+				return "", nil
+			}
 			forced, err := r.forceCancelOutcome(ctx, runID, execution, first, historyEvent)
 			if st.lastResort && errors.Is(err, errForceCancelUnread) {
 				forced, err = ForceCancelClose{Verification: ForceCancelUnverified, Carried: carriedForceCancel(historyEvent)}, nil
@@ -1538,12 +1559,14 @@ func (r *TemporalRunReader) scanExecution(
 			if forced.Verification != ForceCancelNone {
 				status, cause = forced.Outcome(historyEvent.GetWorkflowExecutionTerminatedEventAttributes().GetReason())
 			}
-			if forced.built() && !projection.sawTerminal {
-				if err := r.endAfterReset(ctx, runID, first, historyEvent, fromSequence, wantRun, send, st); err != nil {
+			st.closed = true
+			adopted := false
+			if wantRun || st.forArchive {
+				var err error
+				if adopted, err = r.adoptSetAside(ctx, runID, st); err != nil {
 					return "", err
 				}
 			}
-			st.closed = true
 			if wantRun {
 				// For a CLOSED run a missing snapshot stays fatal — and stays
 				// matching artifacts.ErrNotFound — on purpose: the API layer
@@ -1556,17 +1579,22 @@ func (r *TemporalRunReader) scanExecution(
 					return "", err
 				}
 			}
-			if st.forArchive {
+			if st.forArchive && !adopted {
 				if err := r.loadRecordForArchive(ctx, runID, st); err != nil {
 					return "", err
 				}
 			}
 			terminal := r.closeRun(projection, runID, historyEvent, status, cause, forced, st.lastSequence)
-			if st.forArchive {
+			if st.forArchive || st.recordLoss != "" {
 				if projection.sawTerminal && forced.Verification != ForceCancelNone {
 					cause = nil // it came after the run's own end, and says nothing of that
 				}
 				settleRunForArchive(projection, st, status, cause)
+			}
+			if terminal != nil && st.scope > 0 {
+				// A resume that ended with no event ended at its scope or
+				// after it, and a next resume goes on from there.
+				st.lastSequence = terminal.GetSequence()
 			}
 			if terminal == nil || terminal.GetSequence() <= fromSequence {
 				continue
@@ -1584,6 +1612,17 @@ func (r *TemporalRunReader) scanExecution(
 		}
 	}
 	return "", nil
+}
+
+// asBase reports an execution made by a reset whose reason names a resume
+// plan it could not read, and that ended with no event of its own
+// (endResumeUnrunnable, when no later sequence is known to it): it ran nothing
+// past its reset point, which its history ends at, so the run is as its base
+// left it, ended for that reason. One under a scope it could read is no such
+// execution: it published its ending at that scope.
+func asBase(st *scanState, status orkstackv1.Status, cause *orkstackv1.Error) bool {
+	return st.scope == 0 && st.resetFrom != "" && !st.publishedSinceReset &&
+		status == orkstackv1.Status_STATUS_FAILED && ResumePlanNeverRan(cause.GetCode())
 }
 
 // closeRun overlays the outcome the execution itself reports, and returns a
@@ -2437,6 +2476,17 @@ func (r *TemporalRunReader) RunStart(ctx context.Context, runID string) (*RunSta
 	}
 	record.ByReference = record.Plan.Definition != nil
 	return record, nil
+}
+
+// RunSavedState reads the saved state a run carried on with, verified: what
+// its history started from. One that fails its check wraps
+// ErrContinuationObjectInvalid.
+func (r *TemporalRunReader) RunSavedState(ctx context.Context, namespace, runID string, carry *orkstackv1.RunContinuation) (*orkstackv1.Run, error) {
+	if err := validateCarry(runID, namespace, carry); err != nil {
+		return nil, fmt.Errorf("engine: read the saved state of run %s: %w: %v", runID, ErrContinuationObjectInvalid, err)
+	}
+	checkpoint := carry.GetCheckpoint()
+	return r.readSnapshotAt(ctx, runID, checkpoint.GetUri(), &runProjection{checkpoint: checkpoint})
 }
 
 // RunDefinition is the definition a run was started with, whatever way it

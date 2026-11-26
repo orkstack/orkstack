@@ -36,11 +36,16 @@ func TestResumeShipped_OffWhileBlocked(t *testing.T) {
 	if !regexp.MustCompile(`Resume:\s+resumeSeam\(starter\),`).Match(raw) {
 		t.Error("cmd/ork does not wire resume through resumeSeam")
 	}
-	if engine.ResumeShipped {
-		// What the last blocker's change replaces.
-		if strings.Contains(string(raw), "NoResumes{}") {
-			t.Error("resume is switched on and the artifact GC still checks no resume records")
+	// Whatever asks whether a run is archived asks about its newest ending.
+	for _, wired := range []string{
+		"WithEndings(archive)", "WithEndings(endings, newestEndings)", "WithBodies(newestEndings)",
+		"newestEndings.Reclaim(reclaimStore)", "newestEndings.Restore(store)", "WithResumes(archivecleanup.NewEndingRecords(endings))",
+	} {
+		if !strings.Contains(string(raw), wired) {
+			t.Errorf("cmd/ork does not wire %s", wired)
 		}
+	}
+	if engine.ResumeShipped {
 		return
 	}
 	seam := resumeSeam(engine.NewTemporalStarter(nil, ""))

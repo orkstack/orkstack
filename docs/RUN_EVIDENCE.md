@@ -30,7 +30,8 @@ evidence").
 
 ```text
 MANIFEST.json                              first member, always
-run.jsonl                                  the archive body, verbatim (metadata/runs/{run-id}.jsonl)
+run.jsonl                                  the archive body of the run's newest ending, verbatim (metadata/runs/{run-id}.jsonl, or metadata/run-resumes/{run-id}/{scope}.jsonl once it was resumed)
+endings/{scope:020}.jsonl                  a resumed run's earlier endings, the first (scope 0) first, verbatim
 orkflow/source.yaml                        Orkflow.source_yaml of the pinned version, verbatim bytes (a shared Orkflow's: its owner's)
 tasks/{task-id}/commit.json                ActivityCommit, the stored bytes (SUCCEEDED tasks only)
 tasks/{task-id}/values.json                the committed values.json
@@ -141,7 +142,7 @@ Each member has:
 | Key | Meaning |
 |---|---|
 | `path` | the tar entry name |
-| `kind` | `run`, `source`, `commit`, `values`, `artifact`, `attempt`, `stdout`, `stderr` |
+| `kind` | `run`, `ending`, `source`, `commit`, `values`, `artifact`, `attempt`, `stdout`, `stderr` |
 | `task_id`, `attempt` | the task and attempt the member belongs to, when it belongs to one |
 | `name` | for `artifact`: the exact recorded artifact name; `path`'s last segment is derived from it and may be encoded |
 | `origin` | the object the bytes came from: the recorded URI for an artifact, values, log or commit; the store key for the archive body and an attempt record; the version document key plus `#source_yaml` for the definition. A location, never a credential |
@@ -163,8 +164,8 @@ that exported a bundle verifies it, so keep that release for bundles an engine
 before 0.4.0 exported (versions 1 and 2). A change an older reader could misread
 bumps the version.
 
-Version 3 may carry `event_gaps`, the `withheld` state, `orkflow_namespace` and
-an artifact's `source_*` keys.
+Version 3 may carry `event_gaps`, the `withheld` state, `endings`,
+`orkflow_namespace` and an artifact's `source_*` keys.
 
 ### A run whose stream has a gap
 
@@ -193,14 +194,42 @@ Every member is exactly what it would be without one — `run.jsonl` is still th
 archive body verbatim, gap lines included, and still `present` — so the
 bundle is exactly what the archive holds.
 
+### A resumed run
+
+A run that was resumed ended more than once. The bundle is of its newest ending,
+whose `run.jsonl` holds the whole stream, and it holds the archive body of each
+earlier one too, as it was written. One more key names them all, the first
+ending first:
+
+```json
+  "endings": [
+    {"scope": 0, "path": "endings/00000000000000000000.jsonl", "run_status": "FAILED", "reason": "EXIT_1", "run_finished_at": "2026-09-10T02:08:42Z"},
+    {"scope": 41, "path": "run.jsonl", "run_status": "SUCCEEDED", "run_finished_at": "2026-09-10T03:15:09Z"}
+  ]
+```
+
+A `scope` is the number the stream goes on at after that resume. The numbers
+between the ending set aside and it, if any, were never used: no `event_gaps`
+names them. The other members are the newest ending's; what an earlier one
+recorded and a later one replaced is named, with its digest, in that ending's
+body. A result that a resume kept and the run ended before reading back is a
+`CANCELED` task with `RESUME_NOT_READ_BACK` in `run.jsonl` and no
+`commit.json`: its commit is named by the ending before.
+
+An earlier ending whose body is gone is `reclaimed` (`ending_missing`), with no
+digest, because nothing recorded one. It is known from the mark its resume left,
+where the newest stream holds an event or a gap at that scope; a mark with
+neither is a resume that never began, and no ending. One that does not decode is `rejected`
+(`ending_damaged`). Neither has a `run_status` in `endings`.
+
 ## States
 
 | State | Meaning | `sha256` | In the tar |
 |---|---|---|---|
 | `present` | the bytes were read from the store and hashed; for a member with a recorded reference the hash and size **equal** the reference — a mismatch aborts the export | of the bytes | yes |
-| `reclaimed` | the store answered NotFound for an object the run recorded: the cleanup worker (commits, attempt-linked logs), a bucket lifecycle rule or `DeleteUnreferencedObjects` (artifact objects), or `DeleteOrkflow` (the definition) | the **recorded** digest, preserved; empty for `source` | no |
+| `reclaimed` | the store answered NotFound for an object the run recorded: the cleanup worker (commits, attempt-linked logs), a bucket lifecycle rule or `DeleteUnreferencedObjects` (artifact objects), or `DeleteOrkflow` (the definition) | the **recorded** digest, preserved; empty for `source` and `ending` | no |
 | `unrecorded` | an attempt number between 1 and the highest known attempt for which the attempt store holds no record — the Orker died before filing one, or it was reclaimed | empty | no |
-| `rejected` | an object exists at the coordinates but is not what the run pinned: today only the definition, when the stored document does not hash to the run's definition digest | empty; `definition.stored_definition_digest` carries the document's | no |
+| `rejected` | an object exists at the coordinates but is not what it should be: the definition, when the stored document does not hash to the run's definition digest, or an earlier ending's body that does not decode | empty; `definition.stored_definition_digest` carries the document's | no |
 | `withheld` | the exporter may not read the object: today only the definition of a shared Orkflow's child run, when the caller lacks `orkflow.read` on it in its owner's namespace. While the access document cannot be read and configuration's bindings do not grant it, the export fails `Unavailable` instead | empty | no |
 
 Absence is a member, not a gap: nothing the run recorded is omitted silently.
@@ -226,6 +255,8 @@ are two members.
 | `commit_missing` | the commit record was reclaimed by cleanup; its recorded digest is preserved |
 | `object_missing` | the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved |
 | `attempt_record_missing` | no record: the orker died before filing one, or it was reclaimed |
+| `ending_missing` | the archive body of this earlier ending was removed from the store |
+| `ending_damaged` | an object is stored for this earlier ending, but it does not decode as an archive body of this run |
 | `artifact_reclaimed` | the artifact GC deleted the object after its run was retired; its recorded digest is preserved |
 
 A client prints the token and its sentence; an unknown token is printed as
@@ -253,7 +284,8 @@ a workload artifact named `commit.json` collides with nothing.
    could not be written to object storage, or it was terminated — is archived
    from its history by the archive sweep, within about two cleanup intervals of
    its end and once object storage answers (`docs/DEPLOY.md` §1, "The archive
-   sweep"), and its export can be retried then.
+   sweep"), and its export can be retried then. Of a resumed run it is the newest
+   ending that must be archived: an earlier one is never exported as the run's.
 3. Every member is resolved from the **archived** run snapshot, never from a
    coordinate the caller supplied. An export is a read of the run:
    `run.evidence.export` gives its whole archived record, its trace context
@@ -304,6 +336,13 @@ string. Its rules:
    a `path` listed a second time is `listed twice in manifest`. The engine
    never writes either; the rule exists so that every listed member is
    accounted for exactly once, as verified, a finding, or a failure.
+   `endings` that are not the run's first and later ones in order, each with its
+   member, are refused.
+9. In a resumed run's bundle the event stream of each ending's body must be
+   whole: from 1 on, every number is an event, lies in a `gap` line, or is
+   skipped right before a scope `endings` names, where `RUN_RESUMED`, the run's
+   end or the first number of a `gap` line stands, and the stream reaches that ending's own scope
+   (`event sequence broken`, with the number wanted and the one found). A body that is no archive body is `not an archive body`.
 
 Reclaimed, unrecorded, rejected and withheld members are findings, not
 failures: the command exits 0 and lists each under its own state with its
@@ -356,7 +395,12 @@ immutable, so only states may move:
   exported and the digest still agrees); a file `reclaimed` that is live
   `present` is `restored since export`;
 - a member `withheld` in one and not the other is the finding `readable to only
-  one of the exporter and this caller` (exit 0: nothing moved in the store).
+  one of the exporter and this caller` (exit 0: nothing moved in the store);
+- a run resumed since the export is the finding `resumed since export` (exit 0):
+  its members are another ending's now, so a member is compared only when the
+  live manifest names it from the same object. The endings the bundle holds must
+  each be in the store as the bundle has it, or `reclaimed`.
+  While the run has not ended again the engine refuses the manifest.
 
 It prints the offline report, then a `store:` block (`every member agrees with
 the store`, or the findings and failures), and exits 1 on any failure in

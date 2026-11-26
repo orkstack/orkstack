@@ -60,6 +60,13 @@ type ArchiveRead struct {
 	// (cancelPrincipal), or empty; applyCanceledBy decides whether the run
 	// shows it.
 	CanceledBy CanceledBy
+	// Scope is the ending's: 0 for the run's first, else that of the resume
+	// that made the execution read.
+	Scope uint64
+	// AsBase: the run ended under a reset whose plan key the engine could not
+	// read, with no event of its own, and is read as its base left it; Scope
+	// is then the base's, whose body the archive already holds.
+	AsBase bool
 }
 
 // EventActivities projects workflow-produced state into the in-process read
@@ -287,6 +294,19 @@ func (a *EventActivities) PublishEvent(
 		a.observer.ObserveEvent(ctx, event, snapshot)
 	}
 
+	if event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED {
+		// Whatever replica sent the reset, and whether or not its answer was
+		// lost, the run going on is what retires the rows that say it ended.
+		// On the last attempt the run goes on regardless: its next ending
+		// replaces them.
+		if err := a.archive.RetireEarlierRows(ctx, snapshot, uint64(event.GetSequence())); err != nil {
+			if !lastPublishAttempt(ctx) {
+				return err
+			}
+			slog.Error("the index rows of a resumed run's earlier ending were not retired; lists show that ending until the run ends again", "run_id", event.GetRunId(), "error", err)
+		}
+		return nil
+	}
 	if a.archive == nil || !isTerminalRunEvent(event) {
 		return nil
 	}
@@ -315,7 +335,7 @@ func (a *EventActivities) PublishEvent(
 	// each is archived as an explicit gap: a run with a gap in its events
 	// still reaches the archive (AGENTS.md §15), and every read of the gap
 	// names its cause.
-	return a.archive.Archive(ctx, snapshot, archived.Events, archived.Gaps...)
+	return a.archive.ArchiveEnding(ctx, snapshot, archived.Scope, archived.Events, archived.Gaps...)
 }
 
 // publishAttempts is how many attempts RunWorkflow gives the projection

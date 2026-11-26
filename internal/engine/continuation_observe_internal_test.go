@@ -46,13 +46,13 @@ func TestWriteCheckpoint_ObservesSizeOutcomeAndHold(t *testing.T) {
 	obs := &recordingObserver{}
 	a := NewSnapshotActivities(newMemSnapshotStore()).WithContinuationObserver(obs)
 	in := ContinuationObservationInput{Namespace: "team-a", HoldSeconds: 7}
-	written, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, in, nil, "")
+	written, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, in, nil, nil, "")
 	must.OK(t, err)
-	if _, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 8, in, nil, ""); err != nil {
+	if _, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 8, in, nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	failing := NewSnapshotActivities(&failingStore{err: errors.New("bucket unreachable")}).WithContinuationObserver(obs)
-	if _, err := failing.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, in, nil, ""); err == nil {
+	if _, err := failing.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, in, nil, nil, ""); err == nil {
 		t.Fatal("a write to a failing store succeeded")
 	}
 	if len(obs.writes) != 3 {
@@ -96,7 +96,7 @@ func readChunkInActivity(t *testing.T, a *SnapshotActivities, uri string, size, 
 func TestReadContinuationChunk_ObservesRestoreOnTheFinalChunk(t *testing.T) {
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
-	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{Namespace: "team-a"}, nil, "")
+	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{Namespace: "team-a"}, nil, nil, "")
 	must.OK(t, err)
 	obs := &recordingObserver{}
 	a.WithContinuationObserver(obs)
@@ -117,7 +117,7 @@ func TestReadContinuationChunk_ObservesRestoreOnTheFinalChunk(t *testing.T) {
 func TestReadContinuationChunk_ObservesItsAttempt(t *testing.T) {
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
-	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{Namespace: "team-a"}, nil, "")
+	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{Namespace: "team-a"}, nil, nil, "")
 	must.OK(t, err)
 	obs := &recordingObserver{}
 	a.WithContinuationObserver(obs)
@@ -129,7 +129,7 @@ func TestReadContinuationChunk_ObservesItsAttempt(t *testing.T) {
 
 func TestContinuationObserver_NilRecordsNothing(t *testing.T) {
 	a := NewSnapshotActivities(newMemSnapshotStore())
-	if _, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{}, nil, ""); err != nil {
+	if _, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{}, nil, nil, ""); err != nil {
 		t.Fatalf("a write without an observer failed: %v", err)
 	}
 	if _, err := a.WriteSwitchSnapshot(context.Background(), observedRun(), "team-a", 0, ContinuationObservationInput{}); err != nil {
@@ -143,7 +143,7 @@ func TestContinuationObserver_NilRecordsNothing(t *testing.T) {
 func TestReadContinuationChunk_SizeMismatchIsCorruptAndNamesNoObject(t *testing.T) {
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
-	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{}, nil, "")
+	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{}, nil, nil, "")
 	must.OK(t, err)
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestActivityEnvironment()

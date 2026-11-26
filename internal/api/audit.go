@@ -81,8 +81,8 @@ type AuditCounter interface {
 	CountAudit(ctx context.Context, action, outcome string)
 }
 
-// AuditRecorder writes one record per audited call. It is the only writer of
-// metadata/audit/ in the codebase.
+// AuditRecorder writes one record per audited call. Beside it, only what a
+// concurrency limit does with a reset is recorded (engine.RecordConcurrencyReset).
 type AuditRecorder struct {
 	store   artifacts.AuditStore
 	counter AuditCounter
@@ -273,6 +273,30 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail: fmt.Sprintf("accept_duplicate_retries=%t", in.GetAcceptDuplicateRetries())}
 		if out, ok := resp.(*orkstackv1.LowerAuthModeResponse); ok && out != nil {
 			entry.Detail = "from=" + out.GetPreviousMode() + " " + entry.Detail
+		}
+		return entry
+	},
+	// A reset's record is of the call that started it, or was refused one: a
+	// dry run changes nothing, and a poll, which says no consequence, finds
+	// what it did. What the
+	// limit then does it records itself (concurrency.reset.applied,
+	// .completed, .failed).
+	orkstackv1connect.ConcurrencyAdminServiceResetConcurrencyLimitProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.ResetConcurrencyLimitRequest)
+		out, answered := resp.(*orkstackv1.ResetConcurrencyLimitResponse)
+		answered = answered && out != nil
+		if in.GetDryRun() || (answered && out.GetConsequenceCode() == orkstackv1.ConcurrencyResetConsequence_CONCURRENCY_RESET_CONSEQUENCE_UNSPECIFIED) {
+			return auditEntry{}
+		}
+		expected := "any"
+		if in.ExpectedEpoch != nil {
+			expected = strconv.FormatInt(in.GetExpectedEpoch(), 10)
+		}
+		entry := auditEntry{Action: "concurrency.reset.requested", Namespace: artifacts.ResolveNamespace(in.GetNamespace()), Target: in.GetKey(),
+			Detail: fmt.Sprintf("request %s: force_unanswered=%t expected_epoch=%s", in.GetRequestId(), in.GetForceUnanswered(), expected)}
+		if answered {
+			entry.Detail += fmt.Sprintf(" epoch=%d new_epoch=%d holders=%d queued=%d dropped=%d", out.GetEpoch(), out.GetNewEpoch(),
+				out.GetHolders(), out.GetQueued(), out.GetDropped())
 		}
 		return entry
 	},

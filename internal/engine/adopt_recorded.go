@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
+	"slices"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -41,6 +41,9 @@ const (
 // InlineValuesLimit): the same task reads the same row whether its result
 // was run or kept.
 const adoptInlineValuesLimit = 4096
+
+// errValuesMismatch is a values.json whose bytes are not the recorded ones.
+var errValuesMismatch = errors.New("its values are not the recorded ones")
 
 // undecodableReread is how long a read of undecodable bytes waits before its
 // one reread, as the Orker's retry-start check does.
@@ -99,19 +102,14 @@ func (a *ResumeActivities) adoptRecorded(ctx context.Context, in *orkstackv1.Ado
 	}
 	entries := in.GetEntries()
 	out := &orkstackv1.AdoptRecordedResult{Entries: make([]*orkstackv1.AdoptedEntry, len(entries))}
-	var mu sync.Mutex
-	var final error
+	failures := make([]error, len(entries))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(max(1, int(in.GetConcurrency())))
 	for i, e := range entries {
 		g.Go(func() error {
 			result, err := a.adoptOne(gctx, e, in.GetGetTimeout().AsDuration(), int(in.GetGetTries()))
 			if err != nil {
-				mu.Lock()
-				if final == nil || !isFinal(final) && isFinal(err) {
-					final = err
-				}
-				mu.Unlock()
+				failures[i] = err
 				return err
 			}
 			out.Entries[i] = &orkstackv1.AdoptedEntry{TaskId: e.GetTaskId(), Item: e.GetItem(), Result: result}
@@ -119,12 +117,7 @@ func (a *ResumeActivities) adoptRecorded(ctx context.Context, in *orkstackv1.Ado
 		})
 	}
 	if err := g.Wait(); err != nil {
-		mu.Lock()
-		defer mu.Unlock()
-		if final != nil {
-			return nil, final
-		}
-		return nil, err
+		return nil, callFailure(entries, out.Entries, failures, err)
 	}
 	{
 		budget := in.GetBudget()
@@ -144,6 +137,55 @@ func (a *ResumeActivities) adoptRecorded(ctx context.Context, in *orkstackv1.Ado
 	return out, nil
 }
 
+// callFailure is what a call that failed fails (§4.3): the first entry whose
+// failure is final, which a retry cannot change, or else the first entry it
+// did not read back, with the first failure the call met. Which read gave up
+// first is a race; which entry is failed is not, and a failure that is not
+// final blames nothing a retry would not read again.
+func callFailure(entries []*orkstackv1.AdoptEntry, read []*orkstackv1.AdoptedEntry, failures []error, waited error) error {
+	for i, err := range failures {
+		if err != nil && isFinal(ofUnit(err, entries[i])) {
+			return ofUnit(err, entries[i])
+		}
+	}
+	first := slices.IndexFunc(read, func(e *orkstackv1.AdoptedEntry) bool { return e == nil })
+	if first < 0 {
+		return waited
+	}
+	if own := failures[first]; own != nil && categoryOf(own).isApplication() {
+		return ofUnit(own, entries[first])
+	}
+	// Its read was given up when another's failed: that failure is its cause.
+	for _, err := range failures {
+		if reading := categoryOf(err); err != nil && reading.isApplication() {
+			return ofUnit(temporal.NewApplicationErrorWithCause(
+				fmt.Sprintf("task %q was not read back: %s", entries[first].GetTaskId(), reading.appMessage()), reading.appType(), err), entries[first])
+		}
+	}
+	return waited
+}
+
+// adoptFailedUnit is the unit a read-back call failed on, carried with its
+// failure: the calls pack many, and blaming another would rerun a result that
+// is there.
+type adoptFailedUnit struct {
+	Task string `json:"task"`
+	Item int32  `json:"item"`
+}
+
+// ofUnit is err naming e's unit.
+func ofUnit(err error, e *orkstackv1.AdoptEntry) error {
+	reading := categoryOf(err)
+	if !reading.isApplication() {
+		return err
+	}
+	unit := adoptFailedUnit{Task: e.GetTaskId(), Item: e.GetItem()}
+	if reading.nonRetryable() {
+		return temporal.NewNonRetryableApplicationError(reading.appMessage(), reading.appType(), err, unit)
+	}
+	return temporal.NewApplicationErrorWithCause(reading.appMessage(), reading.appType(), err, unit)
+}
+
 // adoptInputFault is why in cannot be read back, or "".
 func adoptInputFault(in *orkstackv1.AdoptRecordedInput) string {
 	switch {
@@ -156,6 +198,12 @@ func adoptInputFault(in *orkstackv1.AdoptRecordedInput) string {
 	}
 	for _, e := range in.GetEntries() {
 		x := e.GetExpected()
+		if e.GetKind() == orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES {
+			if x.GetRunId() == "" || x.GetTaskId() == "" || e.GetValues().GetUri() == "" || e.GetInlineLimit() <= 0 {
+				return fmt.Sprintf("%s names no values to read, or no bound on them", unitLabel(e))
+			}
+			continue
+		}
 		if x.GetRunId() == "" || x.GetTaskId() == "" || x.GetIdempotencyKey() == "" {
 			return fmt.Sprintf("%s names no identity to check its commit against", unitLabel(e))
 		}
@@ -167,6 +215,9 @@ func isFinal(err error) bool { return categoryOf(err).nonRetryable() }
 
 // adoptOne reads one entry, its tries bounded by getTimeout and tries.
 func (a *ResumeActivities) adoptOne(ctx context.Context, e *orkstackv1.AdoptEntry, getTimeout time.Duration, tries int) (*orkstackv1.ExecuteTaskResult, error) {
+	if e.GetKind() == orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES {
+		return a.adoptValues(ctx, e, getTimeout, tries)
+	}
 	if e.GetKind() != orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_COMMIT {
 		return nil, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("%s: read-back entry kind %v is not one this build reads", unitLabel(e), e.GetKind()), ReasonCommitReadFailed, nil)
@@ -198,14 +249,7 @@ func (a *ResumeActivities) adoptOne(ctx context.Context, e *orkstackv1.AdoptEntr
 		if tctx.Err() != nil || try == max(1, tries)-1 {
 			break
 		}
-		// Spaced, so a store that fails fast does not take every try at once;
-		// doubling, and never past the read's own bound.
-		wait := time.NewTimer(min(adoptRetrySpacing<<min(try, 8), getTimeout))
-		select {
-		case <-tctx.Done():
-			wait.Stop()
-		case <-wait.C:
-		}
+		retryWait(tctx, try, getTimeout)
 	}
 	return nil, temporal.NewApplicationErrorWithCause(
 		fmt.Sprintf("%s: the commit store did not answer: %v", unitLabel(e), last), ReasonCommitReadFailed, last)
@@ -245,7 +289,7 @@ func (a *ResumeActivities) resultOf(ctx context.Context, e *orkstackv1.AdoptEntr
 	}
 	values := commit.GetValues()
 	if values.GetSizeBytes() > 0 && values.GetSizeBytes() <= adoptInlineValuesLimit {
-		raw, err := a.readValues(ctx, e, values)
+		raw, err := a.readValues(ctx, e, values, adoptInlineValuesLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -255,9 +299,55 @@ func (a *ResumeActivities) resultOf(ctx context.Context, e *orkstackv1.AdoptEntr
 	return result, nil
 }
 
+// adoptValues is the result of a settled task: its values, inline up to the
+// entry's bound, and read as a commit's are, each read tried within getTimeout.
+func (a *ResumeActivities) adoptValues(ctx context.Context, e *orkstackv1.AdoptEntry, getTimeout time.Duration, tries int) (*orkstackv1.ExecuteTaskResult, error) {
+	ref := e.GetValues()
+	result := &orkstackv1.ExecuteTaskResult{TaskId: e.GetTaskId(), ValuesRef: ref}
+	if ref.GetSizeBytes() > e.GetInlineLimit() {
+		return result, nil
+	}
+	tctx := ctx
+	if getTimeout > 0 {
+		var cancel context.CancelFunc
+		tctx, cancel = context.WithTimeout(ctx, getTimeout)
+		defer cancel()
+	}
+	reread := false
+	for try := 0; ; try++ {
+		raw, err := a.readValues(tctx, e, ref, e.GetInlineLimit())
+		if errors.Is(err, errValuesMismatch) && !reread {
+			// Other bytes than recorded may be a read cut short: read once more
+			// before they decide an answer is gone, as a commit's are.
+			reread = true
+			retryWait(tctx, 0, undecodableReread)
+			continue
+		}
+		switch {
+		case err == nil:
+			result.ValuesJson, result.ValuesInlined = raw, len(raw) > 0
+			return result, nil
+		case isFinal(err) || tctx.Err() != nil || try >= max(1, tries)-1:
+			return nil, err
+		}
+		retryWait(tctx, try, getTimeout)
+	}
+}
+
+// retryWait spaces two tries of one read, so a store that fails fast does not
+// take every try at once; doubling, and never past the read's own bound.
+func retryWait(ctx context.Context, try int, bound time.Duration) {
+	wait := time.NewTimer(min(adoptRetrySpacing<<min(try, 8), bound))
+	defer wait.Stop()
+	select {
+	case <-ctx.Done():
+	case <-wait.C:
+	}
+}
+
 // readValues reads a small committed values.json, checked against its
 // recorded digest.
-func (a *ResumeActivities) readValues(ctx context.Context, e *orkstackv1.AdoptEntry, ref *orkstackv1.ArtifactRef) ([]byte, error) {
+func (a *ResumeActivities) readValues(ctx context.Context, e *orkstackv1.AdoptEntry, ref *orkstackv1.ArtifactRef, limit int64) ([]byte, error) {
 	if a.values == nil {
 		return nil, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("%s: no artifact store to read its values from", unitLabel(e)), ReasonValuesMissing, nil)
@@ -272,16 +362,20 @@ func (a *ResumeActivities) readValues(ctx context.Context, e *orkstackv1.AdoptEn
 			fmt.Sprintf("%s: read its values.json at %s: %v", unitLabel(e), ref.GetUri(), err), ReasonCommitReadFailed, err)
 	}
 	defer func() { _ = reader.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(reader, adoptInlineValuesLimit+1))
+	raw, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
+		return nil, temporal.NewApplicationErrorWithCause(
+			fmt.Sprintf("%s: read its values.json at %s: %v", unitLabel(e), ref.GetUri(), err), ReasonCommitReadFailed, err)
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, temporal.NewApplicationErrorWithCause(
 			fmt.Sprintf("%s: read its values.json at %s: %v", unitLabel(e), ref.GetUri(), err), ReasonCommitReadFailed, err)
 	}
 	sum := sha256.Sum256(raw)
 	if got := hex.EncodeToString(sum[:]); got != ref.GetSha256() {
 		return nil, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("%s: its values.json at %s hashes to %s, the commit records %s", unitLabel(e), ref.GetUri(), got, ref.GetSha256()),
-			ReasonValuesMissing, nil)
+			fmt.Sprintf("%s: its values.json at %s hashes to %s, the run recorded %s", unitLabel(e), ref.GetUri(), got, ref.GetSha256()),
+			ReasonValuesMissing, errValuesMismatch)
 	}
 	return raw, nil
 }

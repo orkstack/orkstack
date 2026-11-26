@@ -388,6 +388,10 @@ func renderReleases(out io.Writer, resp *orkstackv1.ListReleasesResponse, now ti
 			fmt.Fprintf(out, "  %s queued for a concurrency slot: each holds this release until it starts or its queue timeout passes; list them with orkctl run list -F queued=true\n",
 				orkerPlural(int(queued), "run is", "runs are"))
 		}
+		if resumable := r.GetResumableRuns(); resumable > 0 {
+			fmt.Fprintf(out, "  up to %s be resumed, and only while this release runs\n",
+				orkerPlural(int(resumable), "failed run can", "failed runs can"))
+		}
 		if len(pins) > 0 {
 			label := "  " + orkerPlural(len(pins), "open pin", "open pins") + ":  "
 			pad := strings.Repeat(" ", len(label))
@@ -836,6 +840,10 @@ func incompleteInventory(resp *orkstackv1.ListReleasesResponse) string {
 
 func (w *releaseWaiter) drainedLine(now time.Time, r *orkstackv1.Release) error {
 	w.progress(now, r)
+	if n := r.GetResumableRuns(); n > 0 {
+		w.say("up to %s be resumed, and only while release %s runs; stopping it ends that.\n",
+			orkerPlural(int(n), "failed run can", "failed runs can"), w.build)
+	}
 	w.say("release %s is drained; its engines and Orkers may be stopped.\n", w.build)
 	return w.finish(exitOK, nil)
 }

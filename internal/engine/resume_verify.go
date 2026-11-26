@@ -46,7 +46,7 @@ func (v *ResumeVerifier) withTries(tries int) *ResumeVerifier {
 type ResumeVerification struct {
 	// Evidence holds Kept and Why; the rest is the caller's.
 	Evidence ResumeEvidence
-	// Sizes is the encoded read-back entry of each valid container unit.
+	// Sizes is the encoded read-back entry of each valid unit.
 	Sizes map[ResumeUnit]int64
 	// Causes is, for the log, why each unit that is not valid is not: in the
 	// store's own terms, which no caller is shown.
@@ -91,7 +91,7 @@ func (v *ResumeVerifier) Verify(ctx context.Context, in ResumePlanInput, commitR
 			if entry != nil {
 				f, size = v.commit(gctx, entry)
 			} else {
-				f = v.values(gctx, c.row.GetValuesRef())
+				f, size = v.settled(gctx, in, c)
 			}
 			if err := gctx.Err(); err != nil {
 				return err
@@ -154,6 +154,37 @@ func (v *ResumeVerifier) commit(ctx context.Context, e *orkstackv1.AdoptEntry) (
 	size, err := task.PayloadSize(&orkstackv1.AdoptedEntry{TaskId: e.GetTaskId(), Item: e.GetItem(), Result: result})
 	if err != nil {
 		return keptFinding{KeptUnavailable, "its saved result can't be measured", err}, 0
+	}
+	return keptFinding{answer: KeptValid}, size
+}
+
+// settled is what an awaited or composed task's saved values and artifacts
+// answer, with their encoded entry's size when they are whole.
+func (v *ResumeVerifier) settled(ctx context.Context, in ResumePlanInput, c keptUnit) (keptFinding, int64) {
+	ref := c.row.GetValuesRef()
+	if ref.GetUri() == "" {
+		return keptFinding{KeptGone, "its saved values are not recorded", errors.New("its row has no values_ref")}, 0
+	}
+	for _, r := range append([]*orkstackv1.ArtifactRef{ref}, c.row.GetArtifacts()...) {
+		if f := v.values(ctx, r); f.answer != KeptValid {
+			return f, 0
+		}
+	}
+	if c.kind == kindComposed && ref.GetSizeBytes() > composedValuesMax {
+		// Never read whole: BuildResumeBlock refuses its size.
+		return keptFinding{answer: KeptValid}, ref.GetSizeBytes()
+	}
+	e := settledEntryOf(in.Definition, in.Base.GetId(), c.def, ref)
+	result, err := v.acts.adoptOne(ctx, e, defaultReadbackTunables().GetTimeout, v.tries)
+	if err != nil {
+		if !isFinal(err) {
+			return storeUnanswered(err), 0
+		}
+		return keptFinding{KeptGone, "its saved values can't be read back", err}, 0
+	}
+	size, err := task.PayloadSize(&orkstackv1.AdoptedEntry{TaskId: e.GetTaskId(), Item: e.GetItem(), Result: result})
+	if err != nil {
+		return keptFinding{KeptUnavailable, "its saved values can't be measured", err}, 0
 	}
 	return keptFinding{answer: KeptValid}, size
 }

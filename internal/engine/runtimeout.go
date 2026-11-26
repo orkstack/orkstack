@@ -140,6 +140,14 @@ func (s *runState) adoptRunTimeout(run *orkstackv1.Run) string {
 	return ""
 }
 
+// clearRunClock stops the run timeout's clock as a resume sets the ending
+// aside (E107 §7.1): the main loop's entry starts it again, in full.
+func (s *runState) clearRunClock() {
+	if t := s.runTimeout; t != nil {
+		t.deadline, t.taken, t.timer = time.Time{}, false, nil
+	}
+}
+
 // runLevelError is the error of a run-level ending: one no task owns.
 func runLevelError(code, message string) error {
 	return temporal.NewNonRetryableApplicationError(message, code, nil)
@@ -206,11 +214,14 @@ func (s *runState) armRunTimer(ctx workflow.Context) error {
 		return nil
 	}
 	if t.deadline.IsZero() {
-		// Only a resumed run may arrive here without a deadline (it gets a
-		// fresh clock, E85); no resume exists in this build, so it is an
-		// impossible state, made explicit, never a silent fresh clock.
-		return runLevelError(RunTimeoutStateInvalidCode,
-			"this run declares a run timeout but its clock was never started")
+		// Only a resumed run arrives here without a deadline, and gets a fresh
+		// clock: its read-back and its wait for a slot are not counted. Any
+		// other is an impossible state, made explicit, never a silent one.
+		if !s.resumed {
+			return runLevelError(RunTimeoutStateInvalidCode,
+				"this run declares a run timeout but its clock was never started")
+		}
+		t.deadline = workflow.Now(ctx).Add(t.limit())
 	}
 	d := t.deadline.Sub(workflow.Now(ctx))
 	if d > 0 {

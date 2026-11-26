@@ -122,6 +122,10 @@ engine:
     rebuild_backoff_max: 5m  # ork
     rebuild_timeout: 10m  # ork
     freeze_timeout: 1m  # ork
+    freeze_margin: 20s  # ork
+    reset_audit_window: 24h  # ork
+    reset_incomplete_after: 15m  # ork
+    record_timeout: 10s  # ork
     drain_margin: 5s  # ork
     gate_continue_events: 2000  # ork
     gate_continue_updates: 500  # ork

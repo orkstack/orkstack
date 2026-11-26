@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +142,49 @@ func TestPause_CrossesAContinuationAndUnpauses(t *testing.T) {
 	}
 }
 
+// A resume of a run whose last history started paused sets that pause aside:
+// the run starts at once, and what the cluster indexed of the pause is cleared
+// (E103 §16).
+func TestResetRun_ACarriedPauseIsSetAside(t *testing.T) {
+	g := pauseThenSwitch(t, "600")
+	g.plan.Pause.Indexed, g.plan.CommitRoot = true, "mem://commits"
+	key := ResumePlanKey{Scope: 42, PlanDigest: strings.Repeat("ab", 32)}
+	block := &orkstackv1.ResumeBlock{SeqBase: 42, Scope: 42, Action: orkstackv1.ResumeAction_RESUME_ACTION_RESUME,
+		Readback: readbackOf(defaultReadbackTunables())}
+	var units []ResumeUnitPlan
+	for _, task := range g.wf.GetTasks() {
+		d := dRerun
+		if task.GetId() == "c1" {
+			d = dNone
+		}
+		units = append(units, ResumeUnitPlan{Task: task.GetId(), Item: -1, Disposition: d})
+	}
+	must.OK(t, EncodeResumeUnits(g.wf, block, units, true))
+	h := newTimeoutHarnessOver(t, g.store)
+	h.carriesOn()
+	h.env.RegisterWorkflowWithOptions(ResetRunWorkflow(false), workflow.RegisterOptions{Name: "ResetRunWorkflow"})
+	h.env.RegisterActivityWithOptions(func(context.Context, ReadResetFactsInput) (ResetFacts, error) {
+		return ResetFacts{Reason: key.String()}, nil
+	}, activity.RegisterOptions{Name: ActivityReadResetFacts})
+	h.env.RegisterActivityWithOptions(func(context.Context, LoadResumePlanInput) (*orkstackv1.ResumePlanRecord, error) {
+		return &orkstackv1.ResumePlanRecord{Scope: 42, BaseTerminalSequence: 41, At: timestamppb.New(g.at), Block: block}, nil
+	}, activity.RegisterOptions{Name: ActivityLoadResumePlan})
+	index := h.recordPauseIndex()
+	h.env.SetStartTime(g.at.Add(24 * time.Hour)) // long past the pause's expiry
+	h.taskTakes(10*time.Second, 0)
+	h.env.ExecuteWorkflow("ResetRunWorkflow", "", g.wf, (*orkstackv1.Payload)(nil), g.plan, g.carry)
+	must.OKf(t, h.env.GetWorkflowError(), "the resumed run")
+	if len(h.sawEvent(eventRunUnpaused)) != 0 || len(h.sawEvent(eventRunPaused)) != 0 || len(h.tasks) != 11 {
+		t.Fatalf("paused %d, unpaused %d, ran %v; want no pause and every other task", len(h.sawEvent(eventRunPaused)), len(h.sawEvent(eventRunUnpaused)), h.tasks)
+	}
+	if _, run := h.last(t); run.GetPause() != nil || run.GetLastPause() != nil || run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("ended %v, pause %v, last %v", run.GetStatus(), run.GetPause(), run.GetLastPause())
+	}
+	if !slices.Equal(index.attr, []string{"unset"}) || !slices.Equal(index.memo, []string{"nil"}) {
+		t.Fatalf("wrote %v and %v to the pause index, want each cleared once", index.attr, index.memo)
+	}
+}
+
 // adoptPauseCarry restores the pause a carry holds, PAUSED and with no
 // timer yet, and refuses one it cannot keep or that its saved state does not
 // match.
@@ -258,12 +302,12 @@ func TestPause_UnpauseDuringTheSwitchIsKept(t *testing.T) {
 	h.env.RegisterActivityWithOptions(activities.WriteSwitchSnapshot, activity.RegisterOptions{Name: ActivityWriteSwitchSnapshot})
 	unpaused := false
 	h.env.RegisterActivityWithOptions(func(ctx context.Context, run *orkstackv1.Run, generation, capBytes int64,
-		obs ContinuationObservationInput, loss *orkstackv1.RunLossEvents, chain string) (*orkstackv1.ContinuationObject, error) {
+		obs ContinuationObservationInput, loss *orkstackv1.RunLossEvents, resume *orkstackv1.RunResumeState, chain string) (*orkstackv1.ContinuationObject, error) {
 		if !unpaused {
 			unpaused = true
 			h.env.SignalWorkflow(PauseSignal, pauseSignal(false, "0"))
 		}
-		return activities.WriteCheckpoint(ctx, run, generation, capBytes, obs, loss, chain)
+		return activities.WriteCheckpoint(ctx, run, generation, capBytes, obs, loss, resume, chain)
 	}, activity.RegisterOptions{Name: ActivityWriteCheckpoint})
 	h.taskTakes(10*time.Second, 0)
 	h.env.RegisterDelayedCallback(func() { h.env.SignalWorkflow(PauseSignal, pauseSignal(true, "0")) }, 5*time.Second)

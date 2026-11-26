@@ -192,7 +192,8 @@ func newRecentWalk(q RunQuery) *recentWalk {
 
 // add takes the next key in key order and reports whether the walk is done.
 // A key that reports done is not part of the page.
-func (w *recentWalk) add(key string) (done bool) {
+func (w *recentWalk) add(object blobObject) (done bool) {
+	key := object.Key
 	entry, ok := ParseRunRecentIndexKey(key)
 	if !ok {
 		return false
@@ -208,6 +209,9 @@ func (w *recentWalk) add(key string) (done bool) {
 		return true
 	}
 	if w.q.Matches(entry) {
+		if object.Size > 0 {
+			entry.rowKey = key
+		}
 		w.entries = append(w.entries, entry)
 	}
 	return false

@@ -16,16 +16,21 @@ import (
 
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // GateActivities are the concurrency gate's local activities (E88 §5.1.8):
 // reads of the cluster whose answers the gate's history records, so the gate
-// decides from recorded bytes, and the count of what it took back. None writes
-// anything to the cluster.
+// decides from recorded bytes, the count of what it took back, and a reset's
+// records. None writes anything to the cluster.
 type GateActivities struct {
 	client   client.Client
 	arrivals ArrivalObserver
 	reports  GateReportObserver
+	// Resets' records (concurrency_reset_record.go).
+	audit         artifacts.AuditStore
+	auditVerified func() bool
+	resets        ResetObserver
 }
 
 // NewGateActivities returns the gate's activities over c.
@@ -43,6 +48,8 @@ func RegisterGateActivities(w ActivityRegistrar, a *GateActivities) {
 	w.RegisterActivityWithOptions(a.DescribeConcurrencyEntries, activity.RegisterOptions{Name: ActivityDescribeConcurrencyEntries})
 	w.RegisterActivityWithOptions(a.ListConcurrencyEntries, activity.RegisterOptions{Name: ActivityListConcurrencyEntries})
 	w.RegisterActivityWithOptions(a.ReportConcurrencyGate, activity.RegisterOptions{Name: ActivityReportConcurrencyGate})
+	w.RegisterActivityWithOptions(a.RecordConcurrencyReset, activity.RegisterOptions{Name: ActivityRecordConcurrencyReset})
+	w.RegisterActivityWithOptions(a.RenderConcurrencyKeys, activity.RegisterOptions{Name: ActivityRenderConcurrencyKeys})
 	w.RegisterActivityWithOptions(a.AcquireConcurrency, activity.RegisterOptions{Name: ActivityAcquireConcurrency})
 }
 

@@ -277,7 +277,7 @@ reference.
   [Troubleshooting](./docs/TROUBLESHOOTING.md) ·
   [Runbooks, backup and Temporal outages](./docs/RUNBOOKS.md) ·
   [Storage](./docs/STORAGE.md) · [Stats](./docs/STATS.md) ·
-  [Run evidence](./docs/RUN_EVIDENCE.md) ·
+  [Run evidence](./docs/RUN_EVIDENCE.md) · [Resuming a run](./docs/RESUME.md) ·
   [UI and CLI parity](./docs/UI_CLI_PARITY.md) ·
   [Observability](./deploy/observability/README.md)
 - **Reference:** [orkctl](./docs/CLI.md) · [API](./docs/API.md) ·

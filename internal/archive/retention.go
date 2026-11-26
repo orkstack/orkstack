@@ -85,10 +85,13 @@ type RetentionController struct {
 	// retention the backstop TTL sits.
 	margin time.Duration
 	// keyLife is how long an idempotency key's claim lives (its TTL and its
-	// grace). The backstop is never below it: a retry under a key tells a run
-	// that never started from one that finished only by finding it in the
-	// cluster or the archive, so the cluster may not delete a finished run
-	// before its key has expired. Zero when nothing is wired.
+	// grace), or how long a closed concurrency limit's memory of its resets
+	// must stay readable when that is longer. The backstop is never below it:
+	// a retry under a key tells a run that never started from one that
+	// finished only by finding it in the cluster or the archive, so the
+	// cluster may not delete a finished run before its key has expired, and a
+	// reset that could still act must be found applied. Zero when nothing is
+	// wired.
 	keyLife time.Duration
 	logger  *slog.Logger
 	// observer is told each time the cluster refuses to change the
@@ -213,8 +216,9 @@ func (c *RetentionController) Policy(ctx context.Context) (*orkstackv1.Retention
 	return c.policies.Get(ctx)
 }
 
-// WithKeyLife sets the idempotency key's life the backstop is kept above:
-// engine.idempotency_ttl plus the claim's grace. It moves the cluster's own
+// WithKeyLife sets the life the backstop is kept above: the longer of the
+// idempotency key's (engine.idempotency_ttl plus the claim's grace) and the
+// reset memory's (engine.ResetMemoryLife). It moves the cluster's own
 // retention only, never a namespace's, and runs are retired exactly when they
 // were.
 func (c *RetentionController) WithKeyLife(life time.Duration) *RetentionController {

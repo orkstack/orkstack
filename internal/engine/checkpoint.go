@@ -89,6 +89,9 @@ func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, err
 		if i > 0 && part.GetHeader() != nil {
 			return nil, invalidSavedState("part %d holds a run header; only part 0 may", i)
 		}
+		if i > 0 && part.GetResumeState() != nil {
+			return nil, invalidSavedState("part %d holds what a resume runs again; only part 0 may", i)
+		}
 		for _, row := range part.GetTaskRuns() {
 			id := row.GetTaskId()
 			if id == "" || row.Item != nil {
@@ -112,11 +115,13 @@ func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, err
 		}
 		index := item.GetItem()
 		row, ok := rows[id]
-		if !ok || !row.GetEach().GetExpanded() {
+		// A fan-out a resume kept items of has its rows before it expands.
+		unexpanded := !row.GetEach().GetExpanded()
+		if !ok || row.GetEach() == nil || unexpanded && row.GetResumeDisposition() != orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN {
 			return nil, invalidSavedState("item %d names task %q, which is not an expanded fan-out",
 				index, id)
 		}
-		if index < 0 || index >= row.GetEach().GetCount() {
+		if index < 0 || !unexpanded && index >= row.GetEach().GetCount() {
 			return nil, invalidSavedState("item %d of task %q is outside [0, %d)",
 				index, id, row.GetEach().GetCount())
 		}
@@ -131,6 +136,10 @@ func CheckpointRun(parts ...*orkstackv1.RunCheckpointPart) (*orkstackv1.Run, err
 	}
 	for _, row := range run.TaskRuns {
 		if !row.GetEach().GetExpanded() {
+			sort.Slice(row.Items, func(i, j int) bool { return row.Items[i].GetItem() < row.Items[j].GetItem() })
+			if n := len(row.Items); n > 0 && row.Items[n-1].GetItem() != int32(n-1) {
+				return nil, invalidSavedState("it holds %d items of task %q, up to item %d", n, row.GetTaskId(), row.Items[n-1].GetItem())
+			}
 			continue
 		}
 		if count := row.GetEach().GetCount(); int32(len(row.Items)) != count {

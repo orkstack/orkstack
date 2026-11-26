@@ -241,6 +241,13 @@ type ResumePlanUnit struct {
 	Category    ResumeCategory
 	Disposition ResumeDisposition
 	InRerunSet  bool
+	// Succeeded: it succeeded before, whatever its row reads: a result an
+	// earlier resume kept and did not read back, or one a force cancel caught
+	// as it ended.
+	Succeeded bool
+	// Fresh: a cached task's, which runs again and reads no memo, because a
+	// memo would hand back the result it runs again to replace.
+	Fresh bool
 	// Detail is extra dialog text, for example a late commit's.
 	Detail string
 }
@@ -268,6 +275,10 @@ func (p *ResumePlan) RerunSet() []ResumeUnit {
 // lateCommitDetail is the dialog detail of a task a force cancel caught
 // running whose commit landed after the run's last record (U3-1).
 const lateCommitDetail = "finished after the run's last record"
+
+// unreadKeptDetail is the dialog detail of a kept result an earlier resume
+// did not read back.
+const unreadKeptDetail = "to be read back: an earlier resume did not read its result"
 
 // ---------------------------------------------------------------- refusals
 
@@ -554,6 +565,11 @@ func refuseBase(in ResumePlanInput) *ResumeRefusal {
 		return refuse(RefuseNeverStarted, RefusalPermanent,
 			"run %s never started: its start was never recorded as done. Run again starts it fresh", in.Base.GetId())
 	}
+	// A run with no row of any task has lost their record (adoptSetAside):
+	// planning from it would run kept results again.
+	if len(in.Base.GetTaskRuns()) == 0 {
+		return refuse(RefuseStateUnreadable, RefusalPermanent, "this run's saved state can't be read back. Run again")
+	}
 	if in.Class == ResumeBaseForceCanceled && in.FromTask == "" {
 		return refuse(RefuseFromTaskRequired, RefusalReplan,
 			"run %s was force-cancelled; choose the task to retry from (--from TASK)", in.Base.GetId())
@@ -745,8 +761,18 @@ func isFailedSeed(row *orkstackv1.TaskRun) bool {
 // keptCandidate reports whether a row's result is a kept candidate: a
 // success, or a row an earlier resume kept and had not read back.
 func keptCandidate(row *orkstackv1.TaskRun) bool {
-	return row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED || row.GetReadingBack() ||
-		row.GetError().GetCode() == ReasonResumeNotReadBack
+	return row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED || unreadKept(row)
+}
+
+// unreadKept reports whether an earlier resume kept row and did not read it
+// back: it was not reached, or its read-back failed (§4.3). Neither says the
+// result is not there, so it is checked again: kept when it is, and run
+// again, as one that is gone, when it is not.
+func unreadKept(row *orkstackv1.TaskRun) bool {
+	return row.GetReadingBack() || row.GetError().GetCode() == ReasonResumeNotReadBack ||
+		row.GetStatus() == orkstackv1.Status_STATUS_FAILED &&
+			(row.GetResumeDisposition() == orkstackv1.ResumeDisposition_RESUME_DISPOSITION_ADOPT ||
+				row.GetResumeDisposition() == orkstackv1.ResumeDisposition_RESUME_DISPOSITION_SETTLE)
 }
 
 // answer returns the verification answer for a kept candidate, recording
@@ -790,7 +816,7 @@ func (p *planner) classify() error {
 				// kept when every item is, and the node rule puts it in S
 				// once any item reruns.
 				switch row := task.row; {
-				case row.GetReadingBack() || row.GetError().GetCode() == ReasonResumeNotReadBack:
+				case unreadKept(row):
 					// An earlier resume had not read it back: it stays kept
 					// (§4.4); its items carry their own answers.
 					p.kept[u] = true
@@ -872,9 +898,11 @@ func (p *planner) classifyUnit(task *planTask, u ResumeUnit, row *orkstackv1.Tas
 		case !ok:
 			p.kept[u] = true
 			return nil
-		case a == KeptGone:
+		case a == KeptGone || row.GetError().GetCode() == taskOutputInvalidCode:
 			// An await whose values are gone waits again; any other unit
-			// reruns. Either way the closure takes its downstream.
+			// reruns. Either way the closure takes its downstream. A result an
+			// earlier resume read back and could not use is as good as gone:
+			// verification, which does not decode it, would keep it for ever.
 			p.roots[u] = CategoryRerunResultGone
 			return nil
 		}
@@ -1231,11 +1259,17 @@ func (p *planner) layout() (*ResumePlan, error) {
 	plan := &ResumePlan{}
 	for _, id := range p.order {
 		task := p.tasks[id]
+		nodeFresh := false
 		for _, u := range task.units() {
 			pu, err := p.unitPlan(task, u)
 			if err != nil {
 				return nil, err
 			}
+			if u.Item < 0 {
+				nodeFresh = pu.Fresh
+			}
+			// A fresh fan-out's items are each fresh.
+			pu.Fresh = pu.Fresh || nodeFresh && pu.InRerunSet
 			plan.Units = append(plan.Units, pu)
 		}
 	}
@@ -1250,8 +1284,13 @@ func (p *planner) unitPlan(task *planTask, u ResumeUnit) (ResumePlanUnit, error)
 	}
 	kind := task.unitKind(u)
 	row := task.unitRow(u)
+	pu.Succeeded = row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED || unreadKept(row) || p.late[u]
 	if cat, in := p.inS[u]; in {
 		pu.InRerunSet, pu.Category = true, cat
+		// A unit an earlier resume was to run again may have succeeded before
+		// that, which its row no longer says.
+		pu.Fresh = task.def.GetCache() != nil && (kind == kindContainer || kind == kindFanOut) &&
+			(pu.Succeeded || row.GetResumeDisposition() == orkstackv1.ResumeDisposition_RESUME_DISPOSITION_RERUN)
 		switch kind {
 		case kindAwait, kindSleep:
 			pu.Disposition = DispositionWait
@@ -1259,7 +1298,7 @@ func (p *planner) unitPlan(task *planTask, u ResumeUnit) (ResumePlanUnit, error)
 			pu.Disposition = DispositionRerun
 		}
 		if cat == CategoryRerunResultGone {
-			pu.Detail = p.why(u, "")
+			pu.Detail = p.why(u, row.GetError().GetMessage())
 		}
 		return pu, nil
 	}
@@ -1276,10 +1315,16 @@ func (p *planner) unitPlan(task *planTask, u ResumeUnit) (ResumePlanUnit, error)
 		pu.Category, pu.Disposition = CategorySleepKept, DispositionSleepUntil
 	case p.settled[u]:
 		pu.Category, pu.Disposition = CategorySettled, DispositionSettle
+		if unreadKept(row) {
+			pu.Detail = unreadKeptDetail
+		}
 	case p.kept[u] && kind != kindFanOut:
 		pu.Category, pu.Disposition = CategoryKept, DispositionAdopt
-		if p.late[u] {
+		switch {
+		case p.late[u]:
 			pu.Detail = lateCommitDetail
+		case unreadKept(row):
+			pu.Detail = unreadKeptDetail
 		}
 	default:
 		return pu, fmt.Errorf("engine: plan resume: %s is outside S and neither kept, settled, skipped nor waiting", u)
@@ -1322,6 +1367,13 @@ func checkResumePlan(in ResumePlanInput, plan *ResumePlan) error {
 			if pu.InRerunSet && task.kind() == kindComposed {
 				return fmt.Errorf("composed task %s is in S", id)
 			}
+			cachedRerun := task.def.GetCache() != nil && pu.Disposition == DispositionRerun
+			if pu.Fresh && !cachedRerun {
+				return fmt.Errorf("%s reads no memo, and is no cached task's that reruns", u)
+			}
+			if !pu.Fresh && cachedRerun && task.unitRow(u).GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
+				return fmt.Errorf("%s succeeded and reruns, and its memo would hand its result back", u)
+			}
 			if err := checkOutsideS(in, task, u, pu); err != nil {
 				return err
 			}
@@ -1330,6 +1382,9 @@ func checkResumePlan(in ResumePlanInput, plan *ResumePlan) error {
 		for _, i := range task.items {
 			if inS(ResumeUnit{Task: id, Item: i}) && !node.InRerunSet {
 				return fmt.Errorf("item %s[%d] is in S but its node is not", id, i)
+			}
+			if u := byUnit[ResumeUnit{Task: id, Item: i}]; u.InRerunSet && node.Fresh && !u.Fresh {
+				return fmt.Errorf("item %s[%d] reads a memo and its fan-out reads none", id, i)
 			}
 		}
 		if node.InRerunSet || node.Disposition == DispositionWait {
@@ -1407,7 +1462,7 @@ func checkOutsideS(in ResumePlanInput, task *planTask, u ResumeUnit, pu ResumePl
 		if !keptCandidate(row) && !late {
 			return fmt.Errorf("%s is adopted but did not succeed in the base", u)
 		}
-		if isFailedSeed(row) {
+		if isFailedSeed(row) && !unreadKept(row) {
 			return fmt.Errorf("%s is adopted but failed in the base", u)
 		}
 	case DispositionSettle:

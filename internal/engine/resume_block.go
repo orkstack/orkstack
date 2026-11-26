@@ -44,7 +44,7 @@ func BuildResumeBlock(in ResumeBlockInput) (*orkstackv1.ResumeBlock, error) {
 			return nil, fmt.Errorf("engine: resume block: the plan names task %q, which the definition does not declare", u.Unit.Task)
 		}
 		row := t.unitRow(u.Unit)
-		out := ResumeUnitPlan{Task: u.Unit.Task, Item: u.Unit.Item, Disposition: u.Disposition.Proto()}
+		out := ResumeUnitPlan{Task: u.Unit.Task, Item: u.Unit.Item, Disposition: u.Disposition.Proto(), Fresh: u.Fresh}
 		switch u.Disposition {
 		case DispositionAdopt:
 			out.Epoch = uint64(row.GetResultEpoch())
@@ -56,16 +56,26 @@ func BuildResumeBlock(in ResumeBlockInput) (*orkstackv1.ResumeBlock, error) {
 				return nil, fmt.Errorf("engine: resume block: %s is kept and was not measured", u.Unit)
 			}
 			if size > MaxReadbackEntryBytes() {
-				r := refuse(RefuseTooLarge, RefusalPermanent,
-					"task %s's saved result is too large to read back; retry from a later task, or Run again", u.Unit)
-				r.Tasks = []string{u.Unit.Task}
-				return nil, r
+				return nil, resultTooLarge(u.Unit)
 			}
 			out.EncodedSize = size
 		case DispositionSettle:
-			out.Values, out.Epoch = row.GetValuesRef(), uint64(row.GetResultEpoch())
+			out.Row, out.Epoch = cutRecordedRow(t.kind(), row), uint64(row.GetResultEpoch())
+			if why := recordedRowFault(t.kind(), out.Row); why != "" {
+				// An answer or a child's end the base's row does not hold: the
+				// evidence of one is not read by this build (E85 PR5b).
+				return nil, fmt.Errorf("engine: resume block: %s is settled and its row does not say how: %s", u.Unit, why)
+			}
+			size, measured := in.Verification.Sizes[u.Unit]
+			if !measured {
+				return nil, fmt.Errorf("engine: resume block: %s is settled and was not measured", u.Unit)
+			}
+			if size > MaxReadbackEntryBytes() {
+				return nil, resultTooLarge(u.Unit)
+			}
+			out.EncodedSize = size
 		case DispositionSleepUntil:
-			out.WakeAt = row.GetSleep().GetWakeAt()
+			out.Row = cutRecordedRow(t.kind(), row)
 		case DispositionWait:
 			if t.unitKind(u.Unit) == kindAwait {
 				b.ReopenedAwaits = append(b.ReopenedAwaits, u.Unit.Task)
@@ -82,6 +92,38 @@ func BuildResumeBlock(in ResumeBlockInput) (*orkstackv1.ResumeBlock, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// ResumeRecordTasks is what a resume's record names (artifacts.ResumeRecord):
+// the tasks whose rows the reset run marks to run again, and the awaits it
+// opens again, each in definition order. Identity reads a task's results at
+// the newest resume whose record names it, and the run writes them under its
+// row's, so the two are the same tasks: exactly the rows the reset run gives
+// its own scope (applyDispositions).
+func ResumeRecordTasks(wf *orkstackv1.Orkflow, plan *ResumePlan) (rerun, reopened []string) {
+	awaits := map[string]bool{}
+	for _, t := range wf.GetTasks() {
+		awaits[t.GetId()] = t.GetAwait() != nil
+	}
+	rerun, reopened = []string{}, []string{}
+	for _, u := range plan.Units {
+		switch {
+		case u.Unit.Item >= 0: // its fan-out's own unit runs again with it
+		case u.Disposition == DispositionRerun:
+			rerun = append(rerun, u.Unit.Task)
+		case u.Disposition == DispositionWait && awaits[u.Unit.Task]:
+			reopened = append(reopened, u.Unit.Task)
+		}
+	}
+	return rerun, reopened
+}
+
+// resultTooLarge refuses to keep u, whose saved result no call can read back.
+func resultTooLarge(u ResumeUnit) *ResumeRefusal {
+	r := refuse(RefuseTooLarge, RefusalPermanent,
+		"task %s's saved result is too large to read back; retry from a later task, or Run again", u)
+	r.Tasks = []string{u.Task}
+	return r
 }
 
 var wireDispositions = map[ResumeDisposition]orkstackv1.ResumeDisposition{
@@ -161,6 +203,11 @@ const (
 	// readbackCallEvents bounds one read-back call: its marker, and a
 	// workflow task of its own.
 	readbackCallEvents = 4
+	// slotRecordEvents is one write of a slot's memo and attributes, and
+	// reassertEvents one tick of a wait in line (E88 §5.2.4): its timer, its
+	// workflow task and the acquire's marker.
+	slotRecordEvents = 2
+	reassertEvents   = 6
 	// heartbeatEvents is one workflow task's heartbeat (spike T13).
 	heartbeatEvents = 3
 	// defaultWorkflowTaskTimeout is assumed of a history that records none.
@@ -192,7 +239,7 @@ func PreflightResume(in ResumePlanInput, run RunPlan, h *ResumeHistory, plan *Re
 	var sizes []int64
 	var total int64
 	for _, u := range plan.Units {
-		if size := verified.Sizes[u.Unit]; u.Disposition == DispositionAdopt && size > 0 {
+		if size := verified.Sizes[u.Unit]; (u.Disposition == DispositionAdopt || u.Disposition == DispositionSettle) && size > 0 {
 			sizes = append(sizes, size)
 			total += size
 		}
@@ -216,7 +263,12 @@ func PreflightResume(in ResumePlanInput, run RunPlan, h *ResumeHistory, plan *Re
 	// A call blocks its workflow task, which heartbeats at 80% of its timeout.
 	beats := int64((tun.Deadline+wft*4/5-1)/(wft*4/5)) * heartbeatEvents
 	out.Events = h.ResetPoint.CompletedEventID + 2*resumeEventCost + int64(len(calls))*readbackCallEvents + beats
-	out.Bytes = h.PrefixBytes + total + (out.Events-h.ResetPoint.CompletedEventID)*limit.Reserve.BytesPerEvent
+	copied, reads := restoreCost(run, h.Carry, wft)
+	out.Events += reads
+	out.Bytes = h.PrefixBytes + total + copied + (out.Events-h.ResetPoint.CompletedEventID)*limit.Reserve.BytesPerEvent
+	slotEvents, slotBytes := resumeSlotCost(run.Concurrency)
+	out.Events += slotEvents
+	out.Bytes += slotEvents*limit.Reserve.BytesPerEvent + slotBytes
 	reserveEvents, reserveBytes, err := plannedReserve(in, run, plan)
 	if err != nil {
 		return ResumePreflight{}, err
@@ -234,6 +286,57 @@ func PreflightResume(in ResumePlanInput, run RunPlan, h *ResumeHistory, plan *Re
 			"reading back %d results wouldn't fit this run's history; retry from a later task, or Run again", len(sizes))
 	}
 	return out, nil
+}
+
+// restoreCost is what a resume of a run that carried on copies into its history
+// before it goes on, after its reset point: its saved state, and a definition
+// passed by reference, in bytes, and in events a marker a read, a yield and a
+// workflow task a batch, and the heartbeats of the time it may take.
+func restoreCost(run RunPlan, carry *orkstackv1.RunContinuation, wft time.Duration) (bytes, events int64) {
+	c := run.Continuation
+	if carry == nil || c == nil || c.ChunkBytes <= 0 || c.ChunksPerTask <= 0 {
+		return 0, 0
+	}
+	reads := int64(0)
+	for _, size := range []int64{carry.GetCheckpoint().GetSizeBytes(), run.definitionBytes()} {
+		bytes += size
+		reads += (size + c.ChunkBytes - 1) / c.ChunkBytes
+	}
+	beats := int64((bootstrapTimeout(*c)+wft*4/5-1)/(wft*4/5)) * heartbeatEvents
+	// A yield is a timer's start and its firing, beside its workflow task.
+	return bytes, reads + (reads/int64(c.ChunksPerTask)+1)*(heartbeatEvents+2) + beats
+}
+
+// resumeSlotCost bounds what a resumed run's concurrency slot appends (E88
+// §18 item 10): the commands that set its earlier incarnations aside, and the
+// longest wait in line, at the re-assert interval that grows to its maximum.
+// A run that waits in line never carries on into a later history.
+func resumeSlotCost(p *ConcurrencyPlan) (events, bytes int64) {
+	slot := p.runSlot()
+	if slot == nil {
+		return 0, 0
+	}
+	// One signal and its answer a gate, the records, and the workflow task
+	// that commits them; then the acquire, RUN_QUEUED, the two records of the
+	// wait and of the grant, and the deadline.
+	events = int64(2*len(p.Slots)) + 5*slotRecordEvents + heartbeatEvents + resumeEventCost
+	bytes = int64(len(p.Slots)+2) * p.PerSlotBytes
+	if slot.Strategy != gateStrategyQueue {
+		return events, bytes // refused at once, never in line
+	}
+	wait, interval := time.Duration(slot.QueueTimeoutSeconds)*time.Second, p.RequeueInterval
+	if interval <= 0 {
+		return events, bytes
+	}
+	at, ticks := interval, int64(0)
+	for ; at < wait && interval < p.RequeueIntervalMax && p.RequeueBackoffFactor > 1; at += interval {
+		ticks++
+		interval = min(time.Duration(p.RequeueBackoffFactor)*interval, p.RequeueIntervalMax)
+	}
+	if at < wait {
+		ticks += int64((wait-at)/interval) + 1
+	}
+	return events + ticks*reassertEvents, bytes
 }
 
 // plannedReserve is failReserve of the run as it goes on: its kept results
@@ -254,7 +357,7 @@ func plannedReserve(in ResumePlanInput, run RunPlan, plan *ResumePlan) (events, 
 		}
 		switch u.Disposition {
 		case DispositionRerun:
-		case DispositionWait, DispositionSleepUntil:
+		case DispositionWait:
 			// Its wait, and then its cancel.
 			events += run.History.Reserve.PerAwait
 		default:
