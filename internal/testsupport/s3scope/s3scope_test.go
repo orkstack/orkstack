@@ -195,3 +195,49 @@ func TestProxy_LoseAnswer(t *testing.T) {
 		t.Fatalf("the store saw %d requests and %d answers were lost; want 2 and 1", reached, p.LostSeen())
 	}
 }
+
+// TestOpen: an open proxy refuses nothing, a bucket's own requests included;
+// a script still answers first; and After runs once the store has answered
+// and before the client hears.
+func TestOpen(t *testing.T) {
+	u := newUpstream(t)
+	p := Open(t, u.server.URL, "b")
+	p.Script(func(r Request) *Answer {
+		if r.Key == "cut" {
+			return &Answer{Status: 503, Code: "SlowDown"}
+		}
+		return nil
+	})
+	after := make(chan int, 4)
+	var heard bool
+	p.After(func(r Request) {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		if heard {
+			t.Error("the client heard first")
+		}
+		if want := map[string]int{"": 404, "known": 200}[r.Key]; r.Status != want {
+			t.Errorf("the store answered %q %d, After saw %d", r.Key, want, r.Status)
+		}
+		after <- len(u.hosts)
+	})
+	for path, want := range map[string]int{"/b": 404, "/b/known": 200, "/b/cut": 503} {
+		u.mu.Lock()
+		heard = false
+		u.mu.Unlock()
+		resp, err := http.Get(p.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u.mu.Lock()
+		heard = true
+		u.mu.Unlock()
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Fatalf("%s answered %d, want %d", path, resp.StatusCode, want)
+		}
+	}
+	if one, two := <-after, <-after; one+two != 3 || len(after) != 0 {
+		t.Fatalf("After saw the store after %d and %d requests, and %d more", one, two, len(after))
+	}
+}

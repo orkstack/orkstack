@@ -742,14 +742,15 @@ func indexAnswers(starter engine.RunStarter) (namespaceIndexed, originIndexed bo
 }
 
 // childRefusal prefixes a refusal with the child it concerns, keeping the
-// Connect code.
+// Connect code and how it is classified, and nothing else of its chain: a
+// field path of the child's is none of the parent's.
 func childRefusal(err error, ref *orkstackv1.OrkflowRef, taskID string) error {
 	prefix := fmt.Sprintf("child orkflow %s (task %q): ", dsl.ComposedLabel(ref), taskID)
 	var connectErr *connect.Error
 	if errors.As(err, &connectErr) {
-		return connect.NewError(connectErr.Code(), errors.New(prefix+connectErr.Message()))
+		return connect.NewError(connectErr.Code(), &refusalMark{verdict: classifyRefusal(err), err: errors.New(prefix + connectErr.Message())})
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, errors.New(prefix+err.Error()))
+	return connect.NewError(connect.CodeFailedPrecondition, &refusalMark{verdict: classifyRefusal(err), err: errors.New(prefix + err.Error())})
 }
 
 // planChildren builds plan.Children for every composed task of parent, in
@@ -769,7 +770,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		name, version := ref.GetName(), ref.GetVersion()
 		owner := refOwner(composer, ref)
 		if err := ownNamespaceRef(composer, ref); err != nil {
-			return childRefusal(err, ref, t.GetId())
+			return childRefusal(refused(refusalPause, "COMPOSED_ORKFLOW_UNUSABLE", err), ref, t.GetId())
 		}
 		// 1. The stored child, read from the namespace that owns it.
 		child, err := s.orkflows.Get(ctx, owner, name, version)
@@ -793,7 +794,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 					"it again, or submit a version of %s that composes an existing one",
 					name, version, t.GetId(), owner, pathNames(path[len(path)-1:])[0])
 			}
-			return connect.NewError(connect.CodeFailedPrecondition, errors.New(message))
+			return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "COMPOSED_ORKFLOW_UNUSABLE", errors.New(message)))
 		}
 		// 2b. Sharing, against the pinned version's own shared_with. The
 		// planned copy of another namespace's Orkflow runs in this run's
@@ -928,10 +929,10 @@ func (s *Service) mintChildren(planned *orkstackv1.Orkflow, plan *engine.RunPlan
 			what = fmt.Sprintf(", a child's start reserves %d KiB for its origin, and its %d artifact bindings "+
 				"reserve %d KiB for the references they pass,", engine.ChildOriginMaxBytes/1024, bindings, kib(references))
 		}
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "PLAN_TOO_LARGE", fmt.Errorf(
 			"the run's plan — this definition and the %d child runs it composes — encodes to %d KiB%s "+
 				"over the %d KiB a run may carry; compose fewer or smaller Orkflows",
-			len(all), kib(len(encoded)), what, engine.MaxPlanBytes/1024))
+			len(all), kib(len(encoded)), what, engine.MaxPlanBytes/1024)))
 	}
 	for _, child := range all {
 		child.RunID = s.newRunID()

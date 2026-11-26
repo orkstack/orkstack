@@ -124,12 +124,13 @@ func itoa(n int64) string {
 type memRecorder struct {
 	mu       sync.Mutex
 	receipts []Receipt
+	messages []HandedMessage
 	fail     bool
 	// failTimes fails that many records before it writes them.
 	failTimes int
 }
 
-func (r *memRecorder) Record(_ context.Context, _ HandedMessage, _ int64, rc Receipt) error {
+func (r *memRecorder) Record(_ context.Context, msg HandedMessage, _ int64, rc Receipt) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.fail {
@@ -139,7 +140,7 @@ func (r *memRecorder) Record(_ context.Context, _ HandedMessage, _ int64, rc Rec
 		r.failTimes--
 		return errors.New("store down")
 	}
-	r.receipts = append(r.receipts, rc)
+	r.receipts, r.messages = append(r.receipts, rc), append(r.messages, msg)
 	return nil
 }
 
@@ -359,6 +360,8 @@ func TestLane_ACloseBeforeTheHoldBoundIsAViolation(t *testing.T) {
 func TestLane_ACloseAtTheHoldBoundIsNoVerdictsOutcome(t *testing.T) {
 	back := Receipt{Outcome: artifacts.ReceiptReleased, Reason: eventsources.ReasonMessageReleasedHoldExpired}
 	gone := Receipt{Outcome: artifacts.ReceiptDropped, Reason: eventsources.ReasonMessageReleasedHoldExpired}
+	lost := Receipt{Outcome: artifacts.ReceiptDeadLettered, Reason: eventsources.ReasonMessageDeliveriesExhausted,
+		Cause: eventsources.ReasonMessageReleasedHoldExpired, Required: true}
 	rejected := Receipt{Outcome: artifacts.ReceiptRejected, Reason: "MESSAGE_REJECTED"}
 	accepted := Receipt{Outcome: artifacts.ReceiptAccepted, RunID: "ork-1"}
 	dropped := Receipt{Outcome: artifacts.ReceiptDropped, Reason: "MESSAGE_REJECTED"}
@@ -367,8 +370,13 @@ func TestLane_ACloseAtTheHoldBoundIsNoVerdictsOutcome(t *testing.T) {
 		decided    Receipt
 		atMostOnce bool
 		afterward  bool // it lands as the verdict is written
+		atLimit    bool
 		want       []Receipt
 	}{
+		{name: "a reject, its last delivery", decided: rejected, atLimit: true, want: []Receipt{lost}},
+		{name: "a reject, its last delivery, crossing", decided: rejected, atLimit: true, afterward: true, want: []Receipt{{
+			Outcome: artifacts.ReceiptDeadLettered, Reason: eventsources.ReasonMessageDeliveriesExhausted, Cause: "MESSAGE_REJECTED", Required: true}}},
+		{name: "an accept, its last delivery", decided: accepted, atLimit: true, want: []Receipt{accepted}},
 		{name: "a reject", decided: rejected, want: []Receipt{back}},
 		{name: "a reject, crossing", decided: rejected, afterward: true, want: []Receipt{rejected, back}},
 		{name: "an accept", decided: accepted, want: []Receipt{accepted}},
@@ -383,6 +391,9 @@ func TestLane_ACloseAtTheHoldBoundIsNoVerdictsOutcome(t *testing.T) {
 				var clock laterClock
 				d, src, rec := newDriverFixture(t, &fakeDoor{offers: []func(Offer) (Answer, error){unreachable[Offer]()}})
 				d.Now, d.Judge.AtMostOnce = clock.now, tt.atMostOnce
+				if tt.atLimit {
+					d.Limit = func() (int, time.Time) { return 1, time.Now() }
+				}
 				src.mu.Lock()
 				src.settleFirstAs = holdExpired
 				src.closeOnVerdict = tt.afterward
@@ -398,7 +409,11 @@ func TestLane_ACloseAtTheHoldBoundIsNoVerdictsOutcome(t *testing.T) {
 				if !tt.afterward {
 					src.rename(LanePath(0, StepSettled), []byte(`{"schemaVersion":1,"seq":1,`+holdExpired+`}`))
 				}
-				ex, err := d.Verdict(ctx, held.Message, Decision{Disposition: Reject, Action: ActionReject, Receipt: tt.decided})
+				decision := Decision{Disposition: Reject, Action: ActionReject, Receipt: tt.decided}
+				if tt.decided == accepted {
+					decision = Decision{Disposition: Settle, Action: ActionAck, Receipt: accepted}
+				}
+				ex, err := d.Verdict(ctx, held.Message, decision)
 				if err != nil || ex.Kind != ExchangeHoldExpired || !d.Lane.CanBegin() {
 					t.Fatalf("%+v, %v; want the exchange closed at its hold bound", ex, err)
 				}
@@ -554,4 +569,121 @@ func TestNewVerdictID(t *testing.T) {
 		}
 		seen[id] = true
 	}
+}
+
+// TestLane_ARequiredReceiptWaitsOnce: a receipt the store refuses a second time
+// holds its verdict no longer: the verdict is given, and the failure told.
+func TestLane_ARequiredReceiptWaitsOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
+		d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`, `{"status":"PAID","id":"o-2"}`)
+		rec.fail = true
+		told := 0
+		d.Failed = func(kind string, _ error) {
+			if kind == "receipt" {
+				told++
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for n := range 2 {
+			ex, err := d.Poll(ctx, 0)
+			if !errors.Is(err, ErrReceiptRequired) || ex.Kind != ExchangeHeld {
+				t.Fatalf("message %d: %+v, %v", n, ex, err)
+			}
+			ex, err = d.Verdict(ctx, ex.Message, ex.Decision)
+			if err != nil || ex.Kind != ExchangeSettled || told != 2*n+2 {
+				t.Fatalf("message %d, again: %+v, %v, %d failures told", n, ex, err, told)
+			}
+		}
+	})
+}
+
+// TestLane_ARequiredReceiptAtAStop: a receipt refused because the instance is
+// stopping gives no verdict: the message goes back with its container's lease,
+// and its next delivery has its receipt.
+func TestLane_ARequiredReceiptAtAStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
+		d, src, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		rec.fail = true
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ex, err := d.Poll(ctx, 0)
+		if !errors.Is(err, ErrReceiptRequired) {
+			t.Fatalf("%+v, %v", ex, err)
+		}
+		cancel()
+		if ex, err = d.Verdict(ctx, ex.Message, ex.Decision); err == nil || ex.Kind == ExchangeSettled {
+			t.Fatalf("at a stop: %+v, %v", ex, err)
+		}
+		if _, err := os.Stat(filepath.Join(src.ask, LanePath(0, StepVerdict))); !os.IsNotExist(err) {
+			t.Fatalf("a verdict was given without its required receipt (%v)", err)
+		}
+	})
+}
+
+// TestLane_AMessageAtItsBrokersLimit: whatever gives a message back for the last
+// time, its receipt says it was given up, with what refused it as the cause;
+// what the instance counts is the decision, unchanged.
+func TestLane_AMessageAtItsBrokersLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		limit := func() (int, time.Time) { return 1, time.Now() }
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for name, tc := range map[string]struct {
+			answer     AnswerKind
+			atMostOnce bool
+			limit      func() (int, time.Time)
+			want       Receipt
+			decided    artifacts.ReceiptOutcome
+		}{
+			"a rejection": {AnswerReject, false, limit, Receipt{Outcome: artifacts.ReceiptDeadLettered, Reason: "MESSAGE_DELIVERIES_EXHAUSTED", Cause: "MESSAGE_FIELD_TYPE", Required: true}, artifacts.ReceiptRejected},
+			"a pause":     {AnswerStop, false, limit, Receipt{Outcome: artifacts.ReceiptDeadLettered, Reason: "MESSAGE_DELIVERIES_EXHAUSTED", Cause: "EVENT_SOURCE_PAUSED", Required: true}, artifacts.ReceiptReleased},
+			"a rejection below it": {AnswerReject, false, func() (int, time.Time) { return 2, time.Now() },
+				Receipt{Outcome: artifacts.ReceiptRejected, Reason: "MESSAGE_FIELD_TYPE", Required: true}, artifacts.ReceiptRejected},
+			"a rejection, no limit known": {AnswerReject, false, nil, Receipt{Outcome: artifacts.ReceiptRejected, Reason: "MESSAGE_FIELD_TYPE", Required: true}, artifacts.ReceiptRejected},
+			"a drop":                      {AnswerReject, true, limit, Receipt{Outcome: artifacts.ReceiptDropped, Reason: "MESSAGE_DELIVERIES_EXHAUSTED", Cause: "MESSAGE_FIELD_TYPE", Required: true}, artifacts.ReceiptDropped},
+		} {
+			door := &fakeDoor{offers: []func(Offer) (Answer, error){func(Offer) (Answer, error) { return Answer{Kind: tc.answer, Reason: "MESSAGE_FIELD_TYPE"}, nil }}}
+			d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+			d.Limit, d.Judge.AtMostOnce = tc.limit, tc.atMostOnce
+			ex, err := d.Poll(ctx, 0)
+			if err != nil || len(rec.receipts) != 1 || rec.receipts[0] != tc.want || ex.Decision.Receipt.Outcome != tc.decided {
+				t.Errorf("%s: %+v, %v, receipts %+v", name, ex.Decision, err, rec.receipts)
+			}
+		}
+		// Accepted at its limit is accepted.
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerProceed)}, starts: []func(Start) (Answer, error){startAnswer(AnswerAccepted)}}
+		d, _, rec := newDriverFixture(t, door, `{"status":"PAID","id":"o-1"}`)
+		d.Limit = limit
+		if ex, err := d.Poll(ctx, 0); err != nil || len(rec.receipts) != 1 || rec.receipts[0].Outcome != artifacts.ReceiptAccepted {
+			t.Errorf("accepted: %+v, %v, receipts %+v", ex, err, rec.receipts)
+		}
+	})
+}
+
+// TestLane_WhatAReceiptIsOf: a message carries when it was taken, the same
+// however often its receipt is tried, and its body's digest.
+func TestLane_WhatAReceiptIsOf(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const body = `{"status":"PAID","id":"o-1"}`
+		door := &fakeDoor{offers: []func(Offer) (Answer, error){answer(AnswerReject)}}
+		d, _, rec := newDriverFixture(t, door, body)
+		rec.failTimes = 1
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		before := time.Now()
+		ex, err := d.Poll(ctx, 0)
+		if !errors.Is(err, ErrReceiptRequired) {
+			t.Fatalf("%+v, %v", ex, err)
+		}
+		held := ex.Message.Taken
+		if _, err = d.Verdict(ctx, ex.Message, ex.Decision); err != nil {
+			t.Fatal(err)
+		}
+		if got := rec.messages[0]; held.Before(before) || !got.Taken.Equal(held) || got.BodySHA256 != hash(body) {
+			t.Fatalf("recorded %+v, taken %v", got, held)
+		}
+	})
 }

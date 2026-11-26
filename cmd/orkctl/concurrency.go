@@ -105,8 +105,11 @@ func concurrencyState(l *orkstackv1.ConcurrencyLimit) string {
 		return "reading its holders"
 	case orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_FAILING:
 		return "reading its holders, failing since " + formatTime(l.GetRebuildFailingSince())
+	case orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_UNSPECIFIED, orkstackv1.ConcurrencyRebuild_CONCURRENCY_REBUILD_NONE:
+		return "ok"
 	}
-	return "ok"
+	// A state this build does not know is never read as fine.
+	return fmt.Sprintf("unknown (%d)", l.GetRebuild())
 }
 
 func renderConcurrencyList(out io.Writer, limits []*orkstackv1.ConcurrencyLimit) error {

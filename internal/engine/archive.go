@@ -251,6 +251,10 @@ func UnmarshalRunArchive(body []byte) (*orkstackv1.Run, []*orkstackv1.Event, err
 	return run, events, nil
 }
 
+// errArchiveKindUnknown is a line of a kind this release does not know, as a
+// later one's: it says nothing of whether the record is good.
+var errArchiveKindUnknown = errors.New("unknown kind")
+
 // UnmarshalRunLine decodes only the archive body's run line: what `run get`
 // and a list page need. MarshalRunArchive writes it first, so the read stops
 // at line one and no event line is decoded; a body whose run line is not the
@@ -286,7 +290,7 @@ func UnmarshalRunLine(body []byte) (*orkstackv1.Run, error) {
 			return decoded, nil
 		case ArchiveKindEvent, ArchiveKindGap:
 		default:
-			return nil, fmt.Errorf("engine: read archive line %d: unknown kind %q", number, kind.Kind)
+			return nil, fmt.Errorf("engine: read archive line %d: %w %q", number, errArchiveKindUnknown, kind.Kind)
 		}
 	}
 	return nil, fmt.Errorf("engine: read archive: no %q line", ArchiveKindRun)
@@ -538,8 +542,11 @@ func (a *RunArchiver) LoadRun(ctx context.Context, runID string) (*orkstackv1.Ru
 		return nil, err
 	}
 	run, err := UnmarshalRunLine(body)
-	if err != nil {
+	switch {
+	case errors.Is(err, errArchiveKindUnknown):
 		return nil, fmt.Errorf("engine: load run %q: %w", runID, err)
+	case err != nil:
+		return nil, fmt.Errorf("engine: load run %q: %w: %w", runID, ErrRunRecordUndecodable, err)
 	}
 	a.show(ctx, run)
 	return run, nil

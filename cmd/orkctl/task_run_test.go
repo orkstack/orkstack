@@ -1403,19 +1403,6 @@ func TestTaskRun_ASharedChildRunReadsItsOwnersDefinition(t *testing.T) {
 	}
 }
 
-// TestTaskRun_ACredentialIsRefusedByName: a task that declares a credential
-// is refused, naming each credential, and a task without one is not.
-func TestTaskRun_ACredentialIsRefusedByName(t *testing.T) {
-	spec := &orkstackv1.Task{Id: "migrate", Credentials: []*orkstackv1.CredentialRef{{Name: "aws", Grant: "deployer"}, {Name: "db", Grant: "vault-app"}}}
-	err := credentialRefusal(spec)
-	if err == nil || !strings.Contains(err.Error(), `"aws", "db"`) || !strings.Contains(err.Error(), `task "migrate"`) {
-		t.Fatalf("credentialRefusal = %v; want a refusal naming the task and both credentials", err)
-	}
-	if err := credentialRefusal(&orkstackv1.Task{Id: "plain"}); err != nil {
-		t.Errorf("a task with no credential = %v", err)
-	}
-}
-
 // A replay's task.json carries the recorded run's context: its times, what
 // started it and where it stands in its composed chain, with the local run's
 // own id, attempt and start; and says `unavailable` where the record has none.

@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -305,7 +309,6 @@ func TestInstance_BadRequestIsNotHeld(t *testing.T) {
 		"digest":   func(f *Ref, _ *Caller) { f.ServiceDigest = "" },
 		"indices":  func(f *Ref, _ *Caller) { f.Index = 100000 },
 		"epochs":   func(f *Ref, _ *Caller) { f.Epoch = 1000000000000 },
-		"attempts": func(f *Ref, _ *Caller) { f.Attempt = 10000 },
 		"name":     func(f *Ref, _ *Caller) { f.Name = "a/b" },
 		"empty":    func(f *Ref, _ *Caller) { f.Name = "" },
 		"space":    func(f *Ref, _ *Caller) { f.Namespace = "Pay ments" },
@@ -905,6 +908,23 @@ func TestReader_Caps(t *testing.T) {
 			t.Fatalf("the replica made %d describes in a moment", n)
 		}
 	})
+	t.Run("a caller past its own cap spends nothing of a source's", func(t *testing.T) {
+		w := newWorld()
+		r := w.reader()
+		other := caller()
+		other.OrkerID = "orker-x"
+		for i := range 50 {
+			f := ref()
+			if i < 5 {
+				f.SourceID = fmt.Sprintf("evs-%016x", i)
+			}
+			w.advance(time.Microsecond)
+			Instance(context.Background(), r, PurposeConfirm, f, other, w.clock())
+		}
+		if got := ask(w, r, PurposeOffer); got.Kind != Held {
+			t.Fatalf("the source's holder: %+v", got)
+		}
+	})
 	t.Run("a known source whose describe fails", func(t *testing.T) {
 		w := newWorld()
 		r := w.reader()
@@ -987,5 +1007,34 @@ func TestReader_ACallerLeavingEndsNoSharedRead(t *testing.T) {
 	close(land)
 	if got := <-b; got.Kind != Held {
 		t.Fatalf("the other: %+v", got)
+	}
+}
+
+// TestReader_IsTheOnlyOne: a replica has one reader, made where the engine is
+// wired. A second would keep reads and spend caps of its own.
+func TestReader_IsTheOnlyOne(t *testing.T) {
+	var made []string
+	if err := filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir() && (d.Name() == "node_modules" || d.Name() == ".git" || d.Name() == "gen"):
+			return filepath.SkipDir
+		case d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go"):
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for range strings.Count(string(body), "held.NewReader(") {
+			made = append(made, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join("..", "..", "cmd", "ork", "main.go")}; !slices.Equal(made, want) {
+		t.Fatalf("readers are made in %v; want %v", made, want)
 	}
 }

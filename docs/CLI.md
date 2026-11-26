@@ -558,6 +558,8 @@ Inherited flags:
 
 List the bindings, configuration's included
 
+List the bindings, configuration's included: name, role, scope, subjects and where each comes from. A binding to a credential that Orkers share (orker_ids: any) has one more column, which says what it does not grant.
+
 Inherited flags:
 
 - `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
@@ -3793,6 +3795,37 @@ Flags:
 - `-o, --output STRINGARRAY` — assume a task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file
 - `--outputs-file STRING` — a JSON object keyed by task id whose values are the assumed values.json objects
 - `--version STRING` — orkflow version (default: the current one)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl run records`
+
+List what the engine recorded for a run that holds a task identity
+
+records lists, for a run whose results the engine records, each result,
+resolution, composed task and outputs on record, and each result the run's
+state calls succeeded that has none.
+
+not on record is the alarm: the run says the task succeeded, and no engine
+recorded it. recorded, not applied is an answer the run has not taken.
+
+It exits non-zero when a row could not be read.
+
+Flags:
+
+- `-t, --task STRING` — only this task's
 
 Inherited flags:
 

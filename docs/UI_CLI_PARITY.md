@@ -174,8 +174,9 @@ Lists that take filters: `ListNamespaces`, `ListOrkflows`, `ListWebhooks`,
 `ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`,
 `ListReleases`, `ListDeliveries`, `ListAuditRecords`, `ListConcurrencyLimits` and
 `ListRuns`. Child listings of one parent
-(`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`, `ListIssuedTokens`), the
-`ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
+(`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`, `ListIssuedTokens`,
+`ListRecordedResults`, whose `task_id` names one task of its run and whose
+`unapplied_only` asks what the run did with a record), the `ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
 
 ### Scoping versus filtering
 
@@ -1222,8 +1223,14 @@ the order it starts, with when each wait times out. Both read the limit itself
 at the moment they are asked (`ConcurrencyService`), show at most
 `engine.concurrency.api_holders_shown` holders and waiting runs with the
 totals beside them, list a limit that does not answer as not answering, and
-need `run.read`. `--json` emits the messages unchanged. The UI's Concurrency
-page is the same read.
+need `run.read`. `--json` emits the messages unchanged. Operate → Concurrency
+is the same two reads: the keys of the namespace in the picker, with the
+list's own `filter` parameters, and one key's holders and line at
+`/admin/concurrency?key=KEY`, which a queued run's card links to. Where more
+hold or wait than are shown, it says how many and links to `holding=KEY` or
+`queued_on=KEY` on Runs. A key nothing holds or waits for is said to be unused
+(`concurrency get` exits with `NOT_FOUND`), never shown as a failure. The page
+writes nothing.
 
 ## Webhooks
 

@@ -25,6 +25,11 @@ var errFC = errors.New("not now")
 // see it: mocked activities over one state, so each case drives the steps it
 // is about (AGENTS.md §11.1: workflow tests mock their activities).
 type fcTarget struct {
+	// publishErr is what the build always answers with, where set, and
+	// publishCalls how often it was asked.
+	publishErr   error
+	publishCalls int
+
 	mu   sync.Mutex
 	open bool
 	exec string
@@ -307,6 +312,10 @@ func (f *fcTarget) register(env *testsuite.TestWorkflowEnvironment) {
 	})
 	reg(ActivityFCPublish, func(context.Context, FCStep) (FCPublished, error) {
 		defer lock()()
+		f.publishCalls++
+		if f.publishErr != nil {
+			return FCPublished{}, f.publishErr
+		}
 		return f.publish, f.fails(ActivityFCPublish)
 	})
 	reg(ActivityPublishEvent, func(_ context.Context, e *orkstackv1.Event, uri, key string) error {
@@ -592,6 +601,16 @@ func TestForceCancelWorkflow(t *testing.T) {
 			}(), func(t *testing.T, f *fcTarget) {
 				if f.results[completed].Cause != FCCauseEventUnpublished {
 					t.Errorf("the completed record says %+v", f.results[completed])
+				}
+			}},
+		{"a sealed run's ending is asked for once, said unpublished, and everything else done", func(f *fcTarget) { f.publishErr = sealedEndingRefused("ork-r") }, nil,
+			func() ForceCancelResult {
+				r := done
+				r.TerminalPublished, r.Cause = false, FCCauseEventUnpublished
+				return r
+			}(), func(t *testing.T, f *fcTarget) {
+				if f.publishCalls != 1 || f.results[completed].Cause != FCCauseEventUnpublished {
+					t.Errorf("asked %d times; the completed record says %+v", f.publishCalls, f.results[completed])
 				}
 			}},
 		{"an ending that is published late is published", func(f *fcTarget) { f.publishEventFails = 7 }, nil, done, nil},

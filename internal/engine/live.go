@@ -9,6 +9,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
+	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -101,8 +102,9 @@ func (r *TemporalRunReader) LiveAttempts(ctx context.Context, runID string, now 
 		return LiveRun{}, nil
 	}
 
+	dc := r.runConverter(ctx, runID)
 	execution := resp.GetWorkflowExecutionInfo().GetExecution().GetRunId()
-	scheduled, err := r.scheduledTasks(ctx, runID, execution, ids)
+	scheduled, err := r.scheduledTasks(ctx, dc, runID, execution, ids)
 	if err != nil {
 		return LiveRun{}, err
 	}
@@ -116,7 +118,7 @@ func (r *TemporalRunReader) LiveAttempts(ctx context.Context, runID string, now 
 			return LiveRun{}, fmt.Errorf("engine: run %s: pending activity %q has no scheduling event",
 				runID, pa.GetActivityId())
 		}
-		attempts = append(attempts, r.liveAttempt(pa, st, now))
+		attempts = append(attempts, liveAttempt(dc, pa, st, now))
 	}
 	return LiveRun{Attempts: attempts}, nil
 }
@@ -127,6 +129,7 @@ func (r *TemporalRunReader) LiveAttempts(ctx context.Context, runID string, now 
 // every run read, for fields only InspectRun uses, is the wrong trade.
 func (r *TemporalRunReader) scheduledTasks(
 	ctx context.Context,
+	dc *runPayloads,
 	runID, execution string,
 	ids map[string]struct{},
 ) (map[string]scheduledTask, error) {
@@ -144,6 +147,11 @@ func (r *TemporalRunReader) scheduledTasks(
 			return nil, fmt.Errorf("engine: read history of run %s: %w", runID, err)
 		}
 		read++
+		if started := historyEvent.GetWorkflowExecutionStartedEventAttributes(); started != nil {
+			if err := dc.holdStart(started); err != nil {
+				return nil, err
+			}
+		}
 		attrs := historyEvent.GetActivityTaskScheduledEventAttributes()
 		if attrs == nil || attrs.GetActivityType().GetName() != task.ActivityExecuteTask {
 			continue
@@ -157,7 +165,7 @@ func (r *TemporalRunReader) scheduledTasks(
 				runID, historyEvent.GetEventId(), attrs.GetActivityId())
 		}
 		var in *orkstackv1.ExecuteTaskInput
-		if err := r.converter.FromPayload(payloads[0], &in); err != nil {
+		if err := dc.FromPayload(payloads[0], &in); err != nil {
 			return nil, fmt.Errorf("engine: run %s: decode task input at history event %d: %w",
 				runID, historyEvent.GetEventId(), err)
 		}
@@ -223,7 +231,8 @@ var liveAttemptStateNamed = map[enumspb.PendingActivityState]bool{
 // SDK worker identity (pid@hostname) is never read: a host name is not a
 // user-facing coordinate (AGENTS.md §7.1). orker_id is the Orker's self-name
 // from the detail.
-func (r *TemporalRunReader) liveAttempt(
+func liveAttempt(
+	dc converter.DataConverter,
 	pa *workflowpb.PendingActivityInfo,
 	st scheduledTask,
 	now time.Time,
@@ -259,7 +268,7 @@ func (r *TemporalRunReader) liveAttempt(
 		return out
 	}
 	var progress task.HeartbeatProgress
-	if err := r.converter.FromPayloads(details, &progress); err != nil || progress.Phase == "" {
+	if err := dc.FromPayloads(details, &progress); err != nil || progress.Phase == "" {
 		out.HeartbeatUnavailableReason = orkstackv1.HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE
 		out.Usage = &orkstackv1.LiveUsage{UnavailableReason: orkstackv1.LiveUsageUnavailableReason_LIVE_USAGE_UNAVAILABLE_REASON_UNDECODABLE}
 		return out

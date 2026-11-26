@@ -71,3 +71,25 @@ func TestDockerRuntime_LocalDaemon(t *testing.T) {
 		})
 	}
 }
+
+// TestDockerRuntime_ImageRunsAsRoot reads the user an image declares: none, root by
+// name or by number, in any group, is root; what cannot be read is an error.
+func TestDockerRuntime_ImageRunsAsRoot(t *testing.T) {
+	for answer, want := range map[string]struct {
+		code      int
+		root, err bool
+	}{
+		`""`: {root: true}, `"root"`: {root: true}, `"0"`: {root: true}, `"0:1000"`: {root: true}, `"root:app"`: {root: true}, `"000"`: {root: true},
+		`"1000"`: {}, `"app"`: {}, `"1000:0"`: {}, `"rooty"`: {}, `"10"`: {},
+		"Error: No such image": {code: 1, err: true}, "{": {err: true},
+	} {
+		script := "#!/bin/sh\n[ \"$1 $2 $3 $4\" = 'image inspect --format {{json .Config.User}}' ] || exit 9\n" +
+			"printf '%s\\n' " + shellQuote(answer) + "\nexit " + string(rune('0'+want.code)) + "\n"
+		bin := filepath.Join(t.TempDir(), "docker")
+		must.OK(t, os.WriteFile(bin, []byte(script), 0o755))
+		root, err := (&DockerRuntime{Bin: bin}).ImageRunsAsRoot(t.Context(), "img@sha256:x")
+		if root != want.root || (err != nil) != want.err {
+			t.Errorf("%s: %v, %v", answer, root, err)
+		}
+	}
+}

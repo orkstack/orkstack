@@ -134,9 +134,26 @@ immutable activity completion and per-attempt records, each run tree's
 immutable run-context object, what its tasks may read about their runs, and
 a fan-out's immutable line indexes. The completion records of a run whose
 results the engine records (§4.1) lie under a prefix an Orker's credential
-may read and may not write. It holds each
+may read and may not write. Who gave an awaited task's resolution, and why one
+was rejected, lie with the run's saved state, where an Orker's credential does
+not read. It holds each
 event source's document, keyed by its namespace and name, and the immutable
-service specs written under the source's id. It also holds what
+service specs written under the source's id. It also holds the immutable
+receipts of the messages event sources handled. A message's body and metadata
+reach a run only as artifacts: the Orker that hosts the source stages them
+under a prefix that belongs to no run, and the engine, once it has admitted the
+run, copies them inside the store to the run's own key before the start that
+references them (§4.1's order). No caller and no Orker hands a run a reference
+or writes under a run for a message. The start carries only those references
+and, when a source declares a mapping, the small values it copies into the
+Orkflow's declared inputs (16 KiB by default, bounded by the deployment). A
+message is bound to a run id, and to nothing else, by a write-once claim object
+the engine creates with a conditional put and never rewrites, with a second
+write-once object beside it once that run has started: records the store
+arbitrates, as a commit is, never locks. Nothing is decided from a claim's age.
+Temporal still decides whether a run exists while it holds it, and the run's
+archive after that. A receipt is a record and never a read path for a decision.
+It also holds what
 decides access and identity, where only an engine's credential should reach:
 the access document (roles, bindings, service accounts) and each namespace's
 identity policy, with an immutable revision per change; the identity issuer's
@@ -459,7 +476,9 @@ Successful completion conceptually does this, in order:
 
 Anything the engine itself records as a task's result (an await's resolution
 values, a composed task's values) is written to object storage before the
-history record that references it, the same order as a commit. An attempt's
+history record that references it, the same order as a commit. In a run whose
+results the engine records, that object is the record the task's result is
+taken from once the run applies it, and the history record only announces it. An attempt's
 claim and its release marker are protocol objects that `ResumeRun` reads only
 to raise the unknown-attempt warning; its attempt record stays a record.
 
@@ -493,6 +512,42 @@ without being heard, and only if there is none fails
 its policy. It never reports success without the record and never writes
 around the engine. A result uploaded and not yet recorded when its Orker
 is lost was not committed: the retry runs the container again.
+
+In such a run the engine also records an awaited task's resolution and
+a composed task's values, each create-only where no Orker's storage
+credential can write: a resolution when the API accepts it from a
+caller it authenticated, before the run is told, and the first one
+recorded stands; a composed task's values from the record of its child
+run's outputs, which the engine writes from the child's recorded
+results. The run applies what the record says. The artifacts a child
+returns are in its outputs' record and in the composed task's, and an
+attempt stages what its run received only as the engine answers it,
+from the records of the tasks that produced it. An artifact a failure
+handler passes on from a need that failed is staged as the cluster
+carries it, only for an input the run's admission names as a handler's
+and whose producer has no record; every other input with no record is
+refused. A resolution that
+reaches such a run with no record is not applied: it is an event of the
+run, and the task goes on awaiting. An engine writes such a record only
+from what it checked itself, a caller or other records, never from what
+a run's history says. Who gave a resolution, and a rejection's reason,
+lie where only an engine reads. An attempt of such a run is given no
+identity and has no result recorded, and on an honest Orker starts no
+container, until the tasks its own task follows have their records:
+every task it needs under the default join, and under `none_failed`
+each need that always runs. An attempt that asks earlier fails
+`InfrastructureError` (`REQUIRED_RESULT_NOT_RECORDED`) and is not
+retried. A store that does not answer is never read as a record that
+is missing. A composed task or a child run's end whose record the
+store does not answer fails, with a reason that says the store could
+not be read. An awaited task whose record could not be read when the
+run was told of it stays open: it is read again when the run is told
+again and at its deadline. At its deadline it takes the record when
+the store made one in time; when the record cannot be read there it
+is read once more, a time later that was fixed when the run was
+submitted, and if it still cannot be read the task fails with such a
+reason and never as timed out. A run that must record another event
+while object storage refuses it ends as any run does then (§11).
 
 A cached task's memo is advisory. A hit writes this run's own `commit.json`
 referencing the source commit's content-addressed objects and starts no
@@ -743,7 +798,9 @@ disclosed once and stored only as a salted hash.
 
 A credential of the cluster's namespace is trusted with everything Temporal
 carries: what a run does next, a Signal and so an approval, every event,
-every Orker's channel. By default each Orker holds one. A deployment may
+every Orker's channel. For a run whose results the engine records, a Signal
+gives no approval, and a task started ahead of the tasks it follows is given
+no identity and no recorded result (§4.1). By default each Orker holds one. A deployment may
 narrow an Orker's on a cluster that can; OrkStack neither requires that nor
 depends on it for anything it claims.
 
@@ -921,8 +978,13 @@ internal never appears on any of those surfaces.
 - **Engine-recorded result** means the completion record of a task of a
   run that holds a task identity anywhere in its run tree: written by the
   engine at the request of the Orker that holds the attempt (§4.1), never
-  by an Orker. User-facing text says a run's results are "recorded by the
-  engine".
+  by an Orker. In such a run an awaited task's resolution and a composed
+  task's values are engine-recorded results too, written by the engine itself.
+  A task **follows** the tasks whose records it needs before it may start: its
+  needs under the default join, and under `none_failed` those that always run.
+  User-facing text says an approval is "on record", "not on record", or that
+  its record "could not be read", which is never the same as "not on record".
+  User-facing text says a run's results are "recorded by the engine".
 - **Cached task** means a task declaring `cache:` with `enabled: true`. A
   **memo** is one stored pointer from a memo key to a `SUCCEEDED` commit
   (§4.1); a memo step's outcome is a **hit**, **miss** or **bypassed**.
@@ -1196,7 +1258,11 @@ end without an answer that it started: a start whose outcome is unknown is
 never recorded as a failure, the key keeps naming its run ID, and a later
 submission under the key finds that run or starts that same ID, until the
 cluster could no longer tell whether it ever started; then it is refused. A
-run ID is started at most once, so one key never yields two runs. Admission is
+run ID is started at most once, so one key never yields two runs. An event
+source's door runs the same preparation for each message and refuses before a
+run ID is minted or an object written under a run. The run ID a message is bound
+to is the only one that message can start, and any delivery of the message may
+complete that start. Admission is
 never retroactive. A guard that reads the
 cluster's index or usage (`max_running`, an enforced budget) is a lock-free
 read-then-act and therefore best-effort by a bounded overshoot. `max_running`
@@ -1232,7 +1298,15 @@ for one decision only, whether an attempt may be issued an identity token: a run
 admission, the record of a start an engine made, the set the API keeps of
 each schedule's accepted records, which is maintained and not written once,
 and the record of which attempts of a task have held an identity. None says
-whether a run is open or who holds its attempt; Temporal does. The object-index markers and the cleanup and GC
+whether a run is open or who holds its attempt; Temporal does. For a run
+whose results the engine records, its records are read for these decisions
+and no other: whether an attempt may hold an identity or have its result
+recorded, and whether an honest Orker starts its container; which resolution
+an awaited task takes, and whether one that reached its deadline was answered
+in time; what a composed task's values are; and whether a child run that
+finished may report its outputs. Temporal still decides that a run is open,
+that a task was started and when a deadline passed. No audit record is among
+them. The object-index markers and the cleanup and GC
 records are the one exception: the artifact GC reads them, with the run's
 archive body and the cluster's index of runs, to decide a delete, and nothing
 else decides from them. The run-objects list is not write-once: `PutRun`
@@ -1385,7 +1459,21 @@ A run whose plan carries a continuation budget continues as new into a new
 generation once its history has grown past that budget, at its next moment
 with nothing of it in flight: no activity, child run, pin (opening, open or
 closing) or event publish. Open awaits and sleeps may cross; their deadlines
-and wake-up times are absolute instants. The run id, the event sequence counter, `created_at`, `started_at`, a
+and wake-up times are absolute instants. In a run whose results the engine records,
+and in a run whose definition declares a run-level timeout, each of the
+switch's two checks of the queued resolutions takes at most a count of them
+fixed when the run was submitted, and in a run whose results the engine
+records it reads each from its record there and makes at most one read that
+goes unanswered. A resolution whose record could not be read neither holds nor
+turns back the switch and is never a failed attempt; a ready run-level ending
+abandons the switch. Such an await crosses open, its record standing, and is
+taken when the run is told again or at the await's deadline. The run continues
+as new only when no resolution it has not read is left queued after the last
+check. Awaited tasks between the two reads of their deadlines hold the switch,
+together, for at most a time fixed when the run was submitted and one read
+each; one such group is open at a time, and a run has at most one for each of
+its awaited tasks. While one holds the switch the run gives up its hold on new
+dispatch. The run id, the event sequence counter, `created_at`, `started_at`, a
 reference to an immutable full snapshot of its state at the switch and every
 version decision cross in the carry (`orkstack.v1.RunContinuation`, at most
 256 KiB), and no event is emitted for the crossing. A continuation is not a
@@ -1434,7 +1522,8 @@ future time. A source image's container is not that: it holds a broker connectio
 machine, or expression runtime for these operations. An awaited task
 (`await:`) is the DSL form of a Signal wait, manual approval and external
 completion: a Temporal Timer for its deadline and a Signal for its resolution,
-and no container. A sleeping task (`sleep:`) is the DSL form of wait / sleep:
+and no container. In a run whose results the engine records, the Signal says
+only that a resolution was recorded; the record is the resolution (§4.1). A sleeping task (`sleep:`) is the DSL form of wait / sleep:
 one Temporal Timer and no Signal. A schedule is a Temporal Schedule; a
 concurrency limit is one gate workflow per active key: an Update to take a
 slot, Signals to grant and release; the engine's own internal Schedules (the
@@ -1605,6 +1694,51 @@ includes:
 - an Orker whose role may not commit at its pool: the run is refused at
   submit, and an attempt that reaches such an Orker all the same is
   refused before any container starts;
+- a resolution sent to a run whose results the engine records by
+  anything but the API: an event of the run, its await left open, and
+  the real resolution still applied; the same for a rejection;
+- a task of such a run dispatched before an approval it follows was
+  given, by a party answering the run's workflow tasks: an honest Orker
+  starts no container; that party's own Orker is given no identity and
+  has no result recorded, whatever it runs; each refusal names the task
+  that has no record;
+- an engine lost between recording a resolution and telling the run:
+  the caller's repeat delivers it, a different resolution is refused
+  and delivers it, and an await that reaches its deadline with a record
+  takes that record; two different resolutions at once: one record, and
+  the other caller is told so;
+- an answer given after an await's deadline, while the run's state
+  still shows the task awaiting: refused, and nothing recorded;
+- a child run ended on the cluster with outputs of someone's choosing,
+  and a child whose history was written so that it seems complete: the
+  parent's task fails explicitly, or the child's outputs are not
+  recorded, and no dependent starts;
+- an awaited or a composed task's values changed in a dependent's
+  input: the Orker stages what the record names and fails on the
+  difference;
+- an await of such a run that crosses a switch, and a resolution racing
+  one: resolved once, from its record, with one run id and a contiguous
+  stream; a failing run of this kind still runs its failure handlers to
+  their own outcomes;
+- many awaits of one run told of their answers while only the records
+  are unreadable: none fails and none is applied unread, a sibling
+  task that ends meanwhile is taken and its dependents started, and
+  each answer is taken when the run is told again or at its
+  deadline, if its record can be read then;
+- an answer that is on record, repeated after its await's deadline:
+  answered as a repeat and delivered, never as late and never as
+  applied;
+- an answer on record repeated many times, by one caller and by
+  several replicas, while the run cannot read its record: the run
+  makes one read a turn, a deadline, a sleep or a run timeout that
+  is ready is taken before the next, no repeat spends the history
+  the run's failure path needs, and the run is ended by none of
+  them;
+- an await of such a run whose record cannot be read at its deadline
+  and can be read a fixed time later: the run takes the record and
+  goes on, its dependents start, and no failure handler runs; a
+  record the store finished after the deadline is never taken as in
+  time, whatever time it holds;
 - a run continuing as new with tasks still running: no running task is
   cancelled or dispatched twice, the switch happens only after all finish, and
   the stream has no gap or duplicate; a fan-out whose items outlast any fixed

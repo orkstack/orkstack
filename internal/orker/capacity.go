@@ -179,22 +179,38 @@ func parseCapacity(cpu, memory string) (limit amount, ok bool, err error) {
 	return limit, cpu != "" || memory != "", nil
 }
 
-// Capacity is this Orker's declared capacity and what stands reserved
-// against it. Every field below mu is guarded by it.
-type Capacity struct {
-	limit   amount // what this Orker admits within; a 0 dimension is unbounded
-	ceiling amount // the per-task cap: what each poll on the pool channel reserves
-	slots   int    // max_concurrent: how many polls and pool-channel tasks at once
+// channelLedger is one channel's part of the ledger: what its polls reserve and
+// how many there are. Every channel reserves against the one total.
+type channelLedger struct {
+	ceiling amount // what each poll on the channel reserves: the largest request it can carry
+	slots   int    // how many polls and tasks of the channel at once
+	polls   int    // how many of those may be polls nothing was delivered on; 0 is any
 
-	mu       sync.Mutex
-	issued   int    // permits outstanding: polling, or holding a pool-channel task
-	reserved amount // everything below, summed
+	issued int // permits outstanding: polling, or holding a task of the channel
 	// unclaimed counts permits a task was delivered on whose activity has not
 	// yet been admitted, and claimed those admitted whose permit the SDK has
-	// not yet released. Every permit carries the same ceiling, so a release
-	// need not know WHICH permit it is, only how many of each state remain.
+	// not yet released. Every permit of a channel carries the same ceiling, so
+	// a release need not know WHICH permit it is, only how many of each state
+	// remain.
 	unclaimed int
 	claimed   int
+}
+
+// Capacity is this Orker's declared capacity and what stands reserved
+// against it. Every field but limit's cpu and memory is guarded by mu once the
+// workers poll.
+type Capacity struct {
+	limit amount // what this Orker admits within; a 0 dimension is unbounded
+
+	mu sync.Mutex
+	// The pool's channel: its ceiling is the per-task cap and its slots
+	// max_concurrent.
+	channelLedger
+	// source is the source channel of an Orker that hosts event sources: its
+	// ceiling is max_request and its slots max_instances. Nil hosts none.
+	source *channelLedger
+
+	reserved  amount                        // every poll, task and unremoved container, summed
 	unremoved map[ContainerID]unremovedHold // containers whose removal has not yet succeeded
 	units     *gpuUnits                     // nil: this Orker offers no gpu profile
 	changed   chan struct{}
@@ -204,7 +220,7 @@ type Capacity struct {
 
 func newCapacity(limit, ceiling amount, slots int) *Capacity {
 	return &Capacity{
-		limit: limit, ceiling: ceiling, slots: slots,
+		limit: limit, channelLedger: channelLedger{ceiling: ceiling, slots: slots},
 		unremoved: map[ContainerID]unremovedHold{}, changed: make(chan struct{}),
 	}
 }
@@ -215,52 +231,59 @@ func (c *Capacity) broadcast() {
 	c.changed = make(chan struct{})
 }
 
-// grantable reports whether one more poll may be granted now. Locked.
-func (c *Capacity) grantable() bool {
-	return c.issued < c.slots && c.reserved.add(c.ceiling).within(c.limit) && !c.units.probePending()
+// polling is how many polls of the channel nothing was delivered on yet. Locked.
+func (ch *channelLedger) polling() int { return ch.issued - ch.unclaimed - ch.claimed }
+
+// grantable reports whether one more poll of ch may be granted now. A due unit
+// probe holds back the pool's, which reserve units. Locked.
+func (c *Capacity) grantable(ch *channelLedger) bool {
+	return ch.issued < ch.slots && (ch.polls == 0 || ch.polling() < ch.polls) && c.reserved.add(ch.ceiling).within(c.limit) && !(ch == &c.channelLedger && c.units.probePending())
 }
 
 // holding is what keeps a poll from being granted now: every slot taken, or
 // else the capacity. Locked.
-func (c *Capacity) holding() string {
-	if c.issued >= c.slots {
+func (ch *channelLedger) holding() string {
+	if ch.issued >= ch.slots {
 		return AdmissionBoundSlots
 	}
 	return AdmissionBoundCapacity
 }
 
-// capacityPermit is a permit's own state: whether the SDK delivered a task on
-// it.
-type capacityPermit struct{ used bool }
+// capacityPermit is a permit's own state: the channel it polls, and whether the
+// SDK delivered a task on it.
+type capacityPermit struct {
+	ch   *channelLedger
+	used bool
+}
 
-// grant issues a permit and reserves its ceiling. Locked.
-func (c *Capacity) grant() *worker.SlotPermit {
-	c.issued++
-	c.reserved = c.reserved.add(c.ceiling)
-	return &worker.SlotPermit{UserData: &capacityPermit{}}
+// grant issues a permit of ch and reserves its ceiling. Locked.
+func (c *Capacity) grant(ch *channelLedger) *worker.SlotPermit {
+	ch.issued++
+	c.reserved = c.reserved.add(ch.ceiling)
+	return &worker.SlotPermit{UserData: &capacityPermit{ch: ch}}
 }
 
 // errRefusedWhileWaiting is reserve's answer when a poll became grantable
 // while refuse said no: the caller waits on what refused it, then asks again.
 var errRefusedWhileWaiting = errors.New("the poll was refused while it waited for capacity")
 
-// reserve blocks until a poll fits, then reserves the ceiling for it. refuse,
+// reserve blocks until a poll of ch fits, then reserves the ceiling for it. refuse,
 // when set, is asked at the moment a poll would be granted: a poll that waited
 // for capacity must not be granted past a cordon set while it waited.
 //
 // A poll that had to wait is reported to the observer once it is granted,
 // with what held it when it began to wait.
-func (c *Capacity) reserve(ctx context.Context, refuse func() bool) (*worker.SlotPermit, error) {
+func (c *Capacity) reserve(ctx context.Context, ch *channelLedger, refuse func() bool) (*worker.SlotPermit, error) {
 	var waitedSince time.Time
 	var bound string
 	for {
 		c.mu.Lock()
-		if c.grantable() {
+		if c.grantable(ch) {
 			if refuse != nil && refuse() {
 				c.mu.Unlock()
 				return nil, errRefusedWhileWaiting
 			}
-			permit := c.grant()
+			permit := c.grant(ch)
 			c.mu.Unlock()
 			if c.observer != nil && bound != "" {
 				c.observer.PollWaited(time.Since(waitedSince), bound)
@@ -268,7 +291,7 @@ func (c *Capacity) reserve(ctx context.Context, refuse func() bool) (*worker.Slo
 			return permit, nil
 		}
 		if bound == "" {
-			waitedSince, bound = time.Now(), c.holding()
+			waitedSince, bound = time.Now(), ch.holding()
 		}
 		changed := c.changed
 		c.waiting++
@@ -286,13 +309,13 @@ func (c *Capacity) reserve(ctx context.Context, refuse func() bool) (*worker.Slo
 	}
 }
 
-func (c *Capacity) tryReserve() *worker.SlotPermit {
+func (c *Capacity) tryReserveOn(ch *channelLedger) *worker.SlotPermit {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.grantable() {
+	if !c.grantable(ch) {
 		return nil
 	}
-	return c.grant()
+	return c.grant(ch)
 }
 
 func (c *Capacity) markUsed(permit *worker.SlotPermit) {
@@ -303,7 +326,7 @@ func (c *Capacity) markUsed(permit *worker.SlotPermit) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	p.used = true
-	c.unclaimed++
+	p.ch.unclaimed++
 }
 
 // release ends a permit. A poll that came back empty, and a task the SDK
@@ -317,28 +340,29 @@ func (c *Capacity) release(permit *worker.SlotPermit) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.issued--
+	ch := p.ch
+	ch.issued--
 	switch {
 	case !p.used:
-		c.reserved = c.reserved.sub(c.ceiling)
-	case c.claimed > 0:
-		c.claimed--
+		c.reserved = c.reserved.sub(ch.ceiling)
+	case ch.claimed > 0:
+		ch.claimed--
 	default:
-		c.unclaimed--
-		c.reserved = c.reserved.sub(c.ceiling)
+		ch.unclaimed--
+		c.reserved = c.reserved.sub(ch.ceiling)
 	}
 	c.broadcast()
 }
 
 // admit trims a delivered task's reservation to what it really holds.
 //
-// polled says the activity came from the pool's channel, so it holds a
-// permit's ceiling to trim; anything else (a pinned member, taken from its
-// pin's channel) holds no permit, and its request is added ungated. A trim
+// polled is the channel the activity came from, so it holds a permit's ceiling
+// to trim; nil (a pinned member, taken from its pin's channel) holds no permit,
+// and its request is added ungated. A trim
 // that would grow the reservation past what is free fails
 // RESOURCE_ADMISSION_MISMATCH, and the attempt never runs; the observer is
 // told, outside the lock.
-func (c *Capacity) admit(polled bool, request amount) (*Admission, error) {
+func (c *Capacity) admit(polled *channelLedger, request amount) (*Admission, error) {
 	admission, err := c.trim(polled, request)
 	if err != nil && c.observer != nil {
 		c.observer.AdmissionRefused()
@@ -347,27 +371,27 @@ func (c *Capacity) admit(polled bool, request amount) (*Admission, error) {
 }
 
 // trim is admit's decision, under the lock.
-func (c *Capacity) trim(polled bool, request amount) (*Admission, error) {
+func (c *Capacity) trim(polled *channelLedger, request amount) (*Admission, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !polled || c.unclaimed == 0 {
+	if polled == nil || polled.unclaimed == 0 {
 		// Unclaimed is zero only for an activity that holds no permit of
 		// this ledger; counting it is the conservative reading.
 		c.reserved = c.reserved.add(request)
 		c.broadcast()
 		return &Admission{c: c, held: request}, nil
 	}
-	c.unclaimed--
-	c.claimed++
-	next := c.reserved.sub(c.ceiling).add(request)
-	if request.exceeds(c.ceiling) && !next.within(c.limit) {
-		c.reserved = c.reserved.sub(c.ceiling)
+	polled.unclaimed--
+	polled.claimed++
+	next := c.reserved.sub(polled.ceiling).add(request)
+	if request.exceeds(polled.ceiling) && !next.within(c.limit) {
+		c.reserved = c.reserved.sub(polled.ceiling)
 		c.broadcast()
-		return nil, admissionMismatch(request, c.ceiling, c.limit.sub(c.reserved))
+		return nil, admissionMismatch(request, polled.ceiling, c.limit.sub(c.reserved))
 	}
 	c.reserved = next
 	c.broadcast()
-	return &Admission{c: c, held: request, polled: true}, nil
+	return &Admission{c: c, held: request, polled: polled}, nil
 }
 
 func admissionMismatch(request, ceiling, free amount) *Failure {
@@ -381,13 +405,13 @@ func admissionMismatch(request, ceiling, free amount) *Failure {
 // one keeps all its poll reserved, gpu units included, because unknown is
 // never nothing; a pinned member, which holds no unit, the per-task cap's cpu
 // and memory. Admission.Resolve trims it.
-func (c *Capacity) admitUnknown(polled bool) (*Admission, error) {
+func (c *Capacity) admitUnknown(polled *channelLedger) (*Admission, error) {
 	c.mu.Lock()
-	request := c.ceiling
-	c.mu.Unlock()
-	if !polled {
-		request = request.cpuMemory()
+	request := c.ceiling.cpuMemory()
+	if polled != nil {
+		request = polled.ceiling
 	}
+	c.mu.Unlock()
 	admission, err := c.admit(polled, request)
 	if err != nil {
 		return nil, err
@@ -483,8 +507,10 @@ type Admission struct {
 	units     []int // the unit indices bind gave it, ascending; nil before bind
 	container ContainerID
 	done      bool // the reservation has left the attempt: freed, or handed to unremoved
-	polled    bool // it came off the pool's channel, under a permit's ceiling
 	unknown   bool // its request is not known yet (admitUnknown)
+	// polled is the channel it came off, under a permit's ceiling; nil for a
+	// pinned member.
+	polled *channelLedger
 }
 
 // Resolve trims an admission whose request was not known to request, once the
@@ -511,9 +537,9 @@ func (a *Admission) resolve(request amount) error {
 		return nil
 	}
 	next := c.reserved.sub(a.held).add(request)
-	if a.polled && request.exceeds(c.ceiling) && !next.within(c.limit) {
+	if a.polled != nil && request.exceeds(a.polled.ceiling) && !next.within(c.limit) {
 		// Its reservation is freed when the attempt, which never runs, is done.
-		return admissionMismatch(request, c.ceiling, c.limit.sub(c.reserved.sub(a.held)))
+		return admissionMismatch(request, a.polled.ceiling, c.limit.sub(c.reserved.sub(a.held)))
 	}
 	c.reserved, a.held, a.unknown = next, request, false
 	c.broadcast()
@@ -596,15 +622,16 @@ func admissionFrom(ctx context.Context) *Admission {
 	return a
 }
 
-// capacitySlotSupplier is the task worker's activity supplier when this Orker
-// declares a capacity: max_concurrent slots, each granted only while the
-// per-task cap fits beside what is reserved (Capacity). It replaces the fixed
+// capacitySlotSupplier is a worker's activity supplier when this Orker declares
+// a capacity: its channel's slots, each granted only while the channel's ceiling
+// fits beside what is reserved (Capacity). It replaces the fixed
 // supplier, inside the cordon's wrapper, so a cordon still refuses first; and
 // because a poll can wait here for capacity long after it passed that wrapper,
 // the cordon is asked again at the moment a poll would be granted, and a
 // cordoned Orker's poll goes back to waiting on the cordon.
 type capacitySlotSupplier struct {
 	c      *Capacity
+	ch     *channelLedger
 	cordon *Cordon
 }
 
@@ -625,7 +652,7 @@ func (s *capacitySlotSupplier) ReserveSlot(ctx context.Context, _ worker.SlotRes
 				return nil, err
 			}
 		}
-		permit, err := s.c.reserve(ctx, s.cordoned)
+		permit, err := s.c.reserve(ctx, s.ch, s.cordoned)
 		if errors.Is(err, errRefusedWhileWaiting) {
 			continue
 		}
@@ -637,11 +664,11 @@ func (s *capacitySlotSupplier) TryReserveSlot(worker.SlotReservationInfo) *worke
 	if s.cordoned() {
 		return nil
 	}
-	return s.c.tryReserve()
+	return s.c.tryReserveOn(s.ch)
 }
 
 func (s *capacitySlotSupplier) MarkSlotUsed(info worker.SlotMarkUsedInfo) {
 	s.c.markUsed(info.Permit())
 }
 func (s *capacitySlotSupplier) ReleaseSlot(info worker.SlotReleaseInfo) { s.c.release(info.Permit()) }
-func (s *capacitySlotSupplier) MaxSlots() int                           { return s.c.slots }
+func (s *capacitySlotSupplier) MaxSlots() int                           { return s.ch.slots }

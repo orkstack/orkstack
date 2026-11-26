@@ -15,8 +15,12 @@ import (
 	"strings"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker/servicehost"
 	"github.com/orkstack/orkstack/internal/orker/servicehost/reachprobe"
+	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // The reach probe (docs/DEPLOY.md, "Source hosts"; docs/SECURITY_MODEL.md,
@@ -564,6 +568,17 @@ func (a *Activities) resolveReachImage(ctx context.Context) (string, string, err
 		return "", "none is named: an Orker built from source sets " + ServicesProbeImageVar +
 			" to the orker image of its own build, by digest", nil
 	}
+	a.askPolicy(ctx)
+	// Judged before its registry is asked or anything of it is pulled: the one an
+	// operator names, or this release's own, which is run by the digest its tag
+	// resolves to.
+	named, byDigest := a.reachImage.pinned, false
+	if named == "" {
+		named, byDigest = a.reachImage.release.Ref, true
+	}
+	if why := a.services.refusedByPolicy(named, byDigest); why != "" {
+		return "", why, nil
+	}
 	image, reason, detail, err := checkProbeImage(ctx, rt, a.reachImage, a.build)
 	if err != nil {
 		return "", "", err
@@ -571,7 +586,76 @@ func (a *Activities) resolveReachImage(ctx context.Context) (string, string, err
 	if reason != 0 {
 		return "", detail, nil
 	}
+	// And as what it resolved to, which is what is run.
+	if why := a.services.refusedByPolicy(image, false); why != "" {
+		return "", why, nil
+	}
 	return image, "", nil
+}
+
+// askPolicy asks the engine what its image policy is now. No answer, and one that
+// does not say, leave what was known.
+func (a *Activities) askPolicy(ctx context.Context) {
+	if a.engine == nil {
+		return
+	}
+	ask, cancel := context.WithTimeout(ctx, identitySupportAsk)
+	defer cancel()
+	who, err := a.engine.Whoami(ask)
+	if err != nil {
+		a.dispatcher.logger().Warn("reach probe: the engine did not say what the deployment's image policy is; the probe's image is judged by what was known", "error", err)
+		return
+	}
+	a.services.setPolicy(who.GetImagePolicy())
+}
+
+// setPolicy keeps the image policy as the engine last gave it; nil is no answer.
+func (s *serviceHostState) setPolicy(p *orkstackv1.ImagePolicySelection) {
+	if p == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.policy = p
+}
+
+// refusedByPolicy is why the deployment's image policy does not permit the reach
+// probe's image, "" where it does or nobody has said what it is. A namespace
+// only adds a signer, which a probe is not held to. byDigest says that the image is
+// run by a digest whatever it is named by.
+func (s *serviceHostState) refusedByPolicy(image string, byDigest bool) string {
+	s.mu.Lock()
+	policy := s.policy
+	s.mu.Unlock()
+	if policy == nil {
+		return ""
+	}
+	ref, err := dsl.ParseReference(image)
+	if err != nil {
+		return fmt.Sprintf("%s is no image reference", image)
+	}
+	if policy.GetRequireDigest() && ref.Digest == "" && !byDigest {
+		return fmt.Sprintf("the deployment's image policy permits no image that is not named by its digest (require_digest), and %s is not", image)
+	}
+	if !task.RegistryAllowed(policy.GetAllowedRegistries(), ref.Registry, ref.Repository) {
+		return fmt.Sprintf("the deployment's image policy (allowed_registries) does not permit %s", image)
+	}
+	return ""
+}
+
+// probed takes one run of the reach probe, and evicts what this Orker hosts where it
+// is found unfit to.
+func (a *Activities) probed(r servicehost.ProbeResult, at time.Time) {
+	a.services.setProbe(r, at)
+	verdict, log := a.services.reachVerdict(at), a.dispatcher.logger()
+	switch {
+	case verdict.Evict:
+		why := strings.Join(verdict.Reasons, "; ")
+		evicted := a.evictInstances(eventsources.ReasonServiceHostUnfit, why)
+		log.Error("reach probe: this Orker is unfit to host services and evicts what it hosts (SERVICE_HOST_UNFIT)", "reasons", why, "instances_evicted", evicted)
+	case !verdict.MayHost:
+		log.Warn("reach probe: this Orker takes no new service", "reasons", strings.Join(verdict.Reasons, "; "))
+	}
 }
 
 // RunReachProbes runs the reach probe for an Orker that hosts services, at
@@ -618,21 +702,14 @@ func (a *Activities) RunReachProbes(ctx context.Context, adminAddr, cluster stri
 		}
 		now := time.Now()
 		a.services.setAnswerFS(run.AnswerFS)
-		a.services.setProbe(run.Result, now)
-		verdict, next := a.services.reachVerdict(now), a.services.reachNext()
+		a.probed(run.Result, now)
+		next := a.services.reachNext()
 		if first {
 			first = false
 			if open := hostGatewayOpen(run.Result.Fitness); len(open) > 0 {
 				log.Warn("reach probe: this host's own listeners answer a service network; close them with the host firewall rule of docs/DEPLOY.md, \"Source hosts\"",
 					"found", strings.Join(open, "; "))
 			}
-		}
-		switch {
-		case verdict.Evict:
-			log.Error("reach probe: this Orker is unfit to host services and evicts what it hosts (SERVICE_HOST_UNFIT)",
-				"reasons", strings.Join(verdict.Reasons, "; "))
-		case !verdict.MayHost:
-			log.Warn("reach probe: this Orker takes no new service", "reasons", strings.Join(verdict.Reasons, "; "))
 		}
 		timer := time.NewTimer(time.Until(next))
 		select {

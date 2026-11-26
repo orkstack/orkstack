@@ -168,12 +168,21 @@ func (f *FollowsCheck) records(ctx context.Context, adm artifacts.Admission, adm
 // produced them name them, at the scopes that decide for those. One whose
 // producer has no record, or whose record names no such artifact, is
 // REQUIRED_RESULT_NOT_RECORDED; but one a failure handler passed, whose
-// producer has none, is left out: there is nothing to hold it to.
+// producer has none, is answered by its name alone: there is nothing to hold
+// it to, and the attempt stages no other unrecorded one.
 func (f *FollowsCheck) CheckReceived(ctx context.Context, adm artifacts.Admission, admissionSHA256, taskID string, rootScope uint64) ([]*orkstackv1.ArtifactRef, error) {
-	return f.received(ctx, adm, admissionSHA256, adm.Tasks[taskID].Inputs, rootScope)
+	names := adm.Tasks[taskID].Inputs
+	found, err := f.received(ctx, adm, admissionSHA256, names, rootScope)
+	for i, a := range found {
+		if a == nil {
+			found[i] = &orkstackv1.ArtifactRef{Name: names[i]}
+		}
+	}
+	return found, err
 }
 
-// received is CheckReceived for the artifacts of the run's start names name.
+// received is CheckReceived for the artifacts of the run's start names name,
+// one for each: nil for one with no record that a failure handler passed.
 func (f *FollowsCheck) received(ctx context.Context, adm artifacts.Admission, admissionSHA256 string, names []string, rootScope uint64) ([]*orkstackv1.ArtifactRef, error) {
 	if len(names) == 0 {
 		return nil, nil
@@ -195,7 +204,8 @@ func (f *FollowsCheck) received(ctx context.Context, adm artifacts.Admission, ad
 		src := adm.StartArtifacts[names[i]]
 		got, err := c.standing(ctx, adm.RunID, ref)
 		var m *MintError
-		if src.Handler && errors.As(err, &m) && m.Reason == ReasonRequiredResultNotRecorded {
+		// No record of its producer: not one that does not stand.
+		if src.Handler && errors.As(err, &m) && m.absent && m.Task == ref.TaskID {
 			return FollowedRecord{}, nil
 		}
 		if err != nil {
@@ -208,11 +218,11 @@ func (f *FollowsCheck) received(ctx context.Context, adm artifacts.Admission, ad
 				return got, nil
 			}
 		}
-		return FollowedRecord{}, c.notRecorded("the record of task %q of run %q names no artifact %q", src.TaskID, src.RunID, src.Name)
+		return FollowedRecord{}, c.notRecorded(src.TaskID, "the record of task %q of run %q names no artifact %q", src.TaskID, src.RunID, src.Name)
 	}); err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(found, func(a *orkstackv1.ArtifactRef) bool { return a == nil }), nil
+	return found, nil
 }
 
 // begin is a read of refs' records: the runs they name, and the root's resumes.
@@ -339,7 +349,7 @@ func (c *followsRead) standing(ctx context.Context, own string, ref artifacts.Fo
 	// an honest tree never meets a difference here.
 	now := FollowedBy(c.runs[run].adm, ref.TaskID)
 	if len(now) != len(follows) {
-		return FollowedRecord{}, c.notRecorded("the record of %q does not name what it follows", ref.TaskID)
+		return FollowedRecord{}, c.notRecorded(ref.TaskID, "the record of %q does not name what it follows", ref.TaskID)
 	}
 	recorded := make(map[string]string, len(follows))
 	for _, row := range follows {
@@ -354,7 +364,7 @@ func (c *followsRead) standing(ctx context.Context, own string, ref artifacts.Fo
 	}
 	for _, up := range current {
 		if recorded[up.Ref.TaskID] != up.ResultSHA256 {
-			return FollowedRecord{}, c.notRecorded("the record of %q follows a result of %q that has since been replaced", ref.TaskID, up.Ref.TaskID)
+			return FollowedRecord{}, c.notRecorded(ref.TaskID, "the record of %q follows a result of %q that has since been replaced", ref.TaskID, up.Ref.TaskID)
 		}
 	}
 	return rec, nil
@@ -400,7 +410,7 @@ func (c *followsRead) record(ctx context.Context, run string, ref artifacts.Foll
 	rejected, values, follows := read.Value.Standing()
 	produced := read.Value.Artifacts()
 	if rejected {
-		return FollowedRecord{}, nil, c.notRecorded("task %q of run %q was rejected", ref.TaskID, run)
+		return FollowedRecord{}, nil, c.notRecorded(ref.TaskID, "task %q of run %q was rejected", ref.TaskID, run)
 	}
 	result, err := ResultSHA256(values, resultArtifacts(produced))
 	if err != nil {
@@ -416,7 +426,9 @@ func (c *followsRead) answer(run string, ref artifacts.FollowRef, scope uint64, 
 	case err != nil:
 		return unavailableMint("the record of task %q of run %q could not be read: %v", ref.TaskID, run, err)
 	case got == artifacts.RecordNone:
-		return c.notRecorded("task %q of run %q has no record under scope %d", ref.TaskID, run, scope)
+		e := c.notRecorded(ref.TaskID, "task %q of run %q has no record under scope %d", ref.TaskID, run, scope)
+		e.absent = true
+		return e
 	case got != artifacts.RecordFound:
 		e := unavailableMint("the record of task %q of run %q cannot be trusted (%s %s: %s)", ref.TaskID, run, got, object, reason)
 		e.invalid = got == artifacts.RecordInvalid
@@ -425,8 +437,10 @@ func (c *followsRead) answer(run string, ref artifacts.FollowRef, scope uint64, 
 	return nil
 }
 
-func (c *followsRead) notRecorded(format string, args ...any) *MintError {
-	return refuse(ReasonRequiredResultNotRecorded, true, format, args...)
+func (c *followsRead) notRecorded(task, format string, args ...any) *MintError {
+	e := refuse(ReasonRequiredResultNotRecorded, true, format, args...)
+	e.Task = task
+	return e
 }
 
 // ofEach is fn of each of refs at once, in their order. A refusal found is

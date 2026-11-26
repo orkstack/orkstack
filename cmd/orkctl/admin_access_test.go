@@ -67,6 +67,15 @@ func accessEngineAs(t *testing.T, caller *authn.Principal, bindings ...*orkstack
 	}
 }
 
+func TestBindingMark(t *testing.T) {
+	if got := bindingMark(&orkstackv1.Binding{OrkerIdsAny: true}); !strings.Contains(got, "hosts no event source") {
+		t.Errorf("a shared credential's binding: %q", got)
+	}
+	if got := bindingMark(&orkstackv1.Binding{}); got != "" {
+		t.Errorf("any other: %q", got)
+	}
+}
+
 func TestAdminAccessCommands(t *testing.T) {
 	run := accessEngine(t)
 	must := func(want string, args ...string) string {

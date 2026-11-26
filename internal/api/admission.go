@@ -50,9 +50,9 @@ func (s *Service) admit(
 	if ns.GetMaxRunning() > 0 {
 		running, err := s.runningCount(ctx, binding, name, int64(ns.GetMaxRunning()))
 		if err != nil {
-			return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf(
 				"namespace %q max_running could not be checked against the execution index: %w; ask again",
-				name, err))
+				name, err)))
 		}
 		if refusal := engine.MaxRunningRefusal(ns, running); refusal != nil {
 			return s.refuseCode(ctx, ns, wf, refusal, s.queuedAtMaxRunning(ctx, binding, name, wf, refusal))
@@ -70,8 +70,8 @@ func (s *Service) admit(
 			// was still running: Unavailable, as is.
 			return err
 		case err != nil:
-			return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
-				"namespace %q budget could not be checked against its usage: %w; ask again", name, err))
+			return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf(
+				"namespace %q budget could not be checked against its usage: %w; ask again", name, err)))
 		default:
 			refusal = engine.BudgetRefusal(ns, usage)
 		}

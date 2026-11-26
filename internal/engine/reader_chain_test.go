@@ -15,6 +15,7 @@ import (
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -634,6 +635,49 @@ func TestClosedExecution_CarriedInvalidRunIsStateUnsupported(t *testing.T) {
 			failure.GetCategory() != runStateCategory(code) {
 			t.Fatalf("%s close = %v", code, failure)
 		}
+	}
+}
+
+// TestClosedExecution_ARunsOwnReasonFromItsClose: a run that ended with its own
+// reason and could not store its last state reads by that reason, from the
+// failure it closed with; one that names none reads RUN_FAILED.
+func TestClosedExecution_ARunsOwnReasonFromItsClose(t *testing.T) {
+	closeWith := func(err error) *historypb.HistoryEvent {
+		event := failedClose("")
+		event.GetWorkflowExecutionFailedEventAttributes().Failure = failureConverter.ErrorToFailure(err)
+		return event
+	}
+	infra := orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+	contract := orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
+	for code, category := range map[string]orkstackv1.FailureCategory{OutputsUnavailableCode: infra, OutputsNotRecordedCode: infra,
+		OutputsRenderFailedCode: contract, OutputsArtifactMissingCode: contract, OutputsTooLargeCode: contract} {
+		_, failure, _ := closedExecution(closeWith(temporal.NewNonRetryableApplicationError("the run's tasks finished but its declared outputs could not be produced: x",
+			categoryTypeFor(category), nil, &orkstackv1.ActivityFailureDetail{ReasonCode: code, Category: category})), false)
+		if failure.GetCode() != code || failure.GetCategory() != category || !strings.HasSuffix(failure.GetMessage(), ": x") {
+			t.Fatalf("a run's own reason %s = %v", code, failure)
+		}
+	}
+	// A run whose results the engine does not record closes with no reason
+	// (failOutputs), and reads RUN_FAILED, as before.
+	if _, failure, _ := closedExecution(closeWith(temporal.NewNonRetryableApplicationError("broke", categoryTypeFor(infra), nil)), false); failure.GetCode() != "RUN_FAILED" {
+		t.Fatalf("a close with no reason = %v, want RUN_FAILED", failure)
+	}
+	// Nor is any other reason on the close the run's.
+	if _, failure, _ := closedExecution(closeWith(temporal.NewNonRetryableApplicationError("x", categoryTypeFor(infra), nil,
+		&orkstackv1.ActivityFailureDetail{ReasonCode: PayloadUnreadableCode, Category: contract})), false); failure.GetCode() != "RUN_FAILED" {
+		t.Fatalf("another reason on the close = %v, want RUN_FAILED", failure)
+	}
+	// A composed task's failure is the run's close itself; its reason is the
+	// task's.
+	if _, failure, _ := closedExecution(closeWith(temporal.NewNonRetryableApplicationError("child run c failed", categoryTypeFor(infra), nil,
+		&orkstackv1.ActivityFailureDetail{ReasonCode: ChildValuesUnstoredCode, Category: infra})), false); failure.GetCode() != "RUN_FAILED" {
+		t.Fatalf("a composed task's reason on the close = %v, want RUN_FAILED", failure)
+	}
+	// A task's failure is the run's close; its reason is the task's.
+	task := temporal.NewNonRetryableApplicationError("broke", task.CategoryActivityFailed, nil,
+		&orkstackv1.ActivityFailureDetail{ReasonCode: "CONTAINER_EXIT_NONZERO", Category: infra})
+	if _, failure, _ := closedExecution(closeWith(fmt.Errorf("task build: %w", temporal.NewNonRetryableApplicationError("task build failed", task.Error(), task))), false); failure.GetCode() != "RUN_FAILED" {
+		t.Fatalf("a task's reason in the close's cause = %v, want RUN_FAILED", failure)
 	}
 }
 

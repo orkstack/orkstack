@@ -67,6 +67,11 @@ var recordReadSites = map[string]string{
 	// The await doors answer what is on record and tell the run; they adopt
 	// nothing, and judge a record late by RecordedInTime.
 	"internal/api/await_record.go": "answer",
+	// The one read of a run's await, which adopts only what InTime does.
+	"internal/engine/resolution_record.go": "adopt",
+	// The listing shows what is on record, and tells a late record by
+	// RecordedInTime.
+	"internal/api/recorded_results.go": "answer",
 	// A composed task's record takes its child's outputs', which nothing is
 	// due by: it adopts no resolution.
 	"internal/identity/values_record.go": "answer",

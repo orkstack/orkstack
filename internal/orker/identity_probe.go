@@ -89,15 +89,9 @@ func (a *Activities) bootIdentityStorage(ctx context.Context, root string) error
 		return nil
 	}
 	d := a.dispatcher
-	shm := "/dev/shm"
-	if info, err := os.Stat(shm); err != nil || !info.IsDir() {
-		shm = ""
-	}
-	choice, err := chooseIdentityStorage(ctx, a.identityConfig.Dir, identityStorageProbe{
-		uid: os.Getuid(), runtimeDir: os.Getenv("XDG_RUNTIME_DIR"), shmDir: shm,
-		memoryBacked: identityMemoryBacked,
-		readable:     func(ctx context.Context, dir string) error { return d.ProbeIdentityDir(ctx, root, dir) },
-	})
+	choice, err := chooseIdentityStorage(ctx, a.identityConfig.Dir, hostIdentityStorage(func(ctx context.Context, dir string) error {
+		return d.ProbeIdentityDir(ctx, root, dir)
+	}))
 	if err != nil {
 		return err
 	}

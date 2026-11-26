@@ -35,8 +35,8 @@ func TestSubmit_ArtifactInputRefusedBeforeMint(t *testing.T) {
 	}
 }
 
-// A message's start is refused like any other until the engine binds what
-// it staged, and is named for what it is, never as a submit.
+// A start of an event source that brings none of the message's parts is
+// refused like any other, and named for what it is, never as a submit.
 func TestSubmit_ArtifactInputRefusedOfAnEventSource(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, artifactChildYAML)

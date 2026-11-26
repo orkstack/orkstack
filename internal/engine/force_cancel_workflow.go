@@ -291,7 +291,8 @@ func (f *forceCancel) until(ctx workflow.Context, deadline time.Time, try func()
 var errAgain = errors.New("not yet")
 
 // refused is a step whose decision does not verify, or is not this
-// execution's (errForceCancelRefused).
+// execution's (errForceCancelRefused), or a sealed run's ending
+// (sealedEndingRefused).
 func refused(err error) bool { return categoryOf(err).appType() == forceCancelRefusedType }
 
 // later is at, or its patience from now if that is later: whatever was

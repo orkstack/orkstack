@@ -78,6 +78,9 @@ const (
 	RunServiceExportRunEvidenceProcedure = "/orkstack.v1.RunService/ExportRunEvidence"
 	// RunServiceResumeRunProcedure is the fully-qualified name of the RunService's ResumeRun RPC.
 	RunServiceResumeRunProcedure = "/orkstack.v1.RunService/ResumeRun"
+	// RunServiceListRecordedResultsProcedure is the fully-qualified name of the RunService's
+	// ListRecordedResults RPC.
+	RunServiceListRecordedResultsProcedure = "/orkstack.v1.RunService/ListRecordedResults"
 )
 
 // RunServiceClient is a client for the orkstack.v1.RunService service.
@@ -268,6 +271,12 @@ type RunServiceClient interface {
 	// wait (try again after retry_after_seconds) or replan (preview again).
 	// docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason.
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
+	// ListRecordedResults lists what the engine recorded for ONE run whose
+	// results it records (docs/TASK_IDENTITY.md), and each task the run's state
+	// calls succeeded that has no record. A run whose results the engine does
+	// not record has no rows. A run whose state cannot be read answers
+	// Unavailable, never a list without those rows.
+	ListRecordedResults(context.Context, *connect.Request[v1.ListRecordedResultsRequest]) (*connect.Response[v1.ListRecordedResultsResponse], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -395,6 +404,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("ResumeRun")),
 			connect.WithClientOptions(opts...),
 		),
+		listRecordedResults: connect.NewClient[v1.ListRecordedResultsRequest, v1.ListRecordedResultsResponse](
+			httpClient,
+			baseURL+RunServiceListRecordedResultsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ListRecordedResults")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -419,6 +434,7 @@ type runServiceClient struct {
 	diffRuns              *connect.Client[v1.DiffRunsRequest, v1.DiffRunsResponse]
 	exportRunEvidence     *connect.Client[v1.ExportRunEvidenceRequest, v1.EvidenceChunk]
 	resumeRun             *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	listRecordedResults   *connect.Client[v1.ListRecordedResultsRequest, v1.ListRecordedResultsResponse]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -514,6 +530,11 @@ func (c *runServiceClient) ExportRunEvidence(ctx context.Context, req *connect.R
 // ResumeRun calls orkstack.v1.RunService.ResumeRun.
 func (c *runServiceClient) ResumeRun(ctx context.Context, req *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
 	return c.resumeRun.CallUnary(ctx, req)
+}
+
+// ListRecordedResults calls orkstack.v1.RunService.ListRecordedResults.
+func (c *runServiceClient) ListRecordedResults(ctx context.Context, req *connect.Request[v1.ListRecordedResultsRequest]) (*connect.Response[v1.ListRecordedResultsResponse], error) {
+	return c.listRecordedResults.CallUnary(ctx, req)
 }
 
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
@@ -704,6 +725,12 @@ type RunServiceHandler interface {
 	// wait (try again after retry_after_seconds) or replan (preview again).
 	// docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason.
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
+	// ListRecordedResults lists what the engine recorded for ONE run whose
+	// results it records (docs/TASK_IDENTITY.md), and each task the run's state
+	// calls succeeded that has no record. A run whose results the engine does
+	// not record has no rows. A run whose state cannot be read answers
+	// Unavailable, never a list without those rows.
+	ListRecordedResults(context.Context, *connect.Request[v1.ListRecordedResultsRequest]) (*connect.Response[v1.ListRecordedResultsResponse], error)
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -827,6 +854,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("ResumeRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceListRecordedResultsHandler := connect.NewUnaryHandler(
+		RunServiceListRecordedResultsProcedure,
+		svc.ListRecordedResults,
+		connect.WithSchema(runServiceMethods.ByName("ListRecordedResults")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -867,6 +900,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceExportRunEvidenceHandler.ServeHTTP(w, r)
 		case RunServiceResumeRunProcedure:
 			runServiceResumeRunHandler.ServeHTTP(w, r)
+		case RunServiceListRecordedResultsProcedure:
+			runServiceListRecordedResultsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -950,4 +985,8 @@ func (UnimplementedRunServiceHandler) ExportRunEvidence(context.Context, *connec
 
 func (UnimplementedRunServiceHandler) ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ResumeRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ListRecordedResults(context.Context, *connect.Request[v1.ListRecordedResultsRequest]) (*connect.Response[v1.ListRecordedResultsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ListRecordedResults is not implemented"))
 }

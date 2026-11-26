@@ -513,12 +513,17 @@ func (s *runState) handlerStates() string {
 const runTimeoutReserveEvents = 6
 
 // fixedReserve is the reserve's fixed part, with the run timeout's events
-// for a run that declares one; unchanged for every other run.
+// for a run that declares one, and the write of a child run's outputs' record;
+// unchanged for every other run.
 func (s *runState) fixedReserve(r HistoryReserve) int64 {
-	if s.runTimeout != nil {
-		return r.Fixed + runTimeoutReserveEvents
+	fixed := r.Fixed
+	if s.isChildRun() {
+		fixed += s.readEvents()
 	}
-	return r.Fixed
+	if s.runTimeout != nil {
+		return fixed + runTimeoutReserveEvents
+	}
+	return fixed
 }
 
 // resolutionsPerPass is the plan's bound on resolutions one drain applies.
@@ -540,9 +545,13 @@ func planCarriesRunTimeout(plan RunPlan) bool {
 // it stops once D is due, so a pass never applies past its deadline. changed
 // reports that it applied any, or that some are left queued; a resolve error
 // is the task's.
-func (s *runState) drainQueuedResolutions(ctx workflow.Context) (changed bool, taskID string, err error) {
+func (s *runState) drainQueuedResolutions(ctx workflow.Context, inFlight map[string]workflow.Future) (changed bool, taskID string, err error) {
 	if s.resolutions == nil {
 		return false, "", nil
+	}
+	if s.recorded() {
+		taskID, err = s.drainRecordedAtPass(ctx, inFlight)
+		return false, taskID, err
 	}
 	take := min(s.resolutions.Len(), s.resolutionsPerPass())
 	for i := 0; i < take; i++ {
@@ -570,13 +579,23 @@ func (s *runState) drainQueuedResolutions(ctx workflow.Context) (changed bool, t
 // drain, with a ready deadline abandoning the switch (the pass top takes
 // it). changed means the switch must not proceed in this attempt.
 func (s *runState) switchResolutions(ctx workflow.Context, inFlight map[string]workflow.Future) (changed bool, taskID string, err error) {
+	if s.recorded() {
+		if due, canceled := s.runTimeoutDue(ctx, inFlight); due || canceled {
+			return true, "", nil
+		}
+		changed, taskID, err = s.switchRecorded(ctx, inFlight)
+		if due, canceled := s.runTimeoutDue(ctx, inFlight); due || canceled {
+			changed = true
+		}
+		return changed, taskID, err
+	}
 	if s.runTimeout == nil {
 		return s.applyQueuedResolutions(ctx)
 	}
 	if due, canceled := s.runTimeoutDue(ctx, inFlight); due || canceled {
 		return true, "", nil
 	}
-	changed, taskID, err = s.drainQueuedResolutions(ctx)
+	changed, taskID, err = s.drainQueuedResolutions(ctx, inFlight)
 	if err != nil || changed {
 		return true, taskID, err
 	}

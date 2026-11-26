@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -70,6 +71,9 @@ type CommitRecord struct {
 	// (run evidence) copies these rather than re-marshalling Commit, for the
 	// reason SHA256 is never recomputed. It is nil alongside an error.
 	Raw []byte
+	// StoredAt is the store's own time of the object, when it was read with
+	// it; zero otherwise.
+	StoredAt time.Time
 	// confirmedByRead is set by a Create whose answer was lost and which a
 	// read found landed (putConfirmed): equal bytes there may be another
 	// writer's identical commit. Only the boot probe, whose two writers send

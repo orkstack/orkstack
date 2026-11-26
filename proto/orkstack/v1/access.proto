@@ -218,6 +218,12 @@ enum BindingMatch {
   // It would have matched by name, and is pinned to an earlier incarnation
   // of the namespace or Orkflow.
   BINDING_MATCH_PINNED_ELSEWHERE = 5;
+  // Its role holds the permission, and the binding is for a credential that
+  // Orkers share (orker_ids_any), which names no Orker: it does not grant
+  // hosting an event source, which only a named Orker may do. Such a
+  // credential serves no task identity either; that is refused where it is
+  // used, on the credential itself, and this match is never its answer.
+  BINDING_MATCH_SHARED_ORKER_CREDENTIAL = 6;
 }
 
 // ExplainedBinding is one binding's part in a decision.

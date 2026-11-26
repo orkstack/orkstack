@@ -284,7 +284,7 @@ func TestPreflightCommit(t *testing.T) {
 				return &orkstackv1.CommitResultResponse{}, nil
 			}}}
 		d, _ := recordingDispatcher(engine, artifacts.NewMemoryCommitStore())
-		if f := d.preflightCommit(ctx, in, 1); f != nil || len(engine.calls) != 1 || !engine.calls[0].GetPreflight() || engine.calls[0].GetCommit() != nil {
+		if _, f := d.preflightCommit(ctx, in, 1); f != nil || len(engine.calls) != 1 || !engine.calls[0].GetPreflight() || engine.calls[0].GetCommit() != nil {
 			t.Fatalf("preflight = %v, calls %v", f, engine.calls)
 		}
 	})
@@ -293,7 +293,7 @@ func TestPreflightCommit(t *testing.T) {
 		engine := &scriptedEngine{script: []func(*orkstackv1.CommitResultRequest) (*orkstackv1.CommitResultResponse, error){
 			engineAnswers(commitRefusal(connect.CodePermissionDenied, "may not commit"))}}
 		d, _ := recordingDispatcher(engine, artifacts.NewMemoryCommitStore())
-		if f := d.preflightCommit(ctx, in, 1); f == nil || f.Reason != ReasonCommitEngineRefused || len(engine.calls) != 1 {
+		if _, f := d.preflightCommit(ctx, in, 1); f == nil || f.Reason != ReasonCommitEngineRefused || len(engine.calls) != 1 {
 			t.Fatalf("preflight = %v after %d calls", f, len(engine.calls))
 		}
 	})
@@ -301,7 +301,7 @@ func TestPreflightCommit(t *testing.T) {
 		in := recordedRunInput(t, "build")
 		engine := &scriptedEngine{script: []func(*orkstackv1.CommitResultRequest) (*orkstackv1.CommitResultResponse, error){engineAnswers(errors.New("connection refused"))}}
 		d, clock := recordingDispatcher(engine, artifacts.NewMemoryCommitStore())
-		f := d.preflightCommit(ctx, in, 1)
+		_, f := d.preflightCommit(ctx, in, 1)
 		if f == nil || f.Reason != ReasonCommitEngineUnavailable || clock.Boot() > DefaultIdentitySetupBudget || len(engine.calls) < 2 {
 			t.Fatalf("preflight = %v after %d calls and %s", f, len(engine.calls), clock.Boot())
 		}
@@ -398,6 +398,26 @@ func TestExecute_ARecordedRunCommitsThroughTheEngine(t *testing.T) {
 			}
 		}
 	})
+	// A task that holds an identity is asked at its mint, and at a preflight
+	// only when it stages something its run received.
+	for name, receives := range map[string]bool{"that receives": true, "that receives nothing": false} {
+		t.Run("a task that holds an identity "+name, func(t *testing.T) {
+			d := newAttemptDispatcher(t, &policyCapturingRuntime{log: &eventLog{}}, artifacts.NewMemoryAttemptStore())
+			d.Commits = artifacts.NewMemoryCommitStore()
+			d.identity.Store(identitySupportOf(true))
+			engine := &recordingEngine{refuse: connect.NewError(connect.CodePermissionDenied, errors.New("may not commit"))}
+			d.SetResultCommit(engine.commit)
+			in := recordedRunInput(t, "build")
+			in.Identity.Identities = []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts"}}
+			if receives {
+				in.Upstream = append(in.Upstream, &orkstackv1.UpstreamRef{TaskId: "_inputs"})
+			}
+			_, err := d.Execute(context.Background(), in)
+			if asked := len(engine.requests) == 1; err == nil || asked != receives || strings.Contains(err.Error(), ReasonCommitEngineRefused) != receives {
+				t.Fatalf("Execute = %v after %d asks", err, len(engine.requests))
+			}
+		})
+	}
 }
 
 // recordedCacheHarness is the cache harness whose Orker serves task

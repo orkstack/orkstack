@@ -28,10 +28,16 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
+
+// ErrRunRecordUndecodable is a run's own record, its start event or the run
+// line of its archive, that is whole and does not decode: it never will. A
+// sealed payload is never one, since whether it opens is the reader's keys'.
+var ErrRunRecordUndecodable = errors.New("engine: a run's record does not decode")
 
 // ErrRunNotFound reports that the cluster holds no execution under a run id.
 //
@@ -239,7 +245,10 @@ type TemporalRunReader struct {
 	client    runReadClient
 	temporal  client.Client
 	converter converter.DataConverter
-	snapshots SnapshotStore
+	// payloadKeys opens a sealed run's payloads (WithPayloadKeys); nil reads
+	// none.
+	payloadKeys RunKeySource
+	snapshots   SnapshotStore
 	// bases resolves snapshot overlays (WithBaseCache); nil caches none.
 	bases *SnapshotBaseCache
 
@@ -428,7 +437,11 @@ func (r *TemporalRunReader) carryOf(ctx context.Context, workflowID, execution s
 	if attrs == nil {
 		return nil, nil
 	}
-	carry, err := r.decodeCarry(attrs)
+	dc := r.runConverter(ctx, workflowID)
+	if err := dc.holdStart(attrs); err != nil {
+		return nil, err
+	}
+	carry, err := decodeCarry(dc, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("engine: run %s: %w", workflowID, err)
 	}
@@ -532,8 +545,11 @@ func (r *TemporalRunReader) forceCancelOutcome(
 	if r.authMode != nil {
 		mode = r.authMode()
 	}
-	namespace := artifacts.ResolveNamespace(r.startedNamespace(start.GetWorkflowExecutionStartedEventAttributes()))
-	read := ReadForceCancelClose(ctx, r.forceCancel, mode, namespace, runID, execution,
+	namespace, err := r.runNamespace(ctx, runID, start.GetWorkflowExecutionStartedEventAttributes())
+	if err != nil {
+		return ForceCancelClose{}, fmt.Errorf("%w: %w", errForceCancelUnread, err)
+	}
+	read := ReadForceCancelClose(ctx, r.forceCancel, mode, artifacts.ResolveNamespace(namespace), runID, execution,
 		closeEvent, closeEvent.GetEventTime().AsTime())
 	if read.Verification == ForceCancelUnavailable {
 		return ForceCancelClose{}, fmt.Errorf("engine: run %s: %w", runID, errForceCancelUnread)
@@ -1367,6 +1383,7 @@ func (r *TemporalRunReader) scanExecution(
 	iter := r.client.GetWorkflowHistory(ctx, runID, execution, follow,
 		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	projection := st.projection
+	dc := r.runConverter(ctx, runID)
 	read := 0
 	// A restarted read (historyBranchChanged) begins again at the execution's
 	// first event and skips through the last one this walk handled — but only
@@ -1422,20 +1439,27 @@ func (r *TemporalRunReader) scanExecution(
 			// restarted read may land on a successor without passing the
 			// switch that clears it.
 			projection.canceledBy, projection.cancelSeen = CanceledBy{}, false
-			carry, err := r.decodeCarry(attrs)
+			if err := dc.holdStart(attrs); err != nil {
+				return "", err
+			}
+			carry, err := decodeCarry(dc, attrs)
 			if err != nil {
 				return "", fmt.Errorf("engine: run %s: %w", runID, err)
 			}
 			st.carried = carry != nil
 			if carry != nil {
-				if err := r.adoptCarry(ctx, runID, attrs, carry, fromSequence, wantRun, send, st); err != nil {
+				if err := r.adoptCarry(ctx, dc, runID, attrs, carry, fromSequence, wantRun, send, st); err != nil {
 					return "", err
 				}
 				if st.stopped {
 					return "", nil
 				}
 			}
-			projection.run = mergeRunSnapshot(projection.run, r.startedRun(runID, historyEvent, attrs, carry))
+			started, err := startedRun(dc, runID, historyEvent, attrs, carry)
+			if err != nil {
+				return "", err
+			}
+			projection.run = mergeRunSnapshot(projection.run, started)
 			continue
 		}
 		if attrs := historyEvent.GetWorkflowExecutionCancelRequestedEventAttributes(); attrs != nil {
@@ -1469,7 +1493,7 @@ func (r *TemporalRunReader) scanExecution(
 			continue
 		}
 		if r.isPublishEvent(historyEvent) {
-			event, snapshotURI, err := r.decodePublishEvent(runID, historyEvent)
+			event, snapshotURI, err := decodePublishEvent(dc, runID, historyEvent)
 			if err != nil {
 				return "", err
 			}
@@ -1499,7 +1523,11 @@ func (r *TemporalRunReader) scanExecution(
 			}
 			continue
 		}
-		if status, cause, closed := closedExecution(historyEvent, st.carried); closed {
+		closing, err := dc.openedClose(historyEvent)
+		if err != nil {
+			return "", err
+		}
+		if status, cause, closed := closedExecution(closing, st.carried); closed {
 			forced, err := r.forceCancelOutcome(ctx, runID, execution, first, historyEvent)
 			if st.lastResort && errors.Is(err, errForceCancelUnread) {
 				forced, err = ForceCancelClose{Verification: ForceCancelUnverified, Carried: carriedForceCancel(historyEvent)}, nil
@@ -1511,7 +1539,7 @@ func (r *TemporalRunReader) scanExecution(
 				status, cause = forced.Outcome(historyEvent.GetWorkflowExecutionTerminatedEventAttributes().GetReason())
 			}
 			if forced.built() && !projection.sawTerminal {
-				if err := r.endAfterReset(runID, first, historyEvent, fromSequence, wantRun, send, st); err != nil {
+				if err := r.endAfterReset(ctx, runID, first, historyEvent, fromSequence, wantRun, send, st); err != nil {
 					return "", err
 				}
 			}
@@ -1626,14 +1654,15 @@ func (r *TemporalRunReader) isPublishEvent(historyEvent *historypb.HistoryEvent)
 // the workflow schedules PublishEvent with: the event itself and the URI of
 // the run snapshot written alongside it. The Run is never inline in history;
 // it is fetched from the snapshot store only when a caller wants it.
-func (r *TemporalRunReader) decodePublishEvent(
+func decodePublishEvent(
+	dc converter.DataConverter,
 	runID string,
 	historyEvent *historypb.HistoryEvent,
 ) (*orkstackv1.Event, string, error) {
 	payloads := historyEvent.GetActivityTaskScheduledEventAttributes().GetInput().GetPayloads()
 	var event *orkstackv1.Event
 	if len(payloads) > 0 {
-		if err := r.converter.FromPayload(payloads[0], &event); err != nil {
+		if err := dc.FromPayload(payloads[0], &event); err != nil {
 			return nil, "", fmt.Errorf("engine: decode event of run %s at history event %d: %w",
 				runID, historyEvent.GetEventId(), err)
 		}
@@ -1642,7 +1671,7 @@ func (r *TemporalRunReader) decodePublishEvent(
 		return event, "", nil
 	}
 	var uri string
-	if err := r.converter.FromPayload(payloads[1], &uri); err != nil {
+	if err := dc.FromPayload(payloads[1], &uri); err != nil {
 		return nil, "", fmt.Errorf("engine: decode snapshot reference of run %s at history event %d: %w",
 			runID, historyEvent.GetEventId(), err)
 	}
@@ -1748,12 +1777,13 @@ func (r *TemporalRunReader) readSnapshotAt(
 // arguments in every generation, so the name, version, namespace, input and
 // origin are read the same way; payload 0, empty after the first, is never
 // read — the run id is the workflow id the reader was asked about.
-func (r *TemporalRunReader) startedRun(
+func startedRun(
+	dc *runPayloads,
 	runID string,
 	historyEvent *historypb.HistoryEvent,
 	attrs *historypb.WorkflowExecutionStartedEventAttributes,
 	carry *orkstackv1.RunContinuation,
-) *orkstackv1.Run {
+) (*orkstackv1.Run, error) {
 	run := &orkstackv1.Run{
 		Id:        runID,
 		Status:    orkstackv1.Status_STATUS_PENDING,
@@ -1765,18 +1795,41 @@ func (r *TemporalRunReader) startedRun(
 		run.StartedAt = cloneTime(carry.GetStartedAt())
 	}
 	payloads := attrs.GetInput().GetPayloads()
+	if dc.keyless != nil {
+		// Who the run is of is in its memo, in plaintext. Never left empty: an
+		// empty namespace reads as the built-in one. Nothing else of a keyless
+		// run's start is shown.
+		if err := startedFromMemo(run, attrs.GetMemo()); err != nil {
+			return nil, fmt.Errorf("engine: read the start of run %s: %w", runID, err)
+		}
+		return run, nil
+	}
 	if len(payloads) > 1 {
 		var wf *orkstackv1.Orkflow
-		if err := r.converter.FromPayload(payloads[1], &wf); err == nil && wf != nil {
+		err := dc.FromPayload(payloads[1], &wf)
+		if errors.Is(err, errPayloadKeyUnavailable) {
+			return nil, fmt.Errorf("engine: read the start of run %s: %w", runID, err)
+		}
+		switch {
+		case err == nil && wf != nil:
 			run.OrkflowName = wf.GetName()
 			run.OrkflowVersion = wf.GetVersion()
 			run.Namespace = wf.GetNamespace()
 			run.OrkflowNamespace = wf.GetDefinitionNamespace()
+		case payloadcrypt.IsSealed(payloads[1]):
+			// A reader with no key source: as a keyless run's.
+			if err := startedFromMemo(run, attrs.GetMemo()); err != nil {
+				return nil, fmt.Errorf("engine: read the start of run %s: %w", runID, err)
+			}
 		}
 	}
 	if len(payloads) > 2 {
 		var input *orkstackv1.Payload
-		if err := r.converter.FromPayload(payloads[2], &input); err == nil {
+		err := dc.FromPayload(payloads[2], &input)
+		if errors.Is(err, errPayloadKeyUnavailable) {
+			return nil, fmt.Errorf("engine: read the start of run %s: %w", runID, err)
+		}
+		if err == nil {
 			run.Input = input
 		}
 	}
@@ -1786,12 +1839,16 @@ func (r *TemporalRunReader) startedRun(
 	// leaves the origin unset, as an undecodable orkflow leaves the name empty.
 	if len(payloads) > 3 {
 		var plan RunPlan
-		if err := r.converter.FromPayload(payloads[3], &plan); err == nil {
+		err := dc.FromPayload(payloads[3], &plan)
+		if errors.Is(err, errPayloadKeyUnavailable) {
+			return nil, fmt.Errorf("engine: read the start of run %s: %w", runID, err)
+		}
+		if err == nil {
 			run.Origin = plan.Origin.Proto()
 			run.RunContext = (&runState{plan: plan}).runContextState()
 		}
 	}
-	return run
+	return run, nil
 }
 
 // listedRun projects one visibility record onto a Run.
@@ -2079,6 +2136,11 @@ func RunFilterView(run *orkstackv1.Run) *orkstackv1.Run {
 	return view
 }
 
+// outputsFailureCodes are the reasons failOutputs ends a run with, the only
+// ones a close says of the run itself: any other a close carries is a task's.
+var outputsFailureCodes = map[string]bool{OutputsUnavailableCode: true, OutputsNotRecordedCode: true, OutputsRenderFailedCode: true,
+	OutputsArtifactMissingCode: true, OutputsTooLargeCode: true}
+
 // closedExecution maps a history event that closes an execution onto the run
 // status it means. carried says the execution started from a carry: a
 // generation after the first of a run that continued as new. A
@@ -2114,6 +2176,18 @@ func closedExecution(
 			failure.Message = "this run was carried forward by a newer release and an older release " +
 				"could not carry it on; roll the engines forward"
 			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
+		default:
+			// A run that ended with its own reason and could not store its
+			// last state says it in its close itself (failOutputs), never in
+			// a cause: a task's own reason there is the task's, under
+			// RUN_FAILED. A sealed run's does not open here, and reads
+			// RUN_FAILED.
+			if top := attrs.GetFailure(); top.GetCause() != nil || top.GetApplicationFailureInfo() == nil {
+				break
+			}
+			if detail, ok := categoryOf(failureConverter.FailureToError(attrs.GetFailure())).activityDetail(); ok && outputsFailureCodes[detail.GetReasonCode()] {
+				failure.Code, failure.Category = detail.GetReasonCode(), detail.GetCategory()
+			}
 		}
 		return orkstackv1.Status_STATUS_FAILED, failure, true
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED:
@@ -2299,6 +2373,14 @@ type RunStartRecord struct {
 	ByReference bool
 }
 
+// undecodable is err, marked where p is no sealed payload.
+func undecodable(p *commonpb.Payload, err error) error {
+	if payloadcrypt.IsSealed(p) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrRunRecordUndecodable, err)
+}
+
 // RunStart reads a run's first history event and decodes its definition and
 // plan with the same converter startedRun decodes them with: payloads[1] is
 // the Orkflow, payloads[3] the RunPlan. It reads one event and stops. A run
@@ -2335,14 +2417,21 @@ func (r *TemporalRunReader) RunStart(ctx context.Context, runID string) (*RunSta
 		return nil, fmt.Errorf("engine: run %s: its start carries %d arguments, want 4", runID, len(payloads))
 	}
 	record := &RunStartRecord{}
-	if err := r.converter.FromPayload(payloads[1], &record.Orkflow); err != nil || record.Orkflow == nil {
-		return nil, fmt.Errorf("engine: run %s: decode the started definition: %v", runID, err)
+	dc := r.runConverter(ctx, runID)
+	if err := holdOrKeyless(dc, attrs); err != nil {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, err)
 	}
-	if err := r.converter.FromPayload(payloads[3], &record.Plan); err != nil {
-		return nil, fmt.Errorf("engine: run %s: decode the started plan: %w", runID, err)
+	if err := dc.FromPayload(payloads[1], &record.Orkflow); err != nil {
+		return nil, undecodable(payloads[1], fmt.Errorf("engine: run %s: decode the started definition: %w", runID, err))
+	}
+	if record.Orkflow == nil {
+		return nil, undecodable(payloads[1], fmt.Errorf("engine: run %s: decode the started definition: it is empty", runID))
+	}
+	if err := dc.FromPayload(payloads[3], &record.Plan); err != nil {
+		return nil, undecodable(payloads[3], fmt.Errorf("engine: run %s: decode the started plan: %w", runID, err))
 	}
 	if record.Plan.Identity != nil {
-		if err := r.converter.FromPayload(payloads[2], &record.Input); err != nil {
+		if err := dc.FromPayload(payloads[2], &record.Input); err != nil {
 			return nil, fmt.Errorf("engine: run %s: decode the started input: %w", runID, err)
 		}
 	}

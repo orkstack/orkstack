@@ -10,6 +10,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -103,25 +104,27 @@ func submitOrigin(ctx context.Context, req *connect.Request[orkstackv1.SubmitRun
 // before prepare reads anything: the reference is checked first because it is
 // the request's own mistake and costs nothing, then a named source run is
 // confirmed to exist in the request's namespace (NotFound otherwise, on the
-// rule every run read follows), then the origin is built.
+// rule every run read follows), then the origin is built. received is what
+// the run carries over from the source run (carriedInputs).
 func (s *Service) originForRequest(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.SubmitRunRequest],
-) (*orkstackv1.RunOrigin, error) {
+) (origin *orkstackv1.RunOrigin, received []engine.NamedArtifactPlan, err error) {
 	if err := ValidateOriginReference(req.Msg.GetOriginReference()); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	sourceRunID := req.Msg.GetSourceRunId()
 	if sourceRunID != "" {
 		facts, err := s.runFactsIn(ctx, sourceRunID, req.Msg.GetNamespace())
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// A child run of another namespace's Orkflow runs only as a child:
 		// running it again would start that Orkflow as a root run here.
 		if facts.OrkflowNamespace != "" {
-			return nil, sharedRootRefusal(sourceRunID, facts.OrkflowNamespace, facts.Orkflow, facts.RootRunID)
+			return nil, nil, sharedRootRefusal(sourceRunID, facts.OrkflowNamespace, facts.Orkflow, facts.RootRunID)
 		}
+		received = carriedInputs(facts, req.Msg.GetOrkflowName())
 	}
-	return submitOrigin(ctx, req, sourceRunID), nil
+	return submitOrigin(ctx, req, sourceRunID), received, nil
 }

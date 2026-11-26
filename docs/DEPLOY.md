@@ -655,7 +655,7 @@ then the variable it becomes.
 | `orker.event_sources.max_request.cpu`, `orker.event_sources.max_request.memory` | `ORK_ORKER_EVENT_SOURCE_MAX_REQUEST_CPU`, `ORK_ORKER_EVENT_SOURCE_MAX_REQUEST_MEMORY` | `500m`, `256Mi` | `orker` | the most one instance may ask for on this pool, and what an idle source host keeps reserved for the instance it waits for. A pool-wide setting |
 | `orker.event_sources.spool_bytes` | `ORK_ORKER_EVENT_SOURCE_SPOOL_BYTES` | `67108864` | `orker` | the most one instance's answer filesystem may hold, sized for twice its lanes' bodies. A pool-wide setting |
 | `orker.event_sources.confirm_wait_max` | `ORK_ORKER_EVENT_SOURCE_CONFIRM_WAIT_MAX` | `15m` | `orker` | how long an instance's first confirmation may wait on a judgment before the Orker gives its task back |
-| `orker.event_sources.parse_bytes` | `ORK_ORKER_EVENT_SOURCE_PARSE_BYTES` | `67108864` | `orker` | the most JSON bodies all lanes of this Orker read at once |
+| `orker.event_sources.parse_bytes` | `ORK_ORKER_EVENT_SOURCE_PARSE_BYTES` | `67108864` | `orker` | the most bytes of message bodies all lanes of all instances of this Orker read and judge at once. Lanes are served in the order they asked; no instance holds more than half while another's lane waits, and a body larger than all of it is read alone |
 | `orker.event_sources.log_bytes_per_hour` | `ORK_ORKER_EVENT_SOURCE_LOG_BYTES_PER_HOUR` | `4194304` | `orker` | an instance's log budget per stream after the first megabyte of an attempt |
 | `orker.services.allow_metadata_reach` | `ORK_ORKER_SERVICES_ALLOW_METADATA_REACH` | `false` | `orker` | `true` lets this Orker host services although a container on a service network can reach an instance-metadata endpoint; logged at every boot |
 | `orker.services.allow_open_cluster` | `ORK_ORKER_SERVICES_ALLOW_OPEN_CLUSTER` | `false` | `orker` | `true` lets this Orker host services although the cluster serves a container on a service network that presents no credential, in plaintext or over TLS without a client certificate: any tenant's long-lived container could then act as any worker of the deployment. It never accepts a reachable membership port. Logged at every boot; for a trial deployment only |
@@ -668,7 +668,7 @@ then the variable it becomes.
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its work root, its configuration and credential files (§5, "Secrets on a shared pool"). With `orker.workdir` unset the work root is the temp directory, so a `file:/tmp/…` source is refused and an entry under `/tmp` stops the Orker at boot: give tasks' secret files a directory of their own. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
-| `orker.namespaces` | `ORK_ORKER_NAMESPACES` | *(empty)* | `orker` | comma-separated namespaces this Orker serves, e.g. `payments,billing`. A task of another namespace fails `NAMESPACE_NOT_SERVED` before the Orker reads or writes anything of it, and a commit or memo of another namespace is never read or written. Empty serves every namespace, and logs so at boot. Every Orker of a pool sets the same list. A guard, not a boundary: give each trust zone a deployment of its own (§5, "Trust zones: a deployment per zone"). Refused at boot if a name breaks the namespace rule |
+| `orker.namespaces` | `ORK_ORKER_NAMESPACES` | *(empty)* | `orker` | comma-separated namespaces this Orker serves, e.g. `payments,billing`. A task of another namespace fails `NAMESPACE_NOT_SERVED` before the Orker reads or writes anything of it; an instance of an event source of one is handed back with the same reason, before it is confirmed, and tried again on the pool's source hosts with the back-off; and a commit or memo of another namespace is never read or written. Empty serves every namespace, and logs so at boot. Every Orker of a pool sets the same list. A guard, not a boundary: give each trust zone a deployment of its own (§5, "Trust zones: a deployment per zone"). Refused at boot if a name breaks the namespace rule |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it, and its path must be a plain one: a mount is a comma-separated option list, so an Orker whose work root holds a comma or a control character refuses to start (`WORKDIR_NOT_BINDABLE`, naming `ORK_ORKER_WORKDIR`). The default is `os.TempDir()` — `/var/folders/...` on macOS — which a Docker daemon running in a virtual machine (colima, Lima, Rancher) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
@@ -988,6 +988,15 @@ Orker shows its two pollers' share; a container that could not be removed is
 logged on every reap that fails, with its id. Boot refuses a capacity that does not read, or that the per-task cap does
 not fit in (`ORKER_CAPACITY_INVALID`). `max_concurrent` stays a count ceiling
 beside it.
+
+**Event-source instances** hold their reservations for as long as they run,
+out of the same capacity. A source host with an instance slot free also keeps
+one `orker.event_sources.max_request` reserved for the instance it waits for,
+so boot refuses a capacity the per-task cap does not fit in beside that
+(`ORKER_CAPACITY_INVALID`). It warns where `max_instances` instances of that
+size would leave no room for a task's poll: such an Orker polls for no task
+while they run. Give sources a pool of their own, or a capacity that holds the
+per-task cap and every instance.
 
 **What it costs.** A poll needs a whole cap free, so an Orker whose capacity
 equals its cap runs one task at a time, whatever their size: with the default
@@ -4754,7 +4763,9 @@ What a cordon does, precisely:
   a pin after about five minutes whatever that is set to.
 - **Everything in flight** is untouched: running containers finish, and open
   pins keep executing their remaining members, their release, and their
-  completion on this host.
+  completion on this host. The one thing that is not left alone is an
+  instance of an event source, which never ends by itself: an operator's
+  cordon moves it to another source host ("Source hosts", below).
 - **The pool probe.** A cordoned Orker stops polling its pool's channel but
   still answers on its own control channel, where submit's probes and the
   inventory read it as an Orker that takes no new task. So a pool whose every
@@ -5069,9 +5080,38 @@ none of these holds:
 | It is unfit when | What to do |
 |---|---|
 | it cannot make a service's bounded answer filesystem on this runtime | run Docker or Podman with tmpfs mounts that take a size, an inode count, a uid and a gid |
+| it has no memory-backed directory for a service's secrets and conversation | give it a writable `$XDG_RUNTIME_DIR` or `/dev/shm`, or set `orker.identity.dir` to a memory-backed directory of its own |
 | no reach probe has run, or the reach probe is not clean | see below |
 | a service container it stopped is not gone | the stuck-service cordon, below |
 | it has no engine to call | set `orker.engine.url`: a source host without it refuses to boot, naming both settings |
+| the engine refused it `SOURCE_HOST_NOT_PERMITTED` three attempts in a row | bind its principal to the `orker` role at its pool, with a credential that names its Orker. It keeps what it hosts, asks the engine every two minutes what its credential holds, and is fit again when that is everything hosting asks |
+
+An unfit Orker takes no instance: one that reaches it is handed back
+`SERVICE_HOST_UNFIT` and offered to another source host a second later.
+
+**What moves an instance.** A cordon leaves everything in flight alone, but
+an instance takes new work for as long as it runs, so three things stop the
+instances an Orker hosts, by their stop sequence, and hand them back to
+another source host of the pool: an operator's cordon (`ORKER_CORDONED`), the
+Orker's own first stop signal, not its grace's end (`ORKER_STOPPED`), and a
+reach probe found open twice, or with no clean answer for a day
+(`SERVICE_HOST_UNFIT`). A store outage and a
+stuck service move none: in an outage an instance writes no poll, and goes on
+when it ends. A stopping Orker waits for the instances it evicted for at most
+a minute, beside its tasks, then exits; what is left of one is removed at
+its next boot. With no other source host to go to, an instance waits for one,
+and an at-most-once source loses what is published meanwhile: keep one
+instance slot of a pool that hosts sources spare.
+
+**How long an instance goes on without the engine.** An instance is confirmed
+with the engine before its image is pulled, again if the pull took longer than
+a confirmation holds, and then every five minutes. The first is waited for at
+most `orker.event_sources.confirm_wait_max`. A running one that has not been
+accepted for ten minutes takes nothing more until it is, keeping its
+container; one whose engine has answered nothing for fifteen is handed on,
+`ENGINE_UNAVAILABLE`. A call answered by a replica that cannot serve it is
+made again on up to eight new connections, after its own, within the one bound
+of that call.
 
 A misconfigured `orker.event_sources.*` or `orker.services.*` value refuses
 the boot, naming the setting. Every Orker of a pool that hosts sources has
@@ -5085,7 +5125,9 @@ a memory filesystem the runtime makes with a size, an inode count and the
 Orker's uid, so it is charged to the container's memory and cannot reach a
 disk. An image that needs root fails `SERVICE_RUNS_AS_ROOT`. On a host with
 swap, use encrypted swap or none: memory the host swaps out can reach the
-swap device.
+swap device. A source host whose host swaps, or that cannot tell, warns so at
+its boot; it cannot tell a swap device in memory, or an encrypted one, from any
+other.
 
 **The network.** A service that needs a network gets one of its own, never
 the runtime's default: a bridge, IPv4 only, which no other container joins
@@ -5196,9 +5238,15 @@ label held to the Orker's commit. A deployment that mirrors its images sets
 `orker.services.probe_image` to its copy, by digest (an Orker built from
 source must set it, to the orker image of its own build). Its containers run
 `orker probe reach`, a subcommand of the Orker's for its probe containers
-only, which an operator never runs. Until event sources run, the probe's
-image is held to that signature and digest, not yet judged by the
-deployment's image policy.
+only, which an operator never runs. The probe's image is also held to the
+deployment's image policy (`require_digest` and `allowed_registries`; not its
+signers, which a namespace adds), which the Orker asks the engine for before
+each probe: an image it does not permit is not run, and leaves the Orker unfit
+for a new service, naming the image and the rule. What it hosts is kept, as while
+a probe cannot be run, for a day from its last clean answer. A policy or an image
+that is put right clears it at the next probe, two minutes later at most. While
+the engine does not answer, the image is judged by the policy last known, and
+before one was ever known by its signature and digest alone.
 
 **The stuck-service cordon.** A service container not gone a minute after
 its SIGKILL ends its attempt `SERVICE_STOP_STUCK`, and cordons its Orker with
@@ -6271,9 +6319,18 @@ it, naming `engine.history.max_events`, `engine.continuation.events`,
 `engine.continuation.bytes`, `engine.continuation.restore_timeout` and
 `engine.run_max_in_flight`.
 
+A run whose results the engine records (docs/TASK_IDENTITY.md) has two terms
+more, both of R = 32 events, what one read or write of a record that the store
+does not answer can add to the run's history. F gains R, for the one record
+a child run of this kind writes at its end, so its X(W) loses R/p, 4 tasks;
+and each open await reserves 24 + 2R + 8 = 96 events in place of 24, its
+deadline's two reads and the two timers they share. A read a run makes because it was told of an
+answer is in neither: the guard is asked before it is made.
+
 What X does not cover: it counts plain tasks only — awaits (24 reserved each,
-outside the in-flight cap), pins, fan-outs, composed tasks and failure
-handlers keep more back and trip the guard far below X; and it is a bound in
+96 in a run whose results the engine records, outside the in-flight cap), pins,
+fan-outs, composed tasks and failure handlers keep more back and trip the guard
+far below X; and it is a bound in
 events only. The bytes form of the same arithmetic is derived, not measured,
 and above the events form at the defaults (about 5,990 for 16 KiB dispatches
 in a flat stage, 8,350 for 256 KiB in a deep one, each dispatch charged its
@@ -6991,6 +7048,23 @@ which are the engine's fault and never the task's. Alert on any increase.
 engine to record (`CommitResult`) by `reason`: the same closed set as
 `ork.identity.mints`, and `COMMIT_IDENTITY_MISMATCH`
 ([TASK_IDENTITY.md](./TASK_IDENTITY.md#results-the-engine-records)).
+
+An Orker's own, on its default sink, each with its `ork.orker_id` and no
+namespace, run, task or identity name: `ork.identity.refresh` counts each
+refresh of an attempt's tokens after its first ones by `outcome`, `refreshed`,
+`retried`, `ended` (the attempt) or `stopped` (a `best_effort` identity was
+revoked); `ork.identity.token.margin` is a histogram of the seconds of life the
+token nearest its end had left when a refresh replaced it, below zero for one
+that had expired; `ork.identity.clock_skew` counts the tokens issued more than
+30 s from the Orker's clock; `ork.identity.engine_refused` counts the engine's
+answers that refused the Orker itself, to a mint or to a task's result, by
+`ork.refused`, `refused` (its credential, its role or the engine is wrong) or
+`invalid` (the engine could not read what it sent); `ork.result.commit.wait` is
+a histogram of the seconds an attempt waited for an engine to record its result,
+by `outcome`, `recorded`, `not_recorded` (the wait ran out and no record was
+found) or `refused` (an engine's answer ended the attempt), and none for one
+stopped while it waited; and `ork.result.upstream_unrecorded`
+counts the attempts that failed `UPSTREAM_RESULT_NOT_RECORDED`.
 
 #### Go runtime metrics
 

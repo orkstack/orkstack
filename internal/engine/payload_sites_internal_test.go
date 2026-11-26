@@ -170,7 +170,7 @@ var crossSites = map[string]string{
 	"webhook_delivery.go:WebhookDeliveryWorkflow ExecuteActivity":             "a webhook delivery is not a sealed run",
 	"force_cancel_cascade_workflow.go:(*cascade).one ExecuteChildWorkflow":    "a force cancel of a run below is no run: a decision, ids and settings",
 	"force_cancel_workflow.go:(*forceCancel).release SignalExternalWorkflow":  "the gate holds no run's key: a run id and a sequence",
-	"force_cancel_workflow.go:(*forceCancel).publish ExecuteActivity":         "a force cancel is no run: the event says what its record does, or is the run's own ending announced again; its reads hold no run's key, so a sealed run's is not read, and is said to be unpublished",
+	"force_cancel_workflow.go:(*forceCancel).publish ExecuteActivity":         "a force cancel is no run: the event says what its record does, or is the run's own ending announced again; a sealed run's is refused (errForceCancelSealed), and is said to be unpublished",
 }
 
 // TestPayloads_EveryCrossWorkflowWriteDecides: every SignalChildWorkflow,
@@ -429,4 +429,61 @@ func siteName(fn *ast.FuncDecl) string {
 		}
 	}
 	return name
+}
+
+// plainReads is every function of a reader that reads a payload with the
+// reader's own converter, which opens nothing, and why.
+var plainReads = map[string]string{
+	"reader.go:(*TemporalRunReader).searchKeyword":                  "a search attribute: plaintext by design",
+	"reader.go:(*TemporalRunReader).memoString":                     "a memo field: plaintext by design",
+	"force_cancel_activities.go:(*ForceCancelActivities).ownEnding": "never a sealed run's, which Publish refuses: what it answers is in the force cancel's own history",
+	"reader_payload.go:(*TemporalRunReader).runConverter":           "what the run's converter is made of",
+}
+
+// TestPayloads_AReaderReadsARunsPayloadsWithItsOwnConverter: what a run's
+// history holds is read with the converter that opens it for the run asked
+// for (runConverter); a read with the reader's own sees nothing of a sealed
+// run. A new one is decided here.
+func TestPayloads_AReaderReadsARunsPayloadsWithItsOwnConverter(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	fset := token.NewFileSet()
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "converter" {
+					x, ok := sel.X.(*ast.Ident)
+					of, isField := sel.X.(*ast.SelectorExpr)
+					if ok && x.Name == "r" || isField && of.Sel.Name == "reader" {
+						found[f+":"+siteName(fn)] = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	for site := range found {
+		if _, ok := plainReads[site]; !ok {
+			t.Errorf("%s reads with the reader's own converter", site)
+		}
+	}
+	for site := range plainReads {
+		if !found[site] {
+			t.Errorf("%s is listed and reads with none", site)
+		}
+	}
 }

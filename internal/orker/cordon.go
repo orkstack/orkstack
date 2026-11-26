@@ -365,19 +365,51 @@ func (s *cordonSlotSupplier) MaxSlots() int                             { return
 // ceiling (Options.MaxConcurrent — the same number DescribeOrker reports) and
 // is wrapped by the cordon.
 func (a *Activities) WorkerTuner() (worker.WorkerTuner, error) {
+	if a.capacity != nil {
+		return a.tuner(int(a.maxConc), &a.capacity.channelLedger)
+	}
+	return a.tuner(int(a.maxConc), nil)
+}
+
+// SourceWorkerTuner is WorkerTuner of the worker that polls the source channel:
+// its activity slots are the instances this Orker hosts at once.
+func (a *Activities) SourceWorkerTuner() (worker.WorkerTuner, error) {
+	if a.capacity != nil {
+		return a.tuner(a.sourceHost.MaxInstances, a.capacity.source)
+	}
+	return a.tuner(a.sourceHost.MaxInstances, nil)
+}
+
+// SourceWorkerOptions is base made the source worker's: it runs no workflow, keeps
+// one poll, and has the cordon's slots and interceptor, as the task worker has.
+func (a *Activities) SourceWorkerOptions(base worker.Options) (worker.Options, error) {
+	tuner, err := a.SourceWorkerTuner()
+	if err != nil {
+		return worker.Options{}, err
+	}
+	base.DisableRegistrationAliasing, base.DisableWorkflowWorker = true, true
+	base.MaxConcurrentActivityTaskPollers = 1
+	base.Identity, base.Tuner = a.dispatcher.OrkerID, tuner
+	base.Interceptors = []interceptor.WorkerInterceptor{a.WorkerInterceptor()}
+	return base, nil
+}
+
+// tuner is a worker's Tuner with slots for activities, over the ledger of the
+// channel it polls where this Orker declares a capacity. A declared capacity
+// replaces the fixed count with the ledger, which holds both the count and the
+// capacity (capacity.go).
+func (a *Activities) tuner(slots int, ch *channelLedger) (worker.WorkerTuner, error) {
 	fixed := func(n int) (worker.SlotSupplier, error) { return worker.NewFixedSizeSlotSupplier(n) }
 	workflowSlots, err := fixed(sdkDefaultSlots)
 	if err != nil {
 		return nil, err
 	}
-	activitySlots, err := fixed(int(a.maxConc))
+	activitySlots, err := fixed(slots)
 	if err != nil {
 		return nil, err
 	}
-	if a.capacity != nil {
-		// A declared capacity replaces the fixed count with the ledger,
-		// which holds both the count and the capacity (capacity.go).
-		activitySlots = &capacitySlotSupplier{c: a.capacity, cordon: a.cordon}
+	if ch != nil {
+		activitySlots = &capacitySlotSupplier{c: a.capacity, ch: ch, cordon: a.cordon}
 	}
 	localSlots, err := fixed(sdkDefaultSlots)
 	if err != nil {
@@ -518,18 +550,27 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		}
 		defer admission.Done()
 		return i.Next.ExecuteActivity(ctx, in)
+	case task.ActivityHostEventSource:
+		// Its result is owed as a task's is, so a stopping Orker does not exit
+		// with it unsent; it writes no commit, so it is never remembered as a
+		// success.
+		i.a.instances.add()
+		defer i.a.instances.done()
+		defer func() { i.a.oweReport(ctx, info, err, false) }()
+		admission, err := i.a.admitInstance(info.TaskQueue, in)
+		if err != nil {
+			return nil, err
+		}
+		defer admission.Done()
+		return i.Next.ExecuteActivity(withAdmission(ctx, admission), in)
 	case sessionCreationActivityName:
 	default:
-		// Anything else polled on the pool channel (DescribeOrker) holds a
-		// permit's reservation and runs no container: it is trimmed to
-		// nothing.
-		if i.a.capacity != nil && info.TaskQueue == i.a.taskQueue {
-			admission, err := i.a.admit(info.TaskQueue, amount{})
-			if err != nil {
-				return nil, err
-			}
-			defer admission.Done()
+		// Anything else: admitUnsized.
+		admission, err := i.a.admitUnsized(info.TaskQueue)
+		if err != nil {
+			return nil, err
 		}
+		defer admission.Done()
 		return i.Next.ExecuteActivity(ctx, in)
 	}
 
@@ -628,8 +669,56 @@ func (a *Activities) admit(queue string, request amount) (*Admission, error) {
 	if a.capacity == nil {
 		return nil, nil
 	}
-	admission, err := a.capacity.admit(queue == a.taskQueue, request)
+	admission, err := a.capacity.admit(a.polledOn(queue), request)
 	return admission, a.refusedBeforeRead(err)
+}
+
+// polledOn is the ledger of the channel an activity was polled on; nil for one
+// whose polls reserve nothing, a pin's.
+func (a *Activities) polledOn(queue string) *channelLedger {
+	switch {
+	case queue == a.taskQueue:
+		return &a.capacity.channelLedger
+	case queue == a.sourceQueue:
+		return a.capacity.source
+	}
+	return nil
+}
+
+// admitUnsized admits an activity of no request this Orker can read. On the
+// pool's channel that is DescribeOrker, which runs no container: its permit's
+// reservation is trimmed to nothing. One of the source channel keeps its
+// permit's, because what it runs is not known. A pin's holds no permit.
+func (a *Activities) admitUnsized(queue string) (*Admission, error) {
+	if a.capacity == nil {
+		return nil, nil
+	}
+	switch ch := a.polledOn(queue); ch {
+	case nil:
+		return nil, nil
+	case a.capacity.source:
+		return a.admit(queue, ch.ceiling)
+	default:
+		return a.admit(queue, amount{})
+	}
+}
+
+// admitInstance is admit for an attempt of an event source's instance: the
+// request its input names, or its whole poll where that does not read or is more,
+// which its own check then says.
+func (a *Activities) admitInstance(queue string, in *interceptor.ExecuteActivityInput) (*Admission, error) {
+	if a.capacity == nil || len(in.Args) != 1 {
+		return a.admitUnsized(queue)
+	}
+	input, ok := in.Args[0].(*orkstackv1.HostEventSourceInput)
+	if !ok {
+		return a.admitUnsized(queue)
+	}
+	request, err := instanceRequest(input.GetResources().GetCpu(), input.GetResources().GetMemory())
+	if ch := a.polledOn(queue); err != nil || request == (amount{}) || ch == nil || request.exceeds(ch.ceiling) {
+		return a.admitUnsized(queue)
+	}
+	return a.admit(queue, request)
 }
 
 // admitTask is admit for an ExecuteTask attempt: its resolved request, where
@@ -648,7 +737,7 @@ func (a *Activities) admitTask(queue string, in *interceptor.ExecuteActivityInpu
 		a.dispatcher.logger().Error("a task's input reached the interceptor in a form it does not read; its whole poll is reserved",
 			"arguments", len(in.Args), "type", fmt.Sprintf("%T", slices.Concat(in.Args, []any{nil})[0]))
 	}
-	admission, err := a.capacity.admitUnknown(queue == a.taskQueue)
+	admission, err := a.capacity.admitUnknown(a.polledOn(queue))
 	return admission, a.refusedBeforeRead(err)
 }
 
@@ -867,8 +956,11 @@ func (a *Activities) CordonOrker(ctx context.Context, in *orkstackv1.CordonOrker
 	logger := a.dispatcher.logger()
 	if in.GetCordoned() {
 		a.cordon.Set(in.GetReason(), time.Now())
+		// An instance takes new work for as long as it runs: it moves.
+		evicted := a.evictInstances(ReasonOrkerCordoned, "this Orker is cordoned: "+in.GetReason())
 		logger.Info("orker cordoned",
 			"reason", in.GetReason(),
+			"instances_evicted", evicted,
 			"running_tasks", a.running.load(),
 			"open_pins", len(a.pins.snapshot()))
 	} else {

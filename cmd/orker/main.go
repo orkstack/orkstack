@@ -33,6 +33,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/orker/sourcehost"
 	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/provider"
@@ -923,6 +924,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 
 	opts := orkerOptions(cfg, tcfg, sinks, logStore, logOptions, attemptStore, commitStore, refPredictor, logger)
+	// The engine's records of awaited and composed tasks, which this Orker
+	// only reads.
+	if opts.Records, err = artifacts.NewRecordStore(ctx, artifacts.ConfigFromEnv()); err != nil {
+		return err
+	}
 	// The line indexes of fan-outs over an artifact's lines: written beside
 	// the fan-out's commit, under the same prefix, by IndexEachLines.
 	eachIndexes, err := artifacts.NewEachIndexStore(ctx, artifacts.ConfigFromEnv())
@@ -930,6 +936,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	opts.EachIndexes = eachIndexes
+	if opts.SourceQueue, err = sourceQueue(cfg); err != nil {
+		return err
+	}
 	// Each run tree's run-context object, which a task's task.json is
 	// filled from: written at submit by an engine, and read by key alone.
 	runContexts, err := artifacts.NewRunContextStore(ctx, artifacts.ConfigFromEnv())
@@ -984,10 +993,6 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// leave the one case nothing else collects — a pinned input that reached a
 	// non-pin-hosting Orker's ordinary queue — with no collector at all.
 	go activities.SweepPinLeases(ctx)
-	// The reach probe of an Orker that hosts services: until it has answered
-	// clean the Orker reports itself unfit, and it asks again every hour at an
-	// offset of its own (docs/DEPLOY.md, "Source hosts").
-	go activities.RunReachProbes(ctx, adminAddr, cfg.temporalAddress)
 	// The store watch: while object storage does not answer this Orker it holds
 	// its own cordon, so tasks wait for it without using an attempt. It ticks on
 	// the same signal context, and it is one goroutine and one small request
@@ -1007,6 +1012,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			logger.Warn("telemetry: the Orker's interruption metric could not be built; it is not exported", "error", err)
 		} else {
 			activities.Dispatcher().Interruptions = metrics
+		}
+		// What the attempts of runs that hold an identity meet
+		// (ork.identity.*, ork.result.*).
+		if metrics, err := telemetry.NewOrkerIdentityMetrics(sinks.Default(), activities.Dispatcher().OrkerID); err != nil {
+			logger.Warn("telemetry: the Orker's identity metrics could not be built; they are not exported", "error", err)
+		} else {
+			activities.Dispatcher().Identities = metrics
 		}
 		if metrics, err := telemetry.NewStopWatchMetrics(sinks.Default(), activities.Dispatcher().OrkerID); err != nil {
 			logger.Warn("telemetry: the Orker's stop-watch failure metric could not be built; it is not exported", "error", err)
@@ -1042,7 +1054,23 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// The mint every attempt asks, at most max_concurrent at once.
 		activities.Dispatcher().SetIdentityMint(orker.NewIdentityMinter(engine, cfg.identity.MaxConcurrent))
 		activities.Dispatcher().SetResultCommit(orker.NewResultCommitter(engine))
+		// What its instances of event sources converse with the engine through
+		// and leave in the store (docs/EVENT_SOURCES.md).
+		if cfg.sourceHost.HostsSources() {
+			hosting, done, err := sourceHosting(ctx, cfg, engine, logStore, attemptStore)
+			if err != nil {
+				return err
+			}
+			defer done()
+			activities.SetHosting(hosting)
+			go activities.RunHostPermissionCheck(ctx, engine)
+		}
 	}
+	// The reach probe of an Orker that hosts services: until it has answered
+	// clean the Orker reports itself unfit, and it asks again every hour at an
+	// offset of its own (docs/DEPLOY.md, "Source hosts"). It asks the engine, set
+	// above, what its image is held to.
+	go activities.RunReachProbes(ctx, adminAddr, cfg.temporalAddress)
 	// What a task's grants log in to (docs/PROVIDERS.md).
 	activities.Dispatcher().SetProviders(cfg.providers, cfg.identity.ProviderMaxConcurrent, cfg.identity.ProviderCallTimeout)
 	// The periodic profile audit: every audit_interval, each device of an
@@ -1063,6 +1091,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	taskWorker := worker.New(temporalClient, cfg.queue, taskOptions)
 	activities.RegisterTaskActivities(taskWorker)
 
+	// The source worker, of an Orker that hosts event sources: it polls the
+	// pool's source channel and runs its instances.
+	stopSources := func() {}
+	var sourceWorker worker.Worker
+	if opts.SourceQueue != "" {
+		options, err := activities.SourceWorkerOptions(cfg.deployment.Apply(worker.Options{}))
+		if err != nil {
+			return fmt.Errorf("build the source worker's options: %w", err)
+		}
+		sourceWorker = worker.New(temporalClient, opts.SourceQueue, options)
+		activities.RegisterSourceActivities(sourceWorker)
+	}
 	// The control and presence workers are built before anything starts, so a
 	// refusal leaves nothing polling.
 	controlWorker, presenceWorker, err := orker.NewChannelWorkers(temporalClient, activities)
@@ -1086,6 +1126,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	defer func() {
 		// Stop cancels every running task and returns at once; the tasks then
 		// stop on their own goroutines, and the process must outlive them.
+		stopSources()
 		stopTasks()
 		awaitStoppedTasks(logger, activities)
 		awaitOwedReports(logger, activities)
@@ -1096,6 +1137,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			presenceWorker.Stop()
 		}
 	}()
+	if sourceWorker != nil {
+		if err := sourceWorker.Start(); err != nil {
+			return err
+		}
+		stopSources = sync.OnceFunc(sourceWorker.Stop)
+	}
 	if err := controlWorker.Start(); err != nil {
 		return err
 	}
@@ -1124,6 +1171,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"max_pins", cfg.maxPins,
 		// How many tasks this Orker runs at once (orker.max_concurrent).
 		"max_concurrent", cfg.maxConcurrent,
+		// How many instances of event sources it hosts at once; 0 is none.
+		"max_instances", cfg.sourceHost.MaxInstances,
 		// Whether this Orker cordons itself while object storage does not
 		// answer, and how soon.
 		"store_check", cfg.storeWatch.Enabled,
@@ -1184,10 +1233,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// new pin, while running tasks and pins opened before the signal carry on
 	// for the grace.
 	stopping := activities.BeginStop(orker.StopSequence{
-		Grace:      cfg.stopGrace,
-		EndGrace:   endGrace,
-		StopWorker: stopTasks,
-		Warnings:   stopWarnings,
+		Grace:       cfg.stopGrace,
+		EndGrace:    endGrace,
+		StopWorker:  stopTasks,
+		StopSources: stopSources,
+		Warnings:    stopWarnings,
 	})
 	go countStopSignals(arrivals, firstSignal, func() {
 		logger.Info("a stop signal within a second of the last one is the same stop; send another to end the grace")
@@ -1456,6 +1506,38 @@ func orkerPolicy(cfg config, tcfg telemetry.Config) orker.SecurityPolicy {
 		vars = append(vars, orker.OwnVar{Name: name, Why: "its telemetry credentials"})
 	}
 	return orker.SecurityPolicyFromEnv().WithOwnPaths(paths...).WithOwnVars(vars...)
+}
+
+// sourceQueue is the channel this Orker polls for instances of event sources, ""
+// where it hosts none.
+func sourceQueue(cfg config) (string, error) {
+	if !cfg.sourceHost.HostsSources() {
+		return "", nil
+	}
+	queue, err := task.QueueForSource("", cfg.queue)
+	if err != nil {
+		return "", fmt.Errorf("this Orker's source channel: %w", err)
+	}
+	return queue, nil
+}
+
+// sourceHosting is what an Orker that hosts event sources hosts them with, and
+// what closes it.
+func sourceHosting(ctx context.Context, cfg config, engine *orker.EngineClient, logs artifacts.LogStore, attempts artifacts.AttemptStore) (orker.SourceHosting, func(), error) {
+	records, err := artifacts.NewEventSourceRecordStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return orker.SourceHosting{}, nil, err
+	}
+	instanceLogs, ok := logs.(orker.InstanceLogStore)
+	if !ok {
+		return orker.SourceHosting{}, nil, fmt.Errorf("the log store %T keeps no instance's log", logs)
+	}
+	instanceAttempts, ok := attempts.(orker.InstanceAttemptStore)
+	if !ok {
+		return orker.SourceHosting{}, nil, fmt.Errorf("the attempt store %T keeps no instance's record", attempts)
+	}
+	conn := sourcehost.NewHostConn(engine.DialHost)
+	return orker.SourceHosting{Engine: engine, Conn: conn, Records: records, Logs: instanceLogs, Attempts: instanceAttempts, Deployment: cfg.deployment.Name}, conn.Close, nil
 }
 
 // storeOutageObserver is the store watch's metrics

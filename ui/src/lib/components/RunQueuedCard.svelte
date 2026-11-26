@@ -17,8 +17,10 @@
 	interface Props {
 		queued: ConcurrencyQueued;
 		runHref: (runId: string) => string;
+		/** The key's own address on Operate's Concurrency page. */
+		limitHref: (key: string) => string;
 	}
-	let { queued, runHref }: Props = $props();
+	let { queued, runHref, limitHref }: Props = $props();
 
 	const behind = $derived(queuedBehind(queued));
 	const timesOut = $derived(queued.timesOutAt);
@@ -30,7 +32,7 @@
 	{#if !arrival}<p class="lead" data-testid="run-queued-headline">{queuedHeadline(queued)}</p>{/if}
 	<dl class="qkv">
 		<dt>Key</dt>
-		<dd class="font-mono" data-testid="run-queued-key">{queued.key}</dd>
+		<dd class="font-mono" data-testid="run-queued-key"><a href={limitHref(queued.key)}>{queued.key}</a></dd>
 		<dt>Limit</dt>
 		<dd data-testid="run-queued-limit"><span class="num">{queued.limit}</span> {queued.limit === 1 ? 'run' : 'runs'} at once</dd>
 		<dt>Place</dt>

@@ -148,7 +148,7 @@ func TestLeanHistory_TaskStartedCarriesItsScheduledURI(t *testing.T) {
 				if !reader.isPublishEvent(event) {
 					continue
 				}
-				published, uri, err := reader.decodePublishEvent("", event)
+				published, uri, err := decodePublishEvent(reader.converter, "", event)
 				must.OKf(t, err, "decode a recorded publish")
 				if published.Item != nil {
 					continue

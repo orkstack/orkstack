@@ -37,7 +37,7 @@ func (s *Service) checkIdentityAtSubmit(ctx context.Context, ns *orkstackv1.Name
 		return nil, nil
 	}
 	if err := s.checkSubjects(ns, wf, owner); err != nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		return nil, connect.NewError(connect.CodeFailedPrecondition, unlessTyped(refusalPause, "IDENTITY_SUBJECT_INVALID", err))
 	}
 	p, err := s.namespacePolicy(ctx, ns)
 	if err != nil {
@@ -52,9 +52,9 @@ func (s *Service) checkIdentityAtSubmit(ctx context.Context, ns *orkstackv1.Name
 			return nil, orkflowStoreError(err, "the current version of orkflow %q in namespace %q", wf.GetName(), owner)
 		}
 		if current.GetVersion() != wf.GetVersion() {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			return nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IDENTITY_NOT_PERMITTED", fmt.Errorf(
 				"%s: namespace %q lets only an Orkflow's current version hold identities, and %s@%s is not current (%s is)",
-				identity.ReasonNotPermitted, ns.GetName(), wf.GetName(), wf.GetVersion(), current.GetVersion()))
+				identity.ReasonNotPermitted, ns.GetName(), wf.GetName(), wf.GetVersion(), current.GetVersion())))
 		}
 	}
 	used, err := s.checkGrants(ctx, ns, p, wf, owner, rootOrigin, true)
@@ -166,7 +166,7 @@ func (s *Service) checkStoreScopedForIdentity(ctx context.Context) error {
 	}
 	fleet, err := engine.ReadFleet(ctx, s.fleet)
 	if err != nil {
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("the Orker inventory could not be read: %w", err))
+		return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("the Orker inventory could not be read: %w", err)))
 	}
 	unscoped := engine.UnscopedOrkers(fleet)
 	if len(unscoped) == 0 {
@@ -176,10 +176,10 @@ func (s *Service) checkStoreScopedForIdentity(ctx context.Context) error {
 	for _, u := range unscoped {
 		names = append(names, u.OrkerID+" ("+u.Verdict+")")
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+	return connect.NewError(connect.CodeFailedPrecondition, refused(refusalWait, waitPool, fmt.Errorf(
 		"%s: a run that holds an identity is refused while an Orker's storage credential is not confirmed scoped: %s "+
 			"(docs/SECURITY_MODEL.md; identity.unscoped_orkers: report reports them instead)",
-		reasonStoreUnscoped, strings.Join(names, ", ")))
+		reasonStoreUnscoped, strings.Join(names, ", "))))
 }
 
 // treeAsksForIdentity reports whether wf or any Orkflow it composes holds
@@ -253,18 +253,18 @@ func (s *Service) checkedBinder(ctx context.Context, ns *orkstackv1.Namespace, m
 	if !st.verified || st.binder == "" || st.binding == nil {
 		if origin.GetKind() == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE {
 			// No save of a source records a binding yet, so no rebind helps.
-			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			return nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IDENTITY_STARTER_NOT_RECORDED", fmt.Errorf(
 				"%s: event source %s records no binding that let it bind, so a run it starts of Orkflow %s holds no identity in this release",
-				reasonStarterNotRecorded, st.name, orkflow))
+				reasonStarterNotRecorded, st.name, orkflow)))
 		}
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IDENTITY_STARTER_NOT_RECORDED", fmt.Errorf(
 			"%s: %s %s has no verified binder recorded with the binding that let it bind; rebind it as a principal who may submit Orkflow %s: `orkctl %s update %s --rebind`",
-			reasonStarterNotRecorded, st.kind, st.name, orkflow, st.kind, st.name))
+			reasonStarterNotRecorded, st.kind, st.name, orkflow, st.kind, st.name)))
 	}
 	s.access.init()
 	policy, unavailable := s.access.policy(ctx)
 	if unavailable {
-		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("the access document could not be read to judge %s %s's binder", st.kind, st.name))
+		return nil, connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("the access document could not be read to judge %s %s's binder", st.kind, st.name)))
 	}
 	res, err := s.withIDs(ctx, policy, authz.Resource{Namespace: ns.GetName(), Orkflow: orkflow})
 	if err != nil {
@@ -272,18 +272,18 @@ func (s *Service) checkedBinder(ctx context.Context, ns *orkstackv1.Namespace, m
 	}
 	recorded := authz.BinderBinding{Name: st.binding.Name, Selector: st.binding.Selector, Role: st.binding.Role, Scope: st.binding.Scope}
 	if ok, why := policy.StillGrants(recorded, st.binder, authz.PermRunSubmit, res); !ok {
-		return nil, connect.NewError(connect.CodePermissionDenied, fmt.Errorf(
+		return nil, connect.NewError(connect.CodePermissionDenied, refused(refusalPause, "IDENTITY_STARTER_NOT_PERMITTED", fmt.Errorf(
 			"%s: %s %s's binder %s may no longer submit Orkflow %s: %s; rebind it as a principal who may",
-			reasonStarterNotPermitted, st.kind, st.name, st.binder, orkflow, why))
+			reasonStarterNotPermitted, st.kind, st.name, st.binder, orkflow, why)))
 	}
 	asks, err := s.asksFor(ctx, ns.GetName(), orkflow, msg.GetOrkflowVersion())
 	if err != nil {
 		return nil, err
 	}
 	if st.consent.Digest != asks.Digest {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IDENTITY_STARTER_NOT_CONSENTED", fmt.Errorf(
 			"%s: what Orkflow %s asks for is not what %s %s's consent covers: %s. Consent with `orkctl %s update %s --consent=%s`",
-			reasonStarterNotConsented, orkflow, st.kind, st.name, consent.Difference(st.consent.view(), asks), st.kind, st.name, asks.Digest))
+			reasonStarterNotConsented, orkflow, st.kind, st.name, consent.Difference(st.consent.view(), asks), st.kind, st.name, asks.Digest)))
 	}
 	return &artifacts.AdmittedBinder{Principal: st.binder, Verified: st.verified, Binding: *st.binding}, nil
 }
@@ -300,7 +300,7 @@ func (s *Service) readStarter(ctx context.Context, ns string, msg *orkstackv1.Su
 		}
 		doc, err := s.scheduleBindings.Get(ctx, ns, origin.GetId())
 		if err != nil {
-			return st, connect.NewError(connect.CodeUnavailable, fmt.Errorf("schedule %s's record could not be read: %w", st.name, err))
+			return st, connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("schedule %s's record could not be read: %w", st.name, err)))
 		}
 		held, err := scheduleSubmission(&orkstackv1.ScheduleRecord{OrkflowName: msg.GetOrkflowName(), OrkflowVersion: msg.GetOrkflowVersion(), Input: msg.GetInput()})
 		if err != nil {
@@ -313,7 +313,7 @@ func (s *Service) readStarter(ctx context.Context, ns string, msg *orkstackv1.Su
 	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER:
 		t, found, err := s.triggers.Get(ctx, origin.GetId())
 		if err != nil {
-			return starter{}, connect.NewError(connect.CodeUnavailable, fmt.Errorf("trigger %s's record could not be read: %w", origin.GetId(), err))
+			return starter{}, connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("trigger %s's record could not be read: %w", origin.GetId(), err)))
 		}
 		st := starter{kind: "trigger", name: origin.GetId()}
 		if !found {
@@ -346,7 +346,7 @@ func (s *Service) readSourceStarter(ctx context.Context, ns string, msg *orkstac
 		return st, nil
 	}
 	if err != nil {
-		return st, connect.NewError(connect.CodeUnavailable, fmt.Errorf("event source %s's record could not be read: %w", st.name, err))
+		return st, connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("event source %s's record could not be read: %w", st.name, err)))
 	}
 	pinned := src.GetOrkflowVersion()
 	if src.GetId() != origin.GetId() || src.GetOrkflowName() != msg.GetOrkflowName() || (pinned != "" && pinned != msg.GetOrkflowVersion()) {

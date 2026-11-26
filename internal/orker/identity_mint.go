@@ -52,8 +52,8 @@ type mintAnswer struct {
 	Reason   string
 	Category string
 	Then     mintThen
-	// Count is how ork.identity.engine_refused counts the answer: "refused",
-	// "invalid", or "" for an answer that is not the engine's refusal of the
+	// Count is how ork.identity.engine_refused counts the answer:
+	// EngineRefusedOrker, EngineCouldNotRead, or "" for an answer that is not the engine's refusal of the
 	// Orker itself.
 	Count string
 	// Message says what the engine answered, for the attempt's failure.
@@ -80,9 +80,9 @@ func mapMintAnswer(err error, orkerBuild string) mintAnswer {
 	msg := cerr.Message()
 	switch cerr.Code() {
 	case connect.CodeUnauthenticated, connect.CodePermissionDenied, connect.CodeUnimplemented:
-		return mintRow(identity.ReasonEngineRefused, mintAskAgain, "refused", "the engine refused this Orker ("+cerr.Code().String()+"): "+msg)
+		return mintRow(identity.ReasonEngineRefused, mintAskAgain, EngineRefusedOrker, "the engine refused this Orker ("+cerr.Code().String()+"): "+msg)
 	case connect.CodeInvalidArgument:
-		return mintRow(identity.ReasonEngineRefused, mintAskAgain, "invalid", "the engine could not read this Orker's request: "+msg)
+		return mintRow(identity.ReasonEngineRefused, mintAskAgain, EngineCouldNotRead, "the engine could not read this Orker's request: "+msg)
 	case connect.CodeFailedPrecondition:
 	default:
 		return mintRow(identity.ReasonUnavailable, mintAskAgain, "", "the engine could not answer ("+cerr.Code().String()+"): "+msg)
@@ -90,7 +90,7 @@ func mapMintAnswer(err error, orkerBuild string) mintAnswer {
 	reason, _, _ := strings.Cut(msg, ":")
 	switch reason {
 	case identity.ReasonEngineRefused:
-		return mintRow(reason, mintAskAgain, "refused", msg)
+		return mintRow(reason, mintAskAgain, EngineRefusedOrker, msg)
 	case identity.ReasonAttemptNotHeld, identity.ReasonNotAdmitted:
 		return mintRow(reason, mintAskAgain, "", msg)
 	case identity.ReasonTaskNotAsAdmitted:
@@ -99,7 +99,7 @@ func mapMintAnswer(err error, orkerBuild string) mintAnswer {
 				fmt.Sprintf("%s (this Orker's build %q, the admitting engine's %q)", msg, orkerBuild, engine))
 		}
 		return mintRow(reason, mintEnd, "", msg)
-	case identity.ReasonAttemptsExhausted, identity.ReasonAttemptExpired:
+	case identity.ReasonAttemptsExhausted, identity.ReasonAttemptExpired, identity.ReasonRequiredResultNotRecorded:
 		return mintRow(reason, mintEnd, "", msg)
 	case identity.ReasonRevoked:
 		return mintRow(reason, mintStop, "", msg)

@@ -29,6 +29,9 @@ var (
 
 func newTestCapacity() *Capacity { return newCapacity(testLimit, testCeiling, 16) }
 
+// tryReserve grants a slot of the tasks' channel, or nothing.
+func (c *Capacity) tryReserve() *worker.SlotPermit { return c.tryReserveOn(&c.channelLedger) }
+
 func (c *Capacity) reservedNow() amount {
 	_, reserved := c.snapshot()
 	return reserved
@@ -80,7 +83,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 		"a task that ran a container": func(t *testing.T, c *Capacity) {
 			p := mustReserve(t, c)
 			c.markUsed(p)
-			a, err := c.admit(true, small)
+			a, err := c.admit(&c.channelLedger, small)
 			must.OK(t, err)
 			wantReserved(t, c, "admit", small)
 			a.ContainerCreated("c1")
@@ -92,7 +95,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 		"a task that ran no container": func(t *testing.T, c *Capacity) {
 			p := mustReserve(t, c)
 			c.markUsed(p)
-			a, _ := c.admit(true, small)
+			a, _ := c.admit(&c.channelLedger, small)
 			a.Done()
 			wantReserved(t, c, "done", amount{})
 			c.release(p)
@@ -106,7 +109,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 		"a permit released before its task's container is removed": func(t *testing.T, c *Capacity) {
 			p := mustReserve(t, c)
 			c.markUsed(p)
-			a, _ := c.admit(true, small)
+			a, _ := c.admit(&c.channelLedger, small)
 			a.ContainerCreated("c1")
 			c.release(p)
 			wantReserved(t, c, "release before removal", small)
@@ -117,7 +120,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 			never, ran := mustReserve(t, c), mustReserve(t, c)
 			c.markUsed(never)
 			c.markUsed(ran)
-			a, _ := c.admit(true, small)
+			a, _ := c.admit(&c.channelLedger, small)
 			// The never-admitted permit is released first, while the admitted
 			// one's task still runs: the total may over-hold, never under-hold.
 			c.release(never)
@@ -130,7 +133,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 		"a container whose removal failed, reaped later": func(t *testing.T, c *Capacity) {
 			p := mustReserve(t, c)
 			c.markUsed(p)
-			a, _ := c.admit(true, small)
+			a, _ := c.admit(&c.channelLedger, small)
 			a.ContainerCreated("c1")
 			a.ContainerRemoved(removeFailed)
 			a.Done()
@@ -143,7 +146,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 		"a container never reported removed": func(t *testing.T, c *Capacity) {
 			p := mustReserve(t, c)
 			c.markUsed(p)
-			a, _ := c.admit(true, small)
+			a, _ := c.admit(&c.channelLedger, small)
 			a.ContainerCreated("c1")
 			a.Done()
 			c.release(p)
@@ -152,7 +155,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 		},
 		"a pinned member over capacity": func(t *testing.T, c *Capacity) {
 			p, q := mustReserve(t, c), mustReserve(t, c)
-			member, _ := c.admit(false, amount{milli: 3000, bytes: 1 << 30})
+			member, _ := c.admit(nil, amount{milli: 3000, bytes: 1 << 30})
 			if c.reservedNow().within(testLimit) {
 				t.Fatal("a pinned member was not counted")
 			}
@@ -182,7 +185,7 @@ func TestCapacity_ARequestLargerThanItsPollIsRefusedLoudly(t *testing.T) {
 	c := newTestCapacity()
 	p, q := mustReserve(t, c), mustReserve(t, c)
 	c.markUsed(p)
-	_, err := c.admit(true, amount{milli: 3000, bytes: 1 << 30})
+	_, err := c.admit(&c.channelLedger, amount{milli: 3000, bytes: 1 << 30})
 	var failure *Failure
 	if !errors.As(err, &failure) || failure.Reason != ReasonResourceAdmissionMismatch {
 		t.Fatalf("admit = %v, want %s", err, ReasonResourceAdmissionMismatch)
@@ -196,7 +199,7 @@ func TestCapacity_ARequestLargerThanItsPollIsRefusedLoudly(t *testing.T) {
 	// The same request fits when free capacity covers the difference.
 	r := mustReserve(t, c)
 	c.markUsed(r)
-	if _, err := c.admit(true, amount{milli: 3000, bytes: 1 << 30}); err != nil {
+	if _, err := c.admit(&c.channelLedger, amount{milli: 3000, bytes: 1 << 30}); err != nil {
 		t.Fatalf("a larger request with room to spare was refused: %v", err)
 	}
 }
@@ -240,7 +243,7 @@ func TestCapacity_AWaitingPollIsGrantedWhenCapacityFrees(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
-		permit, _ := c.reserve(ctx, nil)
+		permit, _ := c.reserve(ctx, &c.channelLedger, nil)
 		granted <- permit
 	}()
 	awaitWaiting(t, c, 1)
@@ -257,7 +260,7 @@ func TestCapacity_AWaitingPollIsGrantedWhenCapacityFrees(t *testing.T) {
 func TestCapacity_APollParkedForCapacityStillMeetsALaterCordon(t *testing.T) {
 	c := newTestCapacity()
 	cordon := NewCordon()
-	supplier := &capacitySlotSupplier{c: c, cordon: cordon}
+	supplier := &capacitySlotSupplier{c: c, ch: &c.channelLedger, cordon: cordon}
 	first, second := mustReserve(t, c), mustReserve(t, c)
 	granted := make(chan *worker.SlotPermit, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -314,7 +317,8 @@ func TestBoot_RefusesACapacityItCannotHonour(t *testing.T) {
 func TestCapacity_ACordonStillRefusesFirst(t *testing.T) {
 	cordon := NewCordon()
 	cordon.Set("patch window", time.Now())
-	supplier := &cordonSlotSupplier{inner: &capacitySlotSupplier{c: newTestCapacity()}, cordon: cordon}
+	c := newTestCapacity()
+	supplier := &cordonSlotSupplier{inner: &capacitySlotSupplier{c: c, ch: &c.channelLedger}, cordon: cordon}
 	if supplier.TryReserveSlot(nil) != nil {
 		t.Fatal("a cordoned Orker with free capacity granted a poll")
 	}

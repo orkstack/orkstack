@@ -211,7 +211,7 @@ func TestActivities_RetriesARefusedRemovalWithNoCapacityDeclared(t *testing.T) {
 func TestExecute_ADeclaredCapacityAloneOwesARefusedRemoval(t *testing.T) {
 	limit := amount{milli: 4000, bytes: 1 << 32}
 	capacity := newCapacity(limit, amount{milli: 1000, bytes: 1 << 30}, 2)
-	admission, err := capacity.admit(false, amount{milli: 1000, bytes: 1 << 30})
+	admission, err := capacity.admit(nil, amount{milli: 1000, bytes: 1 << 30})
 	must.OK(t, err)
 	runtime := &removalRecorder{failFirst: 1}
 	runtime.createID = "c1"

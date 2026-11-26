@@ -301,6 +301,9 @@ type OwnContainer struct {
 	TaskID  string
 	Item    string // ork.item, the item index of a fan-out; empty otherwise
 	Attempt string // ork.attempt, the attempt's ordinal
+	// Source is ork.source, the event source whose instance it ran; empty for a
+	// task's.
+	Source string
 }
 
 // RuntimeInfo is a runtime's self-description, for DescribeOrker.

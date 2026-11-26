@@ -24,6 +24,10 @@ import (
 // by the change that lands P13d, P13e and P14v together, never earlier.
 var taskIdentityAvailable = false
 
+// TaskIdentityAvailable is whether this build runs task identity, for what a
+// build that does not should not show.
+func TaskIdentityAvailable() bool { return taskIdentityAvailable }
+
 // MaxIdentitiesPerTask is how many identities one task may declare.
 const MaxIdentitiesPerTask = 8
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // An Orker's stop runs in two phases (docs/OCI_ACTIVITY_CONTRACT.md §6.3,
@@ -80,6 +82,9 @@ type StopSequence struct {
 	// StopWorker stops the task worker: its polls, its session workers and
 	// with them every open pin. It is called once, at t1.
 	StopWorker func()
+	// StopSources stops the source worker, once its instances have ended or their
+	// bound has passed; nil where there is none.
+	StopSources func()
 	// ReportEvery is how often the stop says what it still waits for. Zero
 	// is 30 s.
 	ReportEvery time.Duration
@@ -101,7 +106,15 @@ type Stop struct {
 	seq   StopSequence
 	since time.Time
 	ends  time.Time
+	// sources is closed once the source worker has been stopped.
+	sources chan struct{}
 }
+
+// instanceStopBound is how long a stop waits for the instances it evicted at t0: what
+// their own ends may take and their container's grace, and to spare. It is within
+// StopTimeoutTail, beside what that counts. One that has not ended then is removed
+// at the next boot.
+const instanceStopBound = instanceEnds + eventsources.MaxStopSeconds*time.Second + 5*time.Second
 
 // BeginStop is t0: it sets the stopping cordon, and says when the grace ends
 // and what the platform's stop timeout must be, before it returns.
@@ -109,6 +122,9 @@ func (a *Activities) BeginStop(seq StopSequence) *Stop {
 	since := time.Now()
 	ends := since.Add(seq.Grace)
 	a.cordon.SetStopping(since, ends)
+	// An instance takes new work for as long as it runs, so it is evicted now and
+	// not at the grace's end.
+	evicted := a.evictInstances(eventsources.ReasonOrkerStopped, "this Orker is stopping")
 	// The t0 beat, once the cordon's lock is released: every running unpinned
 	// attempt tells the cluster its Orker is stopping, so a loss after it
 	// can be told from one with no stop behind it.
@@ -118,14 +134,36 @@ func (a *Activities) BeginStop(seq StopSequence) *Stop {
 	})
 	a.dispatcher.logger().Info("stopping: taking no new task or pin; running tasks and open pins carry on until the grace ends",
 		"grace", seq.Grace, "grace_ends_at", ends.UTC().Format(time.RFC3339),
-		"running_tasks", a.running.load(), "open_pins", a.pins.count())
+		"running_tasks", a.running.load(), "open_pins", a.pins.count(), "instances_evicted", evicted)
 	a.dispatcher.logger().Warn("running tasks are lost, not handed back, if this process is killed before the grace ends; "+
 		"the platform's stop timeout must be at least the grace plus the stop's tail",
 		"grace", seq.Grace, "tail", StopTimeoutTail, "stop_timeout_at_least", seq.Grace+StopTimeoutTail)
 	for _, warning := range seq.Warnings {
 		a.dispatcher.logger().Warn(warning)
 	}
-	return &Stop{a: a, seq: seq, since: since, ends: ends}
+	s := &Stop{a: a, seq: seq, since: since, ends: ends, sources: make(chan struct{})}
+	go s.stopSources()
+	return s
+}
+
+// stopSources waits for the evicted instances to end and the cluster to take what
+// they returned, then stops the source worker. It runs beside the grace and the
+// hand-backs.
+func (s *Stop) stopSources() {
+	defer close(s.sources)
+	ctx, cancel := context.WithTimeout(context.Background(), instanceStopBound)
+	defer cancel()
+	select {
+	case <-s.a.instances.idle():
+	case <-ctx.Done():
+		s.a.dispatcher.logger().Error("instances of event sources did not end within their stop; what is left of one is removed at the next boot",
+			"instances", s.a.instances.load(), "waited", instanceStopBound)
+	}
+	if s.seq.StopSources == nil {
+		return
+	}
+	s.awaitOwedBeforeStop()
+	s.seq.StopSources()
 }
 
 // Finish waits out the grace, then is t1: the sweep, the worker's stop, and the
@@ -162,6 +200,7 @@ func (s *Stop) Finish() StopOutcome {
 	if handedBack > 0 {
 		logger.Info("every handed-back task has reported", "took", time.Since(started).Round(time.Millisecond))
 	}
+	<-s.sources
 	return StopOutcome{Ended: ended, HandedBack: handedBack}
 }
 

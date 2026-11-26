@@ -41,6 +41,13 @@ func NewBreakers(rejectLimit int, trial string) *Breakers {
 	return &Breakers{rejectLimit: rejectLimit, trial: trial, rejected: map[string]bool{}}
 }
 
+// RejectAt changes the reject breaker's limit.
+func (b *Breakers) RejectAt(limit int) {
+	if b.rejectLimit = limit; limit == 0 {
+		clear(b.rejected)
+	}
+}
+
 // OnTrial reports the breaker the instance is on trial for, "" when none.
 func (b *Breakers) OnTrial() string { return b.trial }
 

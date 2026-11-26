@@ -7,6 +7,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
 )
 
 func TestExplainAccess(t *testing.T) {
@@ -105,5 +106,21 @@ func TestAccessRevisions_HistoryFollowsTheChainFromTheHead(t *testing.T) {
 	}
 	if _, err := h.ListAccessRevisions(ctx, connect.NewRequest(&orkstackv1.ListAccessRevisionsRequest{PageToken: "garbage"})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("a malformed page token = %v; want invalid_argument", err)
+	}
+}
+
+// TestExplainMatch_NamesEveryOne: every reason a binding did or did not grant
+// has a value of its own on the wire, and none is left for nothing.
+func TestExplainMatch_NamesEveryOne(t *testing.T) {
+	named := map[orkstackv1.BindingMatch]authz.Match{}
+	for m := authz.MatchGranted; m <= authz.MatchSharedOrkerCredential; m++ {
+		on, ok := explainMatch[m]
+		if _, twice := named[on]; !ok || on == orkstackv1.BindingMatch_BINDING_MATCH_UNSPECIFIED || twice {
+			t.Errorf("match %d is %v on the wire", m, on)
+		}
+		named[on] = m
+	}
+	if want := len(orkstackv1.BindingMatch_name) - 1; len(named) != want || len(explainMatch) != want {
+		t.Errorf("%d of %d values are answered, by %d rows", len(named), want, len(explainMatch))
 	}
 }

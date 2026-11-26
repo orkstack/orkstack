@@ -184,7 +184,8 @@ A fire whose Orkflow declares `concurrency:` ([DSL.md](DSL.md#concurrency-limits
 may start no run, or its run may never begin, because of the limit. Such a
 fire **completes**, so it never pauses the schedule, and records why as its
 `skip_code` and `skip_message`, shown in the NOTE column of `orkctl schedule
-get` and in `--json`:
+get`, in `--json`, and under the fire on the Orkflow's Schedules tab, which
+marks the fire *skipped*:
 
 | `skip_code` | When |
 |---|---|

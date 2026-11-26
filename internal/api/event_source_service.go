@@ -446,6 +446,7 @@ func clearOutputOnly(src *orkstackv1.EventSource) {
 	src.BoundBy, src.BoundByVerified, src.ConsentStale = "", false, false
 	src.AsksFor, src.Consented = nil, nil
 	src.ServiceRevision, src.JudgingRevision = 0, 0
+	src.DeletingSince = nil
 }
 
 // CreateEventSource stores a new source after every check, with its
@@ -619,6 +620,7 @@ func (s *Service) UpdateEventSource(ctx context.Context, req *connect.Request[or
 	next.Id, next.Namespace = stored.GetId(), stored.GetNamespace()
 	next.Image = checked.image
 	next.Pause = stored.GetPause()
+	next.DeletingSince = stored.GetDeletingSince()
 	next.CreatedAt, next.CreatedBy = stored.GetCreatedAt(), stored.GetCreatedBy()
 	next.UpdatedAt, next.UpdatedBy = now, who
 	next.ServiceRevision, next.JudgingRevision = stored.GetServiceRevision(), stored.GetJudgingRevision()

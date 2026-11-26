@@ -328,3 +328,49 @@ func FuzzMessageClaim(f *testing.F) {
 		}
 	})
 }
+
+// TestMessageClaims_ProbeWrite: the probe writes and removes one object of its
+// own, outside the claims.
+func TestMessageClaims_ProbeWrite(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewLocalMessageClaimStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := &createdKeys{blobs: store.b}
+	store.b = counted
+	for range 2 {
+		if err := store.ProbeWrite(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(counted.keys) != 2 || counted.keys[0] == counted.keys[1] || !strings.HasPrefix(counted.keys[0], MessageClaimProbePrefix+"/") {
+		t.Fatalf("%v", counted.keys)
+	}
+	if left, err := listKeys(context.Background(), store.b, MessageClaimProbePrefix+"/"); err != nil || len(left) != 0 {
+		t.Fatalf("%v, %v", left, err)
+	}
+	counted.err = errors.New("503")
+	if err := store.ProbeWrite(context.Background()); !errors.Is(err, counted.err) {
+		t.Fatalf("%v", err)
+	}
+	counted.err = errBlobExists
+	if err := store.ProbeWrite(context.Background()); err != nil {
+		t.Fatalf("a key that is taken is an answer: %v", err)
+	}
+}
+
+// createdKeys is a backend that notes what is created, or refuses it.
+type createdKeys struct {
+	blobs
+	keys []string
+	err  error
+}
+
+func (c *createdKeys) create(ctx context.Context, key, contentType string, body []byte) error {
+	if c.err != nil {
+		return c.err
+	}
+	c.keys = append(c.keys, key)
+	return c.blobs.create(ctx, key, contentType, body)
+}

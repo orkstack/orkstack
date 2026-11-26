@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
@@ -109,6 +110,20 @@ func TestTemporalRunReader_RunStartDecodesDefinitionAndPlan(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "ork-bad-1") {
 			t.Fatalf("error %q does not name the run", err)
+		}
+		if !errors.Is(err, ErrRunRecordUndecodable) {
+			t.Fatalf("error %v is not ErrRunRecordUndecodable", err)
+		}
+		// Whether a sealed payload opens is the reader's keys', not the run's.
+		for _, at := range []int{1, 3} {
+			payloads := payloadsOf(t, "ork-bad-1", wf, &orkstackv1.Payload{}, plan)
+			payloads.Payloads[at] = &commonpb.Payload{Metadata: map[string][]byte{payloadcrypt.MetaEncoding: []byte(payloadcrypt.Encoding)}, Data: []byte("x")}
+			sealed, _ := readerOver([]*historypb.HistoryEvent{{EventId: 1, EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
+				Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
+					WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{Input: payloads}}}}, "ork-bad-1")
+			if _, err := sealed.RunStart(context.Background(), "ork-bad-1"); err == nil || errors.Is(err, ErrRunRecordUndecodable) {
+				t.Fatalf("a sealed argument %d: %v", at, err)
+			}
 		}
 	})
 }

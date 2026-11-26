@@ -221,6 +221,12 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 	eventSourcePath, eventSourceHandler := orkstackv1connect.NewEventSourceServiceHandler(svc, handlerOptions...)
 	mux.Handle(eventSourcePath, eventSourceHandler)
 
+	// EventSourceHostService is what an Orker that hosts a source's instance
+	// calls. It answers nothing but an Orker's verified credential, and
+	// refuses every call where the deployment does not authenticate callers.
+	sourceHostPath, sourceHostHandler := orkstackv1connect.NewEventSourceHostServiceHandler(svc, handlerOptions...)
+	mux.Handle(sourceHostPath, sourceHostHandler)
+
 	// AutomationService plans and exports a namespace's automation document.
 	// It writes nothing: an apply is the client sending the plan's requests
 	// to the services above.

@@ -92,11 +92,7 @@ func pinnedElsewhere(b Binding, r Resource) bool {
 // grants reports whether b grants perm on r to sub, and the selector that
 // matched.
 func (p *Policy) grants(b Binding, perm Permission, r Resource, sub *Subject) (Selector, bool) {
-	if !b.Scope.covers(r) || pinnedElsewhere(b, r) || !grantableAt(perm, b.Scope.Kind) {
-		return Selector{}, false
-	}
-	perms, ok := p.RolePermissions(b.Role)
-	if !ok || !perms[perm] {
+	if !b.Scope.covers(r) || pinnedElsewhere(b, r) || !p.bindingGrants(b, perm) {
 		return Selector{}, false
 	}
 	for _, sel := range b.Subjects {
@@ -182,11 +178,7 @@ func ByBinding(policy *Policy, principalID string, granted GrantedBinding, perm 
 		if b.Name != granted.Name || b.Rule != granted.Rule {
 			continue
 		}
-		if b.ScopeID != granted.ScopeID || !b.Scope.covers(r) || pinnedElsewhere(b, r) || !grantableAt(perm, b.Scope.Kind) {
-			return decision, denied
-		}
-		perms, ok := policy.RolePermissions(b.Role)
-		if !ok || !perms[perm] {
+		if b.ScopeID != granted.ScopeID || !b.Scope.covers(r) || pinnedElsewhere(b, r) || !policy.bindingGrants(b, perm) {
 			return decision, denied
 		}
 		for _, sel := range b.Subjects {

@@ -591,6 +591,11 @@ func (s *Service) startRun(
 			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again", err))
 		}
 	}
+	// What the run receives is claimed for it before the start that names it.
+	if err := s.claimReceived(ctx, runID, sub.plan.InputArtifacts); err != nil {
+		forgetFresh()
+		return nil, err
+	}
 	// A run whose plan still names the placeholder its size was measured
 	// with was never admitted: it could hold no identity, so it is not
 	// started.

@@ -2,6 +2,8 @@ package artifacts_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -213,4 +215,37 @@ func FuzzEventSourceRecord(f *testing.F) {
 			t.Fatal("paused is derived from the pause")
 		}
 	})
+}
+
+// TestEventSourceStore_ReadSpec: a spec's bytes hash to the digest that names
+// them, or they are no spec; only "not found" is absence.
+func TestEventSourceStore_ReadSpec(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := artifacts.NewLocalEventSourceStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "evs-0123456789abcdef"
+	body := []byte(`{"format":1}`)
+	sum := sha256.Sum256(body)
+	digest := hex.EncodeToString(sum[:])
+	if _, found, err := store.ReadSpec(ctx, id, digest); found || err != nil {
+		t.Fatalf("none stored: %v, %v", found, err)
+	}
+	if err := store.PutSpec(ctx, id, digest, body); err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := store.ReadSpec(ctx, id, digest); err != nil || !found || string(got) != string(body) {
+		t.Fatalf("%s, %v, %v", got, found, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, artifacts.EventSourceSpecPrefix, id, digest+".json"), []byte(`{"format":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := store.ReadSpec(ctx, id, digest); !errors.Is(err, eventsources.ErrSpecCorrupt) || found || got != nil {
+		t.Fatalf("other bytes: %s, %v, %v", got, found, err)
+	}
+	if _, _, err := store.ReadSpec(ctx, id, "../x"); err == nil {
+		t.Fatal("a digest that is not one was read")
+	}
 }

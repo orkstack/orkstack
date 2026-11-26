@@ -54,7 +54,7 @@ func waitThenGrant(t *testing.T, c *Capacity, free func()) *worker.SlotPermit {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
-		permit, _ := c.reserve(ctx, nil)
+		permit, _ := c.reserve(ctx, &c.channelLedger, nil)
 		granted <- permit
 	}()
 	awaitWaiting(t, c, 1)
@@ -106,11 +106,11 @@ func TestCapacity_TellsItsObserverOfEveryRefusal(t *testing.T) {
 	c.observer = obs
 	p, q := mustReserve(t, c), mustReserve(t, c)
 	c.markUsed(p)
-	if _, err := c.admit(true, amount{milli: 3000, bytes: 1 << 30}); err == nil {
+	if _, err := c.admit(&c.channelLedger, amount{milli: 3000, bytes: 1 << 30}); err == nil {
 		t.Fatal("a request larger than its poll with no room was admitted")
 	}
 	c.markUsed(q)
-	if _, err := c.admit(true, small); err != nil {
+	if _, err := c.admit(&c.channelLedger, small); err != nil {
 		t.Fatalf("a request within its poll was refused: %v", err)
 	}
 	if _, refusals := obs.heard(); refusals != 1 {

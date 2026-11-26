@@ -63,6 +63,22 @@ type chaosEngine struct {
 	loseAnswers atomic.Int32
 	calls       atomic.Int32
 	preflights  atomic.Int32
+	// asked is the last preflight, whose coordinates a stolen Orker sends
+	// with a result of its own.
+	asked atomic.Pointer[orkstackv1.CommitResultRequest]
+}
+
+// steal asks the engine, inside the attempt in is of, to record a result the
+// attempt's Orker made up with no container of its own.
+func (e *chaosEngine) steal(ctx context.Context, in *orkstackv1.ExecuteTaskInput) error {
+	req := proto.Clone(e.asked.Load()).(*orkstackv1.CommitResultRequest)
+	req.Preflight = false
+	req.Commit = &orkstackv1.ActivityCommit{SchemaVersion: artifacts.CommitSchemaVersion, Namespace: in.GetNamespace(), RunId: in.GetRunId(),
+		TaskId: in.GetTaskId(), OrkflowName: in.GetOrkflowName(), OrkflowVersion: in.GetOrkflowVersion(),
+		OrkflowDefinitionDigest: in.GetOrkflowDefinitionDigest(), IdempotencyKey: in.GetIdempotencyKey(), Image: in.GetImage(),
+		Attempt: req.GetAttempt(), OrkerId: e.orkerID}
+	_, err := e.svc.CommitResult(e.asOrker(ctx), connect.NewRequest(req))
+	return err
 }
 
 func (e *chaosEngine) asOrker(ctx context.Context) context.Context {
@@ -73,6 +89,7 @@ func (e *chaosEngine) asOrker(ctx context.Context) context.Context {
 func (e *chaosEngine) commit(ctx context.Context, req *orkstackv1.CommitResultRequest) (*orkstackv1.CommitResultResponse, error) {
 	if req.GetPreflight() {
 		e.preflights.Add(1)
+		e.asked.Store(req)
 	} else {
 		e.calls.Add(1)
 		if e.down.Load() {
@@ -106,6 +123,9 @@ type chaosOutcome struct {
 	attempt int32
 	result  *orkstackv1.ExecuteTaskResult
 	err     error
+	// stolen is the engine's answer to a result made up in an attempt of a
+	// run that follows, whose preflight was refused.
+	stolen error
 }
 
 type chaosRig struct {
@@ -124,6 +144,10 @@ type chaosRig struct {
 	dep      *orkstackv1.ExecuteTaskInput
 	runID    string
 	produced atomic.Pointer[orkstackv1.UpstreamRef]
+	// given is the upstream the task of a run that follows is dispatched with.
+	given    atomic.Pointer[orkstackv1.UpstreamRef]
+	store    artifacts.Store
+	root     string
 	outcomes chan chaosOutcome
 	o        chaosOptions
 
@@ -145,6 +169,13 @@ type chaosOptions struct {
 	// dependent adds a second task to the run, which reads the first one's
 	// values from the file its staging wrote.
 	dependent bool
+	// follows is what the task follows; one who forges the run's history may
+	// dispatch it before any of it is on record. It reads the values the
+	// upstream given it names, and is dispatched again on a signal.
+	follows []artifacts.FollowRef
+	// steal has a refused attempt's Orker hand the engine a result of its own
+	// all the same.
+	steal bool
 }
 
 // chaosDependent is the dependent's task id.
@@ -194,6 +225,9 @@ func newChaosRig(t *testing.T, o chaosOptions) *chaosRig {
 		Image:   &orkstackv1.ImageRef{Reference: e2eImageTag, Pinned: pinned, IndexDigest: indexDigest},
 		Command: []string{"/bin/sh", "-c", `printf '{"ok":true}' > /orkstack/output/values.json`},
 		Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE}
+	if len(o.follows) > 0 {
+		tk.Command = []string{"/bin/sh", "-c", `cp /orkstack/input/upstream/` + o.follows[0].TaskID + `/values.json /orkstack/output/values.json`}
+	}
 	spec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(tk, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -205,6 +239,14 @@ func newChaosRig(t *testing.T, o chaosOptions) *chaosRig {
 		CommitWait: o.commitWait, Tasks: map[string]artifacts.AdmittedTask{mintTask: {Pool: "main", SpecSHA256: spec}}}
 	depTask := &orkstackv1.Task{Id: chaosDependent, Pool: "main", Needs: []string{mintTask}, Image: tk.GetImage(), Network: tk.GetNetwork(),
 		Command: []string{"/bin/sh", "-c", `cp /orkstack/input/upstream/` + mintTask + `/values.json /orkstack/output/values.json`}}
+	if len(o.follows) > 0 {
+		adm.ValueRecords, adm.Follows = 1, map[string][]artifacts.FollowRef{mintTask: o.follows}
+		for _, f := range o.follows {
+			if f.Kind == artifacts.FollowContainer {
+				adm.Tasks[f.TaskID] = adm.Tasks[mintTask]
+			}
+		}
+	}
 	if o.dependent {
 		depSpec, _, err := task.IdentitySpecDigest(task.IdentitySpecVersion, task.IdentitySpecOfTask(depTask, nil))
 		if err != nil {
@@ -231,7 +273,7 @@ func newChaosRig(t *testing.T, o chaosOptions) *chaosRig {
 	describe := func(ctx context.Context, runID string) (identity.ExecutionFacts, error) {
 		return starts.Describe(ctx, runID, "")
 	}
-	recorder := &identity.Recorder{Stores: records, Starts: starts, Describe: describe,
+	recorder := &identity.Recorder{Stores: records, Starts: starts, Describe: describe, Follows: &identity.FollowsCheck{Store: records},
 		PinnedImage: func(context.Context, artifacts.Admission, string) (string, error) { return indexDigest, nil },
 		EngineBuild: "chaos-test", Now: time.Now}
 	svc := NewService(Config{AuditStore: artifacts.NewMemoryAuditStore(), Recorder: recorder, Artifacts: cfg})
@@ -246,17 +288,18 @@ func newChaosRig(t *testing.T, o chaosOptions) *chaosRig {
 	// The real Orker: its dispatcher on the host's runtime, its results
 	// handed to the engine.
 	workRoot := e2eWorkRoot(t, ctx)
-	store, err := artifacts.NewLocalStore(t.TempDir())
+	store, err := artifacts.NewS3Store(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	r.store, r.root = store, strings.TrimSuffix(commitRoot, "/")
 	idCfg := orker.DefaultIdentityConfig()
 	idCfg.RetryMin = time.Second
 	idCfg.SetupBudget = 20 * time.Second
 	policy := orker.DefaultSecurityPolicy()
 	r.runtime = &countingRuntime{ContainerRuntime: orker.NewDockerRuntime()}
 	acts := orker.NewActivitiesWithOptions(store, orker.Options{
-		WorkRoot: workRoot, Commits: commits, Refs: artifacts.MemoryRefPredictor{},
+		WorkRoot: workRoot, Commits: commits, Records: records, Refs: artifacts.MemoryRefPredictor{},
 		Runtime: r.runtime, Policy: &policy, OrkerID: orkerID, BuildID: "chaos-test", Pool: "main", Identity: &idCfg,
 	})
 	// The Orker's self-check, asked of the engine's real GetSignin, finds it
@@ -317,6 +360,32 @@ func chaosChainWorkflow(ctx workflow.Context, queue string) error {
 	return nil
 }
 
+// chaosAgainWorkflow dispatches the run's task, and again on each signal, as
+// one who writes the run's history may.
+func chaosAgainWorkflow(ctx workflow.Context, queue string) error {
+	actx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		ActivityID: identity.ActivityID(mintTask, artifacts.Item{}), TaskQueue: queue, StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}})
+	for {
+		// Its failure is the test's to read, from the attempt.
+		if err := workflow.ExecuteActivity(actx, task.ActivityExecuteTask).Get(actx, nil); temporal.IsCanceledError(err) {
+			return err
+		}
+		workflow.GetSignalChannel(ctx, chaosAgain).Receive(ctx, nil)
+	}
+}
+
+const chaosAgain = "again"
+
+// again dispatches the task of a run that follows once more, with up.
+func (r *chaosRig) again(up *orkstackv1.UpstreamRef) {
+	r.t.Helper()
+	r.given.Store(up)
+	if err := r.temporal.SignalWorkflow(r.ctx, r.runID, "", chaosAgain, nil); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
 // start runs the execution: the engine's worker for the run, the Orker's
 // worker whose activity is the dispatcher's real attempt, and the chain
 // record the engine completes from the run's first start.
@@ -325,6 +394,7 @@ func (r *chaosRig) start() {
 	ew := worker.New(r.temporal, r.wfQueue, worker.Options{Identity: "engine"})
 	ew.RegisterWorkflow(mintRigWorkflow)
 	ew.RegisterWorkflow(chaosChainWorkflow)
+	ew.RegisterWorkflow(chaosAgainWorkflow)
 	if err := ew.Start(); err != nil {
 		r.t.Fatalf("engine worker: %v", err)
 	}
@@ -336,13 +406,21 @@ func (r *chaosRig) start() {
 			in = proto.Clone(r.dep).(*orkstackv1.ExecuteTaskInput)
 			in.Upstream = []*orkstackv1.UpstreamRef{r.produced.Load()}
 		}
+		if up := r.given.Load(); up != nil {
+			in = proto.Clone(in).(*orkstackv1.ExecuteTaskInput)
+			in.Upstream = []*orkstackv1.UpstreamRef{up}
+		}
 		result, err := r.dispatcher.Execute(ctx, in)
 		if err == nil && in == r.in {
 			// As the interpreter builds it (runState.upstreamFor).
 			r.produced.Store(&orkstackv1.UpstreamRef{TaskId: mintTask, CommitUri: result.GetCommit().GetUri(),
 				Values: result.GetValuesRef(), Artifacts: result.GetArtifacts()})
 		}
-		r.outcomes <- chaosOutcome{attempt: n, result: result, err: err}
+		got := chaosOutcome{attempt: n, result: result, err: err}
+		if err != nil && r.o.steal && r.engine.asked.Load() != nil {
+			got.stolen = r.engine.steal(ctx, in)
+		}
+		r.outcomes <- got
 		if err == nil && r.o.failFirstCompletion && n == 1 {
 			return errors.New("the Orker was lost before the cluster heard of its completion (chaos)")
 		}
@@ -355,9 +433,12 @@ func (r *chaosRig) start() {
 	opts := client.StartWorkflowOptions{ID: r.runID, TaskQueue: r.wfQueue}
 	var run client.WorkflowRun
 	var err error
-	if r.dep != nil {
+	switch {
+	case len(r.o.follows) > 0:
+		run, err = r.temporal.ExecuteWorkflow(r.ctx, opts, chaosAgainWorkflow, r.actQueue)
+	case r.dep != nil:
 		run, err = r.temporal.ExecuteWorkflow(r.ctx, opts, chaosChainWorkflow, r.actQueue)
-	} else {
+	default:
 		run, err = r.temporal.ExecuteWorkflow(r.ctx, opts, mintRigWorkflow, r.actQueue, max(r.o.maxAttempts, 1))
 	}
 	if err != nil {

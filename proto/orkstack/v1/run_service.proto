@@ -201,6 +201,12 @@ service RunService {
   // wait (try again after retry_after_seconds) or replan (preview again).
   // docs/RESUME.md is the guide; docs/REASONS.md lists every sub-reason.
   rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
+  // ListRecordedResults lists what the engine recorded for ONE run whose
+  // results it records (docs/TASK_IDENTITY.md), and each task the run's state
+  // calls succeeded that has no record. A run whose results the engine does
+  // not record has no rows. A run whose state cannot be read answers
+  // Unavailable, never a list without those rows.
+  rpc ListRecordedResults(ListRecordedResultsRequest) returns (ListRecordedResultsResponse);
 }
 
 message ResumeRunRequest {
@@ -403,6 +409,109 @@ enum ResumeRefusalClass {
   RESUME_REFUSAL_CLASS_WAIT = 2;
   // Preview again and decide.
   RESUME_REFUSAL_CLASS_REPLAN = 3;
+}
+
+// RecordedResultKind is what a record is of.
+enum RecordedResultKind {
+  RECORDED_RESULT_KIND_UNSPECIFIED = 0;
+  // COMMIT: a container task's result, or one item's of a fan-out.
+  RECORDED_RESULT_KIND_COMMIT = 1;
+  RECORDED_RESULT_KIND_RESOLUTION = 2;
+  RECORDED_RESULT_KIND_COMPOSED = 3;
+  // OUTPUTS: a child run's outputs, of no task.
+  RECORDED_RESULT_KIND_OUTPUTS = 4;
+}
+
+// RecordedResultState is what became of a record, or of a result that should
+// have one. A client that does not know a state shows it as unknown, never as
+// on record.
+enum RecordedResultState {
+  RECORDED_RESULT_STATE_UNSPECIFIED = 0;
+  // ON_RECORD: the record is there, and the run applied it.
+  RECORDED_RESULT_STATE_ON_RECORD = 1;
+  // NOT_APPLIED: recorded in time, and the run has not applied it; the row's
+  // task_status says whether it still may.
+  RECORDED_RESULT_STATE_NOT_APPLIED = 2;
+  // NOT_TAKEN: a record the run will not apply: stored after the task's
+  // deadline or its run's end, or under a scope a later resume replaced.
+  RECORDED_RESULT_STATE_NOT_TAKEN = 3;
+  // NOT_ON_RECORD: the store said, twice, that there is none, of a result the
+  // run's state calls succeeded.
+  RECORDED_RESULT_STATE_NOT_ON_RECORD = 4;
+  // RECLAIMED: the run has left the cluster, and its records with its commits.
+  RECORDED_RESULT_STATE_RECLAIMED = 5;
+  // UNREAD: the store did not answer for this record, or what it answered
+  // cannot be used. It says nothing about the result.
+  RECORDED_RESULT_STATE_UNREAD = 6;
+  // RECORDED_NEWER_FORMAT: a record in a later format than this engine reads;
+  // a newer replica answers it.
+  RECORDED_RESULT_STATE_RECORDED_NEWER_FORMAT = 7;
+}
+
+// RecordedReadStop is why a page is not complete.
+enum RecordedReadStop {
+  RECORDED_READ_STOP_UNSPECIFIED = 0;
+  // ROWS_UNREAD: a row of the page could not be read.
+  RECORDED_READ_STOP_ROWS_UNREAD = 1;
+  // READ_BUDGET: the run's reads of this minute are spent; the token goes on.
+  RECORDED_READ_STOP_READ_BUDGET = 2;
+}
+
+// RecordedResult is one record, or one result that has none.
+message RecordedResult {
+  // task_id is unset for OUTPUTS.
+  string task_id = 1;
+  optional int32 item = 2;
+  // resume_scope is the resume the record was made under; 0 for none.
+  uint64 resume_scope = 3;
+  RecordedResultKind kind = 4;
+  RecordedResultState state = 5;
+  // asked_at is the instant the record itself holds, and stored_at the
+  // store's own time of it, which every "in time" is judged by.
+  google.protobuf.Timestamp asked_at = 6;
+  google.protobuf.Timestamp stored_at = 7;
+  string values_sha256 = 8;
+  // rejected, via, principal and principal_verified are a resolution's.
+  bool rejected = 9;
+  AwaitResolvedVia via = 10;
+  string principal = 11;
+  bool principal_verified = 12;
+  // pool, orker_id and uri are shown only to a caller who also holds
+  // run.artifacts.read on the Orkflow, or orker.read.
+  string pool = 13;
+  string orker_id = 14;
+  string uri = 15;
+  // child_run_id is the child a composed task's values are of.
+  string child_run_id = 16;
+  // task_status is the task's, or for OUTPUTS the run's, as the run's state
+  // has it.
+  Status task_status = 17;
+  // in_child_run says a parent started the run: what it did not apply is not
+  // carried over, and the parent is run again.
+  bool in_child_run = 18;
+  // deadline is when an awaited task's await ends.
+  google.protobuf.Timestamp deadline = 19;
+}
+
+message ListRecordedResultsRequest {
+  string namespace = 1;                  // empty = the default namespace
+  string run_id = 2;
+  string task_id = 3;                    // empty = every task
+  // page_size is at most 50; 25 when unset.
+  int32 page_size = 4;
+  string page_token = 5;
+  // unapplied_only lists only resolutions not applied: of tasks that await,
+  // and of awaited tasks that ended without theirs.
+  bool unapplied_only = 6;
+}
+
+message ListRecordedResultsResponse {
+  repeated RecordedResult results = 1;
+  string next_page_token = 2;
+  // read_complete is said of this page; a listing is complete only when every
+  // page is.
+  bool read_complete = 3;
+  RecordedReadStop incomplete_reason = 4;
 }
 
 message SubmitRunRequest {

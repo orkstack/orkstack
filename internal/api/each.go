@@ -169,10 +169,10 @@ func (s *Service) checkEachCapAtSubmit(wf *orkstackv1.Orkflow) error {
 	if total == 0 || total <= s.eachMaxItems {
 		return nil
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+	return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "EACH_ITEMS_OVER_CAP", fmt.Errorf(
 		"orkflow %s declares %d items across its fan-outs (%s); this deployment now allows %d "+
 			"(ORK_EACH_MAX_ITEMS was lowered after version %s was applied)",
-		wf.GetName(), total, dsl.EachContributors(wf), s.eachMaxItems, wf.GetVersion()))
+		wf.GetName(), total, dsl.EachContributors(wf), s.eachMaxItems, wf.GetVersion())))
 }
 
 // eachLinesPolicyFor is the line policy a run of wf pins: the defaults when

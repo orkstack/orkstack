@@ -95,6 +95,7 @@ const SHEETS: { id: string; path: string; h1: string; ready: string; crumb: stri
 	{ id: 'retention', path: '/admin/retention', h1: 'Maximum run retention', ready: 'retention-info', crumb: 'Retention' },
 	{ id: 'usage', path: '/admin/usage', h1: 'Usage', ready: 'usage-table', crumb: 'Usage' },
 	{ id: 'cache', path: '/admin/cache', h1: 'Cache', ready: 'cache-window', crumb: 'Cache' },
+	{ id: 'concurrency', path: '/admin/concurrency', h1: 'Concurrency', ready: 'concurrency-scope', crumb: 'Concurrency' },
 	{ id: 'image-policy', path: '/admin/image-policy', h1: 'Image policy', ready: 'image-policy-info', crumb: 'Image policy' },
 	{ id: 'audit', path: '/admin/audit', h1: 'Audit', ready: 'audit-table', crumb: 'Audit' }
 ];
@@ -110,6 +111,7 @@ const SCOPE_NOTES: Record<string, string> = {
 	retention: 'retention-scope-caption',
 	usage: 'usage-admin-scope',
 	cache: 'cache-scope',
+	concurrency: 'concurrency-scope',
 	'image-policy': 'image-policy-scope-caption',
 	audit: 'audit-scope'
 };

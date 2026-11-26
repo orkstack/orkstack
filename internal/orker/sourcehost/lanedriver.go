@@ -1,11 +1,13 @@
 package sourcehost
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/orker/servicehost"
@@ -36,10 +38,12 @@ type Recorder interface {
 
 // LaneLimits are the deadlines a lane keeps, from the service spec.
 type LaneLimits struct {
-	PollWait     time.Duration
-	Answer       time.Duration
-	Settle       time.Duration
-	Hold         time.Duration
+	PollWait time.Duration
+	Answer   time.Duration
+	Settle   time.Duration
+	Hold     time.Duration
+	// Try bounds one try of a message; 0 is five minutes.
+	Try          time.Duration
 	LeaseSeconds int
 	MaxBodyBytes int64
 }
@@ -55,13 +59,43 @@ type LaneDriver struct {
 	Recorder Recorder
 	Limits   LaneLimits
 	Now      func() time.Time
+	// Limit is the broker's delivery limit as last reported and when; 0, or
+	// nil, is none known.
+	Limit func() (int, time.Time)
 	// Failed is told of every failure the driver does not return: a
 	// receipt that is not required and could not be written. It counts and
 	// logs them; nil drops them.
 	Failed func(kind string, err error)
 
+	// Hold is what the Orker holds its instance back for, "" for nothing: no
+	// message is judged meanwhile. Nil holds it back for nothing.
+	Hold func() string
+	// Parse bounds the bodies this Orker reads and judges at once; nil bounds
+	// none.
+	Parse *ParseShare
+
 	// polled is when the current exchange's poll was written.
 	polled time.Time
+	// refused is the exchange whose required receipt the store refused, and 0
+	// when it refused none: such a receipt holds its verdict once.
+	refused int64
+	// moved is when this lane last made a step of its own, for the instance's
+	// watch over it.
+	moved atomic.Pointer[time.Time]
+}
+
+// step says the lane moves.
+func (d *LaneDriver) step() {
+	now := d.Now()
+	d.moved.Store(&now)
+}
+
+// lastMoved is when it last did.
+func (d *LaneDriver) lastMoved() time.Time {
+	if at := d.moved.Load(); at != nil {
+		return *at
+	}
+	return time.Time{}
 }
 
 func (d *LaneDriver) failed(kind string, err error) {
@@ -108,6 +142,13 @@ var ErrUnresponsive = errors.New(eventsources.ReasonServiceUnresponsive)
 // the instance later calls Release or Verdict on it. An error ends the
 // attempt: a contract violation, ErrUnresponsive, or ctx's end.
 func (d *LaneDriver) Poll(ctx context.Context, waitSeconds int) (Exchange, error) {
+	return d.pollUntil(ctx, ctx, waitSeconds)
+}
+
+// pollUntil is Poll that waits for the container's answer until waiting ends,
+// and handles a message it was handed until ctx does.
+func (d *LaneDriver) pollUntil(ctx, waiting context.Context, waitSeconds int) (Exchange, error) {
+	d.step()
 	seq, ok := d.Lane.Begin()
 	if !ok {
 		return Exchange{}, fmt.Errorf("lane %d: an exchange is open", d.Index)
@@ -151,10 +192,11 @@ func (d *LaneDriver) Poll(ctx context.Context, waitSeconds int) (Exchange, error
 				return Exchange{}, err
 			}
 			if done {
+				msg.Taken = d.Now()
 				return d.judge(ctx, msg)
 			}
 		}
-		if err := d.tick(ctx); err != nil {
+		if err := d.tick(waiting); err != nil {
 			return Exchange{}, err
 		}
 	}
@@ -176,20 +218,7 @@ func (d *LaneDriver) arrived(seq int64) (bool, error) {
 // it is held.
 func (d *LaneDriver) judge(ctx context.Context, msg HandedMessage) (Exchange, error) {
 	var body []byte
-	if !msg.Oversize {
-		b, err := d.Steps.ReadStep(LanePath(d.Index, StepBody), d.Limits.MaxBodyBytes)
-		if err != nil {
-			if errors.Is(err, servicehost.ErrNotYet) {
-				return Exchange{}, &servicehost.ViolationError{Name: LanePath(d.Index, StepBody), Reason: "message.json without its body"}
-			}
-			return Exchange{}, err
-		}
-		body = b
-	}
-	decision, err := d.Judge.Decide(ctx, msg, body)
-	if errors.Is(err, ErrBodyMismatch) {
-		return Exchange{}, &servicehost.ViolationError{Name: LanePath(d.Index, StepBody), Reason: err.Error()}
-	}
+	decision, err := d.decide(ctx, &msg, &body)
 	if err != nil {
 		return Exchange{}, err
 	}
@@ -209,9 +238,63 @@ func (d *LaneDriver) judge(ctx context.Context, msg HandedMessage) (Exchange, er
 	return ex, err
 }
 
+// aTry bounds one try of a message (06 §6), of which its lane's wait for a share of
+// the bodies being read is part. It is less than any hold an engine gives
+// (eventsources.HoldSeconds), so a lane makes a step within its hold.
+const aTry = 5 * time.Minute
+
+// decide reads a message's body, unless it was read before, and judges it, within
+// the Orker's share of the bodies being read. One that gets no share within a try,
+// or is handed over while its instance is held back, is a wait, its body not read;
+// one whose judgment outlasts the try is a wait too.
+func (d *LaneDriver) decide(ctx context.Context, msg *HandedMessage, body *[]byte) (Decision, error) {
+	if d.Hold != nil {
+		if cause := d.Hold(); cause != "" {
+			return d.Judge.wait(cause), nil
+		}
+	}
+	try, cancel := context.WithTimeout(ctx, cmp.Or(d.Limits.Try, aTry))
+	defer cancel()
+	if !msg.Oversize {
+		size := min(msg.BodyBytes, d.Limits.MaxBodyBytes)
+		release, err := d.Parse.Acquire(try, d.Judge, size)
+		if err != nil {
+			if ctx.Err() != nil {
+				return Decision{}, ctx.Err()
+			}
+			return d.Judge.waitErr("parse_share", err), nil
+		}
+		defer release()
+		if *body == nil {
+			b, err := d.Steps.ReadStep(LanePath(d.Index, StepBody), size)
+			if err != nil {
+				if errors.Is(err, servicehost.ErrNotYet) {
+					return Decision{}, &servicehost.ViolationError{Name: LanePath(d.Index, StepBody), Reason: "message.json without its body"}
+				}
+				return Decision{}, err
+			}
+			if b == nil {
+				b = []byte{}
+			}
+			*body, msg.BodySHA256 = b, bodyDigest(b)
+		}
+	}
+	decision, err := d.Judge.Decide(try, *msg, *body)
+	d.step()
+	if err != nil && ctx.Err() == nil && try.Err() != nil {
+		// Where it got to, its next try finds.
+		return d.Judge.waitErr("timeout", err), nil
+	}
+	if errors.Is(err, ErrBodyMismatch) {
+		return Decision{}, &servicehost.ViolationError{Name: LanePath(d.Index, StepBody), Reason: err.Error()}
+	}
+	return decision, err
+}
+
 // Verdict writes the receipt, then the verdict, and waits for settled.json.
 // A required receipt that cannot be written is returned as an error and no
-// verdict is given: the instance holds the message within its bound.
+// verdict is given: the instance holds the message for one more park, and the
+// next time the verdict is given without it, and the failure told.
 func (d *LaneDriver) Verdict(ctx context.Context, msg HandedMessage, decision Decision) (Exchange, error) {
 	if decision.Receipt.Outcome == artifacts.ReceiptFiltered && !d.Judge.StillConfirmed(ctx, decision) {
 		// The confirmation aged while the decision waited: a FILTERED
@@ -228,12 +311,17 @@ func (d *LaneDriver) Verdict(ctx context.Context, msg HandedMessage, decision De
 		d.Lane.Close()
 		return Exchange{Kind: ExchangeHoldExpired, Message: msg, Decision: decision}, nil
 	}
-	if decision.Receipt.Outcome != "" {
-		if err := d.Recorder.Record(ctx, msg, d.Lane.Seq(), decision.Receipt); err != nil {
-			if decision.Receipt.Required {
+	receipt := decision.Receipt
+	if decision.Disposition != Wait {
+		receipt = d.lastDelivery(msg, decision)
+	}
+	if receipt.Outcome != "" {
+		if err := d.Recorder.Record(ctx, msg, d.Lane.Seq(), receipt); err != nil {
+			d.failed("receipt", err)
+			if receipt.Required && (d.refused != d.Lane.Seq() || ctx.Err() != nil) {
+				d.refused = d.Lane.Seq()
 				return Exchange{Kind: ExchangeHeld, Message: msg, Decision: decision}, fmt.Errorf("%w: %v", ErrReceiptRequired, err)
 			}
-			d.failed("receipt", err)
 		}
 	}
 	id := newVerdictID(d.Lane.Seq())
@@ -257,7 +345,7 @@ func (d *LaneDriver) Verdict(ctx context.Context, msg HandedMessage, decision De
 			if closed {
 				// The container closed at its hold bound as the verdict was
 				// written, and both sides ignore that verdict.
-				d.recordClose(ctx, msg, decision.Receipt, true)
+				d.recordClose(ctx, msg, receipt, true)
 				return Exchange{Kind: ExchangeHoldExpired, Message: msg, Decision: decision}, nil
 			}
 			return Exchange{Kind: ExchangeSettled, Message: msg, Decision: decision, Settled: *s}, nil
@@ -351,6 +439,17 @@ func (d *LaneDriver) closed() (bool, error) {
 	return d.settles(*s, "")
 }
 
+// lastDelivery is the receipt of a decision on a message: what it says, unless
+// the message goes back to its broker for the last time.
+func (d *LaneDriver) lastDelivery(msg HandedMessage, decision Decision) Receipt {
+	if d.Limit == nil {
+		return decision.Receipt
+	}
+	limit, _ := d.Limit()
+	r, _ := DeadLettered(decision, msg.DeliveryCount, limit, d.Judge.AtMostOnce)
+	return r
+}
+
 // recordClose writes the receipt of a message its container gave back at the
 // hold bound. An accepted message (or its duplicate) keeps its own: its run
 // exists, whatever became of the delivery. written says the decided receipt
@@ -364,6 +463,9 @@ func (d *LaneDriver) recordClose(ctx context.Context, msg HandedMessage, decided
 	}
 	if decided.Outcome == artifacts.ReceiptAccepted || decided.Outcome == artifacts.ReceiptDuplicate {
 		r = decided
+	}
+	if r.Outcome == artifacts.ReceiptReleased {
+		r = d.lastDelivery(msg, Decision{Disposition: Wait, Receipt: r})
 	}
 	if written && r.Outcome == decided.Outcome {
 		return
@@ -384,6 +486,7 @@ var ErrReceiptRequired = errors.New("a required receipt could not be written")
 // HoldExpired reports whether the container closed the held exchange
 // itself at its hold bound, and writes the release's receipt.
 func (d *LaneDriver) HoldExpired(ctx context.Context, msg HandedMessage) (bool, error) {
+	d.step()
 	closed, err := d.closed()
 	if err != nil || !closed {
 		return false, err
@@ -406,6 +509,7 @@ func (d *LaneDriver) read(step string, bound int64) ([]byte, error) {
 // longer than the profile's longest hold ends the attempt by itself; the
 // instance's watchdog judges the lanes together (servicehost.Unresponsive).
 func (d *LaneDriver) tick(ctx context.Context) error {
+	d.step()
 	if d.Lane.Tick(d.Now()) {
 		return fmt.Errorf("%w: lane %d had three late exchanges in a row", ErrUnresponsive, d.Index)
 	}

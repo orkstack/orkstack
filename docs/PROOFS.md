@@ -86,7 +86,10 @@ A local proof runs its gates in this order: the **fast gates**, alone and one
 after another — lint (`make lint`: `go vet`, gofmt, and staticcheck as built
 and with `-tags=integration`; the vulnerability scan is not part of it, §5),
 build, unit, `go vet -tags=integration`, then the UI
-type-check and unit suites (after one `svelte-kit sync`, which both read), then
+type-check and unit suites (after one `svelte-kit sync`, which both read; the
+type-check, `ui-check`, is `bun run check`: svelte-check over `ui/src` and
+`ui/test`, then `tsc` over the Playwright specs and their helpers under
+`ui/e2e` against Node's types, `ui/e2e/tsconfig.json`), then
 the site gate, then the alerts gate, then the race gate (§2.3); then the **setup**, as one
 concurrent group — the proof's own Temporal, the activity images, the binaries
 and the integration test binaries (`proofrun compile`), each its own row of

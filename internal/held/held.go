@@ -128,6 +128,12 @@ const (
 	Unanswered
 )
 
+// What PausedOrMarked says in Which.
+const (
+	Paused = "paused"
+	Marked = "marked"
+)
+
 // Read is one of the check's reads.
 type Read string
 
@@ -253,9 +259,9 @@ func Instance(ctx context.Context, r *Reader, purpose Purpose, ref Ref, caller C
 	case doc.ID != ref.SourceID:
 		return Result{Kind: OtherID}
 	case doc.Deleting:
-		return Result{Kind: PausedOrMarked, Which: "marked"}
+		return Result{Kind: PausedOrMarked, Which: Marked}
 	case doc.Paused:
-		return Result{Kind: PausedOrMarked, Which: "paused"}
+		return Result{Kind: PausedOrMarked, Which: Paused}
 	}
 
 	// (5): every permission of the purpose, at the pool the document gives.

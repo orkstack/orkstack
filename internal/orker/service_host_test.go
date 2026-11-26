@@ -23,12 +23,17 @@ func TestServiceHost_FitOnlyWhenEveryConditionHolds(t *testing.T) {
 		SourceHost: SourceHostSettings{MaxInstances: 4, MaxRequestCPU: "500m", MaxRequestMemory: "256Mi", EngineURL: "https://ork:8080"}})
 	got, _ := a.DescribeOrker(context.Background())
 	sh := got.GetServiceHost()
-	if sh == nil || sh.GetFit() || len(sh.GetUnfit()) != 2 || sh.GetMaxInstances() != 4 || sh.GetContractVersions()[0] != 1 ||
+	if sh == nil || sh.GetFit() || len(sh.GetUnfit()) != 3 || sh.GetMaxInstances() != 4 || sh.GetContractVersions()[0] != 1 ||
 		sh.GetProfiles()[0].GetName() != "event-source" || sh.GetMaxRequest().GetMemory() != "256Mi" {
 		t.Fatalf("before any probe: %v", sh)
 	}
 	a.services.setAnswerFS(true)
 	a.services.setProbe(servicehost.ProbeResult{Ran: true, Fitness: servicehost.Fitness{Fit: true}}, time.Now())
+	got, _ = a.DescribeOrker(context.Background())
+	if sh := got.GetServiceHost(); sh.GetFit() || len(sh.GetUnfit()) != 1 || sh.GetUnfit()[0] != unfitNoStorage {
+		t.Fatalf("nowhere in memory for a service's files: %v", sh)
+	}
+	a.services.setStorage("/run/user/1/orkstack")
 	got, _ = a.DescribeOrker(context.Background())
 	if sh := got.GetServiceHost(); !sh.GetFit() || len(sh.GetUnfit()) != 0 || sh.GetProbedAt() == nil {
 		t.Fatalf("every condition holds: %v", sh)

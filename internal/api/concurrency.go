@@ -17,6 +17,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // A run-level concurrency limit at submit (docs/DSL.md "Concurrency
@@ -203,8 +204,8 @@ func (s *Service) planConcurrency(
 		return nil
 	}
 	if err := s.concurrencyBoundsError(planned); err != nil {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"orkflow %s@%s: %w; create a new version within the bounds", planned.GetName(), planned.GetVersion(), err))
+		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
+			"orkflow %s@%s: %w; create a new version within the bounds", planned.GetName(), planned.GetVersion(), err)))
 	}
 	if plan.History == nil {
 		// pinRunTreeLimits always runs first; a plan without its history
@@ -223,7 +224,9 @@ func (s *Service) planConcurrency(
 			OriginKind: enumname.Of(origin.GetKind()), OriginID: origin.GetId(),
 		})
 		if err != nil {
-			return connect.NewError(connect.CodeInvalidArgument, err)
+			// The key is rendered from the run's input: a message's values are
+			// its own.
+			return connect.NewError(connect.CodeInvalidArgument, refused(refusalReject, eventsources.ReasonMessageConcurrencyKeyInvalid, err))
 		}
 		key = rendered
 	}
@@ -469,8 +472,8 @@ func planStrategy(s orkstackv1.ConcurrencyStrategy) (string, error) {
 	case orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_SKIP:
 		return engine.ConcurrencyStrategySkip, nil
 	}
-	return "", connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-		"concurrency.on_limit %s is not one this release holds; create a version with queue, refuse or skip", enumname.Of(s)))
+	return "", connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
+		"concurrency.on_limit %s is not one this release holds; create a version with queue, refuse or skip", enumname.Of(s))))
 }
 
 // fullKeyCheck is §7.1 step 6 for refuse and skip: a key at its limit
@@ -546,10 +549,10 @@ func refuseChildLimits(planned *orkstackv1.Orkflow, plan *engine.RunPlan) error 
 	if limited == nil {
 		return nil
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+	return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_UNSUPPORTED", fmt.Errorf(
 		"%s: orkflow %s@%s declares a concurrency limit and runs here as a composed child; "+
 			"this release holds a limit only for the run submitted, so submit it as a run of its own",
-		engine.ConcurrencyUnsupportedCode, limited.GetName(), limited.GetVersion()))
+		engine.ConcurrencyUnsupportedCode, limited.GetName(), limited.GetVersion())))
 }
 
 // concurrencySupport is §7.1 step 4: CONCURRENCY_UNSUPPORTED naming every
@@ -601,9 +604,13 @@ func (s *Service) concurrencySupport(ctx context.Context, wf *orkstackv1.Orkflow
 func unsupported(wf *orkstackv1.Orkflow, causes []string, fleetOnly bool) error {
 	// A rollout clears by itself, so a fire asks again (checkUnavailable);
 	// an unindexed cluster does not, so it is a refusal.
-	mark := func(err error) error { return connect.NewError(connect.CodeFailedPrecondition, err) }
+	mark := func(err error) error {
+		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_UNSUPPORTED", err))
+	}
 	if fleetOnly {
-		mark = func(err error) error { return unavailableCheck(connect.CodeUnavailable, err) }
+		mark = func(err error) error {
+			return unavailableCheck(connect.CodeUnavailable, refused(refusalWait, waitRollout, err))
+		}
 	}
 	return mark(fmt.Errorf(
 		"%s: orkflow %s@%s declares a concurrency limit this deployment cannot hold (%s)",

@@ -194,7 +194,7 @@ func policyReadError(namespace string, err error) error {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"namespace %q's identity policy cannot be read; repair or remove its record (docs/STORAGE.md): %w", namespace, err))
 	}
-	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("read namespace %q's identity policy: %w", namespace, err))
+	return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("read namespace %q's identity policy: %w", namespace, err)))
 }
 
 // checkPlannedPolicy refuses, before anything is written, a policy an

@@ -30,6 +30,7 @@ export type ListPath =
 	| '/admin/namespaces'
 	| '/admin/webhooks'
 	| '/admin/audit'
+	| '/admin/concurrency'
 	| '/admin/pools'
 	| '/admin/activities'
 	| '/admin/releases'

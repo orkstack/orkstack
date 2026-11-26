@@ -266,6 +266,38 @@ func TestScanResumeBase_NeverStarted(t *testing.T) {
 	}
 }
 
+// TestScanResumeBase_AQueuedRunStarted: a run that waited in line for its
+// concurrency slot started at event 3, and its R is found; one that ended in
+// line has none, and neither has a RUN_STARTED at a sequence no run gives it.
+func TestScanResumeBase_AQueuedRunStarted(t *testing.T) {
+	for name, c := range map[string]struct {
+		started int64 // RUN_STARTED's sequence; 0 is none
+		found   bool
+	}{"started": {3, true}, "ended in line": {0, false}, "another sequence": {4, false}} {
+		b := &historyBuilder{t: t}
+		b.start(nil)
+		b.wft()
+		b.wftCompleted()
+		b.completed(b.publish(orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, 1, ""))
+		b.completed(b.publish(orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED, 2, ""))
+		b.wft()
+		b.wftCompleted()
+		if c.started > 0 {
+			b.completed(b.publish(orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, c.started, ""))
+		}
+		b.wft()
+		r := b.wftCompleted()
+		b.closed()
+		h, err := ScanResumeBase(b.events, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.ResetPoint.Found() != c.found || c.found && h.ResetPoint.CompletedEventID != r {
+			t.Errorf("%s: R = %+v; want found %v at event %d", name, h.ResetPoint, c.found, r)
+		}
+	}
+}
+
 func TestScanResumeBase_ContinuedGeneration(t *testing.T) {
 	b := &historyBuilder{t: t}
 	b.start(&orkstackv1.RunContinuation{})

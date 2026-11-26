@@ -42,9 +42,9 @@ func namesNoRun(id string) bool {
 		strings.ContainsFunc(id, func(r rune) bool { return r <= ' ' || r > '~' })
 }
 
-// doorFault logs why a door anyone may call could not answer, for the
-// operator: at most one line a second, so no caller fills the log, and none
-// for a caller that left.
+// doorFault logs why a door anyone may call, or a call every Orker repeats,
+// could not answer, for the operator: at most one line a second, so no
+// caller fills the log, and none for a caller that left.
 func (s *Service) doorFault(ctx context.Context, msg string, args ...any) {
 	if ctx.Err() != nil {
 		return

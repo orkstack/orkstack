@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -694,6 +695,39 @@ func TestForceCancelPublish_OnlyFromItsOwnCode(t *testing.T) {
 				if out, err := a.Terminate(context.Background(), in); !refused(err) || len(cluster.ended) != 0 {
 					t.Errorf("terminate from a channel = %+v, %v", out, err)
 				}
+			}
+		})
+	}
+}
+
+// TestForceCancelPublish_ASealedRunsEndingIsNotAnnounced: what Publish answers
+// is written in the force cancel's own history, which is no run's and holds no
+// key. A sealed run's ending is refused, as an error that says so: nothing of
+// the run is read for it.
+func TestForceCancelPublish_ASealedRunsEndingIsNotAnnounced(t *testing.T) {
+	keys, d := recordKeys(t), sampleDecision()
+	msg, err := SignForceCancelDecision(keys, d)
+	must.OK(t, err)
+	_, own, memo, args := readerFixture(t)
+	sealed := args(own, "ork-r", &orkstackv1.Orkflow{Name: "pay", Namespace: "payments"})
+	plain, err := DataConverter().ToPayloads("ork-r", &orkstackv1.Orkflow{Name: "pay", Namespace: "payments"})
+	must.OK(t, err)
+	for name, start := range map[string]*historypb.WorkflowExecutionStartedEventAttributes{
+		"its start is sealed":        {Input: sealed, Memo: memo},
+		"its memo alone holds a key": {Input: plain, Memo: memo},
+		"its start alone is sealed":  {Input: sealed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, _ := fcActivities(t, keys, d)
+			cluster := &fcCluster{status: enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED}
+			cluster.on(t, a, nil)
+			cluster.start = &historypb.HistoryEvent{Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{WorkflowExecutionStartedEventAttributes: start}}
+			a.self = func(context.Context) (forceCancelSelf, error) {
+				return forceCancelSelf{WorkflowID: d.WorkflowID(), Type: ForceCancelWorkflowType, StartedAt: time.Now(), TaskQueue: task.DefaultQueue}, nil
+			}
+			got, err := a.Publish(context.Background(), FCStep{Input: ForceCancelInput{Decision: msg, ScanEvents: 100, PageSize: 10}, ExecutionRunID: "exec-1"})
+			if !errors.Is(err, errForceCancelSealed) || !reflect.DeepEqual(got, FCPublished{}) {
+				t.Fatalf("= %+v, %v; want errForceCancelSealed", got, err)
 			}
 		})
 	}

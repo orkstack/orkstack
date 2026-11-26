@@ -77,10 +77,14 @@ type MintError struct {
 	Unavailable bool
 	Audit       bool
 	EngineBuild string
+	// Task is the task REQUIRED_RESULT_NOT_RECORDED is of.
+	Task string
 
 	cause error
 	// invalid says the step was answered with a record that cannot be used.
 	invalid bool
+	// absent says the store answered that Task has no record.
+	absent bool
 }
 
 // Unwrap is what a step that could not ask was answered, if anything.
@@ -92,10 +96,13 @@ func (e *MintError) Error() string { return e.Reason + ": " + e.Message }
 // store's key, a cluster's error or a run's admitted shape never reach an
 // Orker (and through it a task). TASK_NOT_AS_ADMITTED alone carries its
 // detail, which names the members that differ and both builds and nothing
-// else. The whole message is the engine's log line and audit record.
+// else, and REQUIRED_RESULT_NOT_RECORDED the id of the task that has none. The whole message is the engine's log line and audit record.
 func (e *MintError) Public() string {
 	if e.Reason == ReasonTaskNotAsAdmitted {
 		return e.Error()
+	}
+	if e.Reason == ReasonRequiredResultNotRecorded && e.Task != "" {
+		return fmt.Sprintf("%s: task %q, which this one follows, has no result on record", e.Reason, e.Task)
 	}
 	sentence, ok := publicSentences[e.Reason]
 	if !ok {

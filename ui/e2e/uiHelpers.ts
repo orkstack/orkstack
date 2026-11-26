@@ -160,7 +160,7 @@ export async function fullPageShot(page: Page, path: string): Promise<void> {
 	try {
 		await page.screenshot({ path, fullPage: true });
 	} finally {
-		await style.evaluate((el) => el.remove());
+		await style.evaluate((el) => el.parentNode?.removeChild(el));
 	}
 }
 

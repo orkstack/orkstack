@@ -130,7 +130,7 @@ test('only a query the engine would take as a name is sent as a name filter', ()
 
 test('no static command writes: each navigates, switches appearance or namespace', () => {
 	const statics = [...pageCommands('default'), ...namespaceCommands(['default', 'payments'], 'default'), ...themeCommands('system')];
-	expect(statics.length).toBe(17 + 1 + 3);
+	expect(statics.length).toBe(18 + 1 + 3);
 	for (const c of statics) expect(['navigate', 'theme', 'namespace']).toContain(c.action.kind);
 	expect(new Set(statics.map((c) => c.id)).size).toBe(statics.length);
 	for (const c of statics) expect(/^[a-z0-9-]+$/.test(c.id)).toBe(true);

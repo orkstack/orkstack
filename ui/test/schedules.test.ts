@@ -7,6 +7,7 @@ import {
 	OVERLAP_POLICY_SLUGS,
 	type ScheduleForm,
 	durationLabel,
+	fireNote,
 	fireOutcome,
 	isoUTC,
 	overlapPolicyFromSlug,
@@ -120,6 +121,15 @@ test('a fire reads as a run, refused, preparing, or unavailable — never blank'
 		kind: 'refused',
 		refusal: 'no live Orker'
 	});
+	// A fire a concurrency limit kept from starting a run is not preparing one.
+	expect(
+		fireOutcome(create(ScheduleFireSchema, { skipCode: 'FIRE_SKIPPED_CONCURRENCY', skipMessage: 'key k was full', detailsAvailable: true }))
+	).toEqual({ kind: 'skipped' });
+	// A run the limit kept from starting its tasks is still the fire's run.
+	expect(
+		fireOutcome(create(ScheduleFireSchema, { runId: 'ork-1', skipCode: 'FIRE_SKIPPED_CONCURRENCY', skipMessage: 'm', detailsAvailable: true }))
+	).toEqual({ kind: 'run', runId: 'ork-1' });
+	expect(fireOutcome(create(ScheduleFireSchema, { skipCode: 'FIRE_SKIPPED_CONCURRENCY', detailsAvailable: false }))).toEqual({ kind: 'unavailable' });
 	expect(fireOutcome(create(ScheduleFireSchema, { detailsAvailable: true }))).toEqual({ kind: 'preparing' });
 	expect(fireOutcome(create(ScheduleFireSchema, { runId: 'ork-1', detailsAvailable: false }))).toEqual({ kind: 'unavailable' });
 	expect(scheduleState(create(ScheduleSchema, { unavailableReason: 'x', paused: true }))).toBe('unavailable');
@@ -252,4 +262,13 @@ test('isoUTC shows the second an instant falls in, never the next one', () => {
 	expect(isoUTC(create(TimestampSchema, { seconds: 1794168803n, nanos: 999_600_000 }))).toBe('2026-11-08T20:13:23Z');
 	expect(isoUTC(create(TimestampSchema, { seconds: 1794168803n, nanos: 0 }))).toBe('2026-11-08T20:13:23Z');
 	expect(isoUTC(undefined)).toBe('—');
+});
+
+// `orkctl schedule get`'s NOTE cell (cmd/orkctl/schedule.go, fireNote).
+test('a fire\'s note is why it started no run, or why a limit kept it or its run, in the CLI\'s words', () => {
+	const note = (fields: Parameters<typeof create<typeof ScheduleFireSchema>>[1]) => fireNote(create(ScheduleFireSchema, fields));
+	expect(note({ refusal: 'no live Orker', skipCode: 'X', skipMessage: 'y' })).toBe('no live Orker');
+	expect(note({ skipCode: 'FIRE_SKIPPED_CONCURRENCY', skipMessage: 'key k was full' })).toBe('FIRE_SKIPPED_CONCURRENCY: key k was full');
+	expect(note({ runId: 'ork-1', skipCode: 'FIRE_SKIPPED_CONCURRENCY', skipMessage: 'key k was full' })).toBe('FIRE_SKIPPED_CONCURRENCY: key k was full');
+	expect(note({ runId: 'ork-1' })).toBe('');
 });

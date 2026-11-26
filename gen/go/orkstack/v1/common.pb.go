@@ -310,7 +310,8 @@ type Error struct {
 	// is recorded in history, so it is part of the replay-visible contract and
 	// not merely display data.
 	Category FailureCategory `protobuf:"varint,5,opt,name=category,proto3,enum=orkstack.v1.FailureCategory" json:"category,omitempty"`
-	// task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+	// task_code is the code of the task a run failed at, for a run whose results
+	// the engine records; unset otherwise.
 	TaskCode      string `protobuf:"bytes,6,opt,name=task_code,json=taskCode,proto3" json:"task_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

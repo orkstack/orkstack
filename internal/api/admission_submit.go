@@ -300,9 +300,9 @@ func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ex
 			var over *identity.AttemptsOverLimitError
 			switch {
 			case errors.As(err, &over):
-				return nil, nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				return nil, nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IDENTITY_ATTEMPTS_OVER_LIMIT", fmt.Errorf(
 					"%s: task %q of Orkflow %s@%s: %d attempts may hold its identities (max(1, retry.maximum_attempts) + attempts_extra %d), over identity.attempts.max (%d)",
-					reasonAttemptsOverLimit, t.GetId(), wf.GetName(), wf.GetVersion(), over.Slots, extra, over.Limit))
+					reasonAttemptsOverLimit, t.GetId(), wf.GetName(), wf.GetVersion(), over.Slots, extra, over.Limit)))
 			case err != nil:
 				return nil, nil, connect.NewError(connect.CodeInternal, fmt.Errorf("task %q: %w", t.GetId(), err))
 			}
@@ -313,8 +313,8 @@ func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ex
 			row.IdentitySlots = int32(slots)
 			deadline := engine.AttemptDeadlineSeconds(t, plan.TransferBudgetSeconds)
 			if deadline > math.MaxInt32 {
-				return nil, nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-					"task %q of Orkflow %s@%s: an attempt's deadline of %d s cannot be admitted", t.GetId(), wf.GetName(), wf.GetVersion(), deadline))
+				return nil, nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IDENTITY_DEADLINE_TOO_LARGE", fmt.Errorf(
+					"task %q of Orkflow %s@%s: an attempt's deadline of %d s cannot be admitted", t.GetId(), wf.GetName(), wf.GetVersion(), deadline)))
 			}
 			row.AttemptDeadline = int32(deadline)
 		}
@@ -564,6 +564,11 @@ func identityPlanOf(a artifacts.Admission, sha256Hex string) *engine.IdentityPla
 	if len(a.Grants) > 0 {
 		p.Grants = maps.Clone(a.Grants)
 	}
+	if a.ValueRecords > 0 {
+		budget := engine.DefaultRecordBudget
+		p.ValueRecords, p.RecordBudget = a.ValueRecords, &budget
+		p.ResolutionsPerPass, p.NonesPerAwait = engine.DefaultResolutionsPerPass, engine.DefaultNonesPerAwait
+	}
 	return p
 }
 
@@ -601,9 +606,9 @@ func checkAdmissionTemplate(a artifacts.Admission) error {
 	}
 	raw, _, err := artifacts.EncodeAdmission(probe)
 	if errors.Is(err, artifacts.ErrAdmissionTooLarge) || (err == nil && len(raw) > artifacts.MaxAdmissionBytes-admissionHeadroom) {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IDENTITY_TABLE_TOO_LARGE", fmt.Errorf(
 			"%s: Orkflow %s@%s's tasks do not fit one admission record of %d KiB; split it into composed Orkflows",
-			reasonTableTooLarge, a.Orkflow, a.OrkflowVersion, artifacts.MaxAdmissionBytes>>10))
+			reasonTableTooLarge, a.Orkflow, a.OrkflowVersion, artifacts.MaxAdmissionBytes>>10)))
 	}
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("the Orkflow %s@%s cannot be admitted: %w", a.Orkflow, a.OrkflowVersion, err))

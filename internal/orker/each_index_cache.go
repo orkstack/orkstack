@@ -27,6 +27,10 @@ const eachIndexCacheMaxBytes = 64 << 20
 // engine recorded for them: the store holds something else under the key.
 var errEachIndexDigest = errors.New("the line index's bytes do not match its recorded digest")
 
+// errEachIndexFetchEnded is the answer of a fetch that gave none: it panicked,
+// or its goroutine exited. Only the loads that waited for it meet it.
+var errEachIndexFetchEnded = errors.New("the line index's fetch ended without an answer")
+
 // eachIndexCache keeps the line indexes this Orker has read, for the lifetime
 // of the process — the transient download cache AGENTS.md §5 allows. Every
 // item of a fan-out over an artifact's lines reads the same index, so without
@@ -40,6 +44,12 @@ var errEachIndexDigest = errors.New("the line index's bytes do not match its rec
 // naming another index never reads this one's copy, whatever digest it carries. The least recently used entries go once the
 // cache holds more than maxBytes. Concurrent loads of one digest share one
 // fetch. A cache that cannot write its directory still answers, uncached.
+//
+// golang.org/x/sync/singleflight was weighed for the shared fetch and not
+// used: a load must stop waiting when its own context ends, which its Do does
+// not, and its DoChan ends the whole process when a fetch panics. What a
+// panicked or exited fetch leaves here is what singleflight leaves: nothing in
+// flight.
 type eachIndexCache struct {
 	dir      string
 	maxBytes int64
@@ -102,18 +112,7 @@ func (c *eachIndexCache) share(ctx context.Context, key string, want []byte, fet
 			f = &eachIndexFetch{done: make(chan struct{})}
 			c.inflight[key] = f
 			c.mu.Unlock()
-			// Looked for again: the fetch that was in flight when this load
-			// missed may have kept its copy and gone since.
-			body, kept := c.cached(key, want)
-			if !kept {
-				body, f.err = c.fill(ctx, key, want, fetch)
-			}
-			f.body = body
-			c.mu.Lock()
-			delete(c.inflight, key)
-			c.mu.Unlock()
-			close(f.done)
-			return f.body, f.err
+			return c.lead(ctx, f, key, want, fetch)
 		}
 		c.mu.Unlock()
 		select {
@@ -124,16 +123,37 @@ func (c *eachIndexCache) share(ctx context.Context, key string, want []byte, fet
 		if f.err == nil {
 			return f.body, nil
 		}
-		// A leader whose own context ended did not try to completion: try
-		// again while this caller's context allows; any other failure is
-		// shared.
-		if !errors.Is(f.err, context.Canceled) && !errors.Is(f.err, context.DeadlineExceeded) {
+		// A leader whose own context ended, or whose fetch answered nobody,
+		// did not try to completion: try again while this caller's context
+		// allows; any other failure is shared.
+		if !errors.Is(f.err, context.Canceled) && !errors.Is(f.err, context.DeadlineExceeded) && !errors.Is(f.err, errEachIndexFetchEnded) {
 			return nil, f.err
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 	}
+}
+
+// lead makes the fetch f for every load that waits for it, and takes it out of
+// the flight however it ends: a fetch that panics does so in its own load
+// alone.
+func (c *eachIndexCache) lead(ctx context.Context, f *eachIndexFetch, key string, want []byte, fetch func(context.Context) ([]byte, error)) ([]byte, error) {
+	f.err = errEachIndexFetchEnded // unless the fetch answers
+	defer func() {
+		c.mu.Lock()
+		delete(c.inflight, key)
+		c.mu.Unlock()
+		close(f.done)
+	}()
+	// Looked for again: the fetch that was in flight when this load missed may
+	// have kept its copy and gone since.
+	if body, ok := c.cached(key, want); ok {
+		f.body, f.err = body, nil
+	} else {
+		f.body, f.err = c.fill(ctx, key, want, fetch)
+	}
+	return f.body, f.err
 }
 
 // cached is the cache's copy at key when it holds one that hashes to want; a
@@ -154,7 +174,7 @@ func (c *eachIndexCache) cached(key string, want []byte) ([]byte, bool) {
 			return body, true
 		}
 	}
-	c.drop(key)
+	c.drop(key, el)
 	return nil, false
 }
 
@@ -187,38 +207,47 @@ func (c *eachIndexCache) keep(key string, body []byte) {
 	}
 	_, werr := tmp.Write(body)
 	cerr := tmp.Close()
-	if werr != nil || cerr != nil || os.Chmod(tmp.Name(), 0o444) != nil || os.Rename(tmp.Name(), c.path(key)) != nil {
+	if werr != nil || cerr != nil || os.Chmod(tmp.Name(), 0o444) != nil {
 		_ = os.Remove(tmp.Name()) // best effort: the boot reap removes an orphan
 		return
 	}
+	// The file and its entry change together, so a drop never takes the one
+	// for the other's.
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if el, ok := c.entries[key]; ok {
-		c.lru.MoveToFront(el)
+	if os.Rename(tmp.Name(), c.path(key)) != nil {
+		_ = os.Remove(tmp.Name()) // best effort, as above
 		return
+	}
+	if el, ok := c.entries[key]; ok {
+		c.forget(el)
 	}
 	c.entries[key] = c.lru.PushFront(&eachIndexEntry{key: key, size: int64(len(body))})
 	c.used += int64(len(body))
 	for c.used > c.maxBytes {
-		last := c.lru.Back()
-		entry := last.Value.(*eachIndexEntry)
-		c.lru.Remove(last)
-		delete(c.entries, entry.key)
-		c.used -= entry.size
+		entry := c.forget(c.lru.Back())
 		_ = os.Remove(c.path(entry.key)) // best effort: a file left behind is never read without its digest check
 	}
 }
 
-// drop forgets key's entry and removes its file.
-func (c *eachIndexCache) drop(key string) {
+// drop forgets el, key's entry as a load read it, and removes its file, unless
+// another copy has taken its place since.
+func (c *eachIndexCache) drop(key string, el *list.Element) {
 	c.mu.Lock()
-	if el, ok := c.entries[key]; ok {
-		c.lru.Remove(el)
-		delete(c.entries, key)
-		c.used -= el.Value.(*eachIndexEntry).size
+	defer c.mu.Unlock()
+	if c.entries[key] != el {
+		return
 	}
-	c.mu.Unlock()
+	c.forget(el)
 	_ = os.Remove(c.path(key)) // best effort, as in keep
+}
+
+// forget takes el out of the entries, and answers it. c.mu is held.
+func (c *eachIndexCache) forget(el *list.Element) *eachIndexEntry {
+	entry := c.lru.Remove(el).(*eachIndexEntry)
+	delete(c.entries, entry.key)
+	c.used -= entry.size
+	return entry
 }
 
 func (c *eachIndexCache) path(key string) string { return filepath.Join(c.dir, key) }

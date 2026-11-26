@@ -1,0 +1,24 @@
+// The Node-side program of the UI: the Playwright specs and their helpers,
+// and the two configs Node loads (playwright.config.ts, vite.config.ts). They
+// run on Node, not in the browser, so they are checked against `@types/node`
+// and apart from the app's own program (ui/tsconfig.json). `bun run check`
+// runs `tsc -p e2e/tsconfig.json` after svelte-check: the proof's `ui-check`
+// gate and `make check`. Playwright reads the nearest tsconfig when it loads
+// a spec (for `paths`, chiefly): this one sets no `paths`, and no spec or
+// module it imports uses `$lib`, `$app` or `bun:`, which it could not resolve.
+{
+	"compilerOptions": {
+		"target": "ES2024",
+		"lib": ["ES2024", "DOM", "DOM.Iterable"],
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"types": ["node"],
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"allowImportingTsExtensions": true
+	},
+	"include": ["./**/*.ts", "../playwright.config.ts", "../vite.config.ts"]
+}

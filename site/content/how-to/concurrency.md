@@ -28,13 +28,14 @@ Without `key:`, every run of the Orkflow in its namespace shares one key. The ke
 
 - The run page's **Queued** card says why the run waits, its place in line, the runs it waits behind, and when it times out. `orkctl run get <run>` prints the same as its `Queued:` line.
 - The Runs page's **Queued** tile lists the runs waiting now: `orkctl run list -F queued=true`. `queued_on=KEY` and `holding=KEY` narrow to one key.
+- **Operate → Concurrency** lists the keys in use, and one key's page shows who holds it and who waits, in the order they start: `orkctl concurrency list` and `orkctl concurrency get <key>`.
 - The Orkflow page, and `orkctl orkflow get`, name the limit. The dashboard, and `orkctl stats`, count the queued runs among the running.
 
 ## Limits
 
 - A waiting run is Pending. It fails `RUN_QUEUE_TIMEOUT` when its `queue_timeout` passes first.
 - A waiting run cannot be paused. A paused run gives its slot back once nothing of it runs, and waits again when unpaused.
-- `queue` is the only `on_limit` this release runs.
+- `on_limit: refuse` and `on_limit: skip` never wait: a run at a full key is refused at submit. Under `skip`, a schedule's fire at a full key starts no run and the schedule carries on.
 
 ## See also
 

@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/held"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/provider"
@@ -136,6 +137,9 @@ type Config struct {
 	// stdout/stderr. It is deliberately separate from Logs because log chunks
 	// have their own attempt index and streaming read contract.
 	ArtifactStore artifacts.Store
+	// InputClaims claims the artifacts a run carries over from the run it is
+	// started again from; nil refuses such a run.
+	InputClaims inputClaimer
 
 	// Attempts is where the Orker filed one immutable record per task attempt.
 	// It is the same bucket, wired from the same ORK_ARTIFACT_BACKEND, for the
@@ -240,10 +244,13 @@ type Config struct {
 	// for a run whose results the engine records; without them such a run's
 	// await answers unavailable. AwaitSpacings are the waits of one read, the
 	// reader's own when nil; ClockSkew is auth.clock_skew.
-	AwaitRecords  AwaitRecords
-	AwaitChecks   AwaitChecks
-	AwaitSpacings *artifacts.RecordSpacings
-	ClockSkew     time.Duration
+	AwaitRecords AwaitRecords
+	// RecordedResults is what ListRecordedResults reads; nil on an engine
+	// that keeps no identity records.
+	RecordedResults RecordedResults
+	AwaitChecks     AwaitChecks
+	AwaitSpacings   *artifacts.RecordSpacings
+	ClockSkew       time.Duration
 	// EngineBuild is this engine's build, recorded in every admission it
 	// writes: ORK_BUILD_ID, or the commit the binary was built from.
 	EngineBuild string
@@ -636,6 +643,7 @@ type Service struct {
 	// same bucket the Orker wrote into and belongs to no process.
 	logs          artifacts.LogStore
 	artifactStore artifacts.Store
+	inputClaims   inputClaimer
 	// attempts is the durable per-attempt record store, read by
 	// ListTaskAttempts. Written by Orkers, owned by no process.
 	attempts artifacts.AttemptStore
@@ -650,8 +658,30 @@ type Service struct {
 	// the evaluations each namespace runs at once on this replica.
 	eventSources        eventsources.Store
 	eventSourceSettings eventsources.Settings
-	evaluations         *namespaceSlots
-	inspections         *namespaceRate
+	// heldReader makes every read of the held check, for the host service and
+	// the mint alike; nil serves no host service. sourceCeiling bounds it.
+	heldReader    *held.Reader
+	sourceCeiling *sourceCeiling
+	// sourceInstances records the attempts that confirmed. sourceWorkflows
+	// tells the sources' workflows; nil tells nobody. sourcePolicies keeps
+	// what confirmations judged.
+	sourceInstances sourceInstances
+	sourceWorkflows SourceWorkflows
+	sourcePolicies  *sourcePolicies
+	// messageClaims binds messages to their runs; stagedParts is what Orkers
+	// staged for them.
+	messageClaims messageClaims
+	stagedParts   stagedParts
+	// staged puts a message's parts under its run; doorPools is what starts
+	// of messages learned about pools.
+	staged    stagedArtifacts
+	doorPools *keptPools
+	// startProbe and probes are what a probe of a start asks, and what was
+	// answered a moment ago.
+	startProbe  startProbe
+	probes      *keptProbes
+	evaluations *namespaceSlots
+	inspections *namespaceRate
 	// schedules is the cluster's schedule seam; nil answers Unimplemented.
 	schedules ScheduleController
 	// scheduleBindings is cfg.ScheduleBindings.
@@ -675,6 +705,8 @@ type Service struct {
 	identityAdmissions       AdmissionRecords
 	providers                provider.Set
 	awaitRecords             AwaitRecords
+	recordedResults          RecordedResults
+	recordedReads            *recordedReads
 	awaitChecks              AwaitChecks
 	awaitSpacings            *artifacts.RecordSpacings
 	awaitTold                awaitTellings
@@ -808,7 +840,8 @@ type Service struct {
 	transferBudget  int32
 	floorThroughput int64
 	logger          *slog.Logger
-	// doorFaults bounds what the unauthenticated doors log (doorFault).
+	// doorFaults bounds what the unauthenticated doors log, and what every
+	// Orker asks (doorFault).
 	doorFaults authn.LogBound
 	now        func() time.Time
 	newRunID   func() string
@@ -843,6 +876,7 @@ func NewService(cfg Config) *Service {
 		archive:                  cfg.Archive,
 		logs:                     cfg.Logs,
 		artifactStore:            cfg.ArtifactStore,
+		inputClaims:              cfg.InputClaims,
 		attempts:                 cfg.Attempts,
 		commits:                  cfg.Commits,
 		logPoll:                  cfg.LogPoll,
@@ -852,6 +886,10 @@ func NewService(cfg Config) *Service {
 		triggers:                 cfg.Triggers,
 		eventSources:             cfg.EventSources,
 		eventSourceSettings:      cfg.EventSourceSettings,
+		sourceCeiling:            newSourceCeiling(cfg.EventSourceSettings.Limits),
+		sourcePolicies:           newSourcePolicies(),
+		doorPools:                newKeptPools(time.Now),
+		probes:                   newKeptProbes(time.Now),
 		evaluations:              newNamespaceSlots(evaluationsPerNamespace),
 		inspections:              newNamespaceRate(inspectsPerMinute),
 		schedules:                cfg.Schedules,
@@ -868,6 +906,7 @@ func NewService(cfg Config) *Service {
 		identityAdmissions:       cfg.IdentityAdmissions,
 		providers:                cfg.Providers,
 		awaitRecords:             cfg.AwaitRecords,
+		recordedResults:          cfg.RecordedResults,
 		awaitChecks:              cfg.AwaitChecks,
 		awaitSpacings:            cfg.AwaitSpacings,
 		clockSkew:                cfg.ClockSkew,
@@ -914,6 +953,7 @@ func NewService(cfg Config) *Service {
 		commitObserver:           cfg.CommitObserver,
 		commitLimits:             identity.NewCommitLimits(cfg.Now),
 		awaitLimits:              identity.NewResolveLimits(cfg.Now),
+		recordedReads:            newRecordedReads(cfg.Now),
 		identityUnscopedOrkers:   cfg.IdentityUnscopedOrkers,
 		issuedRecords:            cfg.IssuedRecords,
 		identityAttemptsMaxExtra: cfg.IdentityAttemptsMaxExtra,
@@ -1793,10 +1833,10 @@ func decodeOrkflowCursor(token, namespace string, set listfilter.Set) (string, e
 func orkflowStoreError(err error, format string, args ...any) error {
 	subject := fmt.Sprintf(format, args...)
 	if errors.Is(err, artifacts.ErrNotFound) {
-		return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s not found", subject))
+		return connect.NewError(connect.CodeNotFound, refused(refusalPause, "ORKFLOW_NOT_FOUND", fmt.Errorf("%s not found", subject)))
 	}
 	if errors.Is(err, artifacts.ErrInvalidOrkflow) {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %w", subject, err))
+		return connect.NewError(connect.CodeInvalidArgument, refused(refusalPause, "ORKFLOW_INVALID", fmt.Errorf("%s: %w", subject, err)))
 	}
 	// A version already stored with different content is a collision, not an
 	// outage: AlreadyExists, so a client can tell "publish a new version" from
@@ -1804,7 +1844,7 @@ func orkflowStoreError(err error, format string, args ...any) error {
 	if errors.Is(err, artifacts.ErrVersionExists) {
 		return connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("%s: %w", subject, err))
 	}
-	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", subject, err))
+	return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("%s: %w", subject, err)))
 }
 
 // submission is one accepted request after routing has been decided: which
@@ -1872,11 +1912,11 @@ func (s *Service) SubmitRun(
 	// then builds the origin. It is the Connect door's half of "every door
 	// validates its own reference before submitFrom"; the trigger door
 	// (triggers.go) is the other half.
-	origin, err := s.originForRequest(ctx, req)
+	origin, received, err := s.originForRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return s.submitFrom(ctx, req.Msg, origin)
+	return s.submitWith(ctx, req.Msg, origin, received)
 }
 
 // withoutTraceparent is run without the trace context it was started in, for
@@ -1916,8 +1956,23 @@ func (s *Service) submitFrom(
 	msg *orkstackv1.SubmitRunRequest,
 	origin *orkstackv1.RunOrigin,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	sub, err := s.prepare(ctx, msg, origin)
+	return s.submitWith(ctx, msg, origin, nil)
+}
+
+// submitWith is submitFrom of a run that receives artifacts, which the door
+// read from the run it starts again and no request names.
+func (s *Service) submitWith(
+	ctx context.Context,
+	msg *orkstackv1.SubmitRunRequest,
+	origin *orkstackv1.RunOrigin,
+	received []engine.NamedArtifactPlan,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	sub, err := s.prepareWith(ctx, msg, origin, prepareOptions{received: received})
 	if err != nil {
+		return nil, callerGaveUp(ctx, err)
+	}
+	// What is gone is refused before an id is minted or a key claimed.
+	if err := s.checkReceived(ctx, received); err != nil {
 		return nil, callerGaveUp(ctx, err)
 	}
 
@@ -1961,6 +2016,27 @@ func (s *Service) prepare(
 	msg *orkstackv1.SubmitRunRequest,
 	origin *orkstackv1.RunOrigin,
 ) (submission, error) {
+	return s.prepareWith(ctx, msg, origin, prepareOptions{})
+}
+
+// prepareOptions are what a door knows of its start beyond the request.
+type prepareOptions struct {
+	// received are the artifacts the run's artifact inputs are bound to, put
+	// under the run by the engine and named by no client. They may be
+	// predicted for another run id of the same length: what is measured is
+	// the size of what is started.
+	received []engine.NamedArtifactPlan
+	// pools is what this replica learned about pools a moment ago; nil asks.
+	pools *keptPools
+}
+
+// prepareWith is prepare of a start that brings more than its request.
+func (s *Service) prepareWith(
+	ctx context.Context,
+	msg *orkstackv1.SubmitRunRequest,
+	origin *orkstackv1.RunOrigin,
+	opts prepareOptions,
+) (submission, error) {
 	name := msg.GetOrkflowName()
 	if name == "" {
 		return submission{}, connect.NewError(connect.CodeInvalidArgument,
@@ -1993,9 +2069,10 @@ func (s *Service) prepare(
 	if err := s.checkTaskCeilingAtSubmit(stored); err != nil {
 		return submission{}, err
 	}
-	// An artifact input is passed only by a composing task: no other start
-	// can bind one, so it is refused before any id is minted.
-	if err := refuseArtifactInputs(stored, origin.GetKind(), originNoun(origin.GetKind())); err != nil {
+	// An artifact input is bound by a composing task or by the engine
+	// (artifactInputsAllowed): a start that binds none, or others than the
+	// version declares, is refused before any id is minted.
+	if err := refuseArtifactInputs(stored, origin.GetKind(), originNoun(origin.GetKind()), opts.received...); err != nil {
 		return submission{}, err
 	}
 	// Task identity: what the definition asks for against the namespace's
@@ -2044,7 +2121,9 @@ func (s *Service) prepare(
 		return submission{}, err
 	}
 
-	planned, plan, err := s.resolverFor(binding).Plan(ctx, ns, stored, msg.GetAllowEmptyPool())
+	resolver := s.resolverFor(binding)
+	opts.pools.over(resolver)
+	planned, plan, err := resolver.Plan(ctx, ns, stored, msg.GetAllowEmptyPool())
 	if err != nil {
 		return submission{}, poolPlanError(err)
 	}
@@ -2052,7 +2131,7 @@ func (s *Service) prepare(
 	// it runs a container on serves task identity; each child it plans is
 	// asked the same in planChildren.
 	if holds {
-		if err := s.resolverFor(binding).CheckIdentitySupport(ctx, ns, planned, needs); err != nil {
+		if err := resolver.CheckIdentitySupport(ctx, ns, planned, needs); err != nil {
 			return submission{}, poolPlanError(err)
 		}
 	}
@@ -2088,6 +2167,12 @@ func (s *Service) prepare(
 	plan.RunTimeout = s.runTimeoutPlanFor(planned)
 	plan.EachLines = eachLinesPolicyFor(planned)
 	plan.Pause = s.pausePlanFor()
+	if len(opts.received) > 0 {
+		// The run claims what it received before its first dispatch, as a
+		// child does (docs/STORAGE.md, "Reclaiming space").
+		claims := engine.DefaultArtifactClaims
+		plan.InputArtifacts, plan.ArtifactClaims = opts.received, &claims
+	}
 	// Every child run this submission can start, planned recursively under
 	// the parent's namespace, resolver, allow_empty_pool, image-policy
 	// selection and boot answers. It refuses
@@ -2095,7 +2180,7 @@ func (s *Service) prepare(
 	nsIdx, orIdx := indexAnswers(binding.Starter)
 	plan.RootRunIndexed = rootIndexAnswer(binding.Starter)
 	if err := s.planChildren(ctx, composeRequest{
-		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
+		ns: ns, resolver: resolver, allowEmpty: msg.GetAllowEmptyPool(),
 		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(), holdsIdentity: holds, rootOrigin: originWord(origin),
 	}, planned, &plan, 0, nil); err != nil {
 		return submission{}, err
@@ -2220,20 +2305,20 @@ func checkRunStartPayloads(wf *orkstackv1.Orkflow, input *orkstackv1.Payload) er
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run input: %w", err))
 	}
 	if size > limit {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+		return connect.NewError(connect.CodeInvalidArgument, refused(refusalReject, eventsources.ReasonMessageInputTooLarge, fmt.Errorf(
 			"%s: the run input serializes to %d bytes, over the %d KiB (%d bytes) a run's start may carry; "+
 				"pass a reference to large data (a URL or an object key), not the bytes",
-			task.ReasonInputTooLarge, size, limit/1024, limit))
+			task.ReasonInputTooLarge, size, limit/1024, limit)))
 	}
 	size, err = task.PayloadSize(wf)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the orkflow definition: %w", err))
 	}
 	if size > limit {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "DEFINITION_TOO_LARGE", fmt.Errorf(
 			"orkflow %s@%s serializes to %d bytes, over the %d KiB (%d bytes) a run's start may carry; "+
 				"split it into composed Orkflows or move large `with:` values into artifacts",
-			wf.GetName(), wf.GetVersion(), size, limit/1024, limit))
+			wf.GetName(), wf.GetVersion(), size, limit/1024, limit)))
 	}
 	return nil
 }
@@ -2246,9 +2331,9 @@ func checkRunPlanSize(plan engine.RunPlan) error {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run's plan: %w", err))
 	}
 	if len(encoded) > engine.MaxPlanBytes {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "PLAN_TOO_LARGE", fmt.Errorf(
 			"the run's plan encodes to %d KiB, over the %d KiB a run may carry",
-			kib(len(encoded)), engine.MaxPlanBytes/1024))
+			kib(len(encoded)), engine.MaxPlanBytes/1024)))
 	}
 	return nil
 }
@@ -2985,6 +3070,20 @@ type runFacts struct {
 	Orkflow          string
 	OrkflowNamespace string
 	RootRunID        string
+	// Origin is the kind of what started it, and InputArtifacts are the
+	// artifacts it received.
+	Origin         orkstackv1.RunOriginKind
+	InputArtifacts []engine.NamedArtifactPlan
+}
+
+// archivedFacts are the facts of a run as a snapshot of it says.
+func archivedFacts(run *orkstackv1.Run) runFacts {
+	facts := runFacts{Orkflow: run.GetOrkflowName(), OrkflowNamespace: run.GetOrkflowNamespace(), RootRunID: rootOrParent(run.GetOrigin()), Origin: run.GetOrigin().GetKind()}
+	for _, in := range run.GetInputArtifacts() {
+		facts.InputArtifacts = append(facts.InputArtifacts, engine.NamedArtifactPlan{Name: in.GetName(), RunID: in.GetRunId(), TaskID: in.GetTaskId(),
+			Artifact: engine.ArtifactRefPlanOf(in.GetArtifact())})
+	}
+	return facts
 }
 
 // rootOrParent is a child run's root, or its parent when no root was recorded.
@@ -3015,8 +3114,9 @@ func (s *Service) runFactsIn(ctx context.Context, runID, namespace string) (runF
 		switch {
 		case err == nil:
 			found, runNamespace = true, start.Orkflow.GetNamespace()
-			facts = runFacts{Orkflow: start.Orkflow.GetName(), OrkflowNamespace: start.Orkflow.GetDefinitionNamespace()}
+			facts = runFacts{Orkflow: start.Orkflow.GetName(), OrkflowNamespace: start.Orkflow.GetDefinitionNamespace(), InputArtifacts: start.Plan.InputArtifacts}
 			if start.Plan.Origin != nil {
+				facts.Origin = start.Plan.Origin.Proto().GetKind()
 				facts.RootRunID = start.Plan.Origin.RootRunID
 				if facts.RootRunID == "" && start.Plan.Origin.Kind == engine.RunOriginKindParentRun {
 					facts.RootRunID = start.Plan.Origin.ID
@@ -3027,14 +3127,14 @@ func (s *Service) runFactsIn(ctx context.Context, runID, namespace string) (runF
 		}
 	} else if run, ok := s.runs.Get(runID); ok {
 		found, runNamespace = true, run.GetNamespace()
-		facts = runFacts{Orkflow: run.GetOrkflowName(), OrkflowNamespace: run.GetOrkflowNamespace(), RootRunID: rootOrParent(run.GetOrigin())}
+		facts = archivedFacts(run)
 	}
 	if !found && s.archive != nil {
 		run, err := s.archive.LoadRun(ctx, runID)
 		switch {
 		case err == nil:
 			found, runNamespace = true, run.GetNamespace()
-			facts = runFacts{Orkflow: run.GetOrkflowName(), OrkflowNamespace: run.GetOrkflowNamespace(), RootRunID: rootOrParent(run.GetOrigin())}
+			facts = archivedFacts(run)
 		case !errors.Is(err, artifacts.ErrNotFound):
 			return runFacts{}, connect.NewError(connect.CodeInternal,
 				fmt.Errorf("read run %q from archive: %w", runID, err))

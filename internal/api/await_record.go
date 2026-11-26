@@ -41,9 +41,13 @@ const (
 	// awaitTellWait fourfold.
 	awaitTellTries = 3
 	awaitTellWait  = 100 * time.Millisecond
-	// awaitTellBound is how long a record that exists is read back and told
-	// of, whatever becomes of the request that made it.
-	awaitTellBound = 30 * time.Second
+	// awaitSettleBound is how long each question of a record that exists may
+	// take (what it is when read back; whether the run was resumed, and what
+	// the caller may learn), and awaitTellBound how long the run is then told
+	// of it, whatever becomes of the request. Together they leave an answer
+	// that stands time to reach a caller that waits half a minute.
+	awaitSettleBound = 5 * time.Second
+	awaitTellBound   = 10 * time.Second
 	// maxAwaitTellings bounds the tellings a replica remembers.
 	maxAwaitTellings = 10_000
 )
@@ -303,7 +307,9 @@ func (d *awaitDoor) read(ctx context.Context) (artifacts.RecordRead[*artifacts.R
 			"object", read.Object, "reason", read.Reason)
 		// The run fails the task when it reads it: told now, not at its
 		// deadline. Whether it could be told changes nothing of the answer.
-		d.deliver(ctx, d.bare())
+		telling, cancel := context.WithTimeout(context.WithoutCancel(ctx), awaitTellBound)
+		defer cancel()
+		d.deliver(telling, d.bare())
 		return read, awaitRefused(reasonResolutionRecordInvalid,
 			"the record on file for await %q cannot be used; the run fails the task when it reads it", d.r.taskID)
 	}
@@ -317,7 +323,7 @@ func (d *awaitDoor) bare() *orkstackv1.AwaitSignal {
 // standing answers a request that met a record: step 3's table, and step 8's
 // stored time, which outranks it.
 func (d *awaitDoor) standing(ctx context.Context, f *artifacts.RecordedFound) (*orkstackv1.ResolveAwaitResponse, error) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), awaitTellBound)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*awaitSettleBound+awaitTellBound)
 	defer cancel()
 	rejected, values, _ := f.Standing()
 	detail := f.Detail()
@@ -330,13 +336,19 @@ func (d *awaitDoor) standing(ctx context.Context, f *artifacts.RecordedFound) (*
 		}
 		return nil, d.late(f.StoredAt())
 	}
-	if err := d.reopened(ctx); err != nil {
+	asking, asked := context.WithTimeout(ctx, awaitSettleBound)
+	defer asked()
+	if err := d.reopened(asking); err != nil {
 		return nil, err
 	}
 	same := d.r.redeliver
 	if !same && d.sameAs(f) {
-		may, err := d.mayLearn(ctx, detail)
+		learning, learned := context.WithTimeout(ctx, awaitSettleBound)
+		defer learned()
+		may, err := d.mayLearn(learning, detail)
 		if err != nil {
+			// Whatever the caller may learn, the run is told of what stands.
+			d.deliver(ctx, d.bare())
 			return nil, err
 		}
 		same = may
@@ -474,10 +486,12 @@ func (d *awaitDoor) recorded(ctx context.Context, rec *orkstackv1.RecordedValues
 	// The create's own answer is dated no earlier than the record was stored.
 	created, dated := d.clock.Now(d.s.clockSkew)
 	// The record exists: the run is told of it though the caller hang up.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), awaitTellBound)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*awaitSettleBound+awaitTellBound)
 	defer cancel()
+	reading, done := context.WithTimeout(ctx, awaitSettleBound)
+	defer done()
 	passed := false
-	read, err := d.s.awaitRecords.ReadRecordedValues(ctx, artifacts.SlotDoor, d.s.awaitSpacings, d.key, d.want)
+	read, err := d.s.awaitRecords.ReadRecordedValues(reading, artifacts.SlotDoor, d.s.awaitSpacings, d.key, d.want)
 	switch {
 	case err == nil && read.Answer == artifacts.RecordInvalid:
 		d.s.logger.Error("a resolution just recorded cannot be used", "namespace", d.adm.Namespace, "run", d.adm.RunID, "task", d.r.taskID,
@@ -501,8 +515,11 @@ func (d *awaitDoor) recorded(ctx context.Context, rec *orkstackv1.RecordedValues
 			d.resp.DeadlinePassed = true
 			return d.resp, nil
 		}
+		passed = d.passed()
 	}
-	if err := d.reopened(ctx); err != nil {
+	asking, asked := context.WithTimeout(ctx, awaitSettleBound)
+	defer asked()
+	if err := d.reopened(asking); err != nil {
 		return nil, err
 	}
 	signal := &orkstackv1.AwaitSignal{TaskId: d.r.taskID, Reject: d.r.reject, Reason: d.r.reason, Values: rec.GetValues(), Via: d.r.via, Principal: d.r.principal}

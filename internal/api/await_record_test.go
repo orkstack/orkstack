@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -31,16 +34,37 @@ import (
 type faultyRecords struct {
 	*artifacts.RecordStore
 	readErr  error
-	failRead int // the read, from 1, that fails
-	reads    int
+	failRead int  // the read, from 1, that fails
+	hang     bool // and it fails only once its context ends
+	onFail   func()
+	reads    atomic.Int64 // bumped by concurrent row readers
 	writeErr error
 	onWrite  func()
+	listErr  error
+	commits  atomic.Int64 // how many commits were read by key, by concurrent row readers
 	// afterWrite runs once the record is there, before it is read back.
 	afterWrite func()
 }
 
+// idsDown is an id store that does not answer.
+type idsDown struct{ api.IncarnationStore }
+
+func (idsDown) OrkflowID(context.Context, string, string, time.Time) (string, bool, error) {
+	return "", false, errors.New("id store down")
+}
+
+func (idsDown) EnsureOrkflowID(context.Context, string, string, time.Time) (string, error) {
+	return "", errors.New("id store down")
+}
+
 func (f *faultyRecords) ReadRecordedValues(ctx context.Context, class artifacts.SlotClass, spacing *artifacts.RecordSpacings, key string, want artifacts.RecordWant) (artifacts.RecordRead[*artifacts.RecordedFound], error) {
-	if f.reads++; f.readErr != nil && (f.failRead == 0 || f.reads == f.failRead) {
+	if n := f.reads.Add(1); f.readErr != nil && (f.failRead == 0 || n == int64(f.failRead)) {
+		if f.hang {
+			<-ctx.Done()
+		}
+		if f.onFail != nil {
+			f.onFail()
+		}
 		return artifacts.RecordRead[*artifacts.RecordedFound]{}, f.readErr
 	}
 	return f.RecordStore.ReadRecordedValues(ctx, class, spacing, key, want)
@@ -68,6 +92,7 @@ type recordedDoor struct {
 	adm     artifacts.Admission
 	sha     string
 	clock   *testClock
+	seeded  *orkstackv1.Run
 }
 
 // testClock is the service's clock, which only a test moves.
@@ -103,6 +128,8 @@ func newRecordedDoor(t *testing.T) *recordedDoor {
 	d.awaitFixture = newAwaitFixture(t, func(c *api.Config) {
 		c.ArtifactStore = values
 		c.AwaitRecords, c.AwaitChecks, c.AwaitSpacings = d.records, &identity.FollowsCheck{Store: store, Spacing: fast}, fast
+		c.RecordedResults = d.records
+		c.Incarnations = idsDown{}
 		c.ClockSkew = time.Minute
 		c.Now = d.clock.Now
 	})
@@ -127,6 +154,7 @@ func (d *recordedDoor) seed(in time.Duration) *orkstackv1.Run {
 	d.sha = sha
 	run := d.seedRun(d.t, recordedRun, "default", map[string]orkstackv1.Status{"gate": orkstackv1.Status_STATUS_AWAITING})
 	taskRunFor(run, "gate").Await.Deadline = timestamppb.New(time.Now().Add(in))
+	d.seeded = run
 	d.reader.setRun(run)
 	d.reader.setStart(recordedRun, &engine.RunStartRecord{Orkflow: d.wf, Plan: engine.RunPlan{Namespace: "default",
 		Identity: &engine.IdentityPlan{AdmissionSHA256: sha},
@@ -350,6 +378,52 @@ func TestRecordedDoor_Faults(t *testing.T) {
 			t.Fatalf("%v, %v; the create's own answer was in time", resp, err)
 		}
 	})
+	t.Run("the read-back never answered", func(t *testing.T) {
+		t.Parallel()
+		d := newRecordedDoor(t)
+		d.records.readErr, d.records.failRead, d.records.hang = down, 2, true
+		began := time.Now()
+		resp, err := d.approve(approved, "alice")
+		if err != nil || resp.GetToldAt() == nil || len(d.starter.delivered()) != 1 {
+			t.Fatalf("%v, %v; the run is told of a record that could not be read back", resp, err)
+		}
+		// Well within a client's own timeout, 30 s by default.
+		if took := time.Since(began); took > 15*time.Second {
+			t.Fatalf("the caller waited %s for an answer that stood", took)
+		}
+	})
+	t.Run("the read-back failed past the deadline", func(t *testing.T) {
+		d := newRecordedDoor(t)
+		d.records.readErr, d.records.failRead = down, 2
+		d.records.onFail = func() { d.clock.advance(2 * time.Hour) }
+		resp, err := d.approve(approved, "alice")
+		if err != nil || resp.GetToldAt() == nil || !resp.GetDeadlinePassed() {
+			t.Fatalf("%v, %v; the deadline passed while the record was read back", resp, err)
+		}
+	})
+	t.Run("what a repeat's caller may learn could not be decided", func(t *testing.T) {
+		d := newRecordedDoor(t)
+		d.starter.signalErr = errors.New("frontend down")
+		_, err := d.approve(approved, "alice")
+		must.OK(t, err)
+		d.starter.signalErr = nil
+		told := len(d.starter.delivered())
+		// A binding pinned to an id the store does not answer for.
+		applyIn(t, d.svc, "default", awaitedYAML)
+		cas := artifacts.NewMemoryCAS()
+		store := artifacts.NewAccessStoreOn(cas)
+		_, err = store.Write(context.Background(), &orkstackv1.AccessDocument{SchemaVersion: 1, Bindings: []*orkstackv1.Binding{{Name: "b", Role: authz.RoleViewer,
+			Scope: "namespace:default", ScopeId: "ns_1", Subjects: []string{"user:corp:carol"}}}}, nil, artifacts.AccessWrite{At: time.Now()})
+		must.OK(t, err)
+		d.svc.SetAccessForTest(&api.AccessControl{Mode: authn.ModeEnforce, Policies: api.NewPolicyCache(store, api.PolicyCacheOptions{})})
+		ctx := authn.WithPrincipal(authn.WithMode(context.Background(), authn.ModeEnforce),
+			&authn.Principal{Kind: authn.KindUser, ID: "user:corp:carol", Issuer: "corp", Method: authn.MethodJWT})
+		_, err = d.svc.ResolveAwait(ctx, connect.NewRequest(&orkstackv1.ResolveAwaitRequest{RunId: recordedRun, TaskId: "gate", ValuesJson: approved}))
+		d.refused(err, connect.CodeUnavailable, "could not be decided")
+		if len(d.starter.delivered()) != told+1 {
+			t.Fatal("the run was not told of the record that stands")
+		}
+	})
 	t.Run("the row holds no deadline", func(t *testing.T) {
 		d := newRecordedDoor(t)
 		run := d.seed(time.Hour)
@@ -547,15 +621,15 @@ func TestRecordedDoor_CapsRefusedRequests(t *testing.T) {
 		_, err := d.approve(other, "mallory")
 		d.refused(err, connect.CodeFailedPrecondition, "AWAIT_ALREADY_RESOLVED")
 	}
-	reads := d.records.reads
+	reads := d.records.reads.Load()
 	for range 5 {
 		_, err := d.approve(other, "mallory")
 		d.refused(err, connect.CodeResourceExhausted, "too many")
 	}
 	_, err = d.resolve(&orkstackv1.ResolveAwaitRequest{RunId: recordedRun, TaskId: "gate", Redeliver: true}, "mallory")
 	d.refused(err, connect.CodeResourceExhausted, "too many")
-	if d.records.reads != reads {
-		t.Fatalf("a capped request read %d records", d.records.reads-reads)
+	if now := d.records.reads.Load(); now != reads {
+		t.Fatalf("a capped request read %d records", now-reads)
 	}
 	_, err = d.approve(other, "bob")
 	d.refused(err, connect.CodeFailedPrecondition, "AWAIT_ALREADY_RESOLVED")

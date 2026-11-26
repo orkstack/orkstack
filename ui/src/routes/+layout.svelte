@@ -365,6 +365,9 @@
 			const label = named ?? (here?.id === 'runs' && i === 0 ? (runName ?? shortRunId(value)) : value === 'compare' ? 'Compare' : value);
 			out.push({ label, href: link(at) });
 		}
+		// One concurrency key is an address of the Concurrency page's own (?key=), not a path under it.
+		const key = here?.id === 'concurrency' ? (page.data as { key?: string }).key : undefined;
+		if (key) out.push({ label: key });
 		return out;
 	});
 </script>

@@ -256,9 +256,10 @@ const forceCancelCarriedMaxBytes = 2 * ForceCancelRecordMaxBytes
 var ErrForceCancelUndecided = errors.New("how a force cancel ended the run could not be decided now")
 
 // errForceCancelUnread is the one undecided close an archive may settle as its
-// last resort: the run did end, and only its record could not be verified. A
+// last resort: the run did end, and only its record could not be verified: the
+// keys it was signed under, or the namespace it is for, could not be read. A
 // run that cannot be told from one resumed since is not.
-var errForceCancelUnread = fmt.Errorf("%w: the keys its force cancel record was signed under could not be read", ErrForceCancelUndecided)
+var errForceCancelUnread = fmt.Errorf("%w: its force cancel record could not be verified", ErrForceCancelUndecided)
 
 // ForceCancelVerification is what a termination's record proved.
 type ForceCancelVerification int

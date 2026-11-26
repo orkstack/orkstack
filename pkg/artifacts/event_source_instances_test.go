@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"math"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -185,4 +187,43 @@ func FuzzConfirmRecord(f *testing.F) {
 			t.Fatalf("a record does not round-trip: %+v, %v", back, err)
 		}
 	})
+}
+
+// TestInstanceAttempt_OutlivesACrashLoop: an attempt is numbered by the
+// cluster, which numbers as long as it retries: a key holds every number it
+// can give, in order, so a long crash loop's next attempt can still confirm.
+func TestInstanceAttempt_OutlivesACrashLoop(t *testing.T) {
+	ctx := context.Background()
+	s, err := NewLocalEventSourceInstanceStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, n := range []int{1, 9999, 10000, 100000, math.MaxInt32} {
+		a := InstanceAttempt{SourceID: "evs-0123456789abcdef", Index: 1, Epoch: 2, Attempt: n}
+		want := ConfirmRecord{OrkerID: "o", ConfirmedAt: time.Unix(1700000000, 0).UTC(), ServiceDigest: strings.Repeat("a", 64)}
+		if got, err := s.Confirm(ctx, a, want); err != nil || got != want {
+			t.Fatalf("attempt %d: %+v, %v", n, got, err)
+		}
+		if got, found, err := s.Confirmed(ctx, a); err != nil || !found || got != want {
+			t.Fatalf("attempt %d read back: %+v, %v, %v", n, got, found, err)
+		}
+		key, err := confirmKey(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record, err := SourceAttemptKey(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key+" "+record)
+	}
+	if !slices.IsSorted(keys) {
+		t.Fatalf("the keys are not in order: %q", keys)
+	}
+	for _, n := range []int{-1, math.MaxInt32 + 1} {
+		if (InstanceAttempt{SourceID: "evs-0123456789abcdef", Attempt: n}).Valid() == nil {
+			t.Errorf("attempt %d is one", n)
+		}
+	}
 }

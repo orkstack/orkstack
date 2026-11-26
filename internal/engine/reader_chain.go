@@ -10,9 +10,11 @@ import (
 
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -92,15 +94,18 @@ type snapshotNamer interface {
 // are those its resume set aside, which end just below the resume's scope. Its
 // history holds neither.
 func (r *TemporalRunReader) endAfterReset(
-	runID string, start, closing *historypb.HistoryEvent, fromSequence int64, wantRun bool, send func(*orkstackv1.Event) error, st *scanState,
+	ctx context.Context, runID string, start, closing *historypb.HistoryEvent, fromSequence int64, wantRun bool, send func(*orkstackv1.Event) error, st *scanState,
 ) error {
 	before := st.resetScope - 1
 	if before <= st.lastSequence {
 		return nil
 	}
 	if namer, ok := r.snapshots.(snapshotNamer); ok {
-		namespace := artifacts.ResolveNamespace(r.startedNamespace(start.GetWorkflowExecutionStartedEventAttributes()))
-		uri, err := namer.SnapshotURI(namespace, runID, before)
+		namespace, err := r.runNamespace(ctx, runID, start.GetWorkflowExecutionStartedEventAttributes())
+		if err != nil {
+			return err
+		}
+		uri, err := namer.SnapshotURI(artifacts.ResolveNamespace(namespace), runID, before)
 		if err != nil {
 			return fmt.Errorf("engine: run %s: the record its resume set aside: %w", runID, err)
 		}
@@ -207,13 +212,13 @@ func (st *scanState) deliver(
 // decodeCarry decodes a started event's fifth argument: the carry of a
 // generation after the first, nil when absent (generation 0, and every start
 // made before carries existed).
-func (r *TemporalRunReader) decodeCarry(attrs *historypb.WorkflowExecutionStartedEventAttributes) (*orkstackv1.RunContinuation, error) {
+func decodeCarry(dc converter.DataConverter, attrs *historypb.WorkflowExecutionStartedEventAttributes) (*orkstackv1.RunContinuation, error) {
 	payloads := attrs.GetInput().GetPayloads()
 	if len(payloads) < 5 {
 		return nil, nil
 	}
 	var carry *orkstackv1.RunContinuation
-	if err := r.converter.FromPayload(payloads[4], &carry); err != nil {
+	if err := dc.FromPayload(payloads[4], &carry); err != nil {
 		return nil, fmt.Errorf("decode the saved-state reference of its start: %w", err)
 	}
 	return carry, nil
@@ -225,6 +230,7 @@ func (r *TemporalRunReader) decodeCarry(attrs *historypb.WorkflowExecutionStarte
 // (falling back to the switch snapshot) for a run read.
 func (r *TemporalRunReader) adoptCarry(
 	ctx context.Context,
+	dc converter.DataConverter,
 	runID string,
 	attrs *historypb.WorkflowExecutionStartedEventAttributes,
 	carry *orkstackv1.RunContinuation,
@@ -234,7 +240,11 @@ func (r *TemporalRunReader) adoptCarry(
 	st *scanState,
 ) error {
 	eventRead := send != nil || !wantRun
-	if err := validateCarry(runID, r.startedNamespace(attrs), carry); err != nil {
+	namespace, err := startedNamespace(dc, attrs)
+	if err != nil {
+		return fmt.Errorf("engine: read the start of run %s: %w", runID, err)
+	}
+	if err := validateCarry(runID, namespace, carry); err != nil {
 		if !eventRead {
 			return fmt.Errorf("engine: run %s: its saved state cannot be read: %v", runID, err)
 		}
@@ -280,32 +290,42 @@ func (r *TemporalRunReader) adoptCarry(
 }
 
 // startedNamespace is the OrkStack namespace a start's planned definition
-// names ("" when it does not decode, which resolves to default).
-func (r *TemporalRunReader) startedNamespace(attrs *historypb.WorkflowExecutionStartedEventAttributes) string {
+// names ("" when it does not decode, which resolves to default). A key that
+// could not be had is an error.
+func startedNamespace(dc converter.DataConverter, attrs *historypb.WorkflowExecutionStartedEventAttributes) (string, error) {
 	payloads := attrs.GetInput().GetPayloads()
 	if len(payloads) < 2 {
-		return ""
+		return "", nil
 	}
 	var wf *orkstackv1.Orkflow
-	if err := r.converter.FromPayload(payloads[1], &wf); err != nil {
-		return ""
+	if err := dc.FromPayload(payloads[1], &wf); errors.Is(err, errPayloadKeyUnavailable) {
+		return "", err
+	} else if err != nil && payloadcrypt.IsSealed(payloads[1]) {
+		return "", err // never the built-in namespace for a run whose own cannot be read
+	} else if err != nil {
+		return "", nil
 	}
-	return wf.GetNamespace()
+	return wf.GetNamespace(), nil
 }
 
 // startedBy is the namespace a run was started in and what started it, from
 // its first event.
-func (r *TemporalRunReader) startedBy(first *historypb.HistoryEvent) (namespace string, origin *RunOrigin, err error) {
+func (r *TemporalRunReader) startedBy(ctx context.Context, runID string, first *historypb.HistoryEvent) (namespace string, origin *RunOrigin, err error) {
 	attrs := first.GetWorkflowExecutionStartedEventAttributes()
 	payloads := attrs.GetInput().GetPayloads()
 	if len(payloads) < 4 {
 		return "", nil, fmt.Errorf("engine: a run's start carries %d arguments, want 4", len(payloads))
 	}
+	dc := r.runConverter(ctx, runID)
+	if err := holdOrKeyless(dc, attrs); err != nil {
+		return "", nil, fmt.Errorf("engine: run %s: what started it: %w", runID, err)
+	}
 	var plan RunPlan
-	if err := r.converter.FromPayload(payloads[3], &plan); err != nil {
+	if err := dc.FromPayload(payloads[3], &plan); err != nil {
 		return "", nil, fmt.Errorf("engine: decode a run's plan: %w", err)
 	}
-	return r.startedNamespace(attrs), plan.Origin, nil
+	namespace, err = startedNamespace(dc, attrs)
+	return namespace, plan.Origin, err
 }
 
 // longestTaskGrace is LongestTaskGrace of the definition a run was started

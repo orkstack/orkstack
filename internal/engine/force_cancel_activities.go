@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/jwt"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -424,8 +426,14 @@ func (a *ForceCancelActivities) targets(ctx context.Context, d ForceCancelDecisi
 			return "", err
 		}
 		started := first.GetWorkflowExecutionStartedEventAttributes()
-		if hop == 0 && artifacts.ResolveNamespace(a.reader.startedNamespace(started)) != artifacts.ResolveNamespace(d.Namespace) {
-			return FCCauseDecisionUnverified, nil
+		if hop == 0 {
+			namespace, err := a.reader.runNamespace(ctx, d.RunID, started)
+			if err != nil {
+				return "", err
+			}
+			if artifacts.ResolveNamespace(namespace) != artifacts.ResolveNamespace(d.Namespace) {
+				return FCCauseDecisionUnverified, nil
+			}
 		}
 		if exec == d.TargetExecutionRunID {
 			return "", nil
@@ -973,6 +981,13 @@ func (a *ForceCancelActivities) Publish(ctx context.Context, in FCStep) (FCPubli
 	if err != nil {
 		return FCPublished{}, err
 	}
+	first, err := a.firstEvent(ctx, d.RunID, in.ExecutionRunID)
+	if err != nil {
+		return FCPublished{}, err
+	}
+	if sealedStart(first.GetWorkflowExecutionStartedEventAttributes()) {
+		return FCPublished{}, sealedEndingRefused(d.RunID)
+	}
 	status, closed, err := a.closeOf(ctx, d, in.ExecutionRunID)
 	if err != nil {
 		return FCPublished{}, err
@@ -1043,7 +1058,7 @@ func (a *ForceCancelActivities) ownEnding(ctx context.Context, d ForceCancelDeci
 	if !a.reader.isPublishEvent(last) || finished[last.GetEventId()] || len(payloads) < 3 {
 		return out, nil
 	}
-	event, uri, err := a.reader.decodePublishEvent(d.RunID, last)
+	event, uri, err := decodePublishEvent(a.reader.converter, d.RunID, last)
 	if err != nil {
 		return FCPublished{}, err
 	}
@@ -1115,3 +1130,19 @@ const forceCancelRefusedType = "ForceCancelRefused"
 func errForceCancelRefused(cause string) error {
 	return temporal.NewNonRetryableApplicationError(cause, forceCancelRefusedType, nil)
 }
+
+// sealedStart reports a start of a sealed run: one that carries a key, or
+// anything sealed.
+func sealedStart(attrs *historypb.WorkflowExecutionStartedEventAttributes) bool {
+	_, keyed := attrs.GetMemo().GetFields()[payloadcrypt.MemoField]
+	return keyed || slices.ContainsFunc(attrs.GetInput().GetPayloads(), payloadcrypt.IsSealed)
+}
+
+// sealedEndingRefused is Publish's answer for a sealed run: refused, so it is
+// asked once, since nothing asked again changes it.
+func sealedEndingRefused(runID string) error {
+	return temporal.NewNonRetryableApplicationError("run "+runID+": "+errForceCancelSealed.Error(), forceCancelRefusedType, errForceCancelSealed)
+}
+
+// errForceCancelSealed is why a sealed run's ending is not announced.
+var errForceCancelSealed = errors.New("force cancel: the run is encrypted: its ending is not announced, since the force cancel's own history would hold it in plaintext")

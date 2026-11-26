@@ -68,12 +68,12 @@ func NewLocalEventSourceInstanceStore(dir string) (*EventSourceInstanceStore, er
 	return &EventSourceInstanceStore{blobBase: blobBase{b}}, nil
 }
 
-// confirmKey is metadata/event-source-confirms/{id}/{index:05}-{epoch:012}-{attempt:04}.
+// confirmKey is metadata/event-source-confirms/{id}/{index:05}-{epoch:012}-{attempt:010}.
 func confirmKey(a InstanceAttempt) (string, error) {
 	if err := a.valid(); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s/%s/%05d-%012d-%04d", EventSourceConfirmPrefix, a.SourceID, a.Index, a.Epoch, a.Attempt), nil
+	return fmt.Sprintf("%s/%s/%05d-%012d-%010d", EventSourceConfirmPrefix, a.SourceID, a.Index, a.Epoch, a.Attempt), nil
 }
 
 func tombstoneKey(sourceID string) (string, error) {

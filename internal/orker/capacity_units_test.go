@@ -40,7 +40,7 @@ func pollTask(t *testing.T, c *Capacity, request amount) (*Admission, func()) {
 		t.Fatal("the poll was not granted")
 	}
 	c.markUsed(permit)
-	a, err := c.admit(true, request)
+	a, err := c.admit(&c.channelLedger, request)
 	if err != nil {
 		t.Fatalf("admit: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestCapacity_GPUZeroAdmitsNone(t *testing.T) {
 		t.Fatal("a cpu-only poll was not granted under an unbounded limit")
 	}
 	plain.markUsed(permit)
-	if _, err := plain.admit(true, gpuReq(1)); !isReason(err, ReasonResourceAdmissionMismatch) {
+	if _, err := plain.admit(&plain.channelLedger, gpuReq(1)); !isReason(err, ReasonResourceAdmissionMismatch) {
 		t.Fatalf("admit gpu 1 on an Orker with no units = %v, want %s", err, ReasonResourceAdmissionMismatch)
 	}
 	if err := plain.bind(&Admission{c: plain, held: gpuReq(1)}); !isReason(err, ReasonGPUUnitsUnavailable) {
@@ -175,13 +175,13 @@ func TestCapacity_ProbeVsPolledBindOneUnit(t *testing.T) {
 	for range 2 {
 		wg.Go(func() {
 			for range 50 {
-				permit, err := c.reserve(ctx, nil)
+				permit, err := c.reserve(ctx, &c.channelLedger, nil)
 				if err != nil {
 					errs <- err
 					return
 				}
 				c.markUsed(permit)
-				a, err := c.admit(true, gpuReq(1))
+				a, err := c.admit(&c.channelLedger, gpuReq(1))
 				if err != nil {
 					errs <- err
 					c.release(permit)

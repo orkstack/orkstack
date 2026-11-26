@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // copyBackend is one backend's staging writer and artifact store over one
@@ -376,5 +379,27 @@ func TestRemoveStaged_OneMessageOnly(t *testing.T) {
 				t.Error("a removal of no message was made")
 			}
 		})
+	}
+}
+
+// TestStoreRefuses: what a store would answer again is told from what may
+// pass.
+func TestStoreRefuses(t *testing.T) {
+	status := func(code int) error {
+		return fmt.Errorf("get: %w", &smithyhttp.ResponseError{Response: &smithyhttp.Response{Response: &http.Response{StatusCode: code}}, Err: errors.New("said")})
+	}
+	for code, want := range map[int]bool{400: true, 401: true, 403: true, 404: true, 405: true, 501: true,
+		408: false, 409: false, 412: false, 429: false, 500: false, 503: false, 504: false} {
+		if got := StoreRefuses(status(code)); got != want {
+			t.Errorf("%d: %v; want %v", code, got, want)
+		}
+	}
+	for _, err := range []error{nil, errors.New("connection refused"), context.DeadlineExceeded} {
+		if StoreRefuses(err) {
+			t.Errorf("%v is refused", err)
+		}
+	}
+	if !StoreRefuses(fmt.Errorf("open: %w", os.ErrPermission)) {
+		t.Error("a local store that may not be read")
 	}
 }

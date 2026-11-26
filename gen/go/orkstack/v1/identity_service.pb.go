@@ -213,7 +213,8 @@ type MintAttemptTokensResponse struct {
 	Tokens []*IssuedToken         `protobuf:"bytes,1,rep,name=tokens,proto3" json:"tokens,omitempty"`
 	// input_artifacts are the artifacts of the run's start the task names, each
 	// under its input's name, as the engine read them from the records of the
-	// tasks that produced them: the only ones its attempt stages.
+	// tasks that produced them: the only ones its attempt stages. One a failure
+	// handler passed, whose producer has no record, is its name alone.
 	InputArtifacts []*ArtifactRef `protobuf:"bytes,2,rep,name=input_artifacts,json=inputArtifacts,proto3" json:"input_artifacts,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

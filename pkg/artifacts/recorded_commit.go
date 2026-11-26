@@ -75,10 +75,12 @@ func (s *RecordStore) RecordCommit(ctx context.Context, commitKey string, c *ork
 	return RecordedCommit{Key: key, Record: rec}, err
 }
 
-// AttestedWant names the engine's record of one task's result: its run,
-// the resume scope it was made under and the run's admission.
+// AttestedWant names the engine's record of one task's result, or one item's
+// of a fan-out: its run, the resume scope it was made under and the run's
+// admission.
 type AttestedWant struct {
 	Namespace, RunID, TaskID string
+	Item                     Item
 	Scope                    uint64
 	AdmissionSHA256          string
 }
@@ -90,13 +92,16 @@ type AttestedWant struct {
 // not answer is *RecordStoreUnanswered.
 func (s *RecordStore) ReadAttestedCommit(ctx context.Context, class SlotClass, spacing *RecordSpacings, want AttestedWant) (RecordRead[CommitRecord], error) {
 	key, err := ScopedCommitKey(want.Namespace, want.RunID, want.TaskID, want.Scope)
+	if want.Item.Set {
+		key, err = ScopedItemCommitKey(want.Namespace, want.RunID, want.TaskID, want.Item.Index, want.Scope)
+	}
 	if err != nil {
 		return RecordRead[CommitRecord]{}, err
 	}
 	if key, err = AttestedCommitKey(key); err != nil {
 		return RecordRead[CommitRecord]{}, err
 	}
-	body, _, found, err := s.readerWith(spacing).readObject(ctx, class, key, CommitMaxBytes+1)
+	body, stored, found, err := s.readerWith(spacing).readObject(ctx, class, key, CommitMaxBytes+1)
 	if err != nil {
 		return RecordRead[CommitRecord]{}, err
 	}
@@ -127,6 +132,7 @@ func (s *RecordStore) ReadAttestedCommit(ctx context.Context, class SlotClass, s
 	if err != nil {
 		return RecordRead[CommitRecord]{}, err
 	}
+	rec.StoredAt = stored
 	return RecordRead[CommitRecord]{Answer: RecordFound, Value: rec}, nil
 }
 

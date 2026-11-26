@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/jwt"
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestEngineSettings_Validate(t *testing.T) {
@@ -303,5 +305,53 @@ func TestEngineClient_CommitResult(t *testing.T) {
 	if _, err := c.CommitResult(context.Background(), &orkstackv1.CommitResultRequest{Attempt: 9}); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
 		!strings.Contains(err.Error(), "COMMIT_IDENTITY_MISMATCH") {
 		t.Fatalf("a refusal = %v", err)
+	}
+}
+
+// hostEngine answers the host service and counts the connections it is called on.
+type hostEngine struct {
+	orkstackv1connect.UnimplementedEventSourceHostServiceHandler
+	mu      sync.Mutex
+	conns   map[string]bool
+	bearers []string
+}
+
+func (e *hostEngine) ProbeEventSource(_ context.Context, r *connect.Request[orkstackv1.ProbeEventSourceRequest]) (*connect.Response[orkstackv1.ProbeEventSourceResponse], error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.conns[r.Peer().Addr] = true
+	e.bearers = append(e.bearers, r.Header().Get("Authorization"))
+	return connect.NewResponse(&orkstackv1.ProbeEventSourceResponse{Answer: &orkstackv1.DoorAnswer{Disposition: orkstackv1.Disposition_DISPOSITION_OK}}), nil
+}
+
+// TestEngineClient_DialsTheHostServiceOnItsOwnConnection: each dial's calls are on
+// a connection no other's are, and present the Orker's credential.
+func TestEngineClient_DialsTheHostServiceOnItsOwnConnection(t *testing.T) {
+	engine := &hostEngine{conns: map[string]bool{}}
+	mux := http.NewServeMux()
+	mux.Handle(orkstackv1connect.NewEventSourceHostServiceHandler(engine))
+	server := httptest.NewUnstartedServer(mux)
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	t.Cleanup(server.Close)
+	token := filepath.Join(t.TempDir(), "token")
+	must.OK(t, os.WriteFile(token, []byte("eyJ.x.y\n"), 0o600))
+	c, err := NewEngineClient(EngineSettings{URL: server.URL, Method: EngineAuthTokenFile, TokenFile: token})
+	must.OK(t, err)
+	// A connection a call was still on when it was let go closes by itself.
+	if _, tr := c.dial(); tr.IdleConnTimeout <= 0 {
+		t.Error("a host connection left idle is never closed")
+	}
+	for range 2 {
+		host, done := c.DialHost()
+		for range 2 {
+			_, err := host.ProbeEventSource(t.Context(), connect.NewRequest(&orkstackv1.ProbeEventSourceRequest{}))
+			must.OK(t, err)
+		}
+		done()
+	}
+	if len(engine.conns) != 2 || len(engine.bearers) != 4 || engine.bearers[3] != "Bearer eyJ.x.y" {
+		t.Fatalf("%d connections, credentials %q; want two dials on two", len(engine.conns), engine.bearers)
 	}
 }

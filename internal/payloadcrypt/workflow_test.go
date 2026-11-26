@@ -3,6 +3,7 @@ package payloadcrypt
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	commonpb "go.temporal.io/api/common/v1"
@@ -181,5 +182,21 @@ func TestConverter_ReaderKeys(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("the source was asked %d times, want 2", calls)
+	}
+}
+
+// What does not decode is said without quoting it: the error is logged, and
+// shown to whoever asked for the run.
+func TestOpenRaw_QuotesNothingOfWhatDoesNotDecode(t *testing.T) {
+	dc := converter.GetDefaultDataConverter()
+	scope := NewScope(testKey(t, 4), RunContext("ork-1"))
+	p, err := scope.SealPayload(&commonpb.Payload{Metadata: map[string][]byte{"encoding": []byte("json/protobuf")}, Data: []byte(`{"canary":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var into *commonpb.WorkflowExecution
+	present, err := OpenRaw(scope, dc, converter.NewRawValue(p), &into)
+	if present || !errors.Is(err, ErrUnreadable) || strings.Contains(err.Error(), "canary") {
+		t.Fatalf("= %v, %v; want ErrUnreadable and nothing of the payload", present, err)
 	}
 }

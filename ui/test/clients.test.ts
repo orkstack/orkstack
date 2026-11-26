@@ -18,10 +18,10 @@ scanTest('every generated file declares at most one service', () => {
 		expect(`${file}: ${declared}`).toBe(`${file}: ${Math.min(declared, 1)}`);
 		services += declared;
 	}
-	// Eighteen services; EventSourceService has no client module until the
-	// UI gains its event-source pages, and AttemptService is called only by
-	// Orkers, so it has none.
-	expect(services).toBe(18);
+	// Nineteen services; EventSourceService has no client module until the
+	// UI gains its event-source pages, and AttemptService and
+	// EventSourceHostService are called only by Orkers, so they have none.
+	expect(services).toBe(19);
 });
 
 scanTest('each client module imports only its own service', () => {

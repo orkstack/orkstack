@@ -704,10 +704,11 @@ var accessRows = map[string]accessRow{
 		{perm: authz.PermRunSubmit},
 		{perm: authz.PermRunRead, res: ptr(runIn("source_run_id")), when: when("source_run_id")},
 	}},
-	orkstackv1connect.RunServiceGetRunProcedure:           {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
-	orkstackv1connect.RunServiceStreamEventsProcedure:     {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
-	orkstackv1connect.RunServiceListTaskAttemptsProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
-	orkstackv1connect.RunServiceInspectRunProcedure:       {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	orkstackv1connect.RunServiceGetRunProcedure:              {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	orkstackv1connect.RunServiceStreamEventsProcedure:        {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	orkstackv1connect.RunServiceListTaskAttemptsProcedure:    {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	orkstackv1connect.RunServiceListRecordedResultsProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	orkstackv1connect.RunServiceInspectRunProcedure:          {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
 	orkstackv1connect.RunServiceGetArtifactProvenanceProcedure: {res: runIn("run_id"), notFound: true, checks: []check{
 		{perm: authz.PermRunRead},
 		{perm: authz.PermRunLogsRead, when: kindIs(authz.PermRunLogsRead)},
@@ -784,6 +785,17 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.EventSourceServiceEvaluateEventSourceMessageProcedure: {res: eventSourceEvaluated, checks: []check{
 		{perm: authz.PermEventSourceRead}, {perm: authz.PermOrkflowRead, when: hasCandidate}}},
 	orkstackv1connect.EventSourceServiceInspectSourceImageProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermEventSourceWrite)},
+
+	// EventSourceHostService: an Orker's calls for an instance it holds. Each
+	// asks eventsource.host at the pool the source's document names, which
+	// only the held check reads (internal/held), once it has found that the
+	// caller holds the instance.
+	orkstackv1connect.EventSourceHostServiceConfirmInstanceProcedure:         {res: deployment, decidedByHandler: true, checks: perms(authz.PermEventSourceHost)},
+	orkstackv1connect.EventSourceHostServiceReportInstanceProcedure:          {res: deployment, decidedByHandler: true, checks: perms(authz.PermEventSourceHost)},
+	orkstackv1connect.EventSourceHostServiceOfferMessageProcedure:            {res: deployment, decidedByHandler: true, checks: perms(authz.PermEventSourceHost)},
+	orkstackv1connect.EventSourceHostServiceStartMessageRunProcedure:         {res: deployment, decidedByHandler: true, checks: perms(authz.PermEventSourceHost)},
+	orkstackv1connect.EventSourceHostServiceProbeEventSourceProcedure:        {res: deployment, decidedByHandler: true, checks: perms(authz.PermEventSourceHost)},
+	orkstackv1connect.EventSourceHostServiceRequestEventSourcePauseProcedure: {res: deployment, decidedByHandler: true, checks: perms(authz.PermEventSourceHost)},
 
 	// TriggerService
 	orkstackv1connect.TriggerServiceListTriggersProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermTriggerRead),

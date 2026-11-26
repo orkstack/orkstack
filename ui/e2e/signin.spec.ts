@@ -106,6 +106,8 @@ test.beforeAll(async () => {
 		ORK_AUTH_MODE: 'enforce',
 		ORK_AUTH_PUBLIC_URL: ENGINE,
 		ORK_AUTH_ADMINS: 'group:people:admins',
+		// A pool whose Orkers share one credential, bound by configuration.
+		ORK_AUTH_ORKERS: ['orkers:', '  - subject: serviceaccount:orker-main', '    pool: main', '    orker_ids: any'].join('\n'),
 		ORK_AUTH_POLICY_REFRESH: '1s',
 		ORK_AUTH_SIGNIN_KEY_FILES: signinKey,
 		ORK_AUTH_SIGNIN_REVALIDATE_INTERVAL: '4s',
@@ -273,6 +275,59 @@ test('a viewer sees no write control and is refused when it calls the RPC anyway
 	await shot(a, 'signin-explain.png');
 	await admin.close();
 	await viewer.close();
+});
+
+test('a binding for a credential Orkers share says what it does not grant, keeps that when it is edited, and is explained', async ({ page }) => {
+	const subject = 'user:people:edge@example.test';
+	await signIn(page, '/admin/access', 'admin@example.test');
+	await expect(page.getByTestId('binding-table')).toBeVisible();
+	// The page's own calls: the flag has no field in the form.
+	const call = (method: string, body: unknown) =>
+		page.evaluate(
+			async ({ method, body }) => {
+				const post = (m: string, b: unknown, csrf = '') =>
+					fetch(`/orkstack.v1.${m}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(csrf ? { 'Ork-CSRF': csrf } : {}) }, body: JSON.stringify(b) });
+				const { csrfToken } = (await (await post('AuthService/GetSignin', {})).json()) as { csrfToken: string };
+				const res = await post(method, body, csrfToken);
+				if (!res.ok) throw new Error(`${method}: ${res.status} ${await res.text()}`);
+				return (await res.json()) as { document?: { etag: string; bindings?: { name: string; subjects?: string[]; orkerIdsAny?: boolean }[] } };
+			},
+			{ method, body }
+		);
+	const { document: before } = await call('AccessService/GetAccess', {});
+	await call('AccessService/CreateBinding', { binding: { name: 'edge', role: 'orker', scope: 'pool:edge', subjects: [subject], orkerIdsAny: true }, etag: before!.etag });
+	await page.reload();
+	await expect(page.getByTestId('binding-shared-edge')).toHaveText('hosts no event source');
+	await expect(page.getByTestId('binding-edge')).toContainText('this binding lets none of them host an event source.');
+	// So is the one configuration makes; no other binding says it, the admins' among them.
+	const configured = page.getByRole('row').filter({ hasText: 'serviceaccount:orker-main' });
+	await expect(configured).toContainText('hosts no event source');
+	await expect(configured).toContainText('From configuration');
+	await expect(page.getByRole('row').filter({ hasText: 'group:people:admins' })).not.toContainText('hosts no event source');
+	await expect(page.locator('[data-testid^="binding-shared-"]')).toHaveCount(2);
+	await page.getByTestId('binding-edit-edge').click();
+	await expect(page.getByTestId('binding-shared-note')).toContainText('Saving keeps that.');
+	await page.getByTestId('binding-subjects').fill(`${subject}\nuser:people:edge-2@example.test`);
+	await shot(page, 'signin-binding-shared.png');
+	await page.getByTestId('binding-save').click();
+	await expect(page.getByTestId('binding-dialog')).toHaveCount(0);
+	await expect(page.getByTestId('binding-shared-edge')).toBeVisible();
+	const stored = (await call('AccessService/GetAccess', {})).document!.bindings!.find((b) => b.name === 'edge')!;
+	expect([stored.subjects, stored.orkerIdsAny]).toEqual([[subject, 'user:people:edge-2@example.test'], true]);
+
+	await page.goto(`${ENGINE}/admin/access/explain`);
+	await page.getByTestId('explain-principal').fill(subject);
+	await page.getByTestId('explain-permission').selectOption('eventsource.host');
+	await page.getByTestId('explain-pool').fill('edge');
+	// Within the engine's refresh interval.
+	await expect(async () => {
+		await page.getByTestId('explain-run').click();
+		await expect(page.getByTestId('explain-considered-edge')).toContainText('Its Orkers share one credential', { timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	await expect(page.getByTestId('explain-denied')).toBeVisible();
+	await shot(page, 'signin-explain-shared.png');
+	const { document: after } = await call('AccessService/GetAccess', {});
+	await call('AccessService/DeleteBinding', { name: 'edge', etag: after!.etag });
 });
 
 test('a sign-in past its revalidation is refreshed under a form being written, and signing out ends it', async ({ page }) => {

@@ -61,6 +61,19 @@ type SourceHostSettings struct {
 // HostsSources reports an Orker configured to host event-source instances.
 func (s SourceHostSettings) HostsSources() bool { return s.MaxInstances > 0 }
 
+// ceiling is the largest instance this Orker hosts, as the ledger counts it.
+func (s SourceHostSettings) ceiling() (amount, error) {
+	cpu, err := quantity.CPU(s.MaxRequestCPU)
+	if err != nil {
+		return amount{}, fmt.Errorf("%s=%q: %w", SourceHostMaxRequestCPUVar, s.MaxRequestCPU, err)
+	}
+	memory, err := quantity.Memory(s.MaxRequestMemory)
+	if err != nil {
+		return amount{}, fmt.Errorf("%s=%q: %w", SourceHostMaxRequestMemoryVar, s.MaxRequestMemory, err)
+	}
+	return amountOf(cpu, int64(memory)), nil
+}
+
 // SourceHostSettingsFromEnv reads the settings, each refused with its own
 // name when it cannot be read. engineURL is orker.engine.url: a source host
 // needs an engine to call, and refuses to boot without one, naming both.

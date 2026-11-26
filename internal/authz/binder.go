@@ -75,7 +75,7 @@ func (p *Policy) StillGrants(recorded BinderBinding, id string, perm Permission,
 	case !binding.Scope.covers(r) || pinnedElsewhere(*binding, r) || !grantableAt(perm, binding.Scope.Kind):
 		return false, fmt.Sprintf("binding %q no longer covers %s", recorded.Name, r)
 	}
-	if perms, ok := p.RolePermissions(binding.Role); !ok || !perms[perm] {
+	if !p.bindingGrants(*binding, perm) {
 		return false, fmt.Sprintf("binding %q's role %s no longer holds %s", recorded.Name, binding.Role, perm)
 	}
 	return true, ""

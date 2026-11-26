@@ -74,6 +74,9 @@ func TestSource_Validate(t *testing.T) {
 		{"secret with a bad name", func(s *orkstackv1.EventSource) {
 			s.Secrets = []*orkstackv1.SecretRef{{Name: "a b", Source: "env:X"}}
 		}, "secrets[0]"},
+		{"secret named as a directory", func(s *orkstackv1.EventSource) {
+			s.Secrets = []*orkstackv1.SecretRef{{Name: "..", Source: "env:X"}}
+		}, "secrets[0]"},
 		{"env with a bad name", func(s *orkstackv1.EventSource) { s.Env = map[string]string{"1X": "y"} }, "env"},
 		{"bad delivery", func(s *orkstackv1.EventSource) { s.Delivery = 9 }, "delivery"},
 	}

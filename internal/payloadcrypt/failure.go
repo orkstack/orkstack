@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"runtime/debug"
+	"slices"
 
 	commonpb "go.temporal.io/api/common/v1"
 	failurepb "go.temporal.io/api/failure/v1"
@@ -373,7 +374,25 @@ func OpenFailure(s *Scope, c *FailureConverter, err error) (opened error, openEr
 	if !s.Sealed() {
 		return nil, unreadable("a sealed failure in a run that carries no key")
 	}
-	f := proto.Clone(sf.f).(*failurepb.Failure)
+	f, openErr := openLevels(s, sf.f)
+	if openErr != nil {
+		return nil, openErr
+	}
+	return c.dfc.FailureToError(f), nil
+}
+
+// OpenFailureProto is a failure as the cluster holds it, opened with s: f
+// itself where nothing of it is sealed.
+func OpenFailureProto(s *Scope, f *failurepb.Failure) (*failurepb.Failure, error) {
+	if !s.Sealed() {
+		return nil, unreadable("a failure read with no key")
+	}
+	return openLevels(s, f)
+}
+
+// openLevels is sealed opened with s, at every level and in every detail.
+func openLevels(s *Scope, sealed *failurepb.Failure) (*failurepb.Failure, error) {
+	f := proto.Clone(sealed).(*failurepb.Failure)
 	for l := f; l != nil; l = l.GetCause() {
 		if attrs := l.GetEncodedAttributes(); IsSealed(attrs) {
 			text, openErr := openWith(failureLabel, s.key, s.ctx, attrs)
@@ -399,5 +418,20 @@ func OpenFailure(s *Scope, c *FailureConverter, err error) (opened error, openEr
 			}
 		}
 	}
-	return c.dfc.FailureToError(f), nil
+	return f, nil
+}
+
+// FailureSealed reports whether anything of f is sealed.
+func FailureSealed(f *failurepb.Failure) bool {
+	for l := f; l != nil; l = l.GetCause() {
+		if IsSealed(l.GetEncodedAttributes()) {
+			return true
+		}
+		for _, ps := range detailsOf(l) {
+			if slices.ContainsFunc(ps.GetPayloads(), IsSealed) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -76,6 +76,9 @@ type OCIDispatcher struct {
 	// identityConfig is the Orker's identity settings; both nil for an Orker
 	// that reaches no engine.
 	identityMint identityMintFunc
+	// localIdentity is a local run's stand-ins (UseLocalIdentity). Nil on an
+	// Orker.
+	localIdentity *LocalIdentity
 	// resultCommit is the engine's CommitResult, for a run whose results the
 	// engine records (recorded_results.go); recordClockFor and recordDrawFor
 	// replace the host's clocks and the retry rule's draw in tests.
@@ -108,6 +111,9 @@ type OCIDispatcher struct {
 	// create-if-absent, and that conditional is the arbitration point of the
 	// whole protocol.
 	Commits artifacts.CommitStore
+	// Records is what an awaited or a composed upstream of a run whose results
+	// the engine records is staged from. Nil stages none.
+	Records RecordReader
 	// Refs predicts the ArtifactRef a Put would return, with no I/O, so step 4
 	// can bound the projected commit BEFORE any byte is uploaded (§5.4).
 	Refs artifacts.RefPredictor
@@ -142,6 +148,9 @@ type OCIDispatcher struct {
 	// AttemptRecords hears of every attempt record of an earlier release this
 	// Orker meets (ork.orker.attempt_record_legacy). Nil tells nobody.
 	AttemptRecords AttemptRecordObserver
+	// Identities hears what an attempt of a run that holds an identity met
+	// (ork.identity.*, ork.result.*). Nil tells nobody.
+	Identities IdentityObserver
 	// Memos is where cached tasks' memos live. Nil means this Orker reuses
 	// nothing and writes no memo: every cached attempt is a MISS
 	// (MEMO_STORE_ABSENT) and runs, exactly like Commits being nil disables
@@ -587,6 +596,9 @@ func (d *OCIDispatcher) executeAttempt(
 		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
+		if outcome.Reason == ReasonUpstreamNotRecorded {
+			identityObserverOr(d.Identities).UpstreamUnrecorded()
+		}
 		// An attempt that reached an outcome of its own without a claim (an
 		// adopted commit, a refusal) takes an ordinal now to record it under.
 		// One aborted before its claim (cancelled, its heartbeat lost, its
@@ -996,22 +1008,28 @@ func (d *OCIDispatcher) checkImagePolicy(ctx context.Context, in *orkstackv1.Exe
 		return Fail(refusal.Code, "%v; the run pinned this policy at submit and an image "+
 			"outside it is refused before anything is pulled", refusal)
 	}
+	return d.checkSignature(ctx, sel, fmt.Sprintf("task %q", in.GetTaskId()), in.GetNamespace(), in.GetImage())
+}
+
+// checkSignature is the signature half of an image policy: the signer the
+// selection requires, if it requires one, over the image's digest. what names
+// what runs the image.
+func (d *OCIDispatcher) checkSignature(ctx context.Context, sel *orkstackv1.ImagePolicySelection, what, namespace string, image *orkstackv1.ImageRef) *Failure {
 	signer := sel.GetRequireSignedBy()
 	if signer == "" {
 		return nil
 	}
 	if d.Signatures == nil {
 		return Fail(ReasonImageSignatureUnavailable,
-			"task %q: namespace policy requires %s but this orker has no registry client "+
-				"to verify signatures with (set %s)", in.GetTaskId(), signer, RegistryAuthFileVar)
+			"%s: namespace policy requires %s but this orker has no registry client "+
+				"to verify signatures with (set %s)", what, signer, RegistryAuthFileVar)
 	}
-	if err := d.Signatures.Verify(ctx, in.GetImage(), signer, sel.GetSigningKeyPem()); err != nil {
+	if err := d.Signatures.Verify(ctx, image, signer, sel.GetSigningKeyPem()); err != nil {
 		var sig *dsl.SignatureError
 		if errors.As(err, &sig) {
-			return FailCause(sig.Code, err, "task %q: %v; namespace %q requires %s",
-				in.GetTaskId(), err, in.GetNamespace(), signer)
+			return FailCause(sig.Code, err, "%s: %v; namespace %q requires %s", what, err, namespace, signer)
 		}
-		return FailCause(ReasonImageSignatureUnavailable, err, "task %q: %v", in.GetTaskId(), err)
+		return FailCause(ReasonImageSignatureUnavailable, err, "%s: %v", what, err)
 	}
 	return nil
 }
@@ -1135,10 +1153,13 @@ func (d *OCIDispatcher) execute(
 	// refuse runs nothing. A task that holds an identity is asked the same
 	// at its mint (step 6a), and one that holds a credential alone at the
 	// mint of its logins' tokens (step 6a′): every grant it uses is logged in
-	// to before its container is created, and a login asks for a token.
-	if recordedRun(in) && !holdsIdentity(in) {
+	// to before its container is created, and a login asks for a token. Both
+	// are asked here as well when they stage an artifact their run received:
+	// what they may stage is in the answer.
+	var preflight *orkstackv1.CommitResultResponse
+	if recordedRun(in) && (!holdsIdentity(in) || receives(in)) {
 		beat.Phase("commit-preflight")
-		if failure := d.preflightCommit(ctx, in, attempt); failure != nil {
+		if preflight, failure = d.preflightCommit(ctx, in, attempt); failure != nil {
 			return nil, failure
 		}
 	}
@@ -1211,7 +1232,7 @@ func (d *OCIDispatcher) execute(
 	// fan-in item commits — and RECORDS the artifact fetches and secrets
 	// (deferBytes): a hit needs neither.
 	beat.Phase("stage-inputs")
-	staged, failure := d.stageInputs(ctx, in, ws, cached, sink.mask)
+	staged, failure := d.stageInputs(ctx, in, ws, cached, sink.mask, preflight)
 	if failure != nil {
 		return nil, failure
 	}
@@ -1361,10 +1382,11 @@ func (d *OCIDispatcher) execute(
 	// files are removed with the attempt on every exit path.
 	setupDeadline := d.identitySetupDeadline()
 	var ids *identityAttempt
-	if len(in.GetIdentity().GetIdentities()) > 0 {
+	identityIn := d.identityInput(in)
+	if len(identityIn.GetIdentity().GetIdentities()) > 0 {
 		beat.Phase("identity")
 		var failure *Failure
-		if ids, failure = d.setupIdentities(ctx, in, attempt, ws.Root, sink.mask); failure != nil {
+		if ids, failure = d.setupIdentities(ctx, identityIn, attempt, ws.Root, sink.mask); failure != nil {
 			return nil, failure
 		}
 		defer func() { cleanup.record(d.logger(), in, attempt, "identity", ids.dir, ids.remove()) }()
@@ -1386,6 +1408,16 @@ func (d *OCIDispatcher) execute(
 			return nil, failure
 		}
 		defer func() { cleanup.record(d.logger(), in, attempt, "credentials", logins.dir, logins.close()) }()
+	}
+
+	localCreds, failure := d.setupLocalCredentials(in, ws.Root, sink.mask)
+	if failure != nil {
+		return nil, failure
+	}
+	if localCreds != nil {
+		defer func() {
+			cleanup.record(d.logger(), in, attempt, "credentials", localCreds.dir, localCreds.remove())
+		}()
 	}
 
 	// STEP 7. Render, then compose and SEAL the input tree.
@@ -1441,6 +1473,9 @@ func (d *OCIDispatcher) execute(
 	if failure != nil {
 		return nil, failure
 	}
+	if localCreds != nil {
+		credentials = localCreds.refs
+	}
 	lineage := objectLineage(in, runContext)
 	if d.LocalRunContext != nil {
 		lineage = fixedLineage(d.LocalRunContext.Lineage)
@@ -1452,7 +1487,7 @@ func (d *OCIDispatcher) execute(
 	if err := ws.WriteTaskJSON(in, TaskContext{
 		RunContext:     contextRun,
 		TaskContext:    contextTask,
-		Identities:     identitiesOf(ids, in),
+		Identities:     identitiesOf(ids, identityIn),
 		Credentials:    credentials,
 		Attempt:        attempt,
 		Pool:           resolvedPool(in.GetPool()),
@@ -1501,6 +1536,9 @@ func (d *OCIDispatcher) execute(
 	// The credentials likewise, and for the same reason.
 	if logins != nil && logins.dir != "" {
 		spec.Mounts = append(spec.Mounts, Mount{Source: logins.dir, Destination: credentialsMountPath, ReadOnly: true})
+	}
+	if localCreds != nil {
+		spec.Mounts = append(spec.Mounts, Mount{Source: localCreds.dir, Destination: credentialsMountPath, ReadOnly: true})
 	}
 	for key, value := range units.labels {
 		spec.Labels[key] = value
@@ -2005,6 +2043,7 @@ func (d *OCIDispatcher) stageInputs(
 	ws *Workspace,
 	deferBytes bool,
 	mask *attemptMask,
+	preflight *orkstackv1.CommitResultResponse,
 ) (result *stagedInputs, failure *Failure) {
 	staged := &stagedInputs{
 		mask:              mask,
@@ -2038,14 +2077,22 @@ func (d *OCIDispatcher) stageInputs(
 			}
 			continue
 		}
-		// A run whose results the engine records stages a container
-		// upstream only from its engine record (recorded_results.go). A ref
-		// with no commit uri is a failed need's, given to a failure handler
-		// (it has no result, so no record); an awaited or a composed
-		// upstream is staged from its own record (record_uri), which is
-		// workload-identity §3.6's.
+		// A run whose results the engine records stages an upstream only
+		// from its engine record (recorded_results.go): a container's commit,
+		// an awaited or a composed task's own (record_uri), and what the run
+		// received as the engine answered it. A ref with none is a failed
+		// need's, given to a failure handler: it has no result, so no record.
 		if recordedRun(in) {
-			if failure := d.checkUpstreamRecord(ctx, in, up); failure != nil {
+			check := d.checkUpstreamRecord
+			switch {
+			case producer == dsl.InputsProducer:
+				check = func(_ context.Context, in *orkstackv1.ExecuteTaskInput, up *orkstackv1.UpstreamRef) *Failure {
+					return checkReceived(in, up, preflight)
+				}
+			case up.GetRecordUri() != "":
+				check = d.checkUpstreamValues
+			}
+			if failure := check(ctx, in, up); failure != nil {
 				return nil, failure
 			}
 		}

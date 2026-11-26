@@ -1,15 +1,19 @@
 // The words of a concurrency limit (E88), shared by the run page's "Queued
-// for key" card and the Orkflow page's Concurrency fact. Each one is the
-// CLI's, so a person reading `orkctl run get` or `orkctl orkflow get` beside
-// the page reads the same thing (docs/UI_CLI_PARITY.md):
+// for key" card, the Orkflow page's Concurrency fact and Operate's Concurrency
+// page. Each one is the CLI's, so a person reading `orkctl run get`,
+// `orkctl orkflow get` or `orkctl concurrency` beside the page reads the same
+// thing (docs/UI_CLI_PARITY.md):
 //   - queuedHeadline and queuedPlace: cmd/orkctl/run_queued.go, queuedLine;
-//   - concurrencyLabel: cmd/orkctl/orkflow.go, concurrencyLabel.
+//   - concurrencyLabel: cmd/orkctl/orkflow.go, concurrencyLabel;
+//   - limitState, entryLevel, strategyName and holderNote:
+//     cmd/orkctl/concurrency.go.
 // A limit's note is the server's text and is shown as it comes, never
 // composed here.
 import type { ConcurrencyQueued } from '#lib/gen/orkstack/v1/run_pb.ts';
 import { ConcurrencyQueueCause } from '#lib/gen/orkstack/v1/run_pb.ts';
 import type { ConcurrencySpec } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
 import { ConcurrencyStrategy } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
+import { NAMESPACE_PARAM, namespaceLabel } from '#lib/namespace.ts';
 
 /** ordinal is 1st, 2nd, 3rd, 4th…, the teens as 11th, 12th, 13th. */
 export function ordinal(n: number): string {
@@ -74,4 +78,9 @@ export function concurrencyLabel(spec: ConcurrencySpec): string {
 			? `the rest wait in line up to ${upTo}${spec.maxQueued > 0 ? `, at most ${spec.maxQueued}` : ''}`
 			: `on_limit ${ConcurrencyStrategy[spec.onLimit]?.toLowerCase() ?? String(spec.onLimit)}`;
 	return `limit ${spec.limit} on ${key}; ${rest}`;
+}
+
+/** One key's address. The key is a query value, never a path: it may hold slashes, and be `..`. */
+export function limitHref(namespace: string, key: string): string {
+	return `/admin/concurrency?${new URLSearchParams({ [NAMESPACE_PARAM]: namespaceLabel(namespace), key })}`;
 }

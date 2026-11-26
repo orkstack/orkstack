@@ -66,7 +66,7 @@
 	import type { GetForceCancelResponse } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import { can, runTarget } from '#lib/permissions.ts';
 	import RunQueuedCard from '#lib/components/RunQueuedCard.svelte';
-	import { waitsOnArrival } from '#lib/concurrency.ts';
+	import { limitHref, waitsOnArrival } from '#lib/concurrency.ts';
 	import { howLastPauseEnded, pausedChildCount } from '#lib/pause.ts';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import FactsStrip, { type Fact } from '#lib/components/FactsStrip.svelte';
@@ -3402,7 +3402,7 @@
 				{#key forceCancel.requestId}<RunForceCancelCard runId={run.id} namespace={data.namespace} current={forceCancel} ended={isTerminal(runStatus)} allowed={forceAllowed} cascadeAllowed={forceCascadeAllowed} {runHref} stale={forceStale} asked={forceRequest !== '' && forceCancel.requestId !== forceRequest} onstopped={readForceCancel} onagain={() => (forceDialog = true)} />{/key}
 			{/if}
 			{#if run?.queued && !queueLeft && !isTerminal(runStatus)}
-				<RunQueuedCard queued={run.queued} {runHref} />
+				<RunQueuedCard queued={run.queued} {runHref} limitHref={(key) => limitHref(data.namespace, key)} />
 			{/if}
 			{#if pausedNow && run}
 				<RunPausedCard {run} running={pauseRunning} children={pauseChildren} failing={!!(runError || runErrorMessage)} now={wallNow} {runHref} onended={() => void invalidateAll()} />

@@ -126,3 +126,30 @@ func TestAwaitDoor_WhoMayLearnAResolution(t *testing.T) {
 		})
 	}
 }
+
+// TestAwaitDoor_WhatItFollowsIsNamedToAReader: a caller who may resolve an
+// await and not read its run learns that something it follows is not on record,
+// and not which task.
+func TestAwaitDoor_WhatItFollowsIsNamedToAReader(t *testing.T) {
+	s := &Service{logger: slog.Default(), now: time.Now}
+	s.access, _ = accessFor(t, authn.ModeEnforce,
+		[]*orkstackv1.Role{{Name: "resolver", Permissions: []string{"run.await.resolve"}}},
+		&orkstackv1.Binding{Name: "resolvers", Role: "resolver", Scope: "namespace:default", Subjects: []string{"user:corp:omar"}},
+		&orkstackv1.Binding{Name: "viewers", Role: "viewer", Scope: "namespace:default", Subjects: []string{"user:corp:vera"}})
+	missing := &identity.MintError{Reason: identity.ReasonRequiredResultNotRecorded, Task: "secret-build", Message: `task "secret-build" of run "ork-1" has no record under scope 0`}
+	for who, named := range map[string]bool{"user:corp:omar": false, "user:corp:vera": true, "": false} {
+		ctx := authn.WithMode(context.Background(), authn.ModeEnforce)
+		via := orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_CALLBACK
+		if who != "" {
+			via = orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API
+			ctx = authn.WithPrincipal(ctx, &authn.Principal{Kind: authn.KindUser, ID: who, Issuer: "corp", Method: authn.MethodJWT})
+		}
+		d := &awaitDoor{s: s, adm: artifacts.Admission{Namespace: "default", RunID: "ork-1"}, r: awaitResolution{taskID: "gate", via: via, principal: who,
+			run: &orkstackv1.Run{Id: "ork-1", Namespace: "default", OrkflowName: "deploy"}}}
+		err := d.notFollowed(ctx, missing)
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), identity.ReasonRequiredResultNotRecorded) ||
+			strings.Contains(err.Error(), "secret-build") != named {
+			t.Errorf("%q: %v; want the task named: %v", who, err, named)
+		}
+	}
+}

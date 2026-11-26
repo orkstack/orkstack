@@ -46,6 +46,10 @@ type awaitState struct {
 	// deadlineAt is the instant the timer fires, on the workflow's clock.
 	deadlineAt time.Time
 	timeout    time.Duration
+	// Of a run whose results the engine records, past its deadline: confirming
+	// is a member of the run's confirming set, and deferred is left to an
+	// ending that is ready.
+	confirming, deferred bool
 }
 
 // awaitVia is the word a resolution's door is rendered with in an event.
@@ -147,18 +151,35 @@ var awaitDeadlineAfterEmit = false
 // ignoreResolution records a resolution the run did not apply as a TASK_LOG
 // carrying the task's CURRENT status, so it is never silently dropped and a
 // client that applies only SKIPPED/CANCELED from a TASK_LOG changes nothing.
-// An emit error is logged, not returned: the task's outcome is already
-// recorded and an ignored message must not end a run.
-func (s *runState) ignoreResolution(ctx workflow.Context, sig *orkstackv1.AwaitSignal, why string) {
+// An emit error is logged: the task's outcome is already recorded and an
+// ignored message must not end a run.
+// For a run whose results the engine records the text names no resolver: what
+// a message says of who sent it is not quoted. The emit's error is answered.
+func (s *runState) ignoreResolution(ctx workflow.Context, sig *orkstackv1.AwaitSignal, why string) error {
 	id := sig.GetTaskId()
 	taskRun := s.taskRuns[id]
 	message := fmt.Sprintf("resolution ignored: %s (%s)", why,
 		awaitResolver(sig.GetVia(), sig.GetPrincipal()))
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, id,
-		taskRun.GetStatus(), message); err != nil {
+	if s.recorded() {
+		message = "resolution ignored: " + why
+	}
+	err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, id,
+		taskRun.GetStatus(), message)
+	if err != nil {
 		workflow.GetLogger(ctx).Error("emit ignored resolution failed",
 			"run_id", s.runID, "task_id", id, "error", err)
 	}
+	return err
+}
+
+// notAwaiting is why a resolution of await id, which awaits nothing, is not
+// applied.
+func (s *runState) notAwaiting(id string) string {
+	why := "task is " + statusWord(s.taskRuns[id].GetStatus())
+	if code := s.taskRuns[id].GetError().GetCode(); code != "" {
+		why += " (" + code + ")"
+	}
+	return why
 }
 
 // resolve applies one resolution taken off the signal channel.
@@ -174,27 +195,46 @@ func (s *runState) resolve(ctx workflow.Context, sig *orkstackv1.AwaitSignal) er
 	}
 	taskRun := s.taskRuns[id]
 	if taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING {
-		why := "task is " + statusWord(taskRun.GetStatus())
-		if code := taskRun.GetError().GetCode(); code != "" {
-			why += " (" + code + ")"
-		}
-		s.ignoreResolution(ctx, sig, why)
+		_ = s.ignoreResolution(ctx, sig, s.notAwaiting(id))
 		return nil
 	}
 	if !sig.GetReject() && sig.GetValues() == nil {
-		s.ignoreResolution(ctx, sig, "the completion carries no values")
+		_ = s.ignoreResolution(ctx, sig, "the completion carries no values")
 		return nil
 	}
 
+	_, err := s.applyResolution(ctx, id, appliedResolution{reject: sig.GetReject(), reason: sig.GetReason(), values: sig.GetValues(),
+		valuesJSON: sig.GetValuesJson(), via: sig.GetVia(), principal: sig.GetPrincipal()})
+	return err
+}
+
+// appliedResolution is a resolution the run takes: what its message said, or,
+// for a run whose results the engine records, what its record says.
+type appliedResolution struct {
+	reject     bool
+	reason     string
+	values     *orkstackv1.ArtifactRef
+	valuesJSON []byte
+	via        orkstackv1.AwaitResolvedVia
+	principal  string
+	verified   bool
+	record     *orkstackv1.RecordRef
+}
+
+// applyResolution closes await id and records r as its outcome. The error is
+// the task's own when it did not succeed, and the failed emit's when it did.
+func (s *runState) applyResolution(ctx workflow.Context, id string, r appliedResolution) (succeeded bool, err error) {
+	a, taskRun := s.awaits[id], s.taskRuns[id]
 	a.open = false
 	a.cancelDeadline()
 	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
-	taskRun.Await.ResolvedVia = sig.GetVia()
-	taskRun.Await.ResolvedBy = sig.GetPrincipal()
-	resolver := awaitResolver(sig.GetVia(), sig.GetPrincipal())
+	taskRun.Await.ResolvedVia = r.via
+	taskRun.Await.ResolvedBy, taskRun.Await.ResolvedByVerified = r.principal, r.verified
+	taskRun.Record = r.record
+	resolver := awaitResolver(r.via, r.principal)
 
-	if sig.GetReject() {
-		message := AwaitRejectedMessage(id, sig.GetReason())
+	if r.reject {
+		message := AwaitRejectedMessage(id, r.reason)
 		taskRun.Status = orkstackv1.Status_STATUS_FAILED
 		taskRun.Error = &orkstackv1.Error{
 			Code:      AwaitRejectedCode,
@@ -204,7 +244,7 @@ func (s *runState) resolve(ctx workflow.Context, sig *orkstackv1.AwaitSignal) er
 			Retryable: false,
 		}
 		if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED, id,
-			orkstackv1.Status_STATUS_FAILED, fmt.Sprintf("await rejected %s: %s", resolver, sig.GetReason())); err != nil {
+			orkstackv1.Status_STATUS_FAILED, fmt.Sprintf("await rejected %s: %s", resolver, r.reason)); err != nil {
 			workflow.GetLogger(ctx).Error("emit await rejection failed",
 				"run_id", s.runID, "task_id", id, "error", err)
 		}
@@ -213,14 +253,14 @@ func (s *runState) resolve(ctx workflow.Context, sig *orkstackv1.AwaitSignal) er
 			workflow.GetLogger(ctx).Error("emit task failure failed",
 				"run_id", s.runID, "task_id", id, "error", err)
 		}
-		return temporal.NewNonRetryableApplicationError(message, AwaitRejectedCode, nil)
+		return false, temporal.NewNonRetryableApplicationError(message, AwaitRejectedCode, nil)
 	}
 
 	// A completion. The values were stored by the door BEFORE the signal was
 	// sent; what arrives here is the reference and, at 4 KiB or less, the
 	// exact bytes — decoded for conditions and display only, exactly as a
 	// container's are in collect.
-	values := decodeValues(sig.GetValuesJson())
+	values := decodeValues(r.valuesJSON)
 	output, convErr := payloadOf(values)
 	if convErr != nil {
 		taskRun.Status = orkstackv1.Status_STATUS_FAILED
@@ -234,26 +274,26 @@ func (s *runState) resolve(ctx workflow.Context, sig *orkstackv1.AwaitSignal) er
 			workflow.GetLogger(ctx).Error("emit task failure failed",
 				"run_id", s.runID, "task_id", id, "error", emitErr)
 		}
-		return convErr
+		return false, convErr
 	}
 	taskRun.Status = orkstackv1.Status_STATUS_SUCCEEDED
-	taskRun.ValuesRef = sig.GetValues()
+	taskRun.ValuesRef = r.values
 	taskRun.Output = output
 	// A local value only: upstreamFor projects it into UpstreamRef{task_id,
 	// values} with an empty commit_uri — an await has no commit.json, the
 	// Signal in history is its commit.
 	s.results[id] = &orkstackv1.ExecuteTaskResult{
 		TaskId:        id,
-		ValuesRef:     sig.GetValues(),
-		ValuesJson:    sig.GetValuesJson(),
-		ValuesInlined: len(sig.GetValuesJson()) > 0,
+		ValuesRef:     r.values,
+		ValuesJson:    r.valuesJSON,
+		ValuesInlined: len(r.valuesJSON) > 0,
 	}
 	s.outputs[id] = values
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED, id,
 		orkstackv1.Status_STATUS_SUCCEEDED, "await resolved "+resolver); err != nil {
-		return err
+		return true, err
 	}
-	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, id,
+	return true, s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, id,
 		orkstackv1.Status_STATUS_SUCCEEDED, "task succeeded")
 }
 
@@ -271,24 +311,7 @@ func (s *runState) expire(ctx workflow.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	taskRun := s.taskRuns[id]
-	message := fmt.Sprintf("await %q was not resolved within %s (deadline %s)",
-		id, a.timeout, a.deadlineAt.UTC().Format(time.RFC3339))
-	taskRun.Status = orkstackv1.Status_STATUS_FAILED
-	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
-	taskRun.Error = &orkstackv1.Error{
-		Code:      AwaitTimedOutCode,
-		Message:   message,
-		Details:   fmt.Sprintf("task %q", id),
-		Category:  orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT,
-		Retryable: false,
-	}
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
-		orkstackv1.Status_STATUS_FAILED, message); err != nil {
-		workflow.GetLogger(ctx).Error("emit task failure failed",
-			"run_id", s.runID, "task_id", id, "error", err)
-	}
-	return temporal.NewNonRetryableApplicationError(message, AwaitTimedOutCode, nil)
+	return s.timeOutAwait(ctx, id)
 }
 
 // cancelAwaiting closes one await the run is ending under: its timer is
@@ -317,6 +340,10 @@ func (s *runState) drainResolutions(ctx workflow.Context) {
 	if s.resolutions == nil {
 		return
 	}
+	if s.recorded() {
+		s.drainRecordedResolutions(ctx)
+		return
+	}
 	for {
 		var raw converter.RawValue
 		if !s.resolutions.ReceiveAsync(&raw) {
@@ -332,10 +359,6 @@ func (s *runState) drainResolutions(ctx workflow.Context) {
 				"run_id", s.runID, "task_id", id)
 			continue
 		}
-		why := "task is " + statusWord(s.taskRuns[id].GetStatus())
-		if code := s.taskRuns[id].GetError().GetCode(); code != "" {
-			why += " (" + code + ")"
-		}
-		s.ignoreResolution(ctx, sig, why)
+		_ = s.ignoreResolution(ctx, sig, s.notAwaiting(id))
 	}
 }

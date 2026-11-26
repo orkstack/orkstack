@@ -44,6 +44,14 @@ const (
 	holdSlackSeconds       = 60
 )
 
+// The most a spec's numbers may be: an Orker keeps every deadline it is given, so one
+// nobody would write is not read.
+const (
+	MaxStopSeconds = 30
+	maxStepSeconds = 3600
+	maxHoldSeconds = 24 * 3600
+)
+
 // HoldSeconds is the bound within which a message in hand gets its
 // verdict, from its hand-over (06 §6): one try (5 minutes, fixed), the
 // park, one more park for a refused receipt, and a minute.
@@ -53,6 +61,9 @@ func HoldSeconds(parkSeconds int) int {
 	}
 	return oneTrySeconds + 2*parkSeconds + holdSlackSeconds
 }
+
+// ParkSeconds is the park of a spec whose hold bound is holdSeconds.
+func ParkSeconds(holdSeconds int) int { return max((holdSeconds-oneTrySeconds-holdSlackSeconds)/2, 1) }
 
 // SpecLimits are a service spec's numbers, written into the container's
 // service.json limits as they are.
@@ -187,7 +198,9 @@ func ReadServiceSpec(body []byte) (ServiceSpec, error) {
 	l := spec.Limits
 	if spec.Concurrency < 1 || spec.Concurrency > MaxConcurrency || l.StatusSeconds < 1 || l.StartupSeconds < 1 || l.StopSeconds < 1 ||
 		l.AliveSeconds < 1 || l.OrphanSeconds < 1 || l.MaxBodyBytes < 1 || l.MaxAttributesBytes < 1 || l.PollWaitSeconds < 0 ||
-		l.AnswerSeconds < 1 || l.SettleSeconds < 1 || l.HoldSeconds < 1 {
+		l.AnswerSeconds < 1 || l.SettleSeconds < 1 || l.HoldSeconds < 1 || l.StopSeconds > MaxStopSeconds || l.HoldSeconds > maxHoldSeconds ||
+		l.MaxBodyBytes > MaxMessageBytesCeiling || l.MaxAttributesBytes > MaxAttributesBytes ||
+		max(l.StatusSeconds, l.StartupSeconds, l.AliveSeconds, l.OrphanSeconds, l.PollWaitSeconds, l.AnswerSeconds, l.SettleSeconds) > maxStepSeconds {
 		return ServiceSpec{}, fmt.Errorf("%w: a lane count or a limit out of range", ErrSpecUnreadable)
 	}
 	return spec, nil

@@ -32,6 +32,9 @@ type Store interface {
 	// create-only; one already there is success, since the digest names
 	// its bytes.
 	PutSpec(ctx context.Context, id, digest string, body []byte) error
+	// ReadSpec reads a service spec's bytes, which hash to its digest; found
+	// is false only when the store said it is not there.
+	ReadSpec(ctx context.Context, id, digest string) (body []byte, found bool, err error)
 	// Delete removes what the source of this id keeps under its id, then
 	// its document. A document of another id under the name is
 	// ErrChanged and nothing is removed.
@@ -49,6 +52,8 @@ var (
 	// remove every spec under its id: the source is deleted, and what is
 	// left admits nothing.
 	ErrSpecsLeft = errors.New("eventsources: the source is deleted; some of its service specs were not removed")
+	// ErrSpecCorrupt is a service spec whose bytes are not its digest's.
+	ErrSpecCorrupt = errors.New("its bytes are not its digest's")
 	// ErrChanged is a conditional write or delete whose source changed,
 	// vanished, or is another source, since it was read.
 	ErrChanged = errors.New("eventsources: the event source changed since it was read")

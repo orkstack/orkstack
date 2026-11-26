@@ -37,7 +37,7 @@ func (s *Service) imagePolicy(ctx context.Context) (*orkstackv1.ImagePolicy, err
 			return &orkstackv1.ImagePolicy{}, nil
 		}
 		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("the image policy could not be read, so no image can be judged against it: %w", err))
+			outage(fmt.Errorf("the image policy could not be read, so no image can be judged against it: %w", err)))
 	}
 	return policy, nil
 }
@@ -55,7 +55,7 @@ func (s *Service) imagePolicySelection(ctx context.Context, ns *orkstackv1.Names
 		// refuses the writes that would produce it; a document written by
 		// another release can still arrive here, and it is not the caller's
 		// document to fix.
-		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		return nil, connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "IMAGE_POLICY_UNUSABLE", err))
 	}
 	return sel, nil
 }
@@ -125,18 +125,18 @@ func (s *Service) checkImagePolicy(
 		}
 		var sig *dsl.SignatureError
 		if !errors.As(err, &sig) {
-			return connect.NewError(connect.CodeUnavailable, fmt.Errorf("task %q: %w", t.GetId(), err))
+			return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("task %q: %w", t.GetId(), err)))
 		}
 		sentence := fmt.Errorf("task %q: %s; namespace %q requires %s", t.GetId(), sig.Error(), ns.GetName(), signer)
 		switch sig.Code {
 		case task.ReasonImageSignatureUnavailable:
-			return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", sig.Code, sentence))
+			return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("%s: %w", sig.Code, sentence)))
 		case task.ReasonImageNotPermitted:
 			// The engine's own selection is unusable: not the document's fault.
 			return connect.NewError(connect.CodeFailedPrecondition, sentence)
 		default:
 			return connect.NewError(connect.CodeInvalidArgument,
-				&validationFieldError{Field: fmt.Sprintf("tasks[%d].uses", i), Err: sentence})
+				&validationFieldError{Field: fmt.Sprintf("tasks[%d].uses", i), Err: refused(refusalPause, sig.Code, sentence)})
 		}
 	}
 	return nil

@@ -137,7 +137,8 @@ export type MintAttemptTokensResponse = Message<"orkstack.v1.MintAttemptTokensRe
   /**
    * input_artifacts are the artifacts of the run's start the task names, each
    * under its input's name, as the engine read them from the records of the
-   * tasks that produced them: the only ones its attempt stages.
+   * tasks that produced them: the only ones its attempt stages. One a failure
+   * handler passed, whose producer has no record, is its name alone.
    *
    * @generated from field: repeated orkstack.v1.ArtifactRef input_artifacts = 2;
    */

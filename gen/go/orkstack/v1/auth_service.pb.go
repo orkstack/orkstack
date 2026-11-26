@@ -272,7 +272,15 @@ type GetSigninResponse struct {
 	// orker_id is the one Orker the caller's credential names (its issuer's
 	// orker_id_claim, or a service account's or certificate's Orker); empty
 	// when it names none. An Orker refuses to boot unless it is its own id.
-	OrkerId       string `protobuf:"bytes,12,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	OrkerId string `protobuf:"bytes,12,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	// image_policy is what the deployment's image policy holds every image to
+	// now: require_digest and allowed_registries, and never a signer, which is a
+	// namespace's. It is set only for a verified credential, in observe as in
+	// enforce, that names an Orker and holds eventsource.host at any scope: the
+	// Orker judges its own probe image by it, and the policy is the deployment's
+	// whatever the scope. Unset says that the policy was not read, and set and
+	// empty that the deployment has none.
+	ImagePolicy   *ImagePolicySelection `protobuf:"bytes,13,opt,name=image_policy,json=imagePolicy,proto3" json:"image_policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -389,6 +397,13 @@ func (x *GetSigninResponse) GetOrkerId() string {
 		return x.OrkerId
 	}
 	return ""
+}
+
+func (x *GetSigninResponse) GetImagePolicy() *ImagePolicySelection {
+	if x != nil {
+		return x.ImagePolicy
+	}
+	return nil
 }
 
 type RefreshSigninRequest struct {
@@ -573,7 +588,7 @@ var File_orkstack_v1_auth_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_auth_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorkstack/v1/auth_service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/access.proto\"\x16\n" +
+	"\x1eorkstack/v1/auth_service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/access.proto\x1a\x1eorkstack/v1/image_policy.proto\"\x16\n" +
 	"\x14GetAuthConfigRequest\"`\n" +
 	"\x15GetAuthConfigResponse\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x123\n" +
@@ -588,7 +603,7 @@ const file_orkstack_v1_auth_service_proto_rawDesc = "" +
 	"\x06scopes\x18\x05 \x03(\tR\x06scopes\x12\x1f\n" +
 	"\vdevice_flow\x18\x06 \x01(\bR\n" +
 	"deviceFlow\"\x12\n" +
-	"\x10GetSigninRequest\"\xb9\x03\n" +
+	"\x10GetSigninRequest\"\xff\x03\n" +
 	"\x11GetSigninResponse\x12!\n" +
 	"\fprincipal_id\x18\x01 \x01(\tR\vprincipalId\x12\x18\n" +
 	"\adisplay\x18\x02 \x01(\tR\adisplay\x12\x16\n" +
@@ -603,7 +618,8 @@ const file_orkstack_v1_auth_service_proto_rawDesc = "" +
 	"csrf_token\x18\n" +
 	" \x01(\tR\tcsrfToken\x12'\n" +
 	"\x0faccess_revision\x18\v \x01(\x03R\x0eaccessRevision\x12\x19\n" +
-	"\borker_id\x18\f \x01(\tR\aorkerId\"\x16\n" +
+	"\borker_id\x18\f \x01(\tR\aorkerId\x12D\n" +
+	"\fimage_policy\x18\r \x01(\v2!.orkstack.v1.ImagePolicySelectionR\vimagePolicy\"\x16\n" +
 	"\x14RefreshSigninRequest\"\xdb\x01\n" +
 	"\x15RefreshSigninResponse\x12C\n" +
 	"\x0fvalidated_until\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x0evalidatedUntil\x12B\n" +
@@ -646,29 +662,31 @@ var file_orkstack_v1_auth_service_proto_goTypes = []any{
 	(*ExplainedBinding)(nil),      // 9: orkstack.v1.ExplainedBinding
 	(*ScopedPermissions)(nil),     // 10: orkstack.v1.ScopedPermissions
 	(*Signin)(nil),                // 11: orkstack.v1.Signin
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*ImagePolicySelection)(nil),  // 12: orkstack.v1.ImagePolicySelection
+	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
 }
 var file_orkstack_v1_auth_service_proto_depIdxs = []int32{
 	2,  // 0: orkstack.v1.GetAuthConfigResponse.issuers:type_name -> orkstack.v1.SigninIssuer
 	9,  // 1: orkstack.v1.GetSigninResponse.bindings:type_name -> orkstack.v1.ExplainedBinding
 	10, // 2: orkstack.v1.GetSigninResponse.permissions:type_name -> orkstack.v1.ScopedPermissions
 	11, // 3: orkstack.v1.GetSigninResponse.signin:type_name -> orkstack.v1.Signin
-	12, // 4: orkstack.v1.RefreshSigninResponse.validated_until:type_name -> google.protobuf.Timestamp
-	12, // 5: orkstack.v1.RefreshSigninResponse.idle_expires_at:type_name -> google.protobuf.Timestamp
-	12, // 6: orkstack.v1.RefreshSigninResponse.expires_at:type_name -> google.protobuf.Timestamp
-	0,  // 7: orkstack.v1.AuthService.GetAuthConfig:input_type -> orkstack.v1.GetAuthConfigRequest
-	3,  // 8: orkstack.v1.AuthService.GetSignin:input_type -> orkstack.v1.GetSigninRequest
-	5,  // 9: orkstack.v1.AuthService.RefreshSignin:input_type -> orkstack.v1.RefreshSigninRequest
-	7,  // 10: orkstack.v1.AuthService.SignOut:input_type -> orkstack.v1.SignOutRequest
-	1,  // 11: orkstack.v1.AuthService.GetAuthConfig:output_type -> orkstack.v1.GetAuthConfigResponse
-	4,  // 12: orkstack.v1.AuthService.GetSignin:output_type -> orkstack.v1.GetSigninResponse
-	6,  // 13: orkstack.v1.AuthService.RefreshSignin:output_type -> orkstack.v1.RefreshSigninResponse
-	8,  // 14: orkstack.v1.AuthService.SignOut:output_type -> orkstack.v1.SignOutResponse
-	11, // [11:15] is the sub-list for method output_type
-	7,  // [7:11] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	12, // 4: orkstack.v1.GetSigninResponse.image_policy:type_name -> orkstack.v1.ImagePolicySelection
+	13, // 5: orkstack.v1.RefreshSigninResponse.validated_until:type_name -> google.protobuf.Timestamp
+	13, // 6: orkstack.v1.RefreshSigninResponse.idle_expires_at:type_name -> google.protobuf.Timestamp
+	13, // 7: orkstack.v1.RefreshSigninResponse.expires_at:type_name -> google.protobuf.Timestamp
+	0,  // 8: orkstack.v1.AuthService.GetAuthConfig:input_type -> orkstack.v1.GetAuthConfigRequest
+	3,  // 9: orkstack.v1.AuthService.GetSignin:input_type -> orkstack.v1.GetSigninRequest
+	5,  // 10: orkstack.v1.AuthService.RefreshSignin:input_type -> orkstack.v1.RefreshSigninRequest
+	7,  // 11: orkstack.v1.AuthService.SignOut:input_type -> orkstack.v1.SignOutRequest
+	1,  // 12: orkstack.v1.AuthService.GetAuthConfig:output_type -> orkstack.v1.GetAuthConfigResponse
+	4,  // 13: orkstack.v1.AuthService.GetSignin:output_type -> orkstack.v1.GetSigninResponse
+	6,  // 14: orkstack.v1.AuthService.RefreshSignin:output_type -> orkstack.v1.RefreshSigninResponse
+	8,  // 15: orkstack.v1.AuthService.SignOut:output_type -> orkstack.v1.SignOutResponse
+	12, // [12:16] is the sub-list for method output_type
+	8,  // [8:12] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_auth_service_proto_init() }
@@ -677,6 +695,7 @@ func file_orkstack_v1_auth_service_proto_init() {
 		return
 	}
 	file_orkstack_v1_access_proto_init()
+	file_orkstack_v1_image_policy_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

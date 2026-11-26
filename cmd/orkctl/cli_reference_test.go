@@ -82,7 +82,7 @@ func renderCommand(b *strings.Builder, cmd *cobra.Command, path string) {
 func localFlags(cmd *cobra.Command) []*pflag.Flag {
 	var out []*pflag.Flag
 	cmd.LocalNonPersistentFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Name != "help" {
+		if f.Name != "help" && !f.Hidden {
 			out = append(out, f)
 		}
 	})
@@ -92,7 +92,7 @@ func localFlags(cmd *cobra.Command) []*pflag.Flag {
 func inheritedFlags(cmd *cobra.Command) []*pflag.Flag {
 	var out []*pflag.Flag
 	cmd.InheritedFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Name != "help" {
+		if f.Name != "help" && !f.Hidden {
 			out = append(out, f)
 		}
 	})

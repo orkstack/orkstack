@@ -183,6 +183,7 @@ const namespaced = (): { path: string; ready: string }[] => [
 	{ path: `/orkflows/${FLOW}?tab=edit`, ready: 'orkflow-name' },
 	{ path: '/admin/pools', ready: 'pools-scope-caption' },
 	{ path: '/admin/cache', ready: 'breadcrumb-current' },
+	{ path: '/admin/concurrency', ready: 'concurrency-scope' },
 	{ path: '/admin/automation', ready: 'automation-scope' }
 ];
 
