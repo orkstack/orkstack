@@ -25,10 +25,21 @@ const (
 // ago, or not yet back after a rebuild) has no known position. shown bounds
 // the holders named (engine.concurrency.api_holders_shown).
 func LiveQueued(snapshot *orkstackv1.ConcurrencyQueued, runID string, line GateLine, shown int, now time.Time) *orkstackv1.ConcurrencyQueued {
+	return liveQueued(snapshot, runID, true, line, shown, now)
+}
+
+// LiveTaskQueued is LiveQueued for a task of runID that waits for a slot of
+// its own limit (E88 P7). A run has at most one task in a gate's line at a
+// time, so its task-level entry there is that task's.
+func LiveTaskQueued(snapshot *orkstackv1.ConcurrencyQueued, runID string, line GateLine, shown int, now time.Time) *orkstackv1.ConcurrencyQueued {
+	return liveQueued(snapshot, runID, false, line, shown, now)
+}
+
+func liveQueued(snapshot *orkstackv1.ConcurrencyQueued, runID string, runLevel bool, line GateLine, shown int, now time.Time) *orkstackv1.ConcurrencyQueued {
 	q := proto.Clone(snapshot).(*orkstackv1.ConcurrencyQueued)
 	q.Position, q.PositionKnown = 0, false
 	for i, e := range line.Line {
-		if e.RunLevel && e.Run == runID {
+		if e.RunLevel == runLevel && e.Run == runID {
 			q.Position, q.PositionKnown = int32(i+1), true
 			break
 		}

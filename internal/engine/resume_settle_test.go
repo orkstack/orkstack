@@ -176,18 +176,3 @@ func taskOf(wf *orkstackv1.Orkflow, id string) *orkstackv1.Task {
 	}
 	return nil
 }
-
-// A run admitted by its plan is never resumed, though its own definition
-// declares no identity: its child's does.
-func TestResetRun_AnAdmittedRootIsNotRun(t *testing.T) {
-	h := newResetHarness(t)
-	h.keepBuildRerunDeploy(t, true)
-	h.identity = &engine.IdentityPlan{}
-	err := h.runResetOf(t, resumeTwoTaskDocument)
-	if err == nil || !strings.Contains(err.Error(), "resume_unsupported:admitted_run") {
-		t.Fatalf("error = %v, want resume_unsupported:admitted_run", err)
-	}
-	if n := len(h.taskCalls("deploy")) + len(h.taskCalls("build")); n != 0 {
-		t.Fatalf("%d tasks ran", n)
-	}
-}

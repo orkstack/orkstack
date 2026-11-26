@@ -78,6 +78,7 @@ engine:
   resume:
     confirm_timeout: 30s  # ork
     visibility_lag_floor: 15s  # ork
+    child_wait_hint: 24h  # ork
     max_seq_gap: 4096  # ork
     confirm_per_run: 6  # ork
   definition_by_reference: true  # ork
@@ -199,6 +200,10 @@ event_sources:
   max_per_namespace: 20  # ork
   max_instances: 4  # ork
   namespace_instances: 20  # ork
+  reconcile: 1m  # ork
+  readmit: 5m  # ork
+  instance_max_age: 168h  # ork
+  restart_max_interval: 5m  # ork
 
 webhooks:
   allowed_networks: []  # ork; empty admits public addresses only

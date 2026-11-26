@@ -1039,3 +1039,75 @@ func TestResumePlan_RecordedRunNeedsEveryResultDigest(t *testing.T) {
 		t.Fatalf("PlanResume = %v, want an error: up has no digest", err)
 	}
 }
+
+// TestResumePlan_FollowsWhatIdentityFollows: a recorded run's settle is held
+// to what its record follows by identity's rule, through a fan-out to what the
+// fan-out's items follow, and not to a need a none_failed join may skip.
+func TestResumePlan_FollowsWhatIdentityFollows(t *testing.T) {
+	recorded := func(tasks []*orkstackv1.Task, rows ...*orkstackv1.TaskRun) *planFixture {
+		f := newPlan(tasks, rows...)
+		f.in.Evidence.Recorded = true
+		f.in.Evidence.ResultSHA256 = map[string]string{"src": "aa"}
+		f.in.Evidence.Follows = map[string][]ResumeFollow{"ok": {{Task: "src", ResultSHA256: "aa"}}}
+		return f
+	}
+	t.Run("an approval after a fan-out settles", func(t *testing.T) {
+		f := recorded([]*orkstackv1.Task{ptask("src"), eachTask("fan", "src", "src"), awaitTask("ok", "fan"), ptask("x")},
+			prow("src", sOK), fanRow("fan", sOK, pitem(0, sOK)), prow("ok", sOK), prow("x", sFail))
+		if u := unitOf(t, f.plan(t), "ok", -1); u.Disposition != DispositionSettle {
+			t.Errorf("ok = %+v, want settled", u)
+		}
+	})
+	t.Run("a fan-out's item run again withdraws it", func(t *testing.T) {
+		f := recorded([]*orkstackv1.Task{ptask("src"), eachTask("fan", "src", "src"), awaitTask("ok", "fan"), ptask("x")},
+			prow("src", sOK), fanRow("fan", sFail, pitem(0, sOK), pitem(1, sFail)), prow("ok", sCanc), prow("x", sFail))
+		f.in.Evidence.Resolutions = map[string]ResolutionAnswer{"ok": {Completed: true}}
+		if u := unitOf(t, f.plan(t), "ok", -1); u.Disposition == DispositionSettle {
+			t.Errorf("ok = %+v, want not settled", u)
+		}
+	})
+	t.Run("what it follows changed, through the fan-out", func(t *testing.T) {
+		f := recorded([]*orkstackv1.Task{ptask("src"), eachTask("fan", "src", "src"), awaitTask("ok", "fan"), ptask("x")},
+			prow("src", sOK), fanRow("fan", sOK, pitem(0, sOK)), prow("ok", sOK), prow("x", sFail))
+		f.in.Evidence.ResultSHA256["src"] = "bb"
+		if u := unitOf(t, f.plan(t), "ok", -1); u.Disposition != DispositionWait {
+			t.Errorf("ok = %+v, want waits again", u)
+		}
+	})
+	t.Run("a need none_failed may skip is not followed", func(t *testing.T) {
+		gate := awaitTask("ok", "src", "maybe")
+		gate.Join = orkstackv1.JoinPolicy_JOIN_POLICY_NONE_FAILED
+		maybe := ptask("maybe")
+		maybe.Condition = "false"
+		f := recorded([]*orkstackv1.Task{ptask("src"), maybe, gate, ptask("x")}, prow("src", sOK), prow("maybe", sOK), prow("ok", sOK), prow("x", sFail))
+		f.in.Evidence.ResultSHA256["maybe"] = "cc"
+		if u := unitOf(t, f.plan(t), "ok", -1); u.Disposition != DispositionSettle {
+			t.Errorf("ok = %+v, want settled: its record follows src alone", u)
+		}
+	})
+	t.Run("a kept followed task with no digest is the caller's fault", func(t *testing.T) {
+		f := recorded([]*orkstackv1.Task{ptask("src"), awaitTask("ok", "src"), ptask("x")}, prow("src", sOK), prow("ok", sOK), prow("x", sFail))
+		delete(f.in.Evidence.ResultSHA256, "src")
+		var r *ResumeRefusal
+		if _, err := PlanResume(f.in); err == nil || errors.As(err, &r) {
+			t.Errorf("err = %v, want an inconsistency", err)
+		}
+	})
+}
+
+// TestResumePlan_AnAnswerOnRecordThatCannotBeRead: an open await of a recorded
+// run whose record could not be read is no answer to wait again on.
+func TestResumePlan_AnAnswerOnRecordThatCannotBeRead(t *testing.T) {
+	for _, c := range []struct {
+		answer KeptAnswer
+		code   ResumeRefusalCode
+	}{{KeptUnavailable, RefuseCheckUnavailable}, {KeptUnreadable, RefuseStateUnreadable}} {
+		f := newPlan([]*orkstackv1.Task{ptask("src"), awaitTask("ok", "src"), ptask("x")}, prow("src", sOK), prow("ok", sCanc), prow("x", sFail))
+		f.in.Evidence.Recorded = true
+		f.in.Evidence.ResultSHA256 = map[string]string{"src": "aa"}
+		f.in.Evidence.Kept[nodeUnit("ok")] = c.answer
+		if r := f.refusal(t); r.Code != c.code {
+			t.Errorf("%v: refusal %s, want %s", c.answer, r.Code, c.code)
+		}
+	}
+}

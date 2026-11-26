@@ -219,7 +219,7 @@ func slots() map[string]slot {
 		"needs": "[b]", "condition": "'{{ true }}'", "timeout_seconds": "10", "retry": "{maximum_attempts: 2}",
 		"pool": "p", "command": "[x]", "env": "{A: b}", "secrets": "[{name: s, source: 'env:S'}]",
 		"resources": "{cpu: '1'}", "network": "none", "cancellation_grace_period_seconds": "5", "run_as_orker_user": "true", "identities": "[{name: i, audience: a}]", "credentials": "[{name: c, grant: g}]",
-		"cache": "{enabled: true}", "with": "{}", "description_unused": "",
+		"cache": "{enabled: true}", "concurrency": "{limit: 1}", "with": "{}", "description_unused": "",
 	}
 	delete(plainTask, "description_unused")
 	for key, baseline := range plainTask {
@@ -350,6 +350,11 @@ func slots() map[string]slot {
 		out["concurrency."+key] = slot{doc: slotHeader + "name: x\nconcurrency: {" + concurrencyBase[key] + key + ": @V@}\ntasks: [{id: a, uses: 'busybox:1'}]\n",
 			field: "concurrency." + key, baseline: baseline,
 			absent: slotHeader + "name: x\nconcurrency: {" + strings.TrimSuffix(concurrencyBase[key], ", ") + "}\ntasks: [{id: a, uses: 'busybox:1'}]\n"}
+		// A task's limit has the same keys; max_queued is a run's alone.
+		if key != "max_queued" {
+			out["tasks[].concurrency."+key] = slot{doc: taskDoc("    concurrency: {" + concurrencyBase[key] + key + ": @V@}\n"), field: "tasks[0].concurrency." + key,
+				baseline: baseline, absent: taskDoc("    concurrency: {" + strings.TrimSuffix(concurrencyBase[key], ", ") + "}\n")}
+		}
 	}
 	return out
 }

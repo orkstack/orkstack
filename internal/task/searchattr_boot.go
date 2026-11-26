@@ -12,9 +12,10 @@ import (
 // a deployment uses: a cluster that refuses one keeps the others.
 type IndexAnswers struct {
 	// Namespace is a run's OrkStack namespace, Origin what started it, Root
-	// its composed chain, Paused whether it is paused, and Concurrency a
-	// limit's four attributes.
-	Namespace, Origin, Root, Paused, Concurrency bool
+	// its composed chain, Paused whether it is paused, Concurrency a
+	// limit's four attributes, and ResultsRecorded whether its results are
+	// recorded by the engine.
+	Namespace, Origin, Root, Paused, Concurrency, ResultsRecorded bool
 }
 
 // Limits reports that a concurrency limit can be held: it is kept by its own
@@ -85,6 +86,20 @@ func EnsureSearchAttributes(ctx context.Context, temporalClient client.Client, n
 		logger.Warn("visibility does not index a paused run",
 			"search_attribute", SearchAttrOrkflowRunPaused,
 			"consequence", "a paused run is listed as running",
+			"error", err)
+	}
+	// Whether a run's results are recorded by the engine is a sixth answer,
+	// on the same terms (decision RR-1): unusable, the engine warns, naming
+	// it, and starts; its runs carry no mark, and a list by results_recorded
+	// is refused by name.
+	answers.ResultsRecorded, err = EnsureRunResultsRecordedSearchAttribute(ctx, temporalClient, namespace)
+	if errors.Is(err, ErrNamespaceNotVisible) {
+		return answers, err
+	}
+	if err != nil {
+		logger.Warn("visibility does not index runs whose results the engine records",
+			"search_attribute", SearchAttrOrkflowResultsRecorded,
+			"consequence", "orkctl run records --not-applied and the results_recorded run filter are refused; add the attribute by hand (docs/DEPLOY.md)",
 			"error", err)
 	}
 	// The concurrency limit's attributes are a fifth answer, all four as one:

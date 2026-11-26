@@ -123,3 +123,44 @@ func TestGetRun_ReadsAQueuedRunsPlaceLiveFromItsGate(t *testing.T) {
 		}
 	})
 }
+
+// TestGetRun_ReadsAWaitingTasksPlaceLive: a task that waits for a slot of its
+// own limit is placed by its run's task-level entry in its key's line, never
+// by the run's own entry, and a limit that does not answer leaves its place
+// unknown without failing the read.
+func TestGetRun_ReadsAWaitingTasksPlaceLive(t *testing.T) {
+	created := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	gate := engine.GateID("payments", created.Format(time.RFC3339Nano), "db")
+	run := func() *orkstackv1.Run {
+		return &orkstackv1.Run{Id: "ork-me", Namespace: "payments", Status: orkstackv1.Status_STATUS_RUNNING,
+			TaskRuns: []*orkstackv1.TaskRun{
+				{TaskId: "migrate", Status: orkstackv1.Status_STATUS_PENDING,
+					Queued: &orkstackv1.ConcurrencyQueued{Key: "db", Limit: 1, PositionAtArrival: 3, Position: 3, PositionKnown: true}},
+				{TaskId: "done", Status: orkstackv1.Status_STATUS_SUCCEEDED}}}
+	}
+	get := func(t *testing.T, reader *fakeConcReader) *orkstackv1.TaskRun {
+		t.Helper()
+		r := run()
+		registry := newFakeRegistry(&orkstackv1.Namespace{Name: "payments", CreatedAt: timestamppb.New(created)})
+		svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Namespaces: registry,
+			Reader:  &fakeReader{runs: map[string]*orkstackv1.Run{r.GetId(): r}},
+			Starter: &concStarter{fakeStarter: &fakeStarter{}, indexed: true}, Capabilities: &fakeCapabilities{}, ConcurrencyReader: reader})
+		got, err := svc.GetRun(context.Background(), connect.NewRequest(&orkstackv1.GetRunRequest{RunId: r.GetId(), Namespace: "payments"}))
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		return got.Msg.GetRun().GetTaskRuns()[0]
+	}
+	reader := &fakeConcReader{lines: map[string]engine.GateLine{gate: {Present: true, Holders: 1, Queued: 3,
+		// The run's own entry comes first; the task's is the second place.
+		Line:       []engine.GateLineEntry{{Run: "ork-me", RunLevel: true}, {Run: "ork-me"}, {Run: "ork-other"}},
+		HolderRuns: []string{"ork-holder"}}}}
+	if q := get(t, reader).GetQueued(); q.GetPosition() != 2 || !q.GetPositionKnown() || q.GetPositionAtArrival() != 3 ||
+		len(q.GetHoldersAhead()) != 1 || q.GetHoldersAhead()[0] != "ork-holder" {
+		t.Errorf("queued = %v; want the task 2nd in line now, behind ork-holder", q)
+	}
+	if q := get(t, &fakeConcReader{lineErr: errors.New("frontend unavailable")}).GetQueued(); q.GetPositionKnown() ||
+		q.GetNoteCode() != engine.QueuedNoteNotAnswering {
+		t.Errorf("queued = %v; want the place unknown and NOT_ANSWERING", q)
+	}
+}

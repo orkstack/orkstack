@@ -27,6 +27,9 @@ var plainSites = map[string]string{
 	"concurrency_run.go:(*runState).recordRunSlot (memo)":         "the run's slot record, from which a gate is rebuilt",
 	"concurrency_run.go:(*runState).restoreConcRecords (memo)":    "the run's slot record, from which a gate is rebuilt",
 	"concurrency_pause.go:(*runState).releaseRunEntry (memo)":     "the slot record's removal",
+	"concurrency_task.go:(*runState).recordTaskSlot (memo)":       "the task's slot record: its limit, times, sequence and label, as the run's own",
+	"concurrency_task.go:(*runState).releaseTaskSlot":             "a gate release: the run id, a sequence and indices",
+	"concurrency_task.go:(*runState).releaseTaskSlot (memo)":      "the task's slot record's removal",
 	"payload_signals.go:plainMemo":                                "a memo is what every list and count is answered from",
 	"continuation.go:(*runState).continueAsNew (memo)":            "the run's created_at memo field",
 	"pause.go:(*runState).syncPauseIndex (memo)":                  "the pause's expiry memo field",
@@ -45,6 +48,7 @@ var plainSites = map[string]string{
 	"workflow.go:(*runState).emitTaskEvent":                       "an event publish's dedupe key: the run id and a sequence",
 	"lean_events.go:(*runState).publishDetached":                  "an event publish's dedupe key: the run id and a sequence",
 	"each.go:(*runState).emitItem":                                "an event publish's dedupe key: the run id and a sequence",
+	"source_workflow.go:(*sourceRun).writeMemo (memo)":            "a source's carry and now: what the door and the pass read; a source's workflow holds no run's data and no key",
 }
 
 // TestPayloads_EveryValueSiteDecides audits the Plain list: every call of
@@ -157,6 +161,7 @@ func TestPauseCascade_SealedForTheChild(t *testing.T) {
 var crossSites = map[string]string{
 	"concurrency_run.go:releaseSlots SignalExternalWorkflow":                  "PlainIn: the gate holds no run's key",
 	"concurrency_pause.go:(*runState).releaseRunEntry SignalExternalWorkflow": "PlainIn: the gate holds no run's key",
+	"concurrency_task.go:(*runState).releaseTaskSlot SignalExternalWorkflow":  "PlainIn: the gate holds no run's key",
 	"pause_cascade.go:(*runState).goSend SignalChildWorkflow":                 "sealed for the child's own id (sealedForChild)",
 	"compose.go:(*runState).startChild ExecuteChildWorkflow":                  "sealed for the child's own id",
 	"schedule_fire.go:ScheduleFireWorkflow ExecuteChildWorkflow":              "PlainIn: never under the schedule's key",
@@ -175,6 +180,7 @@ var crossSites = map[string]string{
 	"force_cancel_cascade_workflow.go:(*cascade).one ExecuteChildWorkflow":    "a force cancel of a run below is no run: a decision, ids and settings",
 	"force_cancel_workflow.go:(*forceCancel).release SignalExternalWorkflow":  "the gate holds no run's key: a run id and a sequence",
 	"force_cancel_workflow.go:(*forceCancel).publish ExecuteActivity":         "a force cancel is no run: the event says what its record does, or is the run's own ending announced again; a sealed run's is refused (errForceCancelSealed), and is said to be unpublished",
+	"source_workflow.go:(*sourceRun).schedule ExecuteActivity":                "an instance's activity: ids, digests and numbers an Orker reads with no run key; a source's workflow is never sealed",
 }
 
 // TestPayloads_EveryCrossWorkflowWriteDecides: every SignalChildWorkflow,
@@ -268,6 +274,8 @@ var localReads = map[string]string{
 	"force_cancel_workflow.go:(*forceCancel).stepOn":   "a force cancel is no run, and is never sealed",
 	"force_cancel_cascade_workflow.go:(*cascade).step": "a force cancel is no run, and is never sealed",
 	"concurrency_reset_gate.go:(*gateRun).recordReset": "a gate is no run, and is never sealed",
+	"concurrency_task.go:(*runState).sendTaskAcquire":  "takeTaskWake reads its answer through getLocal",
+	"source_workflow.go:(*sourceRun).local":            "a source's workflow is no run, and is never sealed",
 }
 
 // TestPayloads_EveryLocalActivityReadOpens: a local activity's failure is

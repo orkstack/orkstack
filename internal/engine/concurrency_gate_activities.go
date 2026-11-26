@@ -50,6 +50,7 @@ func RegisterGateActivities(w ActivityRegistrar, a *GateActivities) {
 	w.RegisterActivityWithOptions(a.ReportConcurrencyGate, activity.RegisterOptions{Name: ActivityReportConcurrencyGate})
 	w.RegisterActivityWithOptions(a.RecordConcurrencyReset, activity.RegisterOptions{Name: ActivityRecordConcurrencyReset})
 	w.RegisterActivityWithOptions(a.RenderConcurrencyKeys, activity.RegisterOptions{Name: ActivityRenderConcurrencyKeys})
+	w.RegisterActivityWithOptions(a.RenderConcurrencyTaskKeys, activity.RegisterOptions{Name: ActivityRenderConcurrencyTaskKeys})
 	w.RegisterActivityWithOptions(a.AcquireConcurrency, activity.RegisterOptions{Name: ActivityAcquireConcurrency})
 }
 

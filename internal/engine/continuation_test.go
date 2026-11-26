@@ -384,7 +384,7 @@ func raiseHistoryAt(h *harness, n, length int) {
 	var once sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
 		if itemsSucceeded(run, "spread") >= n {
-			once.Do(func() { h.env.SetCurrentHistoryLength(length) })
+			once.Do(func() { h.raiseHistory(length) })
 		}
 		return nil
 	}
@@ -838,7 +838,7 @@ func TestContinuation_CheckpointOverTheCapNeverSwitches(t *testing.T) {
 	plan.History.MaxEvents = 1000
 	h := newHarnessCtx(t, nil, okBehavior)
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-overcap"})
-	h.onSnapshot = onceAt(h.env, 900, taskStatusIs("c", orkstackv1.Status_STATUS_SUCCEEDED))
+	h.onSnapshot = onceAt(h, 900, taskStatusIs("c", orkstackv1.Status_STATUS_SUCCEEDED))
 	h.env.ExecuteWorkflow(engine.RunWorkflowType, "ork-overcap", compile(t, continuationChainDocument), payload(t, nil),
 		plan, (*orkstackv1.RunContinuation)(nil))
 	requireHistoryLimitError(t, h.env)

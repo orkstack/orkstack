@@ -558,11 +558,8 @@ func renderSourceField(src *orkstackv1.EventSource, field string) string {
 // consent, nor anything else that is output only.
 func EventSourceNode(src *orkstackv1.EventSource) (*yaml.Node, error) {
 	view := proto.Clone(src).(*orkstackv1.EventSource)
-	view.Id, view.Namespace, view.Name, view.Image, view.Etag = "", "", "", "", ""
-	view.Paused, view.Pause = false, nil
-	view.CreatedAt, view.UpdatedAt, view.CreatedBy, view.UpdatedBy = nil, nil, "", ""
-	view.BoundBy, view.BoundByVerified, view.ConsentStale, view.AsksFor, view.Consented = "", false, false, nil, nil
-	view.ServiceRevision, view.JudgingRevision = 0, 0
+	eventsources.ClearOutputOnly(view)
+	view.Namespace, view.Name = "", ""
 	raw, err := protojson.MarshalOptions{UseProtoNames: true}.Marshal(view)
 	if err != nil {
 		return nil, err

@@ -93,6 +93,11 @@ type ComposedAsk struct {
 	ChildAdmissionSHA256, ValuesSHA256 string
 	// Spacing is the waits of one read; nil is the recorder's.
 	Spacing *artifacts.RecordSpacings
+	// Closed: a resume asks, before it resets the run, for the values its
+	// child's outputs give a task the resume keeps, so the run's execution
+	// may be closed. Only ResumeRun sets it. A run the cluster no longer holds
+	// is still refused, and every other check stands.
+	Closed bool
 }
 
 // RecordedOutcome is a record made, or found as it would have been made.
@@ -130,7 +135,7 @@ func (c *recording) refused(err error) error {
 }
 
 // begin is step 1: the run's admission, its start, and its root's resumes.
-func (r *ValuesRecorder) begin(ctx context.Context, reason, namespace, runID, sha string, scopes Scopes, spacing *artifacts.RecordSpacings) (*recording, error) {
+func (r *ValuesRecorder) begin(ctx context.Context, reason, namespace, runID, sha string, scopes Scopes, spacing *artifacts.RecordSpacings, closed bool) (*recording, error) {
 	if spacing == nil {
 		spacing = r.Spacing
 	}
@@ -149,7 +154,7 @@ func (r *ValuesRecorder) begin(ctx context.Context, reason, namespace, runID, sh
 	}
 	facts, err := r.Describe(ctx, runID)
 	switch {
-	case errors.Is(err, ErrNoSuchExecution), err == nil && !facts.Open:
+	case errors.Is(err, ErrNoSuchExecution), err == nil && !facts.Open && !closed:
 		return nil, c.refuse("run %q is not executing", runID)
 	case err != nil:
 		return nil, unavailableMint("run %q could not be described: %v", runID, err)
@@ -229,7 +234,7 @@ func (c *recording) write(ctx context.Context, rec *orkstackv1.RecordedValues, k
 // outputs, whose values have the digest the child returned.
 func (r *ValuesRecorder) RecordComposed(ctx context.Context, q ComposedAsk) (RecordedOutcome, error) {
 	none := RecordedOutcome{}
-	c, err := r.begin(ctx, ReasonChildValuesNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes, q.Spacing)
+	c, err := r.begin(ctx, ReasonChildValuesNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes, q.Spacing, q.Closed)
 	if err != nil {
 		return none, err
 	}
@@ -314,7 +319,7 @@ func (c *recording) outputsOf(ctx context.Context, childID string, q ComposedAsk
 // definition over the values its tasks' records name.
 func (r *ValuesRecorder) RecordOutputs(ctx context.Context, q OutputsAsk) (RecordedOutcome, error) {
 	none := RecordedOutcome{}
-	c, err := r.begin(ctx, ReasonOutputsNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes, q.Spacing)
+	c, err := r.begin(ctx, ReasonOutputsNotRecorded, q.Namespace, q.RunID, q.AdmissionSHA256, q.Scopes, q.Spacing, false)
 	if err != nil {
 		return none, err
 	}

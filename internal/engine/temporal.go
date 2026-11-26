@@ -298,6 +298,12 @@ func RunStartSearchAttributes(
 	if plan.RootRunIndexed && plan.Origin != nil && plan.Origin.RootRunID != "" {
 		attrs = append(attrs, task.SearchKeyOrkflowOriginRootRunID.ValueSet(plan.Origin.RootRunID))
 	}
+	// A run whose results the engine records says so where the cluster can
+	// count it, under the plan's own answer: a child's from its own plan, and
+	// a continuation keeps what its first start stamped.
+	if plan.Identity != nil && plan.Identity.Indexed {
+		attrs = append(attrs, task.SearchKeyOrkflowResultsRecorded.ValueSet("true"))
+	}
 	return attrs
 }
 

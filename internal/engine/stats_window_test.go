@@ -312,6 +312,9 @@ type statsCorpusRun struct {
 	queued   bool
 	queuedOn []string
 	holding  []string
+	// resultsRecorded is a run whose results the engine records: its start
+	// stamped OrkflowResultsRecorded = "true".
+	resultsRecorded bool
 }
 
 // statsCorpus is the corpus both sources are asked about. Every row is a case
@@ -392,6 +395,9 @@ func statsIndexOver(t *testing.T, corpus []statsCorpusRun) *statsIndex {
 			}},
 		}
 		attrs := map[string]*commonpb.Payload{}
+		if run.resultsRecorded {
+			attrs[task.SearchAttrOrkflowResultsRecorded] = payload("true")
+		}
 		if run.queued {
 			attrs[task.SearchAttrOrkflowRunQueued] = payload("true")
 		}

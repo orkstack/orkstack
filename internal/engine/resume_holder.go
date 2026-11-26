@@ -21,12 +21,10 @@ type workflowDeps struct {
 	// isResetRun says whether this execution is a reset run. A test
 	// environment cannot reset a workflow, so its tests stand in for it.
 	isResetRun func(info *workflow.Info) bool
-	// limitUnbuilt is ResumeLimitUnbuilt.
-	limitUnbuilt func(RunPlan) bool
 }
 
 // liveDeps are RunWorkflow's own.
-var liveDeps = workflowDeps{isResetRun: isResetRunInfo, limitUnbuilt: ResumeLimitUnbuilt}
+var liveDeps = workflowDeps{isResetRun: isResetRunInfo}
 
 // isResetRunInfo is the reset-run predicate (§30.9 MEDIUM-1): a fresh
 // start, a continue-as-new, a retry and a cron run each set the original
@@ -198,17 +196,6 @@ func loadResumeAtR(ctx workflow.Context, deps workflowDeps, namespace, runID str
 // to a concurrency limit (E88).
 func PlanHasConcurrency(plan RunPlan) bool { return plan.Concurrency != nil }
 
-// ResumeLimitUnbuilt reports whether plan holds the run to a limit a resumed
-// run cannot retake yet: one of its tasks alone (E88 P7). Such a run is never
-// resumed: ResumeRun refuses it, and a reset run of one ends explicitly.
-func ResumeLimitUnbuilt(plan RunPlan) bool {
-	return plan.Concurrency != nil && plan.Concurrency.Run == nil
-}
-
-// resumeConcurrencyUnbuilt is what a person reads of a run that cannot be
-// resumed for its concurrency limit.
-const resumeConcurrencyUnbuilt = "this run's tasks are held to a concurrency limit, and this release cannot resume a run whose are; run it again"
-
 // resumeConcurrency is §5.3 step 4 (E88 §18): the run's earlier incarnations
 // give up every slot and place they may still hold, its records name the
 // resume's own, and it asks for the run-level slot anew, waiting in line if it
@@ -227,6 +214,13 @@ func (s *runState) resumeConcurrency(ctx workflow.Context, seqBase int64) error 
 	}
 	c.held, c.queued, c.requeue, c.givenBack, c.ordinal = nil, nil, nil, false, 0
 	c.seqBase = seqBase
+	for _, t := range c.tasks {
+		// Whatever the copied prefix left of its tasks' slots is an earlier
+		// incarnation's.
+		s.stopTaskWait(t)
+		t.held, t.n = false, 0
+		s.taskRuns[t.id].Queued = nil
+	}
 	// On a context the run's own cancel does not reach, as releaseSlots; the
 	// wait for them ends with it.
 	dctx, cancel := workflow.NewDisconnectedContext(ctx)

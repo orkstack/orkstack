@@ -225,6 +225,17 @@ func (b *s3Blobs) replace(ctx context.Context, key, contentType string, body []b
 	return nil
 }
 
+func (b *s3Blobs) removeVersion(ctx context.Context, key, version string) error {
+	_, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(b.bucket), Key: aws.String(key), IfMatch: aws.String(version)})
+	switch {
+	case err == nil, isNotFound(err):
+		return nil
+	case isPreconditionFailed(err):
+		return errBlobChanged
+	}
+	return err
+}
+
 func (b *s3Blobs) list(ctx context.Context, in blobListInput) (blobListPage, error) {
 	input := &s3.ListObjectsV2Input{Bucket: aws.String(b.bucket), Prefix: aws.String(in.Prefix)}
 	if in.StartAfter != "" {

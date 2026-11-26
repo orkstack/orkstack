@@ -355,6 +355,7 @@ func (s *runState) notRunAgain(ctx workflow.Context, id string, index int32, row
 	if index >= 0 {
 		return
 	}
+	s.taskEnded(ctx, id)
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
 		orkstackv1.Status_STATUS_FAILED, row.Error.GetMessage()); err != nil {
 		workflow.GetLogger(ctx).Error("emit task failure failed", "run_id", s.runID, "task_id", id, "error", err)

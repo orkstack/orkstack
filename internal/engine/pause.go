@@ -419,6 +419,9 @@ func (s *runState) endOwnPause(at time.Time, end pauseEnd) {
 
 // becomePaused sets PAUSED and emits RUN_PAUSED.
 func (s *runState) becomePaused(ctx workflow.Context, inFlight map[string]workflow.Future, req *pauseRequest, message string) {
+	// A place in line and an unused slot go back before the run is said to be
+	// paused, so its snapshot shows neither (§22.14.7).
+	s.dropTaskSlots(ctx)
 	transition := orkstackv1.PauseTransition_PAUSE_TRANSITION_PAUSED
 	if s.status == statusPaused {
 		transition = orkstackv1.PauseTransition_PAUSE_TRANSITION_CAUSES_CHANGED

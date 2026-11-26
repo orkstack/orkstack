@@ -118,6 +118,10 @@ func orkflowAnnotations() map[string]annotation {
 		"tasks[].each.as":               {pattern: eachAsPattern},
 		"tasks[].cache.enabled":         required,
 		"tasks[].cache.scope":           {enum: cacheScopeWords},
+		// A task always waits: its one strategy is queue.
+		"tasks[].concurrency.limit":         required,
+		"tasks[].concurrency.on_limit":      {enum: []string{"queue"}},
+		"tasks[].concurrency.queue_timeout": {typ: map[string]any{"type": "string"}},
 	}
 }
 
@@ -173,6 +177,7 @@ var orkflowDescriptions = map[string]string{
 	"tasks[].cancellation_grace_period_seconds": "SIGTERM-to-SIGKILL window",
 	"tasks[].run_as_orker_user":                 "opt in to overriding the image's USER",
 	"tasks[].cache":                             "optional: reuse an identical earlier result (see \"Caching\")",
+	"tasks[].concurrency":                       "optional: how many tasks share one key's slots at once (see \"Concurrency limits\")",
 	"tasks[].with":                              "image-specific config, rendered into config.json",
 	"tasks[].await":                             "An **awaited task** declares `await:` instead of `uses:`.",
 	"tasks[].each":                              "A **fan-out** is one task that runs once per element of an array",
@@ -221,19 +226,20 @@ const orkflowInputDescription = "One declared input: `type` (string, number, boo
 
 // documentStructs are the definition each document struct becomes.
 var documentStructs = map[reflect.Type]string{
-	reflect.TypeOf(taskDocument{}):        "orkflow.task",
-	reflect.TypeOf(retryDocument{}):       "orkflow.retry",
-	reflect.TypeOf(resourceDocument{}):    "orkflow.resources",
-	reflect.TypeOf(secretDocument{}):      "orkflow.secret",
-	reflect.TypeOf(identityDocument{}):    "orkflow.identity",
-	reflect.TypeOf(credentialDocument{}):  "orkflow.credential",
-	reflect.TypeOf(pinDocument{}):         "orkflow.pin",
-	reflect.TypeOf(awaitDocument{}):       "orkflow.await",
-	reflect.TypeOf(sleepDocument{}):       "orkflow.sleep",
-	reflect.TypeOf(eachDocument{}):        "orkflow.each",
-	reflect.TypeOf(cacheDocument{}):       "orkflow.cache",
-	reflect.TypeOf(shareDocument{}):       "orkflow.share",
-	reflect.TypeOf(concurrencyDocument{}): "orkflow.concurrency",
+	reflect.TypeOf(taskDocument{}):            "orkflow.task",
+	reflect.TypeOf(retryDocument{}):           "orkflow.retry",
+	reflect.TypeOf(resourceDocument{}):        "orkflow.resources",
+	reflect.TypeOf(secretDocument{}):          "orkflow.secret",
+	reflect.TypeOf(identityDocument{}):        "orkflow.identity",
+	reflect.TypeOf(credentialDocument{}):      "orkflow.credential",
+	reflect.TypeOf(pinDocument{}):             "orkflow.pin",
+	reflect.TypeOf(awaitDocument{}):           "orkflow.await",
+	reflect.TypeOf(sleepDocument{}):           "orkflow.sleep",
+	reflect.TypeOf(eachDocument{}):            "orkflow.each",
+	reflect.TypeOf(cacheDocument{}):           "orkflow.cache",
+	reflect.TypeOf(shareDocument{}):           "orkflow.share",
+	reflect.TypeOf(concurrencyDocument{}):     "orkflow.concurrency",
+	reflect.TypeOf(taskConcurrencyDocument{}): "orkflow.taskConcurrency",
 }
 
 var yamlNodeType = reflect.TypeOf(yaml.Node{})

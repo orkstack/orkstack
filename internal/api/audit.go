@@ -494,7 +494,11 @@ var auditedProcedures = map[string]auditExtractor{
 		if out, ok := resp.(*orkstackv1.ResumeRunResponse); ok && out != nil {
 			entry.Detail += fmt.Sprintf(" already=%t plan=%s seq_base=%d", out.GetAlreadyResumed(), out.GetPlanDigest(), out.GetSeqBase())
 			if r := out.GetResume(); r != nil {
-				entry.Detail += fmt.Sprintf(" record_principal=%q scope=%d", r.GetPrincipal(), r.GetScope())
+				entry.Detail += fmt.Sprintf(" record_principal=%q scope=%d from_state=%s", r.GetPrincipal(), r.GetScope(),
+					strings.ToLower(strings.TrimPrefix(r.GetFromState().String(), "RESUME_FROM_STATE_")))
+				if id := r.GetForceCanceledBy().GetRequestId(); id != "" {
+					entry.Detail += fmt.Sprintf(" force_cancel_request=%q", id)
+				}
 			}
 			if kinds := resumeWarningKinds(out.GetWarnings()); kinds != "" {
 				entry.Detail += " warnings=" + kinds

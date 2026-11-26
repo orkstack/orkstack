@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -27,13 +29,18 @@ const recordsAdmission = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 // approve), fan (a fan-out of build) and review (an await that follows build
 // through fan).
 type recordsWorld struct {
-	t      *testing.T
-	dir    string
-	store  *artifacts.RecordStore
-	ask    ResumeRecordsAsk
-	faults map[string]error // by a key's part
+	t     *testing.T
+	dir   string
+	store *artifacts.RecordStore
+	ask   ResumeRecordsAsk
+	// faults fail the read of a key that holds the part as a store that does
+	// not answer fails it: a fault no real store produces on demand at one key
+	// (AGENTS.md §11.1).
+	faults map[string]error
 	mu     sync.Mutex
-	reads  []string
+	// commitReads keeps what a verification of the run read.
+	commitReads *readCommits
+	reads       []string
 }
 
 func newRecordsWorld(t *testing.T) *recordsWorld {
@@ -171,6 +178,9 @@ func (w *recordsWorld) values(task string, kind orkstackv1.RecordedValuesKind, s
 	}
 	if row := w.row(task); row.GetStatus() == sOK && rec.GetValues() != nil {
 		row.ValuesRef = &orkstackv1.ArtifactRef{Name: "values.json", Uri: rec.GetValues().GetUri(), Sha256: rec.GetValues().GetSha256(), SizeBytes: rec.GetValues().GetSizeBytes()}
+		if rec.GetChildRunId() != "" {
+			row.Child = &orkstackv1.TaskChild{RunId: rec.GetChildRunId()}
+		}
 	}
 	key, err := artifacts.RecordKey(of, "default", "ork-x", task, scope)
 	if err != nil {
@@ -293,12 +303,20 @@ func TestReadResumeRecords_Answers(t *testing.T) {
 			setup(w)
 			w.row("approve").Await.Deadline = timestamppb.New(time.Now().Add(-time.Hour))
 		}, "approve", KeptGone, ResolutionAnswer{}, "after", true},
-		"a kept answer with no deadline":   {func(w *recordsWorld) { setup(w); w.row("approve").Await.Deadline = nil }, "approve", KeptGone, ResolutionAnswer{}, "after", true},
-		"a kept composed task":             {setup, "ship", KeptValid, ResolutionAnswer{}, "", false},
-		"a kept composed task, no record":  {func(*recordsWorld) {}, "ship", KeptGone, ResolutionAnswer{}, "not on record", true},
-		"a kept composed task, unanswered": {func(w *recordsWorld) { setup(w); w.faults["/ship/"] = unansweredStore() }, "ship", KeptUnavailable, ResolutionAnswer{}, "did not answer", true},
-		"a followed commit, no record":     {func(*recordsWorld) {}, "build", KeptGone, ResolutionAnswer{}, "not on record", true},
-		"a followed commit, unanswered":    {func(w *recordsWorld) { setup(w); w.faults["/build/"] = unansweredStore() }, "build", KeptUnavailable, ResolutionAnswer{}, "did not answer", true},
+		"a kept answer with no deadline": {func(w *recordsWorld) { setup(w); w.row("approve").Await.Deadline = nil }, "approve", KeptGone, ResolutionAnswer{}, "after", true},
+		"a kept composed task":           {setup, "ship", KeptValid, ResolutionAnswer{}, "", false},
+		"a kept composed task, artifacts it did not return": {func(w *recordsWorld) {
+			setup(w)
+			w.row("ship").Artifacts = []*orkstackv1.ArtifactRef{w.put(`{}`)}
+			w.row("ship").Artifacts[0].Name = "planted"
+		}, "ship", KeptUnreadable, ResolutionAnswer{}, "cannot be read", true},
+		"a kept composed task, another child":        {func(w *recordsWorld) { setup(w); w.row("ship").Child.RunId = "ork-other" }, "ship", KeptUnreadable, ResolutionAnswer{}, "cannot be read", true},
+		"a kept answer at another uri":               {func(w *recordsWorld) { setup(w); w.row("ship").ValuesRef.Uri += "x" }, "ship", KeptUnreadable, ResolutionAnswer{}, "cannot be read", true},
+		"an open await at a scope no resume gave it": {func(w *recordsWorld) { setup(w); w.row("review").ResultEpoch = 7 }, "review", 0, ResolutionAnswer{}, "scope", false},
+		"a kept composed task, no record":            {func(*recordsWorld) {}, "ship", KeptGone, ResolutionAnswer{}, "not on record", true},
+		"a kept composed task, unanswered":           {func(w *recordsWorld) { setup(w); w.faults["/ship/"] = unansweredStore() }, "ship", KeptUnavailable, ResolutionAnswer{}, "did not answer", true},
+		"a followed commit, no record":               {func(*recordsWorld) {}, "build", KeptGone, ResolutionAnswer{}, "not on record", true},
+		"a followed commit, unanswered":              {func(w *recordsWorld) { setup(w); w.faults["/build/"] = unansweredStore() }, "build", KeptUnavailable, ResolutionAnswer{}, "did not answer", true},
 		"a followed commit of another admission": {func(w *recordsWorld) {
 			w.commit("build", 0, `{}`, func(c *orkstackv1.ActivityCommit) { c.Recorded.AdmissionSha256 = strings.Repeat("d", 64) })
 		}, "build", KeptUnreadable, ResolutionAnswer{}, "cannot be read", true},
@@ -474,5 +492,554 @@ func TestResumeScopesHeld(t *testing.T) {
 	w.row("alone").Status, w.row("ship").Status, w.row("review").Await.Deadline = sFail, sSkip, nil
 	if held := ResumeScopesHeld(w.ask); len(held) != 1 {
 		t.Errorf("held = %v, want fan[3] alone", held)
+	}
+}
+
+// TestReadResumeRecords_ARecordWhoseValuesAreGone: a record that stands and
+// whose values object is gone keeps nothing, and is no record that cannot be
+// read.
+func TestReadResumeRecords_ARecordWhoseValuesAreGone(t *testing.T) {
+	w := newRecordsWorld(t)
+	w.resolution("approve", 0, `{"ok":true}`, nil, nil)
+	values, err := artifacts.NewLocalStore(w.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := values.Delete(context.Background(), w.row("approve").GetValuesRef().GetUri()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.read()["approve"]; got.Answer != KeptGone || got.Newer {
+		t.Errorf("%+v, want gone", got)
+	}
+}
+
+// TestAdoptRecorded_ReadsAnAdmittedRunsSettledTaskFromItsRecord: a settled
+// await or composed task of a run whose results the engine records is read
+// back from its record at its scope, as ResumeRun verified it, and from
+// nothing else.
+func TestAdoptRecorded_ReadsAnAdmittedRunsSettledTaskFromItsRecord(t *testing.T) {
+	task := func(w *recordsWorld, id string) *orkstackv1.Task {
+		for _, d := range w.ask.Definition.GetTasks() {
+			if d.GetId() == id {
+				return d
+			}
+		}
+		t.Fatalf("no task %s", id)
+		return nil
+	}
+	read := func(w *recordsWorld, id string, scope uint64, admission string, values *orkstackv1.ArtifactRef) (*orkstackv1.ExecuteTaskResult, error) {
+		store, err := artifacts.NewLocalStore(w.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		acts := NewResumeActivities(nil, store).WithRecordReads(w)
+		in := adoptInput(recordedEntryOf(w.ask.Definition, "ork-x", task(w, id), values, scope, admission))
+		// A miss is confirmed after the reader's own two seconds, within the read's bound.
+		in.GetTimeout = durationpb.New(5 * time.Second)
+		out, err := acts.AdoptRecorded(context.Background(), in)
+		if err != nil {
+			return nil, err
+		}
+		return out.GetEntries()[0].GetResult(), nil
+	}
+	for name, tc := range map[string]struct {
+		make   func(*recordsWorld)
+		task   string
+		scope  uint64
+		edit   func(*recordsWorld) (admission string, values *orkstackv1.ArtifactRef)
+		reason string
+	}{
+		"an answer":           {func(w *recordsWorld) { w.resolution("approve", 0, `{"ok":true}`, nil, nil) }, "approve", 0, nil, ""},
+		"a composed task":     {func(w *recordsWorld) { w.composed(0, `{"d":1}`, nil, nil) }, "ship", 0, nil, ""},
+		"at a resume's scope": {func(w *recordsWorld) { w.resolution("approve", 42, `{"ok":true}`, nil, nil) }, "approve", 42, nil, ""},
+		"none":                {func(*recordsWorld) {}, "approve", 0, nil, ReasonValuesMissing},
+		"its values gone": {func(w *recordsWorld) {
+			w.resolution("approve", 0, `{"ok":true}`, nil, nil)
+			store, _ := artifacts.NewLocalStore(w.dir)
+			_ = store.Delete(context.Background(), w.row("approve").GetValuesRef().GetUri())
+		}, "approve", 0, nil, ReasonValuesMissing},
+		"another scope's": {func(w *recordsWorld) { w.resolution("approve", 0, `{"ok":true}`, nil, nil) }, "approve", 42, nil, ReasonValuesMissing},
+		"another admission": {func(w *recordsWorld) { w.resolution("approve", 0, `{"ok":true}`, nil, nil) }, "approve", 0,
+			func(w *recordsWorld) (string, *orkstackv1.ArtifactRef) {
+				return strings.Repeat("d", 64), w.row("approve").GetValuesRef()
+			}, ResolutionRecordInvalidCode},
+		"other values than kept": {func(w *recordsWorld) { w.resolution("approve", 0, `{"ok":true}`, nil, nil) }, "approve", 0,
+			func(w *recordsWorld) (string, *orkstackv1.ArtifactRef) {
+				return recordsAdmission, w.put(`{"ok":false}`)
+			}, ResolutionRecordInvalidCode},
+		"a rejection": {func(w *recordsWorld) { w.resolution("approve", 0, "", nil, nil) }, "approve", 0,
+			func(w *recordsWorld) (string, *orkstackv1.ArtifactRef) { return recordsAdmission, w.put(`{"ok":true}`) }, ResolutionRecordInvalidCode},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newRecordsWorld(t)
+			tc.make(w)
+			admission, values := recordsAdmission, w.row(tc.task).GetValuesRef()
+			if values == nil {
+				values = w.put(`{"ok":true}`)
+			}
+			if tc.edit != nil {
+				admission, values = tc.edit(w)
+			}
+			got, err := read(w, tc.task, tc.scope, admission, values)
+			if tc.reason == "" {
+				if err != nil || got.GetValuesRef().GetSha256() != values.GetSha256() || len(got.GetValuesJson()) == 0 {
+					t.Fatalf("%v, %v", got, err)
+				}
+				return
+			}
+			if categoryOf(err).appType() != tc.reason || !isFinal(err) {
+				t.Errorf("err = %v, want final %s", err, tc.reason)
+			}
+		})
+	}
+	w := newRecordsWorld(t)
+	w.resolution("approve", 0, `{"ok":true}`, nil, nil)
+	w.faults["/approve/"] = unansweredStore()
+	if _, err := read(w, "approve", 0, recordsAdmission, w.row("approve").GetValuesRef()); categoryOf(err).appType() != ReasonCommitReadFailed || isFinal(err) {
+		t.Errorf("a store that does not answer = %v, want a retryable COMMIT_READ_FAILED", err)
+	}
+	// A record of a newer format is a newer replica's to read: never final.
+	w = newRecordsWorld(t)
+	file := w.resolution("approve", 0, `{"ok":true}`, nil, nil)
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, regexp.MustCompile(`"schemaVersion":\s*1`).ReplaceAll(raw, []byte(`"schemaVersion":99`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := read(w, "approve", 0, recordsAdmission, w.row("approve").GetValuesRef()); categoryOf(err).appType() != ReasonCommitReadFailed || isFinal(err) {
+		t.Errorf("a record of a newer format = %v, want a retryable COMMIT_READ_FAILED", err)
+	}
+}
+
+// TestVerifyRecorded_AnAnswerTheRunNeverApplied: an await that did not
+// succeed and is answered on record in time is settled from its record: the
+// planner keeps it, and the block carries the row its record gives.
+func TestVerifyRecorded_AnAnswerTheRunNeverApplied(t *testing.T) {
+	w := newRecordsWorld(t)
+	w.row("review").Status = sCanc
+	w.row("review").ScheduledAt, w.row("review").StartedAt = timestamppb.Now(), timestamppb.Now()
+	// The rows of what the run took, as a run that ended leaves them.
+	for _, id := range []string{"approve", "ship"} {
+		r := w.row(id)
+		r.ScheduledAt, r.StartedAt, r.FinishedAt = timestamppb.Now(), timestamppb.Now(), timestamppb.Now()
+	}
+	w.row("approve").Await.ResolvedVia, w.row("approve").Await.ResolvedBy = orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API, "alice"
+	w.row("ship").Child = &orkstackv1.TaskChild{RunId: "ork-child"}
+	build := w.commit("build", 0, `{"n":1}`, identified("build", 0))
+	w.commit("alone", 0, `{"n":2}`, identified("alone", 0))
+	w.resolution("approve", 0, `{"ok":true}`, map[string]string{"build": build}, nil)
+	approve, err := identity.ResultSHA256(w.row("approve").GetValuesRef().GetSha256(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.composed(0, `{"d":1}`, map[string]string{"approve": approve}, nil)
+	w.resolution("review", 0, `{"ok":true}`, map[string]string{"build": build}, nil)
+	verified := w.recordedVerify(t)
+	answered := verified.Evidence.Answered["review"]
+	if answered == nil || answered.GetValuesRef().GetUri() == "" || answered.GetAwait().GetResolvedVia() != orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API ||
+		answered.GetAwait().GetResolvedBy() != "alice" || !answered.GetAwait().GetResolvedByVerified() {
+		t.Fatalf("answered = %v", answered)
+	}
+	in := ResumePlanInput{Definition: w.ask.Definition, Base: w.ask.Base, Evidence: verified.Evidence,
+		Facts: ResumeBaseFacts{Dispatched: map[ResumeUnit]bool{}, ResetPoint: ResetPoint{CompletedEventID: 9, ScheduledEventID: 7, StartedEventID: 8}}}
+	for _, row := range w.ask.Base.GetTaskRuns() {
+		in.Facts.Dispatched[nodeUnit(row.GetTaskId())] = true
+	}
+	w.ask.Base.Status, w.ask.Base.Error = sFail, &orkstackv1.Error{Code: "RUN_FAILED"}
+	w.row("alone").Status = sFail
+	plan, err := PlanResume(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := unitOfPlan(plan, "review"); u.Disposition != DispositionSettle {
+		t.Fatalf("review = %+v, want settled from its record", u)
+	}
+	block, err := BuildResumeBlock(ResumeBlockInput{Input: in, Plan: plan, Verification: verified, SeqBase: 100, Scope: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	units, err := DecodeResumeUnits(in.Definition, block, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range units {
+		if u.Task == "review" && u.Row.GetValuesRef().GetSha256() != answered.GetValuesRef().GetSha256() {
+			t.Errorf("the block settles review with %v", u.Row)
+		}
+	}
+}
+
+func unitOfPlan(p *ResumePlan, task string) ResumePlanUnit {
+	for _, u := range p.Units {
+		if u.Unit == nodeUnit(task) {
+			return u
+		}
+	}
+	return ResumePlanUnit{}
+}
+
+// TestVerifyRecorded_AKeptAnswersRowIsTheRecords: a kept approval whose row in
+// the run's state names another values object, size and approver, with its
+// digest left as the record's, is settled with the record's row: the state of
+// a recorded run is no word on who answered, how, or with what.
+func TestVerifyRecorded_AKeptAnswersRowIsTheRecords(t *testing.T) {
+	w := newRecordsWorld(t)
+	for _, id := range []string{"approve", "ship"} {
+		r := w.row(id)
+		r.ScheduledAt, r.StartedAt, r.FinishedAt = timestamppb.Now(), timestamppb.Now(), timestamppb.Now()
+	}
+	w.row("approve").Await.ResolvedVia, w.row("approve").Await.ResolvedBy = orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API, "alice"
+	w.row("ship").Child = &orkstackv1.TaskChild{RunId: "ork-child"}
+	build := w.commit("build", 0, `{"n":1}`, identified("build", 0))
+	w.commit("alone", 0, `{"n":2}`, identified("alone", 0))
+	w.resolution("approve", 0, `{"ok":true}`, map[string]string{"build": build}, nil)
+	approve, err := identity.ResultSHA256(w.row("approve").GetValuesRef().GetSha256(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.composed(0, `{"d":1}`, map[string]string{"approve": approve}, nil)
+	real := proto.Clone(w.row("approve").GetValuesRef()).(*orkstackv1.ArtifactRef)
+	forged := w.row("approve")
+	forged.ValuesRef.Uri, forged.ValuesRef.SizeBytes = real.GetUri()+".forged", real.GetSizeBytes()+7
+	forged.Await.ResolvedBy, forged.Await.ResolvedVia = "mallory", orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_CALLBACK
+	verified := w.recordedVerify(t)
+	in := ResumePlanInput{Definition: w.ask.Definition, Base: w.ask.Base, Evidence: verified.Evidence,
+		Facts: ResumeBaseFacts{Dispatched: map[ResumeUnit]bool{}, ResetPoint: ResetPoint{CompletedEventID: 9, ScheduledEventID: 7, StartedEventID: 8}}}
+	for _, row := range w.ask.Base.GetTaskRuns() {
+		in.Facts.Dispatched[nodeUnit(row.GetTaskId())] = true
+	}
+	w.ask.Base.Status, w.ask.Base.Error = sFail, &orkstackv1.Error{Code: "RUN_FAILED"}
+	w.row("alone").Status = sFail
+	plan, err := PlanResume(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := unitOfPlan(plan, "approve"); u.Disposition != DispositionSettle {
+		t.Fatalf("approve = %+v, want kept", u)
+	}
+	block, err := BuildResumeBlock(ResumeBlockInput{Input: in, Plan: plan, Verification: verified, SeqBase: 100, Scope: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	units, err := DecodeResumeUnits(in.Definition, block, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, u := range units {
+		if u.Task != "approve" {
+			continue
+		}
+		seen = true
+		ref, aw := u.Row.GetValuesRef(), u.Row.GetAwait()
+		if ref.GetUri() != real.GetUri() || ref.GetSizeBytes() != real.GetSizeBytes() || ref.GetSha256() != real.GetSha256() ||
+			aw.GetResolvedBy() != "alice" || aw.GetResolvedVia() != orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API || !aw.GetResolvedByVerified() {
+			t.Errorf("the block keeps approve as %v, want the record's row", u.Row)
+		}
+	}
+	if !seen {
+		t.Fatal("the block has no unit for approve")
+	}
+}
+
+// outputs records child run child's outputs as an engine records them, under
+// its admission; raw empty records them without their values object.
+func (w *recordsWorld) outputs(child, raw string) *orkstackv1.ArtifactRef {
+	w.t.Helper()
+	ref := w.put(raw)
+	rec := &orkstackv1.RecordedValues{SchemaVersion: 1, Kind: orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_OUTPUTS, Namespace: "default",
+		RunId: child, AdmissionSha256: childAdmission, InputBinding: make([]byte, 32), Values: ref,
+		Artifacts: []*orkstackv1.ArtifactRef{{Name: "report", Uri: ref.GetUri(), Sha256: ref.GetSha256(), SizeBytes: ref.GetSizeBytes()}}}
+	if _, err := w.store.WriteRecordedValues(context.Background(), rec); err != nil {
+		w.t.Fatal(err)
+	}
+	return ref
+}
+
+const childAdmission = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+// TestReadResumeRecords_AComposedTaskSettledFromItsChild: a composed task that
+// ended for want of its values' record, or that a force cancel left running,
+// is settled from its own record when it has one, and otherwise from the
+// outputs' record of the child the run's plan names once that child
+// succeeded; its row is the records'. Any other ending reads nothing.
+func TestReadResumeRecords_AComposedTaskSettledFromItsChild(t *testing.T) {
+	unstored := func(w *recordsWorld) {
+		r := w.row("ship")
+		r.Status, r.Error = sFail, &orkstackv1.Error{Code: ChildValuesUnstoredCode}
+		r.Child = &orkstackv1.TaskChild{RunId: "ork-forged"}
+	}
+	succeeded := map[string]ResumeChildAsk{"ship": {RunID: "ork-child", AdmissionSHA256: childAdmission, Succeeded: true}}
+	for name, tc := range map[string]struct {
+		make          func(*recordsWorld)
+		children      map[string]ResumeChildAsk
+		forceCanceled bool
+		want          func(*testing.T, *recordsWorld, ResumeRecord, bool)
+	}{
+		"from its child's outputs": {func(w *recordsWorld) { unstored(w); w.outputs("ork-child", `{"d":1}`) }, succeeded, false,
+			func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+				row := got.Answered
+				if !read || got.Answer != KeptValid || !got.ChildOnRecord || !got.FromOutputs || got.ResultSHA256 == "" || row == nil ||
+					row.GetStatus() != sOK || row.GetError() != nil || row.GetChild().GetRunId() != "ork-child" ||
+					len(row.GetArtifacts()) != 1 || row.GetValuesRef().GetSha256() != got.Values.GetSha256() {
+					t.Fatalf("%+v", got)
+				}
+			}},
+		"from its own record": {func(w *recordsWorld) { unstored(w); w.composed(0, `{"d":1}`, nil, nil) }, succeeded, false,
+			func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+				if !read || got.Answer != KeptValid || !got.ChildOnRecord || got.FromOutputs || got.Answered.GetChild().GetRunId() != "ork-child" {
+					t.Fatalf("%+v", got)
+				}
+			}},
+		"its child did not succeed": {func(w *recordsWorld) { unstored(w); w.outputs("ork-child", `{"d":1}`) },
+			map[string]ResumeChildAsk{"ship": {RunID: "ork-child", AdmissionSHA256: childAdmission}}, false,
+			func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+				if !read || got.Answer == KeptValid || got.ChildCause != ComposedChildNotSucceeded {
+					t.Fatalf("%+v", got)
+				}
+			}},
+		"no outputs on record": {unstored, succeeded, false, func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+			if !read || got.Answer == KeptValid || got.ChildCause != ComposedChildOutputsUnavailable {
+				t.Fatalf("%+v", got)
+			}
+		}},
+		"another admission's outputs": {func(w *recordsWorld) { unstored(w); w.outputs("ork-child", `{"d":1}`) },
+			map[string]ResumeChildAsk{"ship": {RunID: "ork-child", AdmissionSHA256: strings.Repeat("e", 64), Succeeded: true}}, false,
+			func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+				if !read || got.Answer != KeptUnreadable {
+					t.Fatalf("%+v", got)
+				}
+			}},
+		"the store does not answer": {func(w *recordsWorld) {
+			unstored(w)
+			w.outputs("ork-child", `{"d":1}`)
+			w.faults["ork-child"] = unansweredStore()
+		},
+			succeeded, false, func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+				if !read || got.Answer != KeptUnavailable {
+					t.Fatalf("%+v", got)
+				}
+			}},
+		"a run resumed before": {func(w *recordsWorld) {
+			unstored(w)
+			w.outputs("ork-child", `{"d":1}`)
+			w.ask.Resumes = []artifacts.ResumeRecord{{Scope: 42, Tasks: []string{"build"}}}
+		}, succeeded, false, func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+			if !read || got.Answer == KeptValid || got.ChildCause != ComposedResumedBefore {
+				t.Fatalf("%+v", got)
+			}
+		}},
+		"no child in the plan": {unstored, nil, false, func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+			if !read || got.Answer != KeptUnreadable {
+				t.Fatalf("%+v", got)
+			}
+		}},
+		"another ending": {func(w *recordsWorld) {
+			r := w.row("ship")
+			r.Status, r.Error = sFail, &orkstackv1.Error{Code: "CHILD_FAILED"}
+			w.outputs("ork-child", `{"d":1}`)
+		}, succeeded, false, func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+			if read {
+				t.Fatalf("%+v", got)
+			}
+		}},
+		"running, not force-cancelled": {func(w *recordsWorld) { w.row("ship").Status = sRun; w.outputs("ork-child", `{"d":1}`) }, succeeded, false,
+			func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+				if read {
+					t.Fatalf("%+v", got)
+				}
+			}},
+		"running at a force cancel": {func(w *recordsWorld) { w.row("ship").Status = sRun; w.outputs("ork-child", `{"d":1}`) }, succeeded, true,
+			func(t *testing.T, w *recordsWorld, got ResumeRecord, read bool) {
+				if !read || got.Answer != KeptValid || !got.FromOutputs {
+					t.Fatalf("%+v", got)
+				}
+			}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newRecordsWorld(t)
+			tc.make(w)
+			w.ask.Children, w.ask.ForceCanceled = tc.children, tc.forceCanceled
+			got, read := w.read()["ship"]
+			tc.want(t, w, got, read)
+		})
+	}
+}
+
+// TestVerifyRecorded_AComposedTaskSettledFromItsChild: a run that failed
+// because a composed task's values were not recorded is resumed with that task
+// settled from its child's outputs, its row as the records give it; a need
+// that runs again withdraws it, and a child that did not succeed refuses the
+// resume with its own cause.
+func TestVerifyRecorded_AComposedTaskSettledFromItsChild(t *testing.T) {
+	setup := func(t *testing.T, children map[string]ResumeChildAsk, failApprove bool, edits ...func(*recordsWorld)) (*recordsWorld, ResumePlanInput, ResumeVerification) {
+		w := newRecordsWorld(t)
+		for _, id := range []string{"approve", "ship"} {
+			r := w.row(id)
+			r.ScheduledAt, r.StartedAt, r.FinishedAt = timestamppb.Now(), timestamppb.Now(), timestamppb.Now()
+		}
+		w.row("approve").Await.ResolvedVia, w.row("approve").Await.ResolvedBy = orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API, "alice"
+		build := w.commit("build", 0, `{"n":1}`, identified("build", 0))
+		w.commit("alone", 0, `{"n":2}`, identified("alone", 0))
+		w.resolution("approve", 0, `{"ok":true}`, map[string]string{"build": build}, nil)
+		ship := w.row("ship")
+		ship.Status, ship.Error = sFail, &orkstackv1.Error{Code: ChildValuesNotRecordedCode}
+		ship.Child = &orkstackv1.TaskChild{RunId: "ork-forged"}
+		w.outputs("ork-child", `{"d":1}`)
+		if failApprove {
+			w.row("build").Status = sFail
+		}
+		w.ask.Children = children
+		w.ask.Base.Status, w.ask.Base.Error = sFail, &orkstackv1.Error{Code: "RUN_FAILED"}
+		for _, edit := range edits {
+			edit(w)
+		}
+		verified := w.recordedVerify(t)
+		in := ResumePlanInput{Definition: w.ask.Definition, Base: w.ask.Base, Evidence: verified.Evidence,
+			Facts: ResumeBaseFacts{Dispatched: map[ResumeUnit]bool{}, ResetPoint: ResetPoint{CompletedEventID: 9, ScheduledEventID: 7, StartedEventID: 8}}}
+		for _, row := range w.ask.Base.GetTaskRuns() {
+			in.Facts.Dispatched[nodeUnit(row.GetTaskId())] = true
+		}
+		return w, in, verified
+	}
+	succeeded := map[string]ResumeChildAsk{"ship": {RunID: "ork-child", AdmissionSHA256: childAdmission, Succeeded: true}}
+	t.Run("settled", func(t *testing.T) {
+		_, in, verified := setup(t, succeeded, false)
+		plan, err := PlanResume(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u := unitOfPlan(plan, "ship"); u.Disposition != DispositionSettle {
+			t.Fatalf("ship = %+v, want settled from its child", u)
+		}
+		block, err := BuildResumeBlock(ResumeBlockInput{Input: in, Plan: plan, Verification: verified, SeqBase: 100, Scope: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		units, err := DecodeResumeUnits(in.Definition, block, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range units {
+			if u.Task == "ship" && (u.Row.GetChild().GetRunId() != "ork-child" || u.Row.GetValuesRef().GetSha256() == "" || len(u.Row.GetArtifacts()) != 1) {
+				t.Errorf("the block settles ship as %v", u.Row)
+			}
+		}
+	})
+	t.Run("a need runs again", func(t *testing.T) {
+		_, in, _ := setup(t, succeeded, true)
+		_, err := PlanResume(in)
+		var r *ResumeRefusal
+		if !errors.As(err, &r) || r.Code != RefuseComposedTask {
+			t.Fatalf("err = %v, want COMPOSED_TASK", err)
+		}
+	})
+	t.Run("its run was resumed before", func(t *testing.T) {
+		_, in, _ := setup(t, succeeded, false, func(w *recordsWorld) {
+			w.ask.Resumes = []artifacts.ResumeRecord{{Scope: 42, Tasks: []string{"review"}}}
+		})
+		_, err := PlanResume(in)
+		var r *ResumeRefusal
+		if !errors.As(err, &r) || r.Code != RefuseComposedTask || r.Cause != string(ComposedResumedBefore) {
+			t.Fatalf("err = %v, want COMPOSED_TASK resumed_before", err)
+		}
+	})
+	t.Run("its child did not succeed", func(t *testing.T) {
+		_, in, _ := setup(t, map[string]ResumeChildAsk{"ship": {RunID: "ork-child", AdmissionSHA256: childAdmission}}, false)
+		_, err := PlanResume(in)
+		var r *ResumeRefusal
+		if !errors.As(err, &r) || r.Code != RefuseComposedTask || r.Cause != string(ComposedChildNotSucceeded) {
+			t.Fatalf("err = %v, want COMPOSED_TASK child_not_succeeded", err)
+		}
+	})
+}
+
+// TestHoldChildInputs: what a composed task's row says it passed its child is
+// held to its producer's record; anything else makes its record unreadable,
+// and an artifact received from a run above is left as it is.
+func TestHoldChildInputs(t *testing.T) {
+	out := &orkstackv1.ArtifactRef{Name: "out", Uri: "file:///o", Sha256: strings.Repeat("a", 64), SizeBytes: 3}
+	received := []NamedArtifactPlan{{Name: "seed", RunID: "ork-root", TaskID: "gen", Artifact: ArtifactRefPlan{URI: "file:///s", SHA256: strings.Repeat("5", 64)}}}
+	passed := func(edit func(*orkstackv1.NamedArtifact)) map[string]ResumeRecord {
+		in := &orkstackv1.NamedArtifact{Name: "src", RunId: "ork-x", TaskId: "build",
+			Artifact: &orkstackv1.ArtifactRef{Name: "src", Uri: out.GetUri(), Sha256: out.GetSha256(), SizeBytes: 3, Metadata: map[string]string{ArtifactSourceNameKey: "out"}}}
+		if edit != nil {
+			edit(in)
+		}
+		return map[string]ResumeRecord{
+			"build": {Answer: KeptValid, Artifacts: []*orkstackv1.ArtifactRef{out}},
+			"ship":  {Answer: KeptValid, Answered: &orkstackv1.TaskRun{TaskId: "ship", Child: &orkstackv1.TaskChild{InputArtifacts: []*orkstackv1.NamedArtifact{in}}}},
+			"alone": {Answer: KeptGone},
+		}
+	}
+	for name, tc := range map[string]struct {
+		edit func(*orkstackv1.NamedArtifact)
+		want KeptAnswer
+	}{
+		"as its producer recorded it":            {nil, KeptValid},
+		"another object":                         {func(n *orkstackv1.NamedArtifact) { n.Artifact.Sha256 = strings.Repeat("f", 64) }, KeptUnreadable},
+		"another place":                          {func(n *orkstackv1.NamedArtifact) { n.Artifact.Uri = "file:///elsewhere" }, KeptUnreadable},
+		"another of its artifacts":               {func(n *orkstackv1.NamedArtifact) { n.Artifact.Metadata[ArtifactSourceNameKey] = "log" }, KeptUnreadable},
+		"a producer whose record does not stand": {func(n *orkstackv1.NamedArtifact) { n.TaskId = "alone" }, KeptValid},
+		"a producer that leaves no record":       {func(n *orkstackv1.NamedArtifact) { n.TaskId = "fan" }, KeptUnreadable},
+		"as its run received it": {func(n *orkstackv1.NamedArtifact) {
+			n.RunId, n.TaskId, n.Artifact.Uri, n.Artifact.Sha256 = "ork-root", "gen", "file:///s", strings.Repeat("5", 64)
+		}, KeptValid},
+		"not as its run received it": {func(n *orkstackv1.NamedArtifact) {
+			n.RunId, n.TaskId, n.Artifact.Sha256 = "ork-root", "gen", strings.Repeat("f", 64)
+		}, KeptUnreadable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			records := passed(tc.edit)
+			HoldChildInputs(records, "ork-x", received)
+			if got := records["ship"].Answer; got != tc.want {
+				t.Errorf("ship = %v, want %v", records["ship"], tc.want)
+			}
+		})
+	}
+	// A chain: a composed task passes its child what another composed task's
+	// child returned, and the first passed its own child something its
+	// producer does not hold. Whatever order they are visited in, the second
+	// is held to the first as it was read.
+	for range 50 {
+		bad := &orkstackv1.NamedArtifact{Name: "src", RunId: "ork-x", TaskId: "build",
+			Artifact: &orkstackv1.ArtifactRef{Uri: "file:///forged", Sha256: strings.Repeat("f", 64), Metadata: map[string]string{ArtifactSourceNameKey: "out"}}}
+		first := &orkstackv1.NamedArtifact{Name: "rep", RunId: "ork-x", TaskId: "a",
+			Artifact: &orkstackv1.ArtifactRef{Uri: out.GetUri(), Sha256: out.GetSha256(), SizeBytes: 3, Metadata: map[string]string{ArtifactSourceNameKey: "out"}}}
+		records := map[string]ResumeRecord{
+			"build": {Answer: KeptValid, Artifacts: []*orkstackv1.ArtifactRef{out}},
+			"a": {Answer: KeptValid, Artifacts: []*orkstackv1.ArtifactRef{out},
+				Answered: &orkstackv1.TaskRun{TaskId: "a", Child: &orkstackv1.TaskChild{InputArtifacts: []*orkstackv1.NamedArtifact{bad}}}},
+			"b": {Answer: KeptValid, Answered: &orkstackv1.TaskRun{TaskId: "b", Child: &orkstackv1.TaskChild{InputArtifacts: []*orkstackv1.NamedArtifact{first}}}},
+		}
+		HoldChildInputs(records, "ork-x", nil)
+		if records["a"].Answer != KeptUnreadable || records["b"].Answer != KeptValid {
+			t.Fatalf("a = %v, b = %v", records["a"].Answer, records["b"].Answer)
+		}
+	}
+}
+
+// TestReadResumeRecords_AComposedTaskOnALaterResume: on a run resumed before,
+// a composed task the first resume settled is kept from its own record at the
+// scope it ran under, and so is one whose record a confirm wrote and whose
+// reset never ran; neither is to be recorded again.
+func TestReadResumeRecords_AComposedTaskOnALaterResume(t *testing.T) {
+	for name, failed := range map[string]bool{"settled by the first resume": false, "recorded by a confirm that never reset": true} {
+		t.Run(name, func(t *testing.T) {
+			w := newRecordsWorld(t)
+			w.composed(0, `{"d":1}`, nil, nil)
+			if failed {
+				r := w.row("ship")
+				r.Status, r.Error = sFail, &orkstackv1.Error{Code: ChildValuesUnstoredCode}
+			}
+			w.ask.Resumes = []artifacts.ResumeRecord{{Scope: 42, Tasks: []string{"review"}}}
+			w.ask.Children = map[string]ResumeChildAsk{"ship": {RunID: "ork-child", AdmissionSHA256: childAdmission, Succeeded: true}}
+			got := w.read()["ship"]
+			if got.Answer != KeptValid || got.FromOutputs || got.ChildOnRecord != failed || got.ChildCause != "" {
+				t.Fatalf("%+v", got)
+			}
+		})
 	}
 }

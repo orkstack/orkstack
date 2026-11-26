@@ -37,7 +37,9 @@ type ResumeExecution struct {
 	ExecutionRunID string
 	Status         enumspb.WorkflowExecutionStatus
 	CloseTime      time.Time
-	HistoryLength  int64
+	// StartTime is when the execution started.
+	StartTime     time.Time
+	HistoryLength int64
 	// ResetRunID names the run the latest reset of this execution started;
 	// empty when it was never reset.
 	ResetRunID string
@@ -123,6 +125,9 @@ func (s *TemporalStarter) DescribeResumeExecution(ctx context.Context, runID, ex
 	}
 	if info.GetCloseTime() != nil {
 		out.CloseTime = info.GetCloseTime().AsTime()
+	}
+	if info.GetStartTime() != nil {
+		out.StartTime = info.GetStartTime().AsTime()
 	}
 	if v := info.GetVersioningInfo().GetDeploymentVersion(); v != nil {
 		out.DeploymentName, out.BuildID = v.GetDeploymentName(), v.GetBuildId()

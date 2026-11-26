@@ -46,6 +46,9 @@ func TestResumeRun_Preview(t *testing.T) {
 	if want := []string{"a RESUME_CATEGORY_KEPT STATUS_SUCCEEDED", "b RESUME_CATEGORY_RERUN_FAILED STATUS_FAILED"}; !slices.Equal(tasks, want) {
 		t.Fatalf("tasks = %v, want %v", tasks, want)
 	}
+	if got.GetRerunCount() != 1 {
+		t.Fatalf("rerun_count = %d, want 1", got.GetRerunCount())
+	}
 	if c := got.GetCounts(); len(c) != 2 || c[0].GetCount() != 1 || c[1].GetCount() != 1 {
 		t.Fatalf("counts = %v", c)
 	}
@@ -56,7 +59,7 @@ func TestResumeRun_Preview(t *testing.T) {
 	}
 	from, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true, FromTaskId: "a"})
 	if err != nil || from.GetPlanDigest() == got.GetPlanDigest() || from.GetAction() != orkstackv1.ResumeAction_RESUME_ACTION_RETRY_FROM ||
-		from.GetKeptCount() != 0 {
+		from.GetKeptCount() != 0 || from.GetRerunCount() != 2 {
 		t.Fatalf("from a = %v, %v", from, err)
 	}
 	if len(f.cluster.resets) != 0 {
@@ -116,13 +119,6 @@ func TestResumeRun_PlanRefusals(t *testing.T) {
 		reason, cause string
 		class         orkstackv1.ResumeRefusalClass
 	}{
-		// Its own definition declares none: its child's does.
-		"a run admitted by its plan": {change: func(f *resumeFixture) {
-			f.plan.Identity = &engine.IdentityPlan{}
-		}, req: preview(), reason: "RELEASE_UNSUPPORTED", cause: "admitted_run", class: permanent},
-		"a run whose tasks are held to a concurrency limit": {change: func(f *resumeFixture) {
-			f.plan.Concurrency = &engine.ConcurrencyPlan{}
-		}, req: preview(), reason: "RELEASE_UNSUPPORTED", cause: "concurrency_slot", class: permanent},
 		"its concurrency key is full and it refuses": {change: limitedResume(engine.ConcurrencyStrategyRefuse, 0,
 			&fakeConcReader{lines: map[string]engine.GateLine{"ork-conc-k": {Present: true, Holders: 1, HolderRuns: []string{"ork-other"}}}}),
 			req: preview(), reason: "CONCURRENCY_LIMIT_REACHED", class: wait},

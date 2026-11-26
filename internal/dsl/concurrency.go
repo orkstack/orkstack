@@ -13,8 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// The run-level concurrency limit (docs/DSL.md "Concurrency limits"; E88
-// §3): a key's slots, shared by every declaration in a namespace that renders
+// Concurrency limits, run-level and task-level (docs/DSL.md "Concurrency
+// limits"; E88 §3): a key's slots, shared by every declaration in a namespace that renders
 // it. These bounds hold whatever the deployment; the deployment's own
 // (engine.concurrency.max_entries, min_queue_timeout, max_queue_timeout,
 // max_limits_per_orkflow, max_run_slot_entries) are held at validate, create
@@ -47,6 +47,22 @@ type concurrencyDocument struct {
 	MaxQueued    *int32    `yaml:"max_queued"`
 }
 
+// taskConcurrencyDocument is a task's `concurrency:` block as written: a
+// run's without max_queued, which a submit checks and a task never meets.
+type taskConcurrencyDocument struct {
+	Key          *string   `yaml:"key"`
+	Limit        *int32    `yaml:"limit"`
+	OnLimit      string    `yaml:"on_limit"`
+	QueueTimeout yaml.Node `yaml:"queue_timeout"`
+}
+
+func (d *taskConcurrencyDocument) limit() *concurrencyDocument {
+	if d == nil {
+		return nil
+	}
+	return &concurrencyDocument{Key: d.Key, Limit: d.Limit, OnLimit: d.OnLimit, QueueTimeout: d.QueueTimeout}
+}
+
 // concurrencyStrategies are on_limit's closed set, by name.
 var concurrencyStrategies = map[string]orkstackv1.ConcurrencyStrategy{
 	"queue":         orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE,
@@ -70,9 +86,24 @@ func concurrencyStrategyName(s orkstackv1.ConcurrencyStrategy) string {
 	return ""
 }
 
-// compileConcurrency reads the document's `concurrency:` block: absent is
-// no limit.
-func compileConcurrency(doc *concurrencyDocument) (*orkstackv1.ConcurrencySpec, error) {
+// limitSite is where a limit is declared, as its refusals name it: the field,
+// and what comes before "concurrency." in the sentence.
+type limitSite struct{ field, prefix string }
+
+// runLimitSite is the Orkflow's own limit.
+var runLimitSite = limitSite{field: "concurrency"}
+
+// taskLimitSite is one task's limit.
+func taskLimitSite(taskIndex int, taskID string) limitSite {
+	return limitSite{field: fmt.Sprintf("tasks[%d].concurrency", taskIndex), prefix: fmt.Sprintf("task %q: ", taskID)}
+}
+
+func (s limitSite) refuse(format string, args ...any) error {
+	return validationError(s.field, fmt.Errorf(s.prefix+format, args...))
+}
+
+// compileConcurrency reads a `concurrency:` block: absent is no limit.
+func compileConcurrency(doc *concurrencyDocument, at limitSite) (*orkstackv1.ConcurrencySpec, error) {
 	if doc == nil {
 		return nil, nil
 	}
@@ -82,26 +113,26 @@ func compileConcurrency(doc *concurrencyDocument) (*orkstackv1.ConcurrencySpec, 
 	}
 	if doc.Key != nil {
 		if *doc.Key == "" {
-			return nil, validationError("concurrency", fmt.Errorf("concurrency.key is empty; omit it for the Orkflow's own key"))
+			return nil, at.refuse("concurrency.key is empty; omit it for its own key")
 		}
 		spec.Key = *doc.Key
 	}
 	if doc.OnLimit != "" {
 		strategy, ok := concurrencyStrategies[doc.OnLimit]
 		if !ok {
-			return nil, validationError("concurrency", fmt.Errorf("concurrency.on_limit: %q is not one of queue, refuse, skip, cancel_oldest, replace", doc.OnLimit))
+			return nil, at.refuse("concurrency.on_limit: %q is not one of queue, refuse, skip, cancel_oldest, replace", doc.OnLimit)
 		}
 		spec.OnLimit = strategy
 	}
 	if doc.MaxQueued != nil {
 		spec.MaxQueued = *doc.MaxQueued
 	}
-	seconds, err := compileQueueTimeout(&doc.QueueTimeout)
+	seconds, err := compileQueueTimeout(&doc.QueueTimeout, at)
 	if err != nil {
 		return nil, err
 	}
 	spec.QueueTimeoutSeconds = seconds
-	if err := ValidateConcurrency(spec); err != nil {
+	if err := validateLimit(spec, at); err != nil {
 		return nil, err
 	}
 	return spec, nil
@@ -110,75 +141,103 @@ func compileConcurrency(doc *concurrencyDocument) (*orkstackv1.ConcurrencySpec, 
 // compileQueueTimeout reads `queue_timeout:`: absent is 0, the deployment's
 // default; otherwise a Go duration of whole seconds above zero, a string
 // scalar only.
-func compileQueueTimeout(node *yaml.Node) (int64, error) {
+func compileQueueTimeout(node *yaml.Node, at limitSite) (int64, error) {
 	if node.Kind == 0 {
 		return 0, nil
 	}
-	if err := structural(node, "concurrency.queue_timeout"); err != nil {
+	if err := structural(node, at.field+".queue_timeout"); err != nil {
 		return 0, authoredError(err)
 	}
-	fail := func(err error) (int64, error) {
-		return 0, validationError("concurrency", fmt.Errorf("line %d: %w", node.Line, err))
+	fail := func(format string, args ...any) (int64, error) {
+		return 0, validationError(at.field, fmt.Errorf("line %d: %s%w", node.Line, at.prefix, fmt.Errorf(format, args...)))
 	}
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
-		return fail(fmt.Errorf("concurrency.queue_timeout: %s is not a duration such as 30m or 2h", DescribeNode(node)))
+		return fail("concurrency.queue_timeout: %s is not a duration such as 30m or 2h", DescribeNode(node))
 	}
 	d, err := time.ParseDuration(node.Value)
 	if err != nil {
-		return fail(fmt.Errorf("concurrency.queue_timeout: %q is not a duration such as 30m or 2h", node.Value))
+		return fail("concurrency.queue_timeout: %q is not a duration such as 30m or 2h", node.Value)
 	}
 	if d%time.Second != 0 {
-		return fail(fmt.Errorf("concurrency.queue_timeout: %s must be a whole number of seconds", node.Value))
+		return fail("concurrency.queue_timeout: %s must be a whole number of seconds", node.Value)
 	}
 	if d <= 0 {
-		return fail(fmt.Errorf("concurrency.queue_timeout: %s must be above zero; omit it for the deployment's default", node.Value))
+		return fail("concurrency.queue_timeout: %s must be above zero; omit it for the deployment's default", node.Value)
 	}
 	return int64(d / time.Second), nil
 }
 
-// ValidateConcurrency checks a compiled limit against the bounds that hold
-// whatever the deployment: create and plan run it again over a stored
-// definition, as validate does at compile. A nil spec is no limit.
+// ValidateConcurrency checks a compiled run-level limit against the bounds
+// that hold whatever the deployment. A nil spec is no limit.
 func ValidateConcurrency(spec *orkstackv1.ConcurrencySpec) error {
+	return validateLimit(spec, runLimitSite)
+}
+
+// validateTaskConcurrency checks a task's limit against the same bounds and
+// its own: only a task that runs its own container takes a slot, it always
+// waits for one, and never for the key its own run holds.
+func validateTaskConcurrency(taskIndex int, wf *orkstackv1.Orkflow, task *orkstackv1.Task) error {
+	spec := task.GetConcurrency()
 	if spec == nil {
 		return nil
 	}
-	fail := func(format string, args ...any) error {
-		return validationError("concurrency", fmt.Errorf(format, args...))
+	at := taskLimitSite(taskIndex, task.GetId())
+	if err := validateLimit(spec, at); err != nil {
+		return err
+	}
+	run := wf.GetConcurrency()
+	switch {
+	case spec.GetOnLimit() != orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_QUEUE:
+		return at.refuse("concurrency.on_limit: %s is a run's; a task always waits in line (queue)", concurrencyStrategyName(spec.GetOnLimit()))
+	case spec.GetMaxQueued() != 0:
+		return at.refuse("concurrency.max_queued is a run's, checked when it is submitted; a task waits whatever its line holds")
+	case task.GetEach() != nil:
+		return at.refuse("concurrency: is not for a fan-out; bound its items with each.max_parallel")
+	case task.GetPin() != "":
+		return at.refuse("concurrency: is not for a pin's member: it would hold its pin's Orker while it waits")
+	case IsFailureHandler(task):
+		return at.refuse("concurrency: is not for a failure handler, which starts in a failing run and never waits for a slot")
+	case run != nil && run.GetKey() != "" && run.GetKey() == spec.GetKey():
+		return at.refuse("concurrency.key %s is the run's own: the task would wait for a slot its own run holds", strconv.Quote(spec.GetKey()))
+	}
+	return nil
+}
+
+// validateLimit holds one limit to the bounds every one of them has.
+func validateLimit(spec *orkstackv1.ConcurrencySpec, at limitSite) error {
+	if spec == nil {
+		return nil
 	}
 	switch {
 	case spec.GetLimit() < 1:
-		return fail("concurrency.limit is %d; it must be at least 1", spec.GetLimit())
+		return at.refuse("concurrency.limit is %d; it must be at least 1", spec.GetLimit())
 	case spec.GetQueueTimeoutSeconds() < 0:
-		return fail("concurrency.queue_timeout is %ds; it must be above zero", spec.GetQueueTimeoutSeconds())
+		return at.refuse("concurrency.queue_timeout is %ds; it must be above zero", spec.GetQueueTimeoutSeconds())
 	case spec.GetMaxQueued() < 0:
-		return fail("concurrency.max_queued is %d; it must be 0 (no bound of its own) or above", spec.GetMaxQueued())
+		return at.refuse("concurrency.max_queued is %d; it must be 0 (no bound of its own) or above", spec.GetMaxQueued())
 	}
 	switch name := concurrencyStrategyName(spec.GetOnLimit()); {
 	case slices.Contains(concurrencyStrategyWords, name):
 	case spec.GetOnLimit() == orkstackv1.ConcurrencyStrategy_CONCURRENCY_STRATEGY_UNSPECIFIED:
-		return fail("concurrency.on_limit is unset")
+		return at.refuse("concurrency.on_limit is unset")
 	default:
 		// The closed set is parsed; a strategy whose deciding gate has not
 		// landed is refused, never read as queue (E88 P3, D6).
-		return fail("concurrency.on_limit: %s is not available yet; this release supports queue, refuse and skip", name)
+		return at.refuse("concurrency.on_limit: %s is not available yet; this release supports queue, refuse and skip", name)
 	}
 	key := spec.GetKey()
 	if key == "" {
 		return nil
 	}
 	if len(key) > ConcurrencyKeyTemplateMaxBytes {
-		return fail("concurrency.key is %d bytes; a key template is at most %d bytes", len(key), ConcurrencyKeyTemplateMaxBytes)
+		return at.refuse("concurrency.key is %d bytes; a key template is at most %d bytes", len(key), ConcurrencyKeyTemplateMaxBytes)
 	}
-	if !strings.Contains(key, "{{") {
-		// A literal key is its own rendering, held to §3.3 now.
-		if err := CheckConcurrencyKey(key, KeyAuthored); err != nil {
-			return validationError("concurrency", fmt.Errorf("concurrency.key: %w", err))
-		}
-		return nil
+	check := func(k string) error { return CheckConcurrencyKey(k, KeyAuthored) } // a literal key is its own rendering
+	if strings.Contains(key, "{{") {
+		check = checkConcurrencyKeyTemplate
 	}
-	if err := checkConcurrencyKeyTemplate(key); err != nil {
-		return validationError("concurrency", fmt.Errorf("concurrency.key: %w", err))
+	if err := check(key); err != nil {
+		return at.refuse("concurrency.key: %w", err)
 	}
 	return nil
 }

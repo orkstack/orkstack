@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
@@ -71,18 +72,20 @@ type concRunState struct {
 	ordinal   int64
 	givenBack bool
 	requeue   *requeueWait
+	// tasks are the slots of the tasks with a limit of their own, in
+	// definition order.
+	tasks []*taskSlot
 	// pausable: the run's plan carries Pause, the only way a slot is given
 	// back.
 	pausable bool
 }
 
 func newConcRunState(plan *ConcurrencyPlan) *concRunState {
-	if plan == nil || (plan.Run == nil) {
-		// No run-level limit (task-level limits come with E88 P7).
+	if plan == nil || (plan.Run == nil && len(plan.Tasks) == 0) {
 		return nil
 	}
 	c := &concRunState{plan: plan, seqBase: plan.SeqBase}
-	if plan.runSlot() == nil {
+	if plan.Run != nil && plan.runSlot() == nil {
 		// A plan that names a run-level slot it does not have: refused at
 		// the acquire, never run unlimited.
 		c.invalid = fmt.Sprintf("the run's plan names run-level slot %d of %d", *plan.Run, len(plan.Slots))
@@ -105,6 +108,9 @@ func (s *runState) askRunSlot(ctx workflow.Context, cause orkstackv1.Concurrency
 		return runLevelError(RunConcurrencyUnsupportedCode, c.invalid)
 	}
 	slot := c.plan.runSlot()
+	if slot == nil {
+		return nil // only its tasks have limits
+	}
 	now := workflow.Now(ctx)
 	timeout := time.Duration(slot.QueueTimeoutSeconds) * time.Second
 	req := gateAcquire{
@@ -140,6 +146,22 @@ func (c *concRunState) noteAttempted(gate string) {
 
 // sendAcquire runs one AcquireConcurrency local activity for req.
 func (s *runState) sendAcquire(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire) (AcquireConcurrencyResult, error) {
+	lctx, in := s.acquireCall(ctx, slot, req)
+	var res AcquireConcurrencyResult
+	err := getLocal(lctx, runScope(ctx), workflow.ExecuteLocalActivity(lctx, ActivityAcquireConcurrency, in), &res)
+	if err == nil {
+		return res, nil
+	}
+	if categoryOf(err).canceled || ctx.Err() != nil {
+		return res, temporal.NewCanceledError()
+	}
+	// The activity ran out of its acquire_timeout, or failed past its
+	// retries: the limit is unavailable, which the caller decides from.
+	return AcquireConcurrencyResult{Unavailable: err.Error()}, nil
+}
+
+// acquireCall is one acquire's context and input.
+func (s *runState) acquireCall(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire) (workflow.Context, AcquireConcurrencyInput) {
 	c := s.conc
 	c.attempt++
 	// Retried within the acquire's time: a worker that stopped mid-acquire
@@ -156,17 +178,7 @@ func (s *runState) sendAcquire(ctx workflow.Context, slot *ConcurrencySlotPlan, 
 		Start: GateStart{GateID: slot.GateID, Namespace: c.plan.Namespace, Incarnation: c.plan.Incarnation,
 			Key: slot.Key, Tunables: c.plan.Gate},
 	}
-	var res AcquireConcurrencyResult
-	err := getLocal(lctx, runScope(ctx), workflow.ExecuteLocalActivity(lctx, ActivityAcquireConcurrency, in), &res)
-	if err == nil {
-		return res, nil
-	}
-	if categoryOf(err).canceled || ctx.Err() != nil {
-		return res, temporal.NewCanceledError()
-	}
-	// The activity ran out of its acquire_timeout, or failed past its
-	// retries: the limit is unavailable, which the caller decides from.
-	return AcquireConcurrencyResult{Unavailable: err.Error()}, nil
+	return lctx, in
 }
 
 // concEnding is the run-level ending an acquire's result decides, nil for a
@@ -392,11 +404,24 @@ func (s *runState) recordRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan
 func (s *runState) syncConcAttributes(ctx workflow.Context) error {
 	c := s.conc
 	held, queued := []string{}, []string{}
+	add := func(list *[]string, gate string) {
+		if !slices.Contains(*list, gate) {
+			*list = append(*list, gate)
+		}
+	}
 	if c.held != nil {
-		held = append(held, c.held.gate)
+		add(&held, c.held.gate)
 	}
 	if c.queued != nil {
-		queued = append(queued, c.plan.runSlot().GateID)
+		add(&queued, c.plan.runSlot().GateID)
+	}
+	for _, t := range c.tasks {
+		switch {
+		case t.held:
+			add(&held, t.slot.GateID)
+		case t.wait != nil:
+			add(&queued, t.slot.GateID)
+		}
 	}
 	runQueued := task.SearchKeyOrkflowRunQueued.ValueUnset()
 	if c.queued != nil {
@@ -501,6 +526,11 @@ func (c *concRunState) carry() *orkstackv1.RunConcurrencyCarry {
 	if c.ordinal > 0 {
 		out.Ordinals = []*orkstackv1.SlotOrdinal{{GateId: c.plan.runSlot().GateID, TaskIx: gateRunLevel, N: c.ordinal}}
 	}
+	for _, t := range c.tasks {
+		if t.n > 0 {
+			out.Ordinals = append(out.Ordinals, &orkstackv1.SlotOrdinal{GateId: t.slot.GateID, TaskIx: int32(t.ix), N: t.n})
+		}
+	}
 	return out
 }
 
@@ -530,16 +560,27 @@ func (c *concRunState) adoptCarry(in *orkstackv1.RunConcurrencyCarry) error {
 	for _, g := range in.GetAttempted() {
 		c.noteAttempted(g)
 	}
-	switch ordinals := in.GetOrdinals(); len(ordinals) {
-	case 0:
-	case 1:
-		o := ordinals[0]
-		if o.GetGateId() != c.plan.runSlot().GateID || o.GetTaskIx() != gateRunLevel || o.GetN() <= 0 {
-			return fmt.Errorf("the carried slot ordinal %v is not this run's run-level slot's", o)
+	run := c.plan.runSlot()
+	for _, o := range in.GetOrdinals() {
+		at := slices.IndexFunc(c.tasks, func(t *taskSlot) bool {
+			return t.slot != nil && t.ix == int(o.GetTaskIx()) && t.slot.GateID == o.GetGateId()
+		})
+		switch {
+		case o.GetN() <= 0:
+			return fmt.Errorf("the carried slot ordinal %v is not above 0", o)
+		case o.GetTaskIx() == gateRunLevel && run != nil && o.GetGateId() == run.GateID && c.ordinal == 0:
+			c.ordinal = o.GetN()
+		case at >= 0 && c.tasks[at].n == 0:
+			c.tasks[at].n = o.GetN()
+		default:
+			return fmt.Errorf("the carried slot ordinal %v is not one of this run's slots'", o)
 		}
-		c.ordinal = o.GetN()
-	default:
-		return fmt.Errorf("the carry holds %d run-level slot ordinals; a run has one", len(ordinals))
+	}
+	if run == nil {
+		if len(in.GetHeld()) > 0 {
+			return errors.New("the carry holds a run-level slot, and the run has no limit of its own")
+		}
+		return nil
 	}
 	switch held := in.GetHeld(); len(held) {
 	case 0:
@@ -608,9 +649,13 @@ func (s *runState) noteWaitEnd(ctx workflow.Context, outcome orkstackv1.Concurre
 // takeEventWaitEnd hands the noted wait end to the event being built, once:
 // never to a task's log line, which an ending emits before its terminal
 // event.
-func (s *runState) takeEventWaitEnd(eventType orkstackv1.EventType) *orkstackv1.ConcurrencyWaitEnd {
+func (s *runState) takeEventWaitEnd(eventType orkstackv1.EventType, taskID string) *orkstackv1.ConcurrencyWaitEnd {
 	if eventType == orkstackv1.EventType_EVENT_TYPE_TASK_LOG {
 		return nil
+	}
+	if w := s.taskWaitEnds[taskID]; w != nil && taskID != "" {
+		delete(s.taskWaitEnds, taskID)
+		return w
 	}
 	w := s.eventWaitEnd
 	s.eventWaitEnd = nil

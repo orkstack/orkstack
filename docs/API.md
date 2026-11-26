@@ -1837,6 +1837,11 @@ Orkflow it binds are fixed when it is created.
 | `service_revision` | `int64` | service_revision is output only: it rises when what the source's containers are or hold changes (uses, with, env, secrets, identities, credentials, resources, pool, concurrency, delivery), so its containers are replaced. |
 | `judging_revision` | `int64` | judging_revision is output only: it rises when how a message is judged changes (version, format, max_bytes, match, input, map, artifacts, rate, reject_breaker), which restarts nothing. |
 | `deleting_since` | `google.protobuf.Timestamp` | deleting_since is output only: when a delete marked the source. A marked source is stopped, and is gone once its instances have ended. |
+| `resume_seq` | `int64` | resume_seq is output only: it rises with each resume of a paused source. |
+| `trial_code` | `string` | trial_code is output only: the code of the pause the last resume lifted, empty for one an operator made. The instances a resume starts are on trial for it. |
+| `in_place_revision` | `int64` | in_place_revision is output only: the service revision a change or a restart asked to be applied in place, 0 for none. |
+| `service_digest` | `string` | service_digest is output only: the SHA-256 of the service spec of service_revision, which its instances are started with. |
+| `restart_revision` | `int64` | restart_revision is output only: the service revision the last restart raised, 0 for none. |
 
 ### EventSourceDeclaration
 
@@ -3148,7 +3153,10 @@ and is not one of them. queued, queued_on and holding are a concurrency
 limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
 waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
 a run still going matches them, and a deployment that cannot index
-concurrency limits refuses them.
+concurrency limits refuses them. results_recorded=true keeps the runs whose
+results are recorded by the engine, going or ended, as long as the cluster
+still holds them: a run read from the archive is not listed by it, and a
+deployment whose cluster cannot index it refuses it by name.
 
 | Field | Type | Description |
 |---|---|---|
@@ -4525,6 +4533,7 @@ ResumeForceCanceledBy names who force-cancelled a resumed run.
 |---|---|---|
 | `principal` | `string` |  |
 | `principal_verified` | `bool` |  |
+| `request_id` | `string` | request_id is the force cancel's own request id, which its audit record and the run's ending event carry. |
 
 ### ResumeHint
 
@@ -4566,7 +4575,7 @@ saved results, so a ResumeRun preview can still refuse (docs/RESUME.md).
 | `already_resumed` | `bool` |  |
 | `plan_digest` | `string` | plan_digest names the plan: what reruns, what is kept and how. |
 | `seq_base` | `int64` | seq_base is RUN_RESUMED's sequence. |
-| `kept_count` | `int32` |  |
+| `kept_count` | `int32` | kept_count is the units listed KEPT or SETTLED: the results the resume reads back. It is not every unit that does not run again: one kept from an earlier part of the run (RESUME_CATEGORY_EARLIER), skipped, waiting, on record or a sleep that woke is counted only in counts. A unit runs again only when it is listed under a RESUME_CATEGORY_RERUN_* category. |
 | `tasks` | repeated [`ResumeTask`](#resumetask) |  |
 | `counts` | repeated [`ResumeCount`](#resumecount) |  |
 | `diff` | [`ResumeDiff`](#resumediff) | diff is what changed since the plan the caller previewed. |
@@ -4578,6 +4587,7 @@ saved results, so a ResumeRun preview can still refuse (docs/RESUME.md).
 | `warnings` | repeated [`ResumeWarning`](#resumewarning) |  |
 | `terminal_sequence` | `int64` | terminal_sequence is the sequence of the ending a confirm sets aside. |
 | `highest_sequence` | `int64` | highest_sequence is the highest event sequence stored for the run. |
+| `rerun_count` | `int32` | rerun_count is the units the resume runs again: those listed under a RESUME_CATEGORY_RERUN_* category. Every other unit of tasks, one kept from an earlier part of the run included, does not run again. |
 
 ### ResumeScheduleRequest
 
@@ -4843,7 +4853,7 @@ RUN_RESULTS_KEPT.
 
 | Field | Type | Description |
 |---|---|---|
-| `kept_count` | `int32` | kept_count is the results read back from their commits. |
+| `kept_count` | `int32` | kept_count is the results read back from their commits. A unit kept from an earlier part of the run is not read back and is not counted here; ResumeRunResponse.counts holds it, under RESUME_CATEGORY_EARLIER. |
 | `settled_count` | `int32` | settled_count is the awaited and composed tasks kept from their records. |
 | `read_back_seconds` | `double` | read_back_seconds is how long the read-back took. |
 
@@ -4888,8 +4898,8 @@ RunResumed is how a run was resumed, carried by RUN_RESUMED.
 | `action` | [`ResumeAction`](#resumeaction) |  |
 | `from_task_id` | `string` | from_task_id is the task Retry from here chose; empty for Resume. |
 | `resumed_after_sequence` | `int64` | resumed_after_sequence is the sequence of the ending set aside. |
-| `rerun_count` | `int32` |  |
-| `kept_count` | `int32` |  |
+| `rerun_count` | `int32` | rerun_count is the units the resume runs again, a fan-out counted by its items; no other unit runs again. |
+| `kept_count` | `int32` | kept_count is the units whose results the resume reads back, from their commits or their records (ResumeRunResponse's KEPT and SETTLED). It does not count a unit kept from an earlier part of the run, a skipped one, a waiting one or a sleep that woke, none of which runs again either. |
 | `principal` | `string` | principal is who confirmed the resume, as recorded: asserted unless principal_verified (AGENTS.md §7). |
 | `principal_verified` | `bool` |  |
 | `reason` | `string` |  |
@@ -5593,7 +5603,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `timing` | [`TaskTiming`](#tasktiming) | timing is where this task's time went, derived from scheduled_at, started_at and finished_at above (TaskTiming). It is DERIVED ON READ: GetRun sets it on every row, a fan-out's items included, and nothing stores it — the engine never writes it, and a copy read back from anywhere else is not one GetRun answered. |
 | `sleep` | [`TaskSleep`](#tasksleep) | sleep is this task's sleep state, set for a task whose definition declares `sleep:` and unset otherwise (see TaskSleep). |
 | `interruptions` | [`TaskInterruptions`](#taskinterruptions) | interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while a composed task's child run waits in line for a slot of its concurrency limit: the child's own Run.queued, read live by GetRun only, for at most engine.concurrency.api_holders_shown of a run's composed tasks and for a caller who may read the child run. |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while the task waits in line for a slot of its own concurrency limit (status PENDING), or while a composed task's child run waits for a slot of its own: then it is the child's Run.queued, shown only to a caller who may read the child run. Its position is read live by GetRun only, for at most engine.concurrency.api_holders_shown of a run's tasks of each kind. |
 | `pending_reason` | `string` | pending_reason says why a task, or a fan-out item, of a live run is not running yet. GetRun derives it on read and nothing stores it. It is one of: the instant the task waits for to run again after an interruption; that no Orker of its pool (on a versioned fleet, of its run's release) takes work, for a task the run dispatched that no Orker has started; or that its pin waits for a pin host. It is empty when none applies, and when the reason cannot be known: the Orker inventory or the run's release could not be read, or a live Orker did not answer. |
 | `result_epoch` | `int64` | result_epoch is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_disposition` | [`ResumeDisposition`](#resumedisposition) | resume_disposition is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -6885,7 +6895,7 @@ ResumeCategory is the section of the plan a task is listed in.
 | `RESUME_CATEGORY_SKIPPED` | 10 | Stays skipped. |
 | `RESUME_CATEGORY_WAITS_AGAIN` | 11 | Waits again, in full, once what it needs is done. |
 | `RESUME_CATEGORY_SLEEP_KEPT` | 12 | A sleep that already started: it wakes when it would have. |
-| `RESUME_CATEGORY_EARLIER` | 13 | Finished in an earlier part of the run, before it carried on. |
+| `RESUME_CATEGORY_EARLIER` | 13 | Kept, not run again: it finished in an earlier part of the run, before it carried on. Its result is not read back, so kept_count does not count it. |
 | `RESUME_CATEGORY_RESOLVED_ON_RECORD` | 14 | Answered and on record: the answer given is used. |
 | `RESUME_CATEGORY_CHILD_OUTPUTS_ON_RECORD` | 15 | A composed task whose child run's outputs are on record. |
 

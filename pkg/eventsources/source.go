@@ -394,6 +394,28 @@ var fieldClass = map[string]string{
 	"asks_for": classOutput, "consented": classOutput,
 	"secrets": classService, "identities": classService, "credentials": classService, "env": classService,
 	"service_revision": classOutput, "judging_revision": classOutput, "deleting_since": classOutput,
+	"resume_seq": classOutput, "trial_code": classOutput, "in_place_revision": classOutput, "service_digest": classOutput, "restart_revision": classOutput,
+}
+
+// ClearOutputOnly drops every field a write may not set.
+func ClearOutputOnly(src *orkstackv1.EventSource) { CarryOutputOnly(&orkstackv1.EventSource{}, src) }
+
+// CarryOutputOnly gives next every field of stored that is OrkStack's, and no
+// other.
+func CarryOutputOnly(stored, next *orkstackv1.EventSource) {
+	from, to := proto.Clone(stored).ProtoReflect(), next.ProtoReflect()
+	fields := to.Descriptor().Fields()
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		if fieldClass[string(fd.Name())] != classOutput {
+			continue
+		}
+		if from.Has(fd) {
+			to.Set(fd, from.Get(fd))
+		} else {
+			to.Clear(fd)
+		}
+	}
 }
 
 // submitFields are what a source submits: a change to one makes whoever
@@ -479,6 +501,11 @@ func CheckQuotas(namespace []*orkstackv1.EventSource, deployment int, next *orks
 	for _, s := range namespace {
 		if s.GetName() == next.GetName() {
 			isNew = false
+			continue
+		}
+		if s.GetDeletingSince() != nil {
+			// What is being deleted makes room in its namespace at once, and
+			// is the deployment's until it is gone.
 			continue
 		}
 		e := Effective(s, l)

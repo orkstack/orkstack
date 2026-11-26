@@ -22,8 +22,11 @@ const (
 
 	confirmSchema   = 1
 	maxConfirmBytes = 4 << 10
-	maxOrkerID      = 512
-	maxAdmission    = 256
+	// maxTombstoneBytes bounds a tombstone as read: two names and what frames
+	// them.
+	maxTombstoneBytes = 1 << 10
+	maxOrkerID        = 512
+	maxAdmission      = 256
 )
 
 // ConfirmRecord is what one attempt's first accepted confirmation wrote: who
@@ -208,4 +211,96 @@ func (s *EventSourceInstanceStore) Tombstoned(ctx context.Context, sourceID stri
 		return false, fmt.Errorf("artifacts: read tombstone %s: %w", s.b.uri(key), err)
 	}
 	return true, nil
+}
+
+// TombstoneOf reads whose tombstone it is. found is what Tombstoned says; one
+// whose bytes cannot be read is found, and names nobody.
+func (s *EventSourceInstanceStore) TombstoneOf(ctx context.Context, sourceID string) (namespace, name string, found bool, err error) {
+	key, err := tombstoneKey(sourceID)
+	if err != nil {
+		return "", "", false, err
+	}
+	raw, _, err := s.b.get(ctx, key, maxTombstoneBytes+1)
+	if errors.Is(err, errBlobNotFound) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("artifacts: read tombstone %s: %w", s.b.uri(key), err)
+	}
+	namespace, name = decodeTombstone(raw, sourceID)
+	return namespace, name, true, nil
+}
+
+// decodeTombstone is the source a tombstone of that id names; none where it is
+// not one this release reads, or is of another id.
+func decodeTombstone(raw []byte, sourceID string) (namespace, name string) {
+	var doc tombstoneDocument
+	if len(raw) > maxTombstoneBytes || json.Unmarshal(raw, &doc, json.RejectUnknownMembers(true)) != nil || doc.SchemaVersion != 1 || doc.ID != sourceID ||
+		!eventSourceSlug.MatchString(doc.Namespace) || !eventSourceSlug.MatchString(doc.Name) {
+		return "", ""
+	}
+	return doc.Namespace, doc.Name
+}
+
+// KeepsSpecs reports whether the store holds a service spec under the id:
+// what tells a source's own store from one it was never in.
+func (s *EventSourceInstanceStore) KeepsSpecs(ctx context.Context, sourceID string) (bool, error) {
+	if !eventsources.ValidID(sourceID) {
+		return false, fmt.Errorf("artifacts: specs: %q is not an event source id", sourceID)
+	}
+	page, err := s.b.list(ctx, blobListInput{Prefix: EventSourceSpecPrefix + "/" + sourceID + "/", MaxKeys: 1})
+	if err != nil {
+		return false, fmt.Errorf("artifacts: list the specs of event source %s: %w", sourceID, err)
+	}
+	return len(page.Objects) > 0, nil
+}
+
+// Purge removes what was kept under a deleted source's id, at most batch
+// objects of it: its instances' logs, attempt and confirmation records, and
+// its specs last, so that the id has some for as long as anything of it is
+// left. left reports that a further purge has more to do. Its tombstone, and
+// the receipts and claims of its messages, stay.
+func (s *EventSourceInstanceStore) Purge(ctx context.Context, sourceID string, batch int) (left bool, err error) {
+	if !eventsources.ValidID(sourceID) {
+		return false, fmt.Errorf("artifacts: purge: %q is not an event source id", sourceID)
+	}
+	if batch < 1 {
+		return false, fmt.Errorf("artifacts: purge of event source %s: a batch is at least one object", sourceID)
+	}
+	for _, prefix := range []string{
+		LogPrefix + "/" + sourceID + "/" + sourceSegment + "/", AttemptPrefix + "/" + sourceID + "/" + sourceSegment + "/",
+		EventSourceConfirmPrefix + "/" + sourceID + "/", EventSourceSpecPrefix + "/" + sourceID + "/",
+	} {
+		for batch > 0 {
+			page, err := s.b.list(ctx, blobListInput{Prefix: prefix, MaxKeys: int32(min(batch, blobRemoveBatch))})
+			if err != nil {
+				return true, fmt.Errorf("artifacts: purge of event source %s: list %s: %w", sourceID, s.b.uri(prefix), err)
+			}
+			if len(page.Objects) == 0 {
+				break
+			}
+			keys := make([]string, len(page.Objects))
+			for i, object := range page.Objects {
+				keys[i] = object.Key
+			}
+			failed, err := s.b.removeKeys(ctx, keys)
+			if err != nil {
+				return true, fmt.Errorf("artifacts: purge of event source %s: %w", sourceID, err)
+			}
+			for key, cause := range failed {
+				return true, fmt.Errorf("artifacts: purge of event source %s: remove %s: %w", sourceID, s.b.uri(key), cause)
+			}
+			batch -= len(keys)
+			if !page.Truncated {
+				break
+			}
+		}
+		if batch == 0 {
+			page, err := s.b.list(ctx, blobListInput{Prefix: prefix, MaxKeys: 1})
+			if err != nil || len(page.Objects) > 0 {
+				return true, err
+			}
+		}
+	}
+	return false, nil
 }

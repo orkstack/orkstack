@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestRelease_BuildsReportTheirCommit(t *testing.T) {
 		}
 		t.Run(target.Binary, func(t *testing.T) {
 			t.Parallel()
-			binary := releaseBuild(t, target, testCommit)
+			binary := sharedReleaseBuild(t, target, testCommit)
 			args := []string{"--version"}
 			if target.Binary == dist.Orkctl {
 				args = []string{"version"}
@@ -107,38 +108,53 @@ func TestRelease_OneCommitBuildsOneBinary(t *testing.T) {
 	}
 	t.Parallel()
 	target := hostTarget(t, dist.Orkctl)
-	read := func(commit string) []byte {
-		b, err := os.ReadFile(releaseBuild(t, target, commit))
+	read := func(path string) []byte {
+		b, err := os.ReadFile(path)
 		must.OK(t, err)
 		return b
 	}
-	first := read(testCommit)
-	if !bytes.Equal(first, read(testCommit)) {
+	// The first is the build the other tests share; the second is a build of
+	// its own, so the two are independent.
+	first := read(sharedReleaseBuild(t, target, testCommit))
+	if !bytes.Equal(first, read(releaseBuild(t, target, testCommit))) {
 		t.Error("two release builds of one commit differ")
 	}
-	if bytes.Equal(first, read(otherCommit)) {
+	if bytes.Equal(first, read(releaseBuild(t, target, otherCommit))) {
 		t.Error("release builds of two commits are the same bytes: the stamp did not reach the binary")
 	}
 }
 
 // TestUnstampedBuild_ReportsUnknownAndStillRuns: a build nobody stamped, with
 // no version control information either (the quickstart's source build, a
-// source archive), says so rather than failing or guessing. The build runs in
-// an environment that names another target, which testbin.GoBuildEnv drops.
+// source archive), says so rather than failing or guessing. It is built as the
+// quickstart's source build is (deploy/source/Dockerfile), which compiles as a
+// release does and only stamps nothing, so its compile is the release builds'.
+// The build runs in an environment that names another target, which
+// testbin.GoBuildEnv drops.
 func TestUnstampedBuild_ReportsUnknownAndStillRuns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles orkctl; -short skips it, the proof runs it")
 	}
 	t.Parallel()
+	// Its compile is the release builds' of this host, made once (warmCompile).
+	warmCompile(t, hostTarget(t, dist.Orkctl))
 	out := filepath.Join(t.TempDir(), "orkctl")
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, goTool(t), "build", "-trimpath", "-buildvcs=false", "-ldflags", "-X main.commit=", "-o", out, "./cmd/orkctl")
-	cmd.Dir = repoRoot(t)
-	// Built under a shell that targets another platform, as a cross-compiling
-	// one does: the binary this test runs is still this host's.
-	cmd.Env = testbin.GoBuildEnv(append(os.Environ(), "GOOS=plan9", "GOARCH=386", "GOFLAGS=-tags=dist_polluted"))
-	if output, err := cmd.CombinedOutput(); err != nil {
+	root, goBin := repoRoot(t), goTool(t)
+	var output []byte
+	err := inSlot(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, goBin, "build", "-trimpath", "-buildvcs=false", "-tags", dist.BuildTags, "-ldflags", "-X main.commit=", "-o", out, "./cmd/orkctl")
+		cmd.Dir = root
+		// Built under a shell that targets another platform, as a
+		// cross-compiling one does: the binary this test runs is still this
+		// host's.
+		cmd.Env = append(testbin.GoBuildEnv(append(os.Environ(), "GOOS=plan9", "GOARCH=386", "GOFLAGS=-tags=dist_polluted")), "CGO_ENABLED=0")
+		var err error
+		output, err = cmd.CombinedOutput()
+		return err
+	})
+	if err != nil {
 		t.Fatalf("go build: %v\n%s", err, output)
 	}
 	if got := runBinary(t, out, "version"); !regexp.MustCompile(`(?m)^commit:\s+unknown$`).MatchString(got) {
@@ -212,13 +228,56 @@ func hostTarget(t *testing.T, binary string) dist.Target {
 	return dist.Target{}
 }
 
-// releaseBuild compiles target as a release does, with GoBuilder.
+// sharedBuildDir holds the builds sharedReleaseBuild makes, for the whole run.
+var sharedBuildDir string
+
+// sharedBuilds are the release builds of this host's targets, by binary and
+// commit: each is made once and shared by every test that only reads it.
+var sharedBuilds sync.Map // string -> *sharedBuild
+
+type sharedBuild struct {
+	once sync.Once
+	path string
+	err  error
+}
+
+// sharedReleaseBuild is target built as a release builds it at commit, made
+// once for every test that asks: compiling a release binary is what makes this
+// package slow, and each such build is the same file. A test that needs a
+// build of its own, to compare two, asks releaseBuild.
+func sharedReleaseBuild(t *testing.T, target dist.Target, commit string) string {
+	t.Helper()
+	warmCompile(t, target)
+	root := repoRoot(t)
+	key := target.String() + "@" + commit
+	entry, _ := sharedBuilds.LoadOrStore(key, &sharedBuild{})
+	b := entry.(*sharedBuild)
+	b.once.Do(func() {
+		b.path = filepath.Join(sharedBuildDir, key, target.Executable())
+		if b.err = os.MkdirAll(filepath.Dir(b.path), 0o755); b.err == nil {
+			b.err = inSlot(func() error {
+				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+				defer cancel()
+				return dist.GoBuilder(ctx, root, target, "v1.2.3", commit, b.path)
+			})
+		}
+	})
+	must.OKf(t, b.err, "build %s", key)
+	return b.path
+}
+
+// releaseBuild compiles target as a release does, with GoBuilder, into a file
+// of the calling test's own.
 func releaseBuild(t *testing.T, target dist.Target, commit string) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	defer cancel()
+	warmCompile(t, target)
 	out := filepath.Join(t.TempDir(), target.Executable())
-	must.OK(t, dist.GoBuilder(ctx, repoRoot(t), target, "v1.2.3", commit, out))
+	root := repoRoot(t)
+	must.OK(t, inSlot(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+		defer cancel()
+		return dist.GoBuilder(ctx, root, target, "v1.2.3", commit, out)
+	}))
 	return out
 }
 

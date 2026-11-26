@@ -44,6 +44,8 @@ type faultyRecords struct {
 	commits  atomic.Int64 // how many commits were read by key, by concurrent row readers
 	// afterWrite runs once the record is there, before it is read back.
 	afterWrite func()
+	// none answers every recorded-values read that the record is not there.
+	none bool
 }
 
 // idsDown is an id store that does not answer.
@@ -66,6 +68,9 @@ func (f *faultyRecords) ReadRecordedValues(ctx context.Context, class artifacts.
 			f.onFail()
 		}
 		return artifacts.RecordRead[*artifacts.RecordedFound]{}, f.readErr
+	}
+	if f.none {
+		return artifacts.RecordRead[*artifacts.RecordedFound]{Answer: artifacts.RecordNone}, nil
 	}
 	return f.RecordStore.ReadRecordedValues(ctx, class, spacing, key, want)
 }

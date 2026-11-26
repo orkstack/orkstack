@@ -93,6 +93,13 @@ verifies at its reset point within its plan's restore timeout, or the fixed
 `resume_plan_load_timeout` of 5 minutes when its plan pins none
 (`docs/STORAGE.md`).
 
+An event source's service is Temporal's too: one engine workflow per event
+source keeps its instances alive as heartbeating activities, Temporal places
+each on a source host, retries one that fails and reschedules one whose Orker
+is lost, and nothing else starts, places or counts them. That workflow
+converges on the source's stored document (§13); it holds no message and no
+broker position.
+
 One record is the stated exception: for a task that holds an identity,
 OrkStack records which attempts have held one, and refuses an identity to an
 attempt beyond the number of attempts the run's admission records for the
@@ -152,7 +159,7 @@ the engine creates with a conditional put and never rewrites, with a second
 write-once object beside it once that run has started: records the store
 arbitrates, as a commit is, never locks. Nothing is decided from a claim's age.
 Temporal still decides whether a run exists while it holds it, and the run's
-archive after that. A receipt is a record and never a read path for a decision.
+archive after that. A receipt is a record and never a read path for a decision. An event source that is deleted leaves a **tombstone** under its id: one small create-only object, which the delete creates before anything the source kept is removed: when it has marked the document, or first thing in the removal where that write failed. It is the delete's own mark, kept after the document that carried it has been removed, and it is read as that mark is: a workflow of that source that starts afterwards ends, and a copy of the document that comes back into the store is not run. Nothing is removed from the store, and no tombstone is written, because a document is merely absent.
 It also holds what
 decides access and identity, where only an engine's credential should reach:
 the access document (roles, bindings, service accounts) and each namespace's
@@ -1312,6 +1319,15 @@ archive body and the cluster's index of runs, to decide a delete, and nothing
 else decides from them. The run-objects list is not write-once: `PutRun`
 rewrites it, only as the union of what it held and the run's references.
 
+One record is read for one decision. When an event source's instance confirms
+at the engine with its Orker's credential, the engine writes down that this
+attempt did: an immutable, create-only object, never removed for a later
+attempt. It is read only to answer whether an attempt has confirmed, because
+nothing else an instance says of itself can be believed: who holds a task and
+what it heartbeats are the word of whoever took the task. Its absence can only
+make OrkStack replace that instance, a bounded number of times a day; its
+presence starts and stops nothing.
+
 RunWorkflow assigns event sequence numbers. One event is not assigned by
 RunWorkflow: the terminal event of a force-canceled run, which no workflow code
 of the run can emit. Its force-cancel workflow publishes it with the next
@@ -1350,7 +1366,7 @@ contract. A metric about a pool is labelled with the pool (`ork.pool`), never
 its channel.
 
 The deployment's engine workflows use fixed internal channels: `RunWorkflow`
-(including every child run) uses `ork-tasks` and engine events use
+(including every child run), as does each event source's own workflow, uses `ork-tasks` and engine events use
 `ork-engine-events`, regardless of the `ORK_ORKER_QUEUE` override used for the
 default activity pool.
 
@@ -1373,18 +1389,18 @@ explicitly acknowledged (`--acknowledge-breaking`).
 
 One Worker Deployment spans `ork` and `orker` for a release. They share
 `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` and are released together. With
-versioning enabled, `RunWorkflow`, `ScheduleFireWorkflow` and
-`WebhookDeliveryWorkflow` are Pinned,
+versioning enabled, `RunWorkflow`, `ScheduleFireWorkflow`, `WebhookDeliveryWorkflow` and
+`EventSourceWorkflow` are Pinned,
 `IdempotencyClaimWorkflow`, `ConcurrencyGateWorkflow`,
 `ConcurrencyCensusWorkflow` and `ForceCancelWorkflow` are AutoUpgrade, and the
 projection worker on
-`ork-engine-events` is unversioned. A child run started by a Pinned parent
+`ork-engine-events` is unversioned. `EventSourceWorkflow` ships with no `workflow.GetVersion` gate: no history of it was recorded by an earlier release. A child run started by a Pinned parent
 inherits the parent's version, so its plan is interpreted by the release that
 built it. Versioning is off unless `ORK_BUILD_ID` is set; leave
 `DefaultVersioningBehavior` unset when it is off. `orkctl release` (status,
 ramp, promote, rollback, wait) is the supported rollout path, and it refuses a
 ramp or promotion the target release's engines and Orkers could not carry. A
-version must drain before its workers are decommissioned. A run that continues
+version must drain before its workers are decommissioned. An event source's workflow lives as long as its source and is Pinned all the same: it runs only on the release that started it, so no release ever reads a history another wrote. Event sources therefore need a versioned deployment, and are refused where `ORK_BUILD_ID` is not set. A source moves to another release by handing over: when the release its workflow is pinned to is no longer one the cluster sends new work to, the engines' reconcile pass tells it so, it stops its instances, records what it knows and ends, and it is started again on a routed release from that record. A promotion and a rollback therefore restart each source's instances once, which the commands say first; a ramp moves no source, and nothing is handed over while one stands. A source is handed over only into room the current release has at that moment, counted source by source in one order, and only where that release can read its record and host its image; until then it stays where it is, running, and its release is not drained. A source whose release cannot run its workflow says so, and is not moved by OrkStack. Every start of a source's workflow reads that record from the last execution there was, so none forgets which of the source's revisions worked. The reconcile pass describes each source's workflow and compares that with the record the workflow itself keeps; it signals only for what that record lacks, so a pass over a deployment in which nothing changed signals nothing; it starts a workflow that is missing, ends none, and nothing makes it stop for the sources it can see. A change to a source replaces its instances one at a time, each only when its replacement works; a replacement that has no room yet, or failed for a reason trying again might change, waits and is started again, and a source's new revision is given up only when its container said it cannot work, could not be run for a reason trying again cannot change, or ran one whole attempt of its stated wait without becoming ready. A run that continues
 as new keeps its pinned build, so a version drains only after its last open
 chain ends. A generation never re-asks a version decision an earlier
 generation made; on an unversioned fleet a later generation may run a newer
@@ -1518,8 +1534,8 @@ cancellation
 ```
 
 Do not start a container merely to sleep, wait for approval, or wait until a
-future time. A source image's container is not that: it holds a broker connection and receives, which no Timer or Signal can do. Do not add a custom scheduler, event bus, task queue, state
-machine, or expression runtime for these operations. An awaited task
+future time. A source image's container is not that: it holds a broker connection and receives, which no Timer or Signal can do. It is the one container that waits for something to arrive, and it is the user's choice of image, not a primitive. Do not add a custom scheduler, event bus, task queue, state
+machine, or expression runtime for these operations. Consuming from a user's broker is none of these: an event source holds no message beyond the deliveries in its hands, stores no position, and keeps no queue. While a start cannot be made it stops polling and only asks, at intervals, whether one would now be admitted. Its filter and mapping are fixed selectors and exact tests, never expressions. An event source's service is one engine workflow and one long-running activity per instance. An awaited task
 (`await:`) is the DSL form of a Signal wait, manual approval and external
 completion: a Temporal Timer for its deadline and a Signal for its resolution,
 and no container. In a run whose results the engine records, the Signal says

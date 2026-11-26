@@ -154,3 +154,12 @@ func chainCompleter(records *artifacts.RecordStore, temporal client.Client) engi
 		return nil
 	}
 }
+
+// composedRecords is what a resume records a composed task's values from its
+// child's outputs with; nil on an engine that keeps no identity records.
+func composedRecords(rec engine.ValuesRecorder) api.ComposedRecords {
+	if rec == nil {
+		return nil
+	}
+	return rec
+}

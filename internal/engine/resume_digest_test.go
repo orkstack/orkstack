@@ -20,6 +20,9 @@ func TestResumePlanDigestOf(t *testing.T) {
 			Format: 1, Namespace: "team", RunId: "ork-r", Scope: 10, N: 1, BaseExecutionRunId: "exec-1", RScheduledEventId: 7, RStartedEventId: 8,
 			BaseTerminalSequence: 9, At: timestamppb.New(time.Unix(1, 0)), ExpiresAt: timestamppb.New(time.Unix(2, 0)), Principal: "ada",
 			PrincipalVerified: true, Reason: "r", SupersededReason: "RUN_FAILED", PreviousScope: 3, RequestId: "q", PlanDigest: "d",
+			// Who force-cancelled the base is not the plan: the base's execution,
+			// which the digest holds, is the one its record verified against.
+			ForceCanceledBy: &orkstackv1.ResumeForceCanceledBy{Principal: "bob", RequestId: "fc"},
 			Block: &orkstackv1.ResumeBlock{SeqBase: 10, Scope: 10, Action: orkstackv1.ResumeAction_RESUME_ACTION_RETRY_FROM, FromTaskId: "a",
 				Readback: readbackOf(defaultReadbackTunables()), ResumesBefore: 2, PreviousSeqBase: 5, ReopenedAwaits: []string{"w"}, Units: []byte{1}},
 		}

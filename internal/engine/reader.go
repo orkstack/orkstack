@@ -1028,9 +1028,11 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originS
 		for _, predicate := range predicates {
 			query += " AND " + predicate
 		}
-		// Only an open run matches, and an ended run keeps the attributes it
-		// last wrote: the live predicate keeps a walk from reading them.
-		if q.Status == orkstackv1.Status_STATUS_UNSPECIFIED {
+		// Only an open run matches a concurrency filter, and an ended run keeps
+		// the attributes it last wrote: the live predicate keeps a walk from
+		// reading them. The mark of a recorded run is its start's, true of it
+		// ended or not, so results_recorded alone reads both.
+		if q.Status == orkstackv1.Status_STATUS_UNSPECIFIED && q.Index.Gated() {
 			query += " AND " + liveRunPredicate(r.clock())
 		}
 	}
@@ -2063,9 +2065,10 @@ func RunListPlan(set listfilter.Set) RunQuery {
 
 // The indexed paths of ListRuns' allowlist (run_service.proto).
 const (
-	runFilterQueued   = "queued"
-	runFilterQueuedOn = "queued_on"
-	runFilterHolding  = "holding"
+	runFilterQueued          = "queued"
+	runFilterQueuedOn        = "queued_on"
+	runFilterHolding         = "holding"
+	runFilterResultsRecorded = "results_recorded"
 )
 
 // RunIndexQuery is a ListRuns filter set's indexed part: what the cluster's
@@ -2081,16 +2084,40 @@ type RunIndexQuery struct {
 	match func(row proto.Message, holds func(path, value string) bool) bool
 }
 
+// Gated reports whether the query holds a concurrency filter: those name a
+// key, which stands for its gate (GateOf), and only an open run matches them.
+func (x *RunIndexQuery) Gated() bool {
+	for _, f := range x.Filters {
+		if f.Path != runFilterResultsRecorded {
+			return true
+		}
+	}
+	return false
+}
+
+// ResultsRecorded reports whether the query keeps only the runs whose results
+// the engine records (task.SearchAttrOrkflowResultsRecorded).
+func (x *RunIndexQuery) ResultsRecorded() bool {
+	for _, f := range x.Filters {
+		if f.Path == runFilterResultsRecorded {
+			return true
+		}
+	}
+	return false
+}
+
 // predicates are the visibility predicates the filters push down: each
-// narrows the walk, and an open record is still decided by its own
-// attributes (holds).
+// narrows the walk, and a record is still decided by its own attributes
+// (holds).
 func (x *RunIndexQuery) predicates() ([]string, error) {
-	if x.GateOf == nil {
+	if x.GateOf == nil && x.Gated() {
 		return nil, errors.New("engine: a concurrency list filter needs its namespace's gates")
 	}
 	out := make([]string, 0, len(x.Filters))
 	for _, f := range x.Filters {
 		switch f.Path {
+		case runFilterResultsRecorded:
+			out = append(out, fmt.Sprintf("%s = %q", task.SearchAttrOrkflowResultsRecorded, "true"))
 		case runFilterQueued:
 			out = append(out, fmt.Sprintf("%s = %q", task.SearchAttrOrkflowRunQueued, "true"))
 		case runFilterQueuedOn:
@@ -2104,14 +2131,36 @@ func (x *RunIndexQuery) predicates() ([]string, error) {
 	return out, nil
 }
 
-// holds is the index's answer for one listed record: what its attributes say
-// it waits on and holds. Only an open record answers: a run that has ended
-// keeps the attributes it last wrote, and it waits on and holds nothing.
-func (x *RunIndexQuery) holds(info *workflowpb.WorkflowExecutionInfo) func(path, value string) bool {
-	if info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
-		return nil
+// indexedResultsRecorded is a listed record's mark of a run whose results the
+// engine records. A mark this process cannot decode is left to the cluster:
+// its predicate, pushed into the query, selected the record.
+func indexedResultsRecorded(info *workflowpb.WorkflowExecutionInfo) bool {
+	p := info.GetSearchAttributes().GetIndexedFields()[task.SearchAttrOrkflowResultsRecorded]
+	if p == nil {
+		return false
 	}
+	var value string
+	if err := DataConverter().FromPayload(p, &value); err != nil {
+		slog.Warn("list runs: a run's results-recorded mark could not be read; the cluster's match stands",
+			"run_id", info.GetExecution().GetWorkflowId(), "attribute", task.SearchAttrOrkflowResultsRecorded, "error", err)
+		return true
+	}
+	return value == "true"
+}
+
+// holds is the index's answer for one listed record: what its attributes say
+// it waits on and holds, and whether its results are recorded by the engine.
+// Only an open record answers the concurrency paths: a run that has ended
+// keeps the attributes it last wrote, and it waits on and holds nothing. The
+// mark of a recorded run is its start's, and answers open or ended.
+func (x *RunIndexQuery) holds(info *workflowpb.WorkflowExecutionInfo) func(path, value string) bool {
 	fields := info.GetSearchAttributes().GetIndexedFields()
+	recorded := indexedResultsRecorded(info)
+	if info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		return func(path, value string) bool {
+			return path == runFilterResultsRecorded && value == "true" && recorded
+		}
+	}
 	// A list the run wrote but this process cannot decode is left to the
 	// cluster: its predicate, pushed into the query, selected the record.
 	gates := func(name string) (ids []string, decoded bool) {
@@ -2130,6 +2179,8 @@ func (x *RunIndexQuery) holds(info *workflowpb.WorkflowExecutionInfo) func(path,
 	held, heldRead := gates(task.SearchAttrOrkflowConcurrencyHeld)
 	return func(path, value string) bool {
 		switch path {
+		case runFilterResultsRecorded:
+			return value == "true" && recorded
 		case runFilterQueued:
 			return value == "true" && indexedRunQueued(info)
 		case runFilterQueuedOn:

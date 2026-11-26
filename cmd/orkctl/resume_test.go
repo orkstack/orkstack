@@ -489,3 +489,11 @@ func TestRunResume_EveryCategoryIsShown(t *testing.T) {
 	}
 	got.requireContains(t, "Other (1): from-a-newer-engine")
 }
+
+// What an earlier part of the run finished is shown as kept, not run again:
+// a section title that says neither reads as work still to do.
+func TestRunResume_EarlierTasksReadAsKept(t *testing.T) {
+	if got := sectionOf(orkstackv1.ResumeCategory_RESUME_CATEGORY_EARLIER); got != "Kept from an earlier part of the run, not run again" {
+		t.Fatalf("the section is %q", got)
+	}
+}

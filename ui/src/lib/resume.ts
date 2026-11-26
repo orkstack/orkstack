@@ -121,7 +121,7 @@ const SECTIONS: { key: string; title: string; reruns: boolean; categories: Resum
 	{ key: 'kept', title: 'Kept', reruns: false, categories: [ResumeCategory.KEPT] },
 	{ key: 'done', title: 'Already done', reruns: false, categories: [ResumeCategory.SETTLED, ResumeCategory.SLEEP_KEPT] },
 	{ key: 'skipped', title: 'Stays skipped', reruns: false, categories: [ResumeCategory.SKIPPED] },
-	{ key: 'earlier', title: 'From an earlier part of the run', reruns: false, categories: [ResumeCategory.EARLIER] }
+	{ key: 'earlier', title: 'Kept from an earlier part of the run, not run again', reruns: false, categories: [ResumeCategory.EARLIER] }
 ];
 
 /** A unit whose category no section claims: a newer engine's, shown, never dropped. */

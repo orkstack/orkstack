@@ -96,7 +96,18 @@ type RecordedFound struct {
 	storedAt     time.Time
 	detail       *orkstackv1.ResolutionDetail
 	inline       []byte
+	// raw and detailRaw are the stored bytes, as read: what an evidence
+	// bundle holds. detailKey is where the detail was read.
+	raw, detailRaw []byte
+	detailKey      string
 }
+
+// Raw is the record's stored bytes, as read.
+func (f *RecordedFound) Raw() []byte { return f.raw }
+
+// DetailRaw is a resolution's detail's stored bytes, as read, and the key it
+// was read at; nil and empty for any other kind.
+func (f *RecordedFound) DetailRaw() ([]byte, string) { return f.detailRaw, f.detailKey }
 
 // RecordSHA256 is the SHA-256 of the record's stored bytes.
 func (f *RecordedFound) RecordSHA256() string { return f.recordSHA256 }
@@ -218,13 +229,13 @@ func (s *RecordStore) ReadRecordedValues(ctx context.Context, class SlotClass, s
 	if read.Answer != RecordFound {
 		return read, nil
 	}
-	f := &RecordedFound{record: rec, recordSHA256: hexDigest(body), storedAt: storedAt}
+	f := &RecordedFound{record: rec, recordSHA256: hexDigest(body), storedAt: storedAt, raw: body}
 	if rec.GetKind() == orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_RESOLUTION {
 		read, err := r.readDetail(ctx, class, rec)
 		if err != nil || read.Answer != RecordFound {
 			return read, err
 		}
-		f.detail = read.Value.detail
+		f.detail, f.detailRaw, f.detailKey = read.Value.detail, read.Value.detailRaw, read.Value.detailKey
 	}
 	if v := rec.GetValues(); v != nil && v.GetSizeBytes() <= maxInlineValues {
 		inline, read, err := r.readValues(ctx, class, v)
@@ -235,6 +246,11 @@ func (s *RecordStore) ReadRecordedValues(ctx context.Context, class SlotClass, s
 	}
 	return RecordRead[*RecordedFound]{Answer: RecordFound, Value: f}, nil
 }
+
+// RecordValuesMissing is the reason of an invalid read whose record is there
+// and whose values object, which the record names, is not: the record stands,
+// and what it took is gone.
+const RecordValuesMissing = "missing"
 
 // UpstreamRecord is what a dependent stages of an awaited or a composed task:
 // what its record names, and whether it is a rejection.
@@ -457,7 +473,7 @@ func (r *recordReader) readDetail(ctx context.Context, class SlotClass, rec *ork
 	if read.Answer != RecordFound {
 		return read, nil
 	}
-	return RecordRead[*RecordedFound]{Answer: RecordFound, Value: &RecordedFound{detail: d}}, nil
+	return RecordRead[*RecordedFound]{Answer: RecordFound, Value: &RecordedFound{detail: d, detailRaw: body, detailKey: key}}, nil
 }
 
 // readValues reads small values inline; a zero Answer means they are good.
@@ -471,7 +487,7 @@ func (r *recordReader) readValues(ctx context.Context, class SlotClass, v *orkst
 		return nil, RecordRead[*RecordedFound]{}, err
 	}
 	if !found {
-		return nil, invalidRead[*RecordedFound]("values", "missing"), nil
+		return nil, invalidRead[*RecordedFound]("values", RecordValuesMissing), nil
 	}
 	if hexDigest(body) != v.GetSha256() || int64(len(body)) != v.GetSizeBytes() {
 		return nil, invalidRead[*RecordedFound]("values", "do not hash to the record's digest"), nil

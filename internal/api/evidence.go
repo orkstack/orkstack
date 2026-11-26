@@ -230,6 +230,10 @@ func (e *evidenceExport) build(
 			m.Members = append(m.Members, member)
 		}
 	}
+	// 8c. The records the engine made, for a run whose results it records.
+	if err := e.records(ctx, m, archived, msg); err != nil {
+		return nil, err
+	}
 	// 9.
 	m.Counts = evidence.CountMembers(m.Members)
 	return m, nil

@@ -276,6 +276,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 					fmt.Errorf("task %q pins to unknown pin %q", task.GetId(), pin))
 			}
 		}
+		// Rule 66: a task's own concurrency limit.
+		if err := validateTaskConcurrency(taskIndex, wf, task); err != nil {
+			return err
+		}
 		// Rules 34–36: a cached task's TTL, scope, and no pin.
 		if err := validateCache(taskIndex, task); err != nil {
 			return err

@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 )
 
 // SpecDifferenceForTest exposes specDifference to the external test package,
@@ -54,3 +57,9 @@ func (s *Service) SetAccessForTest(a *AccessControl) { s.access = a }
 
 // SpendRecordedReads takes n of run's reads of this minute.
 func (s *Service) SpendRecordedReads(run string, n int) bool { return s.recordedReads.spend(run, n) }
+
+// ResumeAuditDetailForTest is the detail the audit record of a ResumeRun
+// answer carries.
+func ResumeAuditDetailForTest(req *orkstackv1.ResumeRunRequest, resp *orkstackv1.ResumeRunResponse) string {
+	return auditedProcedures[orkstackv1connect.RunServiceResumeRunProcedure](req, resp).Detail
+}

@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	enumspb "go.temporal.io/api/enums/v1"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -25,9 +27,6 @@ const resumeSequenceRoom = 1 << 32
 
 // The causes a refused plan carries (docs/REASONS.md).
 const (
-	// causeConcurrencySlot: the run's tasks are held to a concurrency limit, whose
-	// slot a resumed run cannot take yet.
-	causeConcurrencySlot = "concurrency_slot"
 	// causeEventsAboveTerminal: the run's stored events go on above its
 	// ending by more than a resume passes by.
 	causeEventsAboveTerminal = "events_above_terminal"
@@ -43,6 +42,9 @@ type resumePlanned struct {
 	block     *orkstackv1.ResumeBlock
 	preflight engine.ResumePreflight
 	digest    string
+	// warnings are what the plan's admission found worth saying, not
+	// refusing: a pin host still holding the run's old slot.
+	warnings []*orkstackv1.ResumeWarning
 }
 
 // maxLoggedCauses bounds how many saved results one request logs.
@@ -58,8 +60,14 @@ func (s *Service) planResume(ctx context.Context, base *resumeBase, msg *orkstac
 		return nil, refuseResume(engine.RefuseStateUnreadable, engine.RefusalPermanent,
 			"run %s does not say where its results are saved. Run again", base.run.GetId())
 	}
+	var recorded *engine.ResumeRecordedRun
+	if base.start.Plan.Identity != nil {
+		if recorded, err = s.resumeRecordedRun(ctx, base, p.input.Class == engine.ResumeBaseForceCanceled); err != nil {
+			return nil, err
+		}
+	}
 	verifier := engine.NewResumeVerifier(s.commits, s.artifactStore)
-	if p.verified, err = verifier.Verify(ctx, p.input, base.start.Plan.CommitRoot); err != nil {
+	if p.verified, err = verifier.VerifyRecorded(ctx, p.input, base.start.Plan.CommitRoot, recorded); err != nil {
 		if ctx.Err() != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, err)
 		}
@@ -103,15 +111,107 @@ func (s *Service) planResume(ctx context.Context, base *resumeBase, msg *orkstac
 	return p, nil
 }
 
+// resumeRecordedRun is how base's records are read: a run whose results the
+// engine records (design §28). Its resumes are read up to the one base is of:
+// one whose plan was recorded and never carried out decides nothing yet. Its
+// end is the earlier of its execution's close and its last state's finish,
+// after which no answer settles anything.
+func (s *Service) resumeRecordedRun(ctx context.Context, base *resumeBase, forceCanceled bool) (*engine.ResumeRecordedRun, error) {
+	id := base.run.GetId()
+	if s.recordedResults == nil {
+		return nil, resumeUnavailable("this engine reads no record of run %s; try again shortly", id)
+	}
+	end := base.execution.CloseTime
+	if at := base.run.GetFinishedAt(); at != nil && (end.IsZero() || at.AsTime().Before(end)) {
+		end = at.AsTime()
+	}
+	if end.IsZero() {
+		return nil, resumeUnavailable("when run %s ended can't be read right now; try again shortly", id)
+	}
+	chain, err := s.recordedResults.ResumeChain(ctx, base.namespace, id)
+	if err != nil {
+		s.logger.WarnContext(ctx, "resume: a run's resume records could not be read", "run_id", id, "error", err)
+		return nil, resumeUnavailable("the resumes of run %s can't be read right now; try again shortly", id)
+	}
+	switch chain.Answer {
+	case artifacts.RecordFound:
+	case artifacts.RecordUnsupported:
+		return nil, unreadableRecord(id)
+	default:
+		s.logger.WarnContext(ctx, "resume: a run's resume records are not valid", "run_id", id,
+			"answer", chain.Answer.String(), "object", chain.Object, "reason", chain.Reason)
+		return nil, refuseResume(engine.RefuseStateUnreadable, engine.RefusalPermanent, "run %s's resume records can't be read back. Run again", id)
+	}
+	resumes := chain.Value
+	for len(resumes) > 0 && resumes[0].Scope > base.scope {
+		resumes = resumes[1:]
+	}
+	children, err := s.resumeChildren(ctx, base, forceCanceled)
+	if err != nil {
+		return nil, err
+	}
+	plan := base.start.Plan.Identity
+	return &engine.ResumeRecordedRun{Store: s.recordedResults, AdmissionSHA256: plan.AdmissionSHA256, Resumes: resumes, End: end,
+		Spacings: plan.RecordBudget.Spacings(), Children: children, Received: base.start.Plan.InputArtifacts}, nil
+}
+
+// resumeChildren are the child runs of base's composed tasks that a resume
+// may settle from their outputs on record (design §28.3): as the run's plan
+// names them, which its state does not decide, and whether the cluster says
+// each closed SUCCEEDED. A child still open waits (phase 2 refused it
+// already, unless it started since).
+func (s *Service) resumeChildren(ctx context.Context, base *resumeBase, forceCanceled bool) (map[string]engine.ResumeChildAsk, error) {
+	out := map[string]engine.ResumeChildAsk{}
+	for _, row := range base.run.GetTaskRuns() {
+		id := row.GetTaskId()
+		if !engine.ComposedOnRecordCandidate(row, forceCanceled) {
+			continue
+		}
+		c := base.start.Plan.Children[id]
+		if c == nil || c.RunID == "" || c.Plan.Identity == nil {
+			continue // read as a task with no admitted child
+		}
+		ask := engine.ResumeChildAsk{RunID: c.RunID, AdmissionSHA256: c.Plan.Identity.AdmissionSHA256}
+		e, err := base.binding.Resume.DescribeResumeExecution(ctx, c.RunID, "")
+		switch {
+		case errors.Is(err, engine.ErrResumeExecutionNotFound):
+			// Past the cluster's retention, or never started: whether it
+			// succeeded can't be told.
+			s.logger.InfoContext(ctx, "resume: a composed task's child run is not in the cluster", "run_id", base.run.GetId(), "task_id", id, "child_run_id", c.RunID)
+			ask.Unknown = true
+		case err != nil:
+			s.logger.WarnContext(ctx, "resume: a composed task's child run could not be read", "run_id", base.run.GetId(), "child_run_id", c.RunID, "error", err)
+			return nil, waitStopping(causeChildrenUnconfirmed, resumeCheckRetry,
+				"whether run %s, below run %s, succeeded can't be told right now; try again shortly", c.RunID, base.run.GetId())
+		case e.Status == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING || e.Status == enumspb.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW:
+			return nil, s.childRunning(ctx, base, id, c.RunID, e.StartTime)
+		case e.Status == enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED:
+			// A run's execution completes whatever its own ending: the run
+			// says whether it succeeded.
+			run, err := base.binding.Reader.GetRun(ctx, c.RunID)
+			if err != nil {
+				s.logger.WarnContext(ctx, "resume: a composed task's child run could not be read", "run_id", base.run.GetId(), "child_run_id", c.RunID, "error", err)
+				return nil, waitStopping(causeChildrenUnconfirmed, resumeCheckRetry,
+					"whether run %s, below run %s, succeeded can't be told right now; try again shortly", c.RunID, base.run.GetId())
+			}
+			if !runstatus.IsTerminal(run.GetStatus()) {
+				// Its execution has completed and its state does not say so yet.
+				return nil, waitStopping(causeChildrenUnconfirmed, resumeCheckRetry,
+					"whether run %s, below run %s, succeeded can't be told yet; try again shortly", c.RunID, base.run.GetId())
+			}
+			ask.Succeeded = run.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED
+		}
+		out[id] = ask
+	}
+	return out, nil
+}
+
 // refuseUnbuilt refuses a run this release's engine does not resume.
 func refuseUnbuilt(base *resumeBase) error {
 	unsupported := func(cause, format string, args ...any) error {
 		r := refuseResume(resumeReleaseUnsupport, engine.RefusalPermanent, format, args...)
 		r.Cause = cause
 		return r
-	}
-	if engine.ResumeLimitUnbuilt(base.start.Plan) {
-		return unsupported(causeConcurrencySlot, "run %s's tasks are held to a concurrency limit, which this release can't resume a run under; Run again", base.run.GetId())
 	}
 	if part, why, unbuilt := engine.ResumeNeedsUnbuilt(base.definition, base.start.Plan); unbuilt {
 		return unsupported(string(part), "run %s can't be resumed by this release: %s", base.run.GetId(), why)
@@ -208,7 +308,7 @@ func (s *Service) admitResume(ctx context.Context, base *resumeBase, p *resumePl
 	if err != nil {
 		return resumePoolError(err)
 	}
-	return s.refusePinLeases(ctx, base, planned)
+	return s.refusePinLeases(ctx, base, planned, p)
 }
 
 // admitResumeSlot asks of the run's concurrency limit what a submit would be
@@ -321,6 +421,20 @@ func planRecord(base *resumeBase, block *orkstackv1.ResumeBlock) *orkstackv1.Res
 		Format: artifacts.ResumePlanFormat, Namespace: base.namespace, RunId: base.run.GetId(),
 		BaseExecutionRunId: base.execution.ExecutionRunID, BaseTerminalSequence: base.sequence,
 		RScheduledEventId: base.history.ResetPoint.ScheduledEventID, RStartedEventId: base.history.ResetPoint.StartedEventID,
-		Block: block,
+		Block: block, ForceCanceledBy: forceCanceledBy(base),
+	}
+}
+
+// forceCanceledBy is who force-cancelled the base, as its verified record
+// names them and the request it was; nil for a run that failed.
+func forceCanceledBy(base *resumeBase) *orkstackv1.ResumeForceCanceledBy {
+	if base.class != engine.ResumeBaseForceCanceled {
+		return nil
+	}
+	fc := base.forceCancel
+	return &orkstackv1.ResumeForceCanceledBy{
+		Principal:         fc.Record.Principal,
+		PrincipalVerified: fc.Verification == engine.ForceCancelVerified && fc.Record.PrincipalVerified,
+		RequestId:         fc.Record.RequestID,
 	}
 }

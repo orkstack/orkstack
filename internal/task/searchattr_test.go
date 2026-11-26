@@ -473,3 +473,31 @@ func TestEnsureConcurrencySearchAttributes(t *testing.T) {
 		}
 	})
 }
+
+// TestEnsureRunResultsRecordedSearchAttribute_IsItsOwnAnswer: the mark of a
+// run whose results the engine records is registered on its own (decision
+// RR-1): a cluster that refuses it keeps every other index and reports this
+// one unusable by name; one already there needs no registration; and the key
+// a start stamps is the one boot registers, of its type.
+func TestEnsureRunResultsRecordedSearchAttribute_IsItsOwnAnswer(t *testing.T) {
+	refused := &fakeOperator{custom: map[string]enumspb.IndexedValueType{},
+		addErr: errors.New("cannot have more than 10 search attribute of type Keyword")}
+	if indexed, err := ensureRunResultsRecordedSearchAttribute(context.Background(), refused, DefaultNamespace); indexed || err == nil ||
+		!strings.Contains(err.Error(), SearchAttrOrkflowResultsRecorded) {
+		t.Fatalf("results-recorded index = %v, %v; want unusable with an error naming it", indexed, err)
+	}
+	present := &fakeOperator{custom: map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowResultsRecorded: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	}, addErr: errors.New("nothing should be registered")}
+	if indexed, err := ensureRunResultsRecordedSearchAttribute(context.Background(), present, DefaultNamespace); err != nil || !indexed {
+		t.Fatalf("results-recorded index already present = %v, %v", indexed, err)
+	}
+	registered := &fakeOperator{custom: map[string]enumspb.IndexedValueType{}}
+	if _, err := ensureRunResultsRecordedSearchAttribute(context.Background(), registered, DefaultNamespace); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if got := registered.custom[SearchKeyOrkflowResultsRecorded.GetName()]; got != SearchKeyOrkflowResultsRecorded.GetValueType() ||
+		got != enumspb.INDEXED_VALUE_TYPE_KEYWORD {
+		t.Fatalf("boot registers %s as %s, want the KEYWORD a start stamps", SearchKeyOrkflowResultsRecorded.GetName(), got)
+	}
+}

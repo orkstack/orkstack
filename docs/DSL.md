@@ -495,6 +495,8 @@ tasks:
       - sensor
     cancellation_grace_period_seconds: 30 # SIGTERM-to-SIGKILL window
     run_as_orker_user: false # opt in to overriding the image's USER
+    concurrency:          # optional: how many tasks share one key's slots at once (see "Concurrency limits")
+      limit: 2
     cache:                # optional: reuse an identical earlier result (see "Caching")
       enabled: true
     with:                 # image-specific config, rendered into config.json
@@ -2277,6 +2279,32 @@ tasks:
   A composed task has no timeout, so a queued child's wait is bounded by its
   `queue_timeout`, and by the `timeout:` of a run above it, which stops it. Its
   own `timeout:` starts once it has its slot.
+- **A task's own limit.** A task that runs a container may declare
+  `concurrency:` too, with the same `key`, `limit` and `queue_timeout`, and
+  `on_limit: queue` only. Absent, its key is its own,
+  `ork:task:<namespace>/<orkflow>:<task>`, shared by that task in every run and
+  version. It holds one slot while it runs, its retries and the times it is run
+  again included, and gives it back when it ends; only while it waits does its
+  run show it `PENDING` with its place (`orkctl run get`, `TASK_QUEUED` once). A
+  run keeps one of its tasks in a key's line at a time: its others on that key
+  wait their turn, in the order they are declared, and its other tasks run
+  meanwhile. A run whose task waits does not carry on into a later history. A
+  pause, a failure or a cancel gives back each place in line and each slot not
+  yet used; running tasks keep theirs until they end. A resumed run gives up
+  every slot its earlier attempt held, and each task it runs again asks anew. A
+  wait that ends without a
+  slot fails the task, and its run: `TASK_QUEUE_TIMEOUT`, or
+  `TASK_CONCURRENCY_FULL`, `_UNAVAILABLE`, `_FENCED`, `_UNSUPPORTED`; a limit
+  that does not answer keeps the task waiting, until its `queue_timeout`. A
+  task's key that renders to its run's own is refused at submit,
+  `CONCURRENCY_KEY_CONFLICT`. An awaited, sleeping or composed task, a
+  fan-out, a pin's member and a failure handler declare none (rule 66). A
+  composed child's tasks keep their limits: their keys are rendered from the
+  child's inputs when its parent starts it, with its own, and one that is its
+  own run's or a run above it's fails the composed task
+  (`TASK_CONCURRENCY_KEY_CONFLICT`). Two runs that
+  each hold a key the other's task waits for wait until a `queue_timeout`: take
+  shared keys in one order.
 - **A full line is refused at submit**, `CONCURRENCY_QUEUE_FULL`: a run that
   would wait, when its line already holds `max_queued` waiting runs, or its
   key the most one key holds (`engine.concurrency.max_entries`), or its
@@ -2784,6 +2812,11 @@ with the deployment and the namespace in hand.
     locator, never `env:` or `file:`;
     its `ciphertext` comes with a `grant` and is standard base64, padded and
     on one line, of at most 8192 characters; a task's ciphertexts are at most 16 KiB once decoded.
+66. A task's `concurrency:` is written only on a task that runs one container
+    of its own: never an awaited, sleeping or composed task (with rules 15, 49
+    and 27), a fan-out, a pin's member or a failure handler. Its `on_limit` is
+    `queue`, it takes no `max_queued`, and its key as written is not the run's
+    own.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -86,6 +88,20 @@ type sourceFixture struct {
 	client   orkstackv1connect.EventSourceServiceClient
 	// storeDir is the local event source store's root.
 	storeDir string
+	told     *startedSources
+}
+
+// startedSources is the workflows a write starts, as the API sees them.
+type startedSources struct {
+	api.SourceWorkflows
+	started []*orkstackv1.EventSource
+	outcome engine.SourceStart
+	err     error
+}
+
+func (s *startedSources) Start(_ context.Context, src *orkstackv1.EventSource) (engine.SourceStart, error) {
+	s.started = append(s.started, src)
+	return cmp.Or(s.outcome, engine.SourceStarted), s.err
 }
 
 func newSourceFixture(t *testing.T, edit func(*api.Config)) *sourceFixture {
@@ -111,6 +127,9 @@ func newSourceFixture(t *testing.T, edit func(*api.Config)) *sourceFixture {
 	storeDir := t.TempDir()
 	store, err := artifacts.NewLocalEventSourceStore(storeDir)
 	must.OKf(t, err, "store")
+	records, err := artifacts.NewLocalEventSourceInstanceStore(storeDir)
+	must.OKf(t, err, "records")
+	told := &startedSources{}
 	settings := eventsources.DefaultSettings()
 	settings.Enabled, settings.AllowAsserted = true, true
 	f := newFixtureWith(t, func(cfg *api.Config) {
@@ -118,13 +137,14 @@ func newSourceFixture(t *testing.T, edit func(*api.Config)) *sourceFixture {
 		cfg.Resolver = resolver
 		cfg.EventSources = store
 		cfg.EventSourceSettings = settings
+		cfg.SourceWorkflows, cfg.SourceRecords = told, records
 		cfg.System = api.SystemInfo{DeploymentName: "ork", BuildID: "b1"}
 		cfg.Namespaces = newFakeRegistry(&orkstackv1.Namespace{Name: "payments"})
 		if edit != nil {
 			edit(cfg)
 		}
 	})
-	return &sourceFixture{fixture: f, resolver: resolver, orkflows: orkflows, storeDir: storeDir,
+	return &sourceFixture{fixture: f, resolver: resolver, orkflows: orkflows, storeDir: storeDir, told: told,
 		client: orkstackv1connect.NewEventSourceServiceClient(f.client, f.baseURL)}
 }
 
@@ -172,6 +192,9 @@ func TestEventSourceService_CreateStoresTheDocument(t *testing.T) {
 	}
 	_, err := f.client.CreateEventSource(context.Background(), connect.NewRequest(&orkstackv1.CreateEventSourceRequest{EventSource: orderSource("")}))
 	wantRefusal(t, err, connect.CodeAlreadyExists, "orders")
+	if specs, err := os.ReadDir(filepath.Join(f.storeDir, "metadata", "event-source-specs")); err != nil || len(specs) != 1 {
+		t.Errorf("a create under a taken name left specs: %v, %v", specs, err)
+	}
 
 	read, err := f.client.GetEventSource(context.Background(), connect.NewRequest(&orkstackv1.GetEventSourceRequest{Name: "orders"}))
 	must.OKf(t, err, "Get")
@@ -197,6 +220,9 @@ func TestEventSourceService_StoresATypedServiceSpec(t *testing.T) {
 	spec, err := eventsources.ReadServiceSpec(body)
 	must.OKf(t, err, "the stored spec reads")
 	sum := sha256.Sum256(body)
+	if got.GetServiceDigest() != hex.EncodeToString(sum[:]) {
+		t.Errorf("the document names the spec %q", got.GetServiceDigest())
+	}
 	if filepath.Base(paths[0]) != hex.EncodeToString(sum[:])+".json" || spec.Source.ID != got.GetId() || spec.Image != got.GetImage() ||
 		spec.Limits.HoldSeconds != eventsources.HoldSeconds(0) {
 		t.Fatalf("spec %s at %s", body, paths[0])
@@ -286,13 +312,26 @@ func TestEventSourceService_UpdateBumpsExactlyItsCounter(t *testing.T) {
 	if got.GetServiceRevision() != 1 || got.GetJudgingRevision() != 2 {
 		t.Fatalf("rate: %d %d, want 1 2", got.GetServiceRevision(), got.GetJudgingRevision())
 	}
-	got = update(func(s *orkstackv1.EventSource) { s.Concurrency = 2 })
-	if got.GetServiceRevision() != 2 || got.GetJudgingRevision() != 2 {
-		t.Fatalf("concurrency: %d %d, want 2 2", got.GetServiceRevision(), got.GetJudgingRevision())
+	digest := got.GetServiceDigest()
+	// A bound that judges, and is in the spec, restarts nothing.
+	got = update(func(s *orkstackv1.EventSource) { s.MaxBytes = 4096 })
+	if got.GetServiceRevision() != 1 || got.GetJudgingRevision() != 3 || got.GetServiceDigest() != digest {
+		t.Fatalf("max_bytes: %v", got)
+	}
+	// What is OrkStack's is never the request's.
+	got = update(func(s *orkstackv1.EventSource) {
+		s.Concurrency, s.ResumeSeq, s.TrialCode, s.InPlaceRevision, s.ServiceDigest, s.RestartRevision = 2, 9, "X", 9, "x", 9
+	})
+	if got.GetServiceRevision() != 2 || got.GetJudgingRevision() != 3 {
+		t.Fatalf("concurrency: %d %d, want 2 3", got.GetServiceRevision(), got.GetJudgingRevision())
+	}
+	if got.GetServiceDigest() == digest || len(got.GetServiceDigest()) != 64 || got.GetResumeSeq() != 0 || got.GetTrialCode() != "" ||
+		got.GetInPlaceRevision() != 0 || got.GetRestartRevision() != 0 {
+		t.Fatalf("a write's output-only fields were kept: %v", got)
 	}
 	got = update(func(s *orkstackv1.EventSource) { s.Description = "d"; s.Instances = 2 })
-	if got.GetServiceRevision() != 2 || got.GetJudgingRevision() != 2 {
-		t.Fatalf("neither: %d %d, want 2 2", got.GetServiceRevision(), got.GetJudgingRevision())
+	if got.GetServiceRevision() != 2 || got.GetJudgingRevision() != 3 {
+		t.Fatalf("neither: %d %d, want 2 3", got.GetServiceRevision(), got.GetJudgingRevision())
 	}
 	if n := f.resolver.count("ghcr.io/acme/source:1"); n != asked {
 		t.Fatalf("an update that left uses: as it was resolved the tag again (%d times, was %d)", n, asked)
@@ -369,7 +408,7 @@ func TestEventSourceService_PauseResume(t *testing.T) {
 	resumed, err := f.client.ResumeEventSource(ctx, connect.NewRequest(&orkstackv1.ResumeEventSourceRequest{Name: "orders"}))
 	must.OKf(t, err, "Resume")
 	after := resumed.Msg.GetEventSource()
-	if after.GetPaused() || resumed.Msg.GetNotice() != "" {
+	if after.GetPaused() || resumed.Msg.GetNotice() != "" || after.GetResumeSeq() != 1 || after.GetTrialCode() != "" {
 		t.Fatalf("resumed %v notice %q", after, resumed.Msg.GetNotice())
 	}
 	if after.GetBoundBy() != before.GetBoundBy() || !after.GetConsented().GetAt().AsTime().Equal(before.GetConsented().GetAt().AsTime()) {
@@ -377,8 +416,22 @@ func TestEventSourceService_PauseResume(t *testing.T) {
 	}
 	again, err := f.client.ResumeEventSource(ctx, connect.NewRequest(&orkstackv1.ResumeEventSourceRequest{Name: "orders"}))
 	must.OKf(t, err, "Resume again")
-	if again.Msg.GetNotice() != "source was not paused; nothing changed" {
-		t.Fatalf("notice %q", again.Msg.GetNotice())
+	if again.Msg.GetNotice() != "source was not paused; nothing changed" || again.Msg.GetEventSource().GetResumeSeq() != 1 {
+		t.Fatalf("notice %q, %v", again.Msg.GetNotice(), again.Msg.GetEventSource())
+	}
+
+	// A resume of one OrkStack paused is on trial for what it was paused for.
+	store, err := artifacts.NewLocalEventSourceStore(f.storeDir)
+	must.OKf(t, err, "open the store")
+	src, err := store.Get(ctx, "default", "orders")
+	must.OKf(t, err, "read")
+	src.Pause = &orkstackv1.EventSourcePause{Cause: orkstackv1.PauseCause_PAUSE_CAUSE_ENGINE, Code: eventsources.PauseInstanceFailed, Reason: "x"}
+	_, err = store.Replace(ctx, src, src.GetEtag())
+	must.OKf(t, err, "pause it")
+	resumed, err = f.client.ResumeEventSource(ctx, connect.NewRequest(&orkstackv1.ResumeEventSourceRequest{Name: "orders"}))
+	must.OKf(t, err, "Resume a breaker's")
+	if after := resumed.Msg.GetEventSource(); after.GetResumeSeq() != 2 || after.GetTrialCode() != eventsources.PauseInstanceFailed {
+		t.Fatalf("resumed %v", after)
 	}
 }
 
@@ -393,8 +446,208 @@ func TestEventSourceService_DeleteByID(t *testing.T) {
 	}
 	_, err = f.client.DeleteEventSource(ctx, connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "orders", Id: src.GetId()}))
 	must.OKf(t, err, "Delete")
-	_, err = f.client.DeleteEventSource(ctx, connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "orders", Id: src.GetId()}))
-	wantRefusal(t, err, connect.CodeNotFound, "orders")
+}
+
+// remove is what the engines' pass does once the source's workflow has purged
+// and ended.
+func (f *sourceFixture) remove(t *testing.T, ns, name string) {
+	t.Helper()
+	store, err := artifacts.NewLocalEventSourceStore(f.storeDir)
+	must.OKf(t, err, "open the store")
+	src, err := store.Get(context.Background(), ns, name)
+	must.OKf(t, err, "read the marked source")
+	must.OKf(t, store.Remove(context.Background(), ns, name, src.GetEtag()), "remove it")
+}
+
+// TestEventSourceService_DeleteMarks: a delete marks the document, leaves the
+// tombstone and tells the source's workflow; the document stays, with its
+// name, and takes no write but a delete, which writes no second mark.
+func TestEventSourceService_DeleteMarks(t *testing.T) {
+	f := newSourceFixture(t, func(c *api.Config) { c.EventSourceSettings.Limits.MaxPerNamespace = 1 })
+	ctx := context.Background()
+	src := f.create(t, orderSource(""))
+	del := func(name, id string) error {
+		_, err := f.client.DeleteEventSource(ctx, connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: name, Id: id}))
+		return err
+	}
+	get := func() *orkstackv1.GetEventSourceResponse {
+		t.Helper()
+		read, err := f.client.GetEventSource(ctx, connect.NewRequest(&orkstackv1.GetEventSourceRequest{Name: "orders"}))
+		must.OKf(t, err, "Get")
+		return read.Msg
+	}
+	f.told.started = nil
+	must.OKf(t, del("orders", src.GetId()), "Delete")
+	marked := get()
+	if marked.GetEventSource().GetDeletingSince() == nil || marked.GetStatus().GetState() != orkstackv1.EventSourceState_EVENT_SOURCE_STATE_DELETING ||
+		marked.GetStatus().GetReason() != eventsources.ReasonDeleting {
+		t.Fatalf("%v", marked)
+	}
+	if len(f.told.started) != 1 || f.told.started[0].GetId() != src.GetId() || f.told.started[0].GetDeletingSince() == nil {
+		t.Fatalf("told %v", f.told.started)
+	}
+	records, err := artifacts.NewLocalEventSourceInstanceStore(f.storeDir)
+	must.OKf(t, err, "records")
+	if ns, name, found, err := records.TombstoneOf(ctx, src.GetId()); !found || err != nil || ns != "default" || name != "orders" {
+		t.Fatalf("its tombstone: %q %q %v %v", ns, name, found, err)
+	}
+
+	// Every write but a delete is refused; a delete again is the same delete.
+	src.Etag, src.Rate = marked.GetEventSource().GetEtag(), 3
+	_, err = f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: src}))
+	wantRefusal(t, err, connect.CodeFailedPrecondition, eventsources.ReasonDeleting)
+	_, err = f.client.PauseEventSource(ctx, connect.NewRequest(&orkstackv1.PauseEventSourceRequest{Name: "orders", Reason: "x"}))
+	wantRefusal(t, err, connect.CodeFailedPrecondition, eventsources.ReasonDeleting)
+	_, err = f.client.ResumeEventSource(ctx, connect.NewRequest(&orkstackv1.ResumeEventSourceRequest{Name: "orders"}))
+	wantRefusal(t, err, connect.CodeFailedPrecondition, eventsources.ReasonDeleting)
+	_, err = f.client.CreateEventSource(ctx, connect.NewRequest(&orkstackv1.CreateEventSourceRequest{EventSource: orderSource("")}))
+	wantRefusal(t, err, connect.CodeAlreadyExists, "orders")
+	must.OKf(t, del("orders", src.GetId()), "Delete again")
+	must.OKf(t, del("orders", ""), "Delete whatever the name holds")
+	if again := get(); again.GetEventSource().GetEtag() != marked.GetEventSource().GetEtag() || len(f.told.started) != 3 {
+		t.Fatalf("a second delete wrote the document, or told nobody: %v, told %d", again, len(f.told.started))
+	}
+
+	// It counts toward no quota of its namespace.
+	other := orderSource("")
+	other.Name = "others"
+	f.create(t, other)
+
+	// Once it is gone, the id's tombstone answers for it, under its own name
+	// alone.
+	f.remove(t, "default", "orders")
+	must.OKf(t, del("orders", src.GetId()), "Delete of one that is gone")
+	wantRefusal(t, del("orders", "evs-ffffffffffffffff"), connect.CodeNotFound, "orders")
+	wantRefusal(t, del("elsewhere", src.GetId()), connect.CodeNotFound, "elsewhere")
+	wantRefusal(t, del("orders", ""), connect.CodeNotFound, "orders")
+	// Its name given away: the same, and the other is not touched.
+	must.OKf(t, del("others", ""), "make room")
+	second := f.create(t, orderSource(""))
+	must.OKf(t, del("orders", src.GetId()), "Delete of the first, by its id")
+	if got := get().GetEventSource(); got.GetId() != second.GetId() || got.GetDeletingSince() != nil {
+		t.Fatalf("a delete of the first marked the second: %v", got)
+	}
+}
+
+// A delete whose tombstone cannot be left tells the workflow all the same,
+// which leaves it, and is answered as one to repeat.
+func TestEventSourceService_DeleteWithoutATombstone(t *testing.T) {
+	records := &awayRecords{away: 1}
+	f := newSourceFixture(t, func(c *api.Config) {
+		records.SourceRecords = c.SourceRecords
+		c.SourceRecords = records
+	})
+	src := f.create(t, orderSource(""))
+	f.told.started = nil
+	del := func() error {
+		_, err := f.client.DeleteEventSource(context.Background(), connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "orders", Id: src.GetId()}))
+		return err
+	}
+	must.OKf(t, del(), "a write that fails once")
+	if len(f.told.started) != 1 || records.away != 0 {
+		t.Fatalf("told %v", f.told.started)
+	}
+	records.away = 2
+	wantRefusal(t, del(), connect.CodeUnavailable, "delete it again")
+	if len(f.told.started) != 2 {
+		t.Fatalf("told %v", f.told.started)
+	}
+	must.OKf(t, del(), "Delete again")
+}
+
+// awayRecords fails its first writes, as a store that is away for a moment.
+type awayRecords struct {
+	api.SourceRecords
+	away int
+}
+
+func (r *awayRecords) Tombstone(ctx context.Context, id, ns, name string, at time.Time) error {
+	if r.away > 0 {
+		r.away--
+		return errors.New("the store is away")
+	}
+	return r.SourceRecords.Tombstone(ctx, id, ns, name, at)
+}
+
+// A document that cannot be decoded is deleted by its id, and marks a source
+// only where the id is its own.
+func TestEventSourceService_DeleteUnreadable(t *testing.T) {
+	const id = "evs-0123456789abcdef"
+	for body, marks := range map[string]bool{
+		`{"format":9,"eventSource":{"id":"` + id + `","namespace":"default","name":"orders"}}`: true,
+		`{"format":9,"eventSource":{"id":"` + id + `","namespace":"default","name":"others"}}`: false,
+		`garbage`: false,
+	} {
+		f := newSourceFixture(t, nil)
+		ctx := context.Background()
+		path := filepath.Join(f.storeDir, artifacts.EventSourcePrefix, "default", "orders.json")
+		must.OKf(t, os.MkdirAll(filepath.Dir(path), 0o755), "dir")
+		must.OKf(t, os.WriteFile(path, []byte(body), 0o600), "write")
+		del := func(id string) error {
+			_, err := f.client.DeleteEventSource(ctx, connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "orders", Id: id}))
+			return err
+		}
+		wantRefusal(t, del(""), connect.CodeFailedPrecondition, eventsources.ReasonDocumentUnreadable)
+		if marks {
+			wantRefusal(t, del("evs-ffffffffffffffff"), connect.CodeFailedPrecondition, eventsources.ReasonIDMismatch)
+		}
+		must.OKf(t, del(id), "Delete")
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s: still there: %v", body, err)
+		}
+		records, err := artifacts.NewLocalEventSourceInstanceStore(f.storeDir)
+		must.OKf(t, err, "records")
+		if gone, err := records.Tombstoned(ctx, id); gone != marks || err != nil || (len(f.told.started) == 1) != marks {
+			t.Errorf("%s: tombstone %v, %v, told %v", body, gone, err, f.told.started)
+		}
+	}
+}
+
+// TestEventSourceService_EveryWriteMakesTheStart: what is written is told to
+// the source's workflow, and a write is done whether it could be told or not.
+func TestEventSourceService_EveryWriteMakesTheStart(t *testing.T) {
+	f := newSourceFixture(t, nil)
+	ctx := context.Background()
+	src := f.create(t, orderSource(""))
+	told := func(want int) {
+		t.Helper()
+		if len(f.told.started) != want || f.told.started[want-1].GetId() != src.GetId() {
+			t.Fatalf("told %d times, want %d", len(f.told.started), want)
+		}
+	}
+	told(1)
+	src.Rate = 5
+	updated, err := f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: src}))
+	must.OKf(t, err, "Update")
+	told(2)
+	if f.told.started[1].GetRate() != 5 || len(updated.Msg.GetSaveWarnings()) != 0 {
+		t.Fatalf("told %v, warned %v", f.told.started[1], updated.Msg.GetSaveWarnings())
+	}
+	_, err = f.client.ResumeEventSource(ctx, connect.NewRequest(&orkstackv1.ResumeEventSourceRequest{Name: "orders"}))
+	must.OKf(t, err, "Resume of one that is not paused")
+	told(3)
+	f.told.err = errors.New("the cluster is away")
+	paused, err := f.client.PauseEventSource(ctx, connect.NewRequest(&orkstackv1.PauseEventSourceRequest{Name: "orders", Reason: "x"}))
+	must.OKf(t, err, "Pause")
+	told(4)
+	if len(paused.Msg.GetWarnings()) != 1 || !strings.Contains(paused.Msg.GetWarnings()[0], "next pass") {
+		t.Fatalf("warned %v", paused.Msg.GetWarnings())
+	}
+	f.told.err, f.told.outcome = nil, engine.SourceDeletedCopy
+	resumed, err := f.client.ResumeEventSource(ctx, connect.NewRequest(&orkstackv1.ResumeEventSourceRequest{Name: "orders"}))
+	must.OKf(t, err, "Resume")
+	told(5)
+	if !strings.Contains(resumed.Msg.GetNotice(), eventsources.ReasonDeletedDocumentReappeared) {
+		t.Fatalf("notice %q", resumed.Msg.GetNotice())
+	}
+	f.told.outcome = engine.SourceNewerCarry
+	src = resumed.Msg.GetEventSource()
+	src.Rate = 6
+	updated, err = f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: src}))
+	must.OKf(t, err, "Update")
+	if len(updated.Msg.GetSaveWarnings()) != 1 || !strings.Contains(updated.Msg.GetSaveWarnings()[0], "newer release") {
+		t.Fatalf("warned %v", updated.Msg.GetSaveWarnings())
+	}
 }
 
 func TestEvaluate_CandidateAndStored(t *testing.T) {
@@ -472,6 +725,10 @@ func TestDeleteNamespace_RefusedWhileItHoldsASource(t *testing.T) {
 	wantRefusal(t, err, connect.CodeFailedPrecondition, "event source")
 	_, err = f.client.DeleteEventSource(ctx, connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Namespace: "payments", Name: "orders", Id: src.GetId()}))
 	must.OKf(t, err, "delete the source")
+	// It holds its namespace until it is gone.
+	_, err = namespaces.DeleteNamespace(ctx, connect.NewRequest(&orkstackv1.DeleteNamespaceRequest{Name: "payments"}))
+	wantRefusal(t, err, connect.CodeFailedPrecondition, "event source")
+	f.remove(t, "payments", "orders")
 	_, err = namespaces.DeleteNamespace(ctx, connect.NewRequest(&orkstackv1.DeleteNamespaceRequest{Name: "payments"}))
 	must.OKf(t, err, "delete the namespace once it holds no source")
 }
@@ -558,4 +815,249 @@ func TestEventSourceService_ConsentToTheDigestShown(t *testing.T) {
 	if !shown.GetConsentStale() || shown.GetAsksFor().GetDigest() == consent.Empty() || strings.Join(shown.GetAsksFor().GetAudiences(), ",") != "sts" {
 		t.Fatalf("after the pointer moved: stale = %v asks_for = %v", shown.GetConsentStale(), shown.GetAsksFor())
 	}
+}
+
+// TestEventSourceService_ASpecThatCannotBeStored refuses the save: a document
+// never names a spec that is not there.
+func TestEventSourceService_ASpecThatCannotBeStored(t *testing.T) {
+	f := newSourceFixture(t, nil)
+	ctx := context.Background()
+	src := f.create(t, orderSource(""))
+	specs := filepath.Join(f.storeDir, "metadata", "event-source-specs")
+	must.OKf(t, os.RemoveAll(specs), "remove the specs")
+	must.OKf(t, os.WriteFile(specs, nil, 0o600), "block the prefix")
+
+	src.Concurrency = 3
+	_, err := f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: src}))
+	wantRefusal(t, err, connect.CodeUnavailable, "nothing was written")
+	other := orderSource("")
+	other.Name = "others"
+	_, err = f.client.CreateEventSource(ctx, connect.NewRequest(&orkstackv1.CreateEventSourceRequest{EventSource: other}))
+	wantRefusal(t, err, connect.CodeUnavailable, "nothing was written")
+	read, err := f.client.GetEventSource(ctx, connect.NewRequest(&orkstackv1.GetEventSourceRequest{Name: "orders"}))
+	must.OKf(t, err, "Get")
+	if got := read.Msg.GetEventSource(); got.GetEtag() != src.GetEtag() || got.GetConcurrency() == 3 {
+		t.Errorf("the refused update wrote %v", got)
+	}
+	_, err = f.client.GetEventSource(ctx, connect.NewRequest(&orkstackv1.GetEventSourceRequest{Name: "others"}))
+	wantRefusal(t, err, connect.CodeNotFound, "others")
+}
+
+// TestEventSourceService_ASaveKeepsWhatIsOrkStacks: a user's save of the
+// document keeps the engine's counters as they were, under the write that is
+// conditional on what was read, and a stale one changes nothing.
+func TestEventSourceService_ASaveKeepsWhatIsOrkStacks(t *testing.T) {
+	f := newSourceFixture(t, nil)
+	ctx := context.Background()
+	f.create(t, orderSource(""))
+	store, err := artifacts.NewLocalEventSourceStore(f.storeDir)
+	must.OKf(t, err, "open the store")
+	src, err := store.Get(ctx, "default", "orders")
+	must.OKf(t, err, "read")
+	stale := proto.Clone(src).(*orkstackv1.EventSource)
+	digest := src.GetServiceDigest()
+	src.ResumeSeq, src.TrialCode, src.InPlaceRevision, src.RestartRevision = 5, eventsources.PauseInstanceFailed, 1, 1
+	_, err = store.Replace(ctx, src, src.GetEtag())
+	must.OKf(t, err, "the engine's values")
+	read, err := f.client.GetEventSource(ctx, connect.NewRequest(&orkstackv1.GetEventSourceRequest{Name: "orders"}))
+	must.OKf(t, err, "Get")
+
+	mine := read.Msg.GetEventSource()
+	mine.Rate, mine.ResumeSeq, mine.TrialCode, mine.InPlaceRevision, mine.ServiceDigest, mine.RestartRevision = 7, 0, "MINE", 9, "", 9
+	saved, err := f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: mine}))
+	must.OKf(t, err, "Update")
+	for name, got := range map[string]*orkstackv1.EventSource{"answered": saved.Msg.GetEventSource(), "stored": func() *orkstackv1.EventSource {
+		got, err := store.Get(ctx, "default", "orders")
+		must.OKf(t, err, "read")
+		return got
+	}()} {
+		if got.GetRate() != 7 || got.GetResumeSeq() != 5 || got.GetTrialCode() != eventsources.PauseInstanceFailed || got.GetInPlaceRevision() != 1 ||
+			got.GetRestartRevision() != 1 || got.GetServiceDigest() != digest {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+	stale.Rate = 9
+	_, err = f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: stale}))
+	if connect.CodeOf(err) != connect.CodeAborted {
+		t.Errorf("a save over an older read: %v", err)
+	}
+	if got, err := store.Get(ctx, "default", "orders"); err != nil || got.GetRate() != 7 || got.GetResumeSeq() != 5 {
+		t.Errorf("it wrote %v, %v", got, err)
+	}
+
+	// A trial is for a code of the closed set alone.
+	src, err = store.Get(ctx, "default", "orders")
+	must.OKf(t, err, "read")
+	src.Pause = &orkstackv1.EventSourcePause{Code: "A_CODE_OF_NO_PAUSE", Reason: "x"}
+	_, err = store.Replace(ctx, src, src.GetEtag())
+	must.OKf(t, err, "pause it")
+	resumed, err := f.client.ResumeEventSource(ctx, connect.NewRequest(&orkstackv1.ResumeEventSourceRequest{Name: "orders"}))
+	must.OKf(t, err, "Resume")
+	if got := resumed.Msg.GetEventSource(); got.GetTrialCode() != "" || got.GetResumeSeq() != 6 {
+		t.Errorf("resumed %v", got)
+	}
+}
+
+// A create that loses its name to another between the look and the write
+// leaves no spec under an id that is no source's.
+func TestEventSourceService_ACreateThatLosesItsName(t *testing.T) {
+	var store *raceCreate
+	f := newSourceFixture(t, func(c *api.Config) {
+		store = &raceCreate{Store: c.EventSources}
+		c.EventSources = store
+	})
+	_, err := f.client.CreateEventSource(context.Background(), connect.NewRequest(&orkstackv1.CreateEventSourceRequest{EventSource: orderSource("")}))
+	wantRefusal(t, err, connect.CodeAlreadyExists, "orders")
+	files, err := filepath.Glob(filepath.Join(f.storeDir, "metadata", "event-source-specs", "*", "*"))
+	must.OKf(t, err, "glob")
+	if len(files) != 0 || store.put == 0 {
+		t.Errorf("left %v, %d written", files, store.put)
+	}
+}
+
+// raceCreate gives the name to another source as it is created.
+type raceCreate struct {
+	eventsources.Store
+	put int
+}
+
+func (r *raceCreate) PutSpec(ctx context.Context, id, digest string, body []byte) error {
+	r.put++
+	return r.Store.PutSpec(ctx, id, digest, body)
+}
+
+func (r *raceCreate) Create(context.Context, *orkstackv1.EventSource) (*orkstackv1.EventSource, error) {
+	return nil, eventsources.ErrNameTaken
+}
+
+// TestEventSourceService_DeleteUnreadableThatChanges: once its tombstone is
+// left the source is deleted, and what its document became meanwhile is
+// deleted with it; another source under the name is not.
+func TestEventSourceService_DeleteUnreadableThatChanges(t *testing.T) {
+	const id = "evs-0123456789abcdef"
+	ours := &orkstackv1.EventSource{Id: id, Namespace: "default", Name: "orders", OrkflowName: "handle-order", Uses: "ghcr.io/acme/s:1"}
+	other := proto.Clone(ours).(*orkstackv1.EventSource)
+	other.Id = "evs-0123456789abcde0"
+	for name, tc := range map[string]struct {
+		becomes func(*eventsources.UnreadableError) (*orkstackv1.EventSource, error)
+		removes int
+		code    connect.Code
+		marks   bool
+	}{
+		"readable": {becomes: func(*eventsources.UnreadableError) (*orkstackv1.EventSource, error) { return ours, nil }, removes: 1, marks: true},
+		"gone": {becomes: func(*eventsources.UnreadableError) (*orkstackv1.EventSource, error) {
+			return nil, eventsources.ErrNotFound
+		}, removes: 1},
+		"another's":            {becomes: func(*eventsources.UnreadableError) (*orkstackv1.EventSource, error) { return other, nil }, removes: 1},
+		"unreadable for ever":  {becomes: func(u *eventsources.UnreadableError) (*orkstackv1.EventSource, error) { return nil, u }, removes: 3, code: connect.CodeUnavailable},
+		"a store that is away": {becomes: func(*eventsources.UnreadableError) (*orkstackv1.EventSource, error) { return nil, errors.New("away") }, removes: 1, code: connect.CodeUnavailable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &changingUnreadable{err: &eventsources.UnreadableError{Namespace: "default", Name: "orders", ID: id, Etag: "1"}, becomes: tc.becomes}
+			f := newSourceFixture(t, func(c *api.Config) {
+				store.Store = c.EventSources
+				c.EventSources = store
+			})
+			_, err := f.client.DeleteEventSource(context.Background(), connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "orders", Id: id}))
+			if (tc.code == 0) != (err == nil) || (err != nil && connect.CodeOf(err) != tc.code) || store.removes != tc.removes || (store.replaced != nil) != tc.marks {
+				t.Errorf("%v, %d removes, replaced %v", err, store.removes, store.replaced)
+			}
+			if tc.marks && store.replaced.GetDeletingSince() == nil {
+				t.Errorf("not marked: %v", store.replaced)
+			}
+			want := 1
+			if tc.marks {
+				want = 2
+			}
+			if len(f.told.started) != want || f.told.started[0].GetId() != id || f.told.started[0].GetDeletingSince() == nil {
+				t.Errorf("told %v", f.told.started)
+			}
+		})
+	}
+}
+
+// What runs is told of a delete before the document that names it is removed:
+// one that could not be told is deleted again by it.
+func TestEventSourceService_DeleteUnreadableIsToldFirst(t *testing.T) {
+	const id = "evs-0123456789abcdef"
+	f := newSourceFixture(t, nil)
+	path := filepath.Join(f.storeDir, artifacts.EventSourcePrefix, "default", "orders.json")
+	must.OKf(t, os.MkdirAll(filepath.Dir(path), 0o755), "dir")
+	must.OKf(t, os.WriteFile(path, []byte(`{"format":9,"eventSource":{"id":"`+id+`","namespace":"default","name":"orders"}}`), 0o600), "write")
+	del := func() error {
+		_, err := f.client.DeleteEventSource(context.Background(), connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "orders", Id: id}))
+		return err
+	}
+	for _, away := range []func(){func() { f.told.err = errors.New("the cluster is away") }, func() { f.told.err, f.told.outcome = nil, engine.SourceUnanswered }} {
+		away()
+		wantRefusal(t, del(), connect.CodeUnavailable, "delete it again")
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("its document is gone and nothing was told: %v", err)
+		}
+	}
+	f.told.outcome = engine.SourceNewerCarry
+	wantRefusal(t, del(), connect.CodeFailedPrecondition, "newer release")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("its document is gone, and no release removes what it kept: %v", err)
+	}
+	f.told.outcome = engine.SourceSignalled
+	must.OKf(t, del(), "Delete again")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("still there: %v", err)
+	}
+}
+
+// changingUnreadable is a document that cannot be decoded, and has become
+// something else each time it is to be removed.
+type changingUnreadable struct {
+	eventsources.Store
+	err      *eventsources.UnreadableError
+	becomes  func(*eventsources.UnreadableError) (*orkstackv1.EventSource, error)
+	removes  int
+	replaced *orkstackv1.EventSource
+}
+
+func (c *changingUnreadable) Get(context.Context, string, string) (*orkstackv1.EventSource, error) {
+	if c.removes == 0 {
+		return nil, c.err
+	}
+	return c.becomes(c.err)
+}
+
+func (c *changingUnreadable) Remove(context.Context, string, string, string) error {
+	c.removes++
+	return eventsources.ErrChanged
+}
+
+func (c *changingUnreadable) Replace(_ context.Context, src *orkstackv1.EventSource, _ string) (*orkstackv1.EventSource, error) {
+	c.replaced = src
+	return src, nil
+}
+
+// An engine that is no release refuses a delete and writes nothing: nothing
+// there would finish it.
+func TestEventSourceService_DeleteNeedsARelease(t *testing.T) {
+	f := newSourceFixture(t, func(c *api.Config) { c.System.BuildID = "" })
+	store, err := artifacts.NewLocalEventSourceStore(f.storeDir)
+	must.OKf(t, err, "open the store")
+	src, err := store.Create(context.Background(), &orkstackv1.EventSource{Id: "evs-0123456789abcdef", Namespace: "default", Name: "orders", OrkflowName: "handle-order", Uses: "ghcr.io/acme/s:1"})
+	must.OKf(t, err, "create")
+	_, err = f.client.DeleteEventSource(context.Background(), connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "orders", Id: src.GetId()}))
+	wantRefusal(t, err, connect.CodeFailedPrecondition, eventsources.ReasonRequireVersioning)
+	got, err := store.Get(context.Background(), "default", "orders")
+	must.OKf(t, err, "read")
+	if !proto.Equal(got, src) || len(f.told.started) != 0 {
+		t.Errorf("it wrote %v, told %v", got, f.told.started)
+	}
+	// What needs no workflow is not refused: a delete that was made, and a
+	// document nothing can be told of.
+	records, err := artifacts.NewLocalEventSourceInstanceStore(f.storeDir)
+	must.OKf(t, err, "records")
+	must.OKf(t, records.Tombstone(context.Background(), "evs-0123456789abcde0", "default", "gone", time.Now()), "tombstone")
+	_, err = f.client.DeleteEventSource(context.Background(), connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "gone", Id: "evs-0123456789abcde0"}))
+	must.OKf(t, err, "Delete of one that is gone")
+	path := filepath.Join(f.storeDir, artifacts.EventSourcePrefix, "default", "broken.json")
+	must.OKf(t, os.WriteFile(path, []byte("garbage"), 0o600), "write")
+	_, err = f.client.DeleteEventSource(context.Background(), connect.NewRequest(&orkstackv1.DeleteEventSourceRequest{Name: "broken", Id: "evs-0123456789abcdef"}))
+	must.OKf(t, err, "Delete of a damaged document")
 }

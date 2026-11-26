@@ -1649,10 +1649,12 @@ type TaskRun struct {
 	Sleep *TaskSleep `protobuf:"bytes,27,opt,name=sleep,proto3" json:"sleep,omitempty"`
 	// interruptions is set from E92; unset until it lands (v0.4.0 proto batch).
 	Interruptions *TaskInterruptions `protobuf:"bytes,28,opt,name=interruptions,proto3" json:"interruptions,omitempty"`
-	// queued is present while a composed task's child run waits in line for a
-	// slot of its concurrency limit: the child's own Run.queued, read live by
-	// GetRun only, for at most engine.concurrency.api_holders_shown of a run's
-	// composed tasks and for a caller who may read the child run.
+	// queued is present while the task waits in line for a slot of its own
+	// concurrency limit (status PENDING), or while a composed task's child run
+	// waits for a slot of its own: then it is the child's Run.queued, shown
+	// only to a caller who may read the child run. Its position is read live
+	// by GetRun only, for at most engine.concurrency.api_holders_shown of a
+	// run's tasks of each kind.
 	Queued *ConcurrencyQueued `protobuf:"bytes,29,opt,name=queued,proto3" json:"queued,omitempty"`
 	// pending_reason says why a task, or a fan-out item, of a live run is not
 	// running yet. GetRun derives it on read and nothing stores it. It is one
@@ -5610,8 +5612,11 @@ type ResumeForceCanceledBy struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Principal         string                 `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"`
 	PrincipalVerified bool                   `protobuf:"varint,2,opt,name=principal_verified,json=principalVerified,proto3" json:"principal_verified,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// request_id is the force cancel's own request id, which its audit record
+	// and the run's ending event carry.
+	RequestId     string `protobuf:"bytes,3,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResumeForceCanceledBy) Reset() {
@@ -5658,6 +5663,13 @@ func (x *ResumeForceCanceledBy) GetPrincipalVerified() bool {
 	return false
 }
 
+func (x *ResumeForceCanceledBy) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 // RunResumed is how a run was resumed, carried by RUN_RESUMED.
 type RunResumed struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
@@ -5666,8 +5678,14 @@ type RunResumed struct {
 	FromTaskId string `protobuf:"bytes,2,opt,name=from_task_id,json=fromTaskId,proto3" json:"from_task_id,omitempty"`
 	// resumed_after_sequence is the sequence of the ending set aside.
 	ResumedAfterSequence int64 `protobuf:"varint,3,opt,name=resumed_after_sequence,json=resumedAfterSequence,proto3" json:"resumed_after_sequence,omitempty"`
-	RerunCount           int32 `protobuf:"varint,4,opt,name=rerun_count,json=rerunCount,proto3" json:"rerun_count,omitempty"`
-	KeptCount            int32 `protobuf:"varint,5,opt,name=kept_count,json=keptCount,proto3" json:"kept_count,omitempty"`
+	// rerun_count is the units the resume runs again, a fan-out counted by its
+	// items; no other unit runs again.
+	RerunCount int32 `protobuf:"varint,4,opt,name=rerun_count,json=rerunCount,proto3" json:"rerun_count,omitempty"`
+	// kept_count is the units whose results the resume reads back, from their
+	// commits or their records (ResumeRunResponse's KEPT and SETTLED). It does
+	// not count a unit kept from an earlier part of the run, a skipped one, a
+	// waiting one or a sleep that woke, none of which runs again either.
+	KeptCount int32 `protobuf:"varint,5,opt,name=kept_count,json=keptCount,proto3" json:"kept_count,omitempty"`
 	// principal is who confirmed the resume, as recorded: asserted unless
 	// principal_verified (AGENTS.md §7).
 	Principal         string `protobuf:"bytes,6,opt,name=principal,proto3" json:"principal,omitempty"`
@@ -5785,7 +5803,9 @@ func (x *RunResumed) GetResumeCount() int32 {
 // RUN_RESULTS_KEPT.
 type RunResultsKept struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// kept_count is the results read back from their commits.
+	// kept_count is the results read back from their commits. A unit kept from
+	// an earlier part of the run is not read back and is not counted here;
+	// ResumeRunResponse.counts holds it, under RESUME_CATEGORY_EARLIER.
 	KeptCount int32 `protobuf:"varint,1,opt,name=kept_count,json=keptCount,proto3" json:"kept_count,omitempty"`
 	// settled_count is the awaited and composed tasks kept from their records.
 	SettledCount int32 `protobuf:"varint,2,opt,name=settled_count,json=settledCount,proto3" json:"settled_count,omitempty"`
@@ -6600,10 +6620,12 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x0eRunResumeEnded\x12+\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x122\n" +
-	"\x15before_anything_reran\x18\x03 \x01(\bR\x13beforeAnythingReran\"d\n" +
+	"\x15before_anything_reran\x18\x03 \x01(\bR\x13beforeAnythingReran\"\x83\x01\n" +
 	"\x15ResumeForceCanceledBy\x12\x1c\n" +
 	"\tprincipal\x18\x01 \x01(\tR\tprincipal\x12-\n" +
-	"\x12principal_verified\x18\x02 \x01(\bR\x11principalVerified\"\x8c\x03\n" +
+	"\x12principal_verified\x18\x02 \x01(\bR\x11principalVerified\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x03 \x01(\tR\trequestId\"\x8c\x03\n" +
 	"\n" +
 	"RunResumed\x121\n" +
 	"\x06action\x18\x01 \x01(\x0e2\x19.orkstack.v1.ResumeActionR\x06action\x12 \n" +

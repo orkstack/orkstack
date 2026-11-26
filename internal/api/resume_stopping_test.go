@@ -93,6 +93,9 @@ func TestResumeRun_ChildRunsStillOpen(t *testing.T) {
 			Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-child", RootRunId: "ork-r"}}
 	}
 	open := engine.ResumeExecution{Status: enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING}
+	// Open two days before its parent closed: past a day's wait, the advice
+	// leads with ending it.
+	long := engine.ResumeExecution{Status: enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, StartTime: resumeEpoch.Add(-48 * time.Hour)}
 	closedChild := engine.ResumeExecution{Status: enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED}
 	for name, tc := range map[string]struct {
 		ended  []string
@@ -102,9 +105,11 @@ func TestResumeRun_ChildRunsStillOpen(t *testing.T) {
 		list   error
 		cause  string // "": not refused
 		naming string
+		says   string
 	}{
 		"every child ended":               {ended: []string{"ork-child"}},
-		"a child it did not see end":      {child: &open, cause: "child_runs_open", naming: "ork-child"},
+		"a child it did not see end":      {child: &open, cause: "child_runs_open", naming: "ork-child", says: "wait for them, or end them with orkctl run cancel,"},
+		"a child open for days":           {child: &long, cause: "child_runs_open", naming: "ork-child", says: "have been open since"},
 		"a child that has ended since":    {child: &closedChild},
 		"a child whose history is gone":   {},
 		"an orphan further down":          {ended: []string{"ork-child"}, runs: []*orkstackv1.Run{live("ork-orphan")}, cause: "child_runs_open", naming: "ork-orphan"},
@@ -140,7 +145,7 @@ func TestResumeRun_ChildRunsStillOpen(t *testing.T) {
 			}
 			r := refusalOf(t, err)
 			if r.GetReason() != "STILL_STOPPING" || r.GetCause() != tc.cause || r.GetRetryAfterSeconds() <= 0 ||
-				!strings.Contains(r.GetMessage(), tc.naming) {
+				!strings.Contains(r.GetMessage(), tc.naming) || !strings.Contains(r.GetMessage(), tc.says) {
 				t.Fatalf("refusal = %v, want STILL_STOPPING %s naming %q", r, tc.cause, tc.naming)
 			}
 		})
@@ -181,12 +186,16 @@ func TestResumeRun_PinLeasesHeld(t *testing.T) {
 		"the earliest of its leases":         {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", 90*time.Second)), host(lease("ork-r", 5*time.Second))}, 5},
 		"others hold every host":             {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-z", time.Minute))}, 0},
 		"another host is free":               {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", time.Minute)), host()}, 0},
+		"another host is free for two tasks": {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", time.Minute)), host()}, 0},
 		"the free host is cordoned":          {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", time.Minute)), cordoned}, 15},
 		"its lease has expired":              {[]*orkstackv1.DescribeOrkerResult{host(lease("ork-r", -time.Minute))}, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newResumeFixture(t, func(f *resumeFixture) {
 				f.def.Tasks[1].Pin = "p"
+				if name == "another host is free for two tasks" {
+					f.def.Tasks[0].Pin = "p"
+				}
 				f.fleet.described = map[string]*orkstackv1.DescribeOrkerResult{}
 				for i, h := range tc.hosts {
 					id := fmt.Sprintf("orker-%d", i)
@@ -195,10 +204,26 @@ func TestResumeRun_PinLeasesHeld(t *testing.T) {
 					f.fleet.described[id] = h
 				}
 			})
-			_, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true})
+			got, err := f.resume(&orkstackv1.ResumeRunRequest{DryRun: true})
 			if tc.retry == 0 {
 				if err != nil && refusalOf(t, err).GetCause() == "pin_leases_held" {
 					t.Fatalf("refused: %v", err)
+				}
+				// Opening on a free host, it is told its old one may still
+				// count the slot, once for the pin however many of its tasks
+				// run again.
+				warned := 0
+				for _, w := range got.GetWarnings() {
+					if w.GetKind() == orkstackv1.ResumeWarningKind_RESUME_WARNING_KIND_PIN_LEASE_HELD && w.GetPin() == "p" && w.GetUntil().IsValid() {
+						warned++
+					}
+				}
+				want := 0
+				if strings.HasPrefix(name, "another host is free") {
+					want = 1
+				}
+				if err == nil && warned != want {
+					t.Fatalf("warnings = %v; want %d held pin named", got.GetWarnings(), want)
 				}
 				return
 			}

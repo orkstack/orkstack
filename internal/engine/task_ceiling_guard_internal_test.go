@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,15 +52,17 @@ const (
 // the pass first waits; landings are moves of the raw length, at the
 // publishes the arrangement picks.
 type flatStageRun struct {
-	t     *testing.T
-	runID string
-	wf    *orkstackv1.Orkflow
-	plan  RunPlan
-	mode  string
-	rng   *rand.Rand
-	store *memSnapshotStore
-	base  int
-	d     int64 // the history one dispatch records
+	// executing counts the run's ExecuteTask calls not yet returned.
+	executing atomic.Int64
+	t         *testing.T
+	runID     string
+	wf        *orkstackv1.Orkflow
+	plan      RunPlan
+	mode      string
+	rng       *rand.Rand
+	store     *memSnapshotStore
+	base      int
+	d         int64 // the history one dispatch records
 	// owed is the part of the last dispatch's d not yet in the raw length:
 	// its TASK_STARTED publish and its ExecuteTask, which the workflow
 	// counts itself (noteCommand) until its workflow task is recorded, as a
@@ -226,6 +229,8 @@ func (r *flatStageRun) stageEvent(event *orkstackv1.Event) {
 }
 
 func (r *flatStageRun) stageExecute(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	r.executing.Add(1)
+	defer r.executing.Add(-1)
 	r.mu.Lock()
 	r.arrived++
 	r.running[in.GetTaskId()] = true
@@ -303,6 +308,10 @@ func (r *flatStageRun) drive(firstOnly bool) error {
 	for r.generation = 0; r.generation < 64; r.generation++ {
 		env := r.stageGeneration(tasks - r.total)
 		env.ExecuteWorkflow(RunWorkflowType, args...)
+		// A generation that ended with tasks in flight (RUN_HISTORY_LIMIT)
+		// never reached its Selector: release them, or each stays parked in
+		// stageExecute for the rest of the package's run.
+		r.stageAtSelector()
 		if !env.IsWorkflowCompleted() {
 			r.t.Fatalf("generation %d did not end", r.generation)
 		}
@@ -328,9 +337,33 @@ func (r *flatStageRun) drive(firstOnly bool) error {
 	return nil
 }
 
+// guardProbeUsers counts the tests that hold the guard probe: the scale tests
+// that install it run in parallel with each other, so the first installs it
+// and the last removes it.
+var guardProbeUsers struct {
+	sync.Mutex
+	n int
+}
+
 // installGuardProbe routes every guard check, and every arrival at the
-// Selector, to its run.
+// Selector, to its run, for as long as any test that asked for it runs. The
+// tests that install it are parallel ones, which start only after the
+// package's serial tests, the ones that time a pass (passClock), have ended,
+// so none of those ever runs beside them or meets this probe.
 func installGuardProbe(t *testing.T) {
+	guardProbeUsers.Lock()
+	defer guardProbeUsers.Unlock()
+	guardProbeUsers.n++
+	t.Cleanup(func() {
+		guardProbeUsers.Lock()
+		defer guardProbeUsers.Unlock()
+		if guardProbeUsers.n--; guardProbeUsers.n == 0 {
+			historyGuardProbeForTest, readyLoopProbeForTest = nil, nil
+		}
+	})
+	if guardProbeUsers.n > 1 {
+		return
+	}
 	historyGuardProbeForTest = func(runID string, events, reserve int64) {
 		if r, ok := flatStageRuns.Load(runID); ok {
 			r.(*flatStageRun).stageObserve(events, reserve)
@@ -345,7 +378,6 @@ func installGuardProbe(t *testing.T) {
 			r.(*flatStageRun).stageEvent(event)
 		}
 	}}
-	t.Cleanup(func() { historyGuardProbeForTest, readyLoopProbeForTest = nil, nil })
 }
 
 // isHistoryLimit reports whether err is the guard's RUN_HISTORY_LIMIT.
@@ -390,6 +422,9 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
 	}
+	// Each run is single-threaded and its own: they run together, and beside
+	// the package's other parallel scale test, after its serial tests.
+	t.Parallel()
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
 	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight), testPublishReserve))
@@ -398,6 +433,7 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 	}
 	for _, mode := range []string{landLate, landInPass} {
 		t.Run("defaults/"+mode, func(t *testing.T) {
+			t.Parallel()
 			r := newFlatStageRun(t, tasks, mode, 1)
 			must.OKf(t, r.drive(false), "a flat stage of %d tasks, landings %s", tasks, mode)
 			if r.total != tasks {
@@ -420,6 +456,7 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 		corner := int(cornerMaxTasks(limit, budget, wide, d))
 		for _, mode := range []string{landLate, landInPass} {
 			t.Run(fmt.Sprintf("W=%d/d=%d/%s", wide, d, mode), func(t *testing.T) {
+				t.Parallel()
 				r := newFlatStageRunAt(t, corner, mode, 1, wide, d)
 				if err := r.drive(false); err != nil {
 					t.Fatalf("a flat stage of %d tasks at d = %d, landings %s: %v", corner, d, mode, err)
@@ -441,6 +478,7 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 			continue // a cheaper corner is bounded, with rounding to spare: tightness is d₁'s
 		}
 		t.Run(fmt.Sprintf("W=%d/d=%d/one task more, landing in the pass", wide, d), func(t *testing.T) {
+			t.Parallel()
 			r := newFlatStageRunAt(t, corner+1, landInPass, 1, wide, d)
 			err := r.drive(true)
 			if !isRunHistoryLimit(err) {
@@ -451,6 +489,14 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 			}
 			t.Logf("E7 one task over (%d) at W = %d, d = %d: RUN_HISTORY_LIMIT in generation 0 after %d dispatches, peak %d",
 				corner+1, wide, d, r.genDispatch[0], r.peaks[0])
+			// The tasks in flight when it failed are let go, not left parked.
+			deadline := time.Now().Add(30 * time.Second)
+			for parked := r.executing.Load(); parked > 0; parked = r.executing.Load() {
+				if time.Now().After(deadline) {
+					t.Fatalf("%d tasks of the failed run are still parked in stageExecute", parked)
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
 		})
 	}
 }
@@ -466,6 +512,8 @@ func TestHistoryGuard_CompletionsLandingDuringThePassNeverTripTheGuard(t *testin
 	if testing.Short() {
 		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
 	}
+	// Beside FlatStageAtTheClosedFormMaximum, after the package's serial tests.
+	t.Parallel()
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
 	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight), testPublishReserve))

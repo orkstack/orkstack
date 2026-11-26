@@ -212,6 +212,15 @@ func (c *resumeClaimer) Claim(ctx context.Context, key string, candidate engine.
 type resumeRunReader struct {
 	*fakeReader
 	sequence int64 // under mu, as the run is
+	// onStream, when set, is called as each stream of events begins.
+	onStream func()
+}
+
+func (r *resumeRunReader) StreamEvents(ctx context.Context, runID string, from int64, send func(*orkstackv1.Event) error) error {
+	if r.onStream != nil {
+		r.onStream()
+	}
+	return r.fakeReader.StreamEvents(ctx, runID, from, send)
 }
 
 func (r *resumeRunReader) set(sequence int64) {
@@ -234,16 +243,18 @@ func (r *resumeRunReader) GetRunAndSequence(_ context.Context, runID string) (*o
 // whose last event is 9.
 type resumeFixture struct {
 	*readerFixture
-	run       *orkstackv1.Run
-	def       *orkstackv1.Orkflow
-	cluster   *fakeResumeCluster
-	clock     *stepClock
-	settings  api.ResumeSettings
-	records   api.ResumeRecords
-	claims    *resumeClaimer
-	runReader *resumeRunReader
-	attempts  *artifacts.MemoryAttemptStore
-	endings   *fakeResumeEndings
+	run      *orkstackv1.Run
+	def      *orkstackv1.Orkflow
+	cluster  *fakeResumeCluster
+	clock    *stepClock
+	settings api.ResumeSettings
+	records  api.ResumeRecords
+	// recordStore is the identity records an admitted run's resume reads.
+	recordStore *artifacts.RecordStore
+	claims      *resumeClaimer
+	runReader   *resumeRunReader
+	attempts    *artifacts.MemoryAttemptStore
+	endings     *fakeResumeEndings
 	// claimsErr is what listing the run's open claims answers, when set.
 	claimsErr error
 	fleet     *stubFleet
@@ -253,6 +264,12 @@ type resumeFixture struct {
 	plan      engine.RunPlan
 	pools     livePools
 	configure func(*api.Config)
+	// stream is the run's events as its reader streams them; nil for none.
+	stream []*orkstackv1.Event
+	// streamGoesOn keeps the stream open past its events, as a run's current
+	// execution does while it runs; streamGone answers it as a run that is
+	// not there.
+	streamGoesOn, streamGone bool
 }
 
 func newResumeFixture(t *testing.T, change func(*resumeFixture)) *resumeFixture {
@@ -286,26 +303,35 @@ func newResumeFixture(t *testing.T, change func(*resumeFixture)) *resumeFixture 
 		defer f.reader.mu.Unlock()
 		return proto.Clone(f.run).(*orkstackv1.Run)
 	}
-	f.store, f.snaps = openResumeStores(t)
-	records, err := artifacts.NewRecordStore(context.Background(), artifacts.Config{Backend: "local", LocalDir: t.TempDir()})
+	objects := t.TempDir()
+	f.store, f.snaps = openResumeStoresAt(t, objects)
+	// One bucket holds the run's objects and its records, as a deployment's does.
+	records, err := artifacts.NewRecordStore(context.Background(), artifacts.Config{Backend: "local", LocalDir: objects})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.records = records
+	f.records, f.recordStore = records, records
 	base := engine.ResumeExecution{ExecutionRunID: "exec-1", Status: enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
 		CloseTime: resumeEpoch.Add(time.Hour)}
 	f.cluster.executions[""], f.cluster.executions["exec-1"] = base, base
 	if change != nil {
 		change(f)
 	}
-	reader := &fakeReader{runs: map[string]*orkstackv1.Run{"ork-r": f.run},
+	reader := &fakeReader{runs: map[string]*orkstackv1.Run{"ork-r": f.run}, events: map[string][]*orkstackv1.Event{"ork-r": f.stream},
 		starts: map[string]*engine.RunStartRecord{"ork-r": {Orkflow: f.def, Plan: f.plan}}}
+	if f.streamGoesOn {
+		reader.live = make(chan struct{})
+	}
+	if f.streamGone {
+		delete(reader.events, "ork-r")
+	}
 	f.runReader = &resumeRunReader{fakeReader: reader, sequence: 9}
 	f.readerFixture = newReaderFixtureWith(t, reader, func(cfg *api.Config) {
 		cfg.ResumeClaims = f.claims
 		cfg.Now = f.clock.Now
 		cfg.ResumeSettings = f.settings
 		cfg.ResumeRecords = f.records
+		cfg.RecordedResults = f.recordStore
 		cfg.ResumeEndings, cfg.ResumeArchiver = f.endings, f.endings
 		cfg.Attempts = f.attempts
 		if f.claimsErr != nil {
@@ -597,9 +623,9 @@ func TestResumeRun_CountsTheResumesBeforeIt(t *testing.T) {
 
 const resumeCommitRoot = "mem://commits"
 
-func openResumeStores(t *testing.T) (*artifacts.LocalStore, *artifacts.LocalRunSnapshotStore) {
+func openResumeStoresAt(t *testing.T, dir string) (*artifacts.LocalStore, *artifacts.LocalRunSnapshotStore) {
 	t.Helper()
-	store, err := artifacts.NewLocalStore(t.TempDir())
+	store, err := artifacts.NewLocalStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,5 +658,40 @@ func (f *resumeFixture) commit(t *testing.T, id string, change func(*orkstackv1.
 		if _, err := f.commits.Create(context.Background(), resumeCommitRoot+"/"+want.Key, c); err != nil {
 			t.Fatal(err)
 		}
+		if f.plan.Identity != nil {
+			f.recordCommit(t, want.Key, c)
+		}
 	}
+}
+
+// resumeAdmission is the admission digest of a fixture's run that holds an
+// identity.
+var resumeAdmission = strings.Repeat("a", 64)
+
+// recordCommit records c as the engine records an admitted run's result: in
+// the record store, and at the attested key in the commit store the read-back
+// reads, as one bucket holds both.
+func (f *resumeFixture) recordCommit(t *testing.T, key string, c *orkstackv1.ActivityCommit) {
+	t.Helper()
+	c = proto.Clone(c).(*orkstackv1.ActivityCommit)
+	c.Recorded = &orkstackv1.CommitRecording{AdmissionSha256: f.plan.Identity.AdmissionSHA256}
+	if c.GetValues() == nil {
+		ref, err := f.store.Put(context.Background(), "values.json", strings.NewReader(`{}`), artifacts.PutOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Values = &orkstackv1.ArtifactRef{Uri: ref.URI, Sha256: ref.SHA256, SizeBytes: ref.SizeBytes}
+	}
+	if _, err := f.recordStore.RecordCommit(context.Background(), key, c); err != nil {
+		t.Fatal(err)
+	}
+	attested, err := artifacts.AttestedCommitKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := artifacts.MarshalCommit(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.commits.PutRaw(resumeCommitRoot+"/"+attested, raw)
 }

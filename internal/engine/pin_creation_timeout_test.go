@@ -372,7 +372,7 @@ func TestRunWorkflow_ACarriedGenerationKeepsThePinCreationDecision(t *testing.T)
 				h.mu.Unlock()
 				return nil
 			}, activity.RegisterOptions{Name: task.ActivityReleasePin})
-			h.env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, err error) {
+			h.onActivityCompleted(func(info *activity.Info, _ converter.EncodedValue, err error) {
 				if info.ActivityType.Name == sessionCompletionActivityName && err == nil {
 					closeOnce.Do(func() { close(firstClosed) })
 				}

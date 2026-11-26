@@ -177,6 +177,7 @@ func composeExecutionKeys(td taskDocument) []struct {
 		{"await", td.Await != nil},
 		{"sleep", td.Sleep != nil},
 		{"cache", td.Cache != nil},
+		{"concurrency", td.Concurrency != nil},
 	}
 }
 
@@ -284,6 +285,7 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 		{"await", task.GetAwait() != nil},
 		{"sleep", task.GetSleep() != nil},
 		{"cache", task.GetCache() != nil},
+		{"concurrency", task.GetConcurrency() != nil},
 		{"input_artifacts", len(task.GetInputArtifacts()) > 0},
 	}
 	for _, c := range checks {

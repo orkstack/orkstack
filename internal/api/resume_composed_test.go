@@ -11,6 +11,7 @@ import (
 	"time"
 
 	historypb "go.temporal.io/api/history/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -80,6 +81,25 @@ func (f *resumeFixture) putValues(t *testing.T, row *orkstackv1.TaskRun) {
 		t.Fatal(err)
 	}
 	row.ValuesRef = &orkstackv1.ArtifactRef{Name: "values.json", Uri: ref.URI, Sha256: ref.SHA256, SizeBytes: ref.SizeBytes}
+}
+
+// recordComposed records, for a run that holds an identity, what each composed
+// row's values are, as the engine records them when its child ends.
+func (f *resumeFixture) recordComposed(t *testing.T) {
+	t.Helper()
+	for _, row := range f.run.GetTaskRuns() {
+		if row.GetChild() == nil || row.GetValuesRef().GetUri() == "" {
+			continue
+		}
+		v := row.GetValuesRef()
+		rec := &orkstackv1.RecordedValues{SchemaVersion: 1, Kind: orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_COMPOSED, Namespace: "default",
+			RunId: "ork-r", TaskId: row.GetTaskId(), ResumeScope: uint64(max(row.GetResultEpoch(), 0)), AdmissionSha256: resumeAdmission,
+			InputBinding: make([]byte, 32), Values: &orkstackv1.ArtifactRef{Uri: v.GetUri(), Sha256: v.GetSha256(), SizeBytes: v.GetSizeBytes()},
+			Artifacts: row.GetArtifacts(), ChildRunId: "ork-child", ChildAdmissionSha256: resumeAdmission, ChildOutputsSha256: resumeAdmission}
+		if _, err := f.recordStore.WriteRecordedValues(context.Background(), rec); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func gone(ref *orkstackv1.ArtifactRef) *orkstackv1.ArtifactRef {
@@ -185,11 +205,12 @@ func composedFixture(t *testing.T, s composedShape, identity bool) (*resumeFixtu
 	t.Helper()
 	dir := t.TempDir()
 	f := newResumeFixture(t, func(f *resumeFixture) {
-		records, err := artifacts.NewRecordStore(context.Background(), artifacts.Config{Backend: "local", LocalDir: filepath.Join(dir, "records")})
+		// One bucket holds the run's objects and its records, as a deployment's does.
+		records, err := artifacts.NewRecordStore(context.Background(), artifacts.Config{Backend: "local", LocalDir: filepath.Join(dir, "objects")})
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.records = records
+		f.records, f.recordStore = records, records
 		if f.store, err = artifacts.NewLocalStore(filepath.Join(dir, "objects")); err != nil {
 			t.Fatal(err)
 		}
@@ -205,11 +226,34 @@ func composedFixture(t *testing.T, s composedShape, identity bool) (*resumeFixtu
 		}
 		f.cluster.histories = map[string][]*historypb.HistoryEvent{"exec-1": failedHistory(t, ran...)}
 		if identity {
-			f.plan.Identity = &engine.IdentityPlan{}
+			f.plan.Identity = &engine.IdentityPlan{AdmissionSHA256: resumeAdmission,
+				RecordBudget: &engine.RecordBudget{MissConfirmMS: 1, ReaskInitialMS: 1, ReaskMaxMS: 1}}
 		}
 		f.putComposed(t)
+		var was map[string]*orkstackv1.ArtifactRef
+		if identity {
+			// What the child ended with is on record; a change that loses an
+			// object of it loses the object, and the record stays.
+			f.recordComposed(t)
+			was = map[string]*orkstackv1.ArtifactRef{}
+			for _, row := range f.run.GetTaskRuns() {
+				if row.GetChild() != nil {
+					was[row.GetTaskId()] = row.GetValuesRef()
+				}
+			}
+		}
 		if s.change != nil {
 			s.change(t, f)
+		}
+		for _, row := range f.run.GetTaskRuns() {
+			ref, ok := was[row.GetTaskId()]
+			if !ok || ref == nil || proto.Equal(ref, row.GetValuesRef()) && len(row.GetArtifacts()) == 0 {
+				continue
+			}
+			if err := f.store.Delete(context.Background(), ref.GetUri()); err != nil {
+				t.Fatal(err)
+			}
+			row.ValuesRef, row.Artifacts = ref, nil
 		}
 	})
 	return f, func() map[string]int64 {
@@ -358,11 +402,14 @@ func TestResumeRun_KeepsAComposedTask(t *testing.T) {
 	if _, err := f.confirm(t, nil); err != nil || len(f.cluster.resets) != 1 {
 		t.Fatalf("confirm = %v, %d resets", err, len(f.cluster.resets))
 	}
-	f, stored := composedFixture(t, shape(), true)
+	// One that holds an identity keeps it as the engine recorded it.
+	f, _ = composedFixture(t, shape(), true)
 	f.resets(true)
-	before := stored()
-	_, err := f.confirm(t, nil)
-	if r := refusalOf(t, err); r.GetReason() != "RELEASE_UNSUPPORTED" || r.GetCause() != "admitted_run" || len(f.cluster.resets) != 0 || !maps.Equal(before, stored()) {
-		t.Fatalf("refusal = %v, %d resets", r, len(f.cluster.resets))
+	p = f.preview(t)
+	if c := p.GetTasks()[0]; c.GetTaskId() != "c" || c.GetCategory() != orkstackv1.ResumeCategory_RESUME_CATEGORY_SETTLED || p.GetKeptCount() != 1 {
+		t.Fatalf("an identity: preview = %v, want c settled", p)
+	}
+	if _, err := f.confirm(t, nil); err != nil || len(f.cluster.resets) != 1 {
+		t.Fatalf("an identity: confirm = %v, %d resets", err, len(f.cluster.resets))
 	}
 }

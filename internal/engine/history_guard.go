@@ -282,6 +282,11 @@ func (s *runState) failReserve(inFlight map[string]workflow.Future, r HistoryRes
 	// interruption-retry gate, so no recorded history meets this term.
 	events += r.PerAwait * int64(len(s.waits))
 	bytes = r.PerInFlightBytes * int64(len(inFlight))
+	// Every task slot held or asked for is given back as the run ends.
+	if slots := int64(s.taskSlotsOut()); slots > 0 {
+		events += s.conc.plan.PerSlotEvents * slots
+		bytes += s.conc.plan.PerSlotBytes * slots
+	}
 	for _, id := range s.order {
 		status := s.taskRuns[id].GetStatus()
 		pending := status == orkstackv1.Status_STATUS_PENDING

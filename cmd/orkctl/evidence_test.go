@@ -642,3 +642,35 @@ func TestRenderVerifyReport_EarlierEndings(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderVerifyReport_AMissingRecordIsAGap: a record the store does not
+// hold while the run says its task succeeded is stated, by path and reason,
+// and named among the reasons; it is a gap, not a failure.
+func TestRenderVerifyReport_AMissingRecordIsAGap(t *testing.T) {
+	member := evidence.Member{Path: "tasks/ship/records/composed.json", Kind: evidence.KindComposed, TaskID: "ship", State: evidence.StateMissing,
+		Reason: evidence.ReasonRecordMissing}
+	out := renderVerifyReport(&evidence.Report{Missing: []evidence.Member{member}, Manifest: &evidence.Manifest{
+		Namespace: "payments", OrkflowName: "build", OrkflowVersion: "1.0.0", Counts: evidence.Counts{Missing: 1},
+		Definition: evidence.Definition{State: evidence.StatePresent}}})
+	for _, want := range []string{"record gaps", "task ship's composed record: NOT ON RECORD (record_missing)", "tasks/ship/records/composed.json",
+		"record_missing: the store holds no record"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "FAILED") {
+		t.Errorf("a gap reads as a failure\n%s", out)
+	}
+	var doc bytes.Buffer
+	if err := writeVerifyJSON(&doc, &evidence.Report{Missing: []evidence.Member{member}, Manifest: &evidence.Manifest{}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"missing"`, `"task_id":"ship"`, `"kind":"composed"`, `"reason":"record_missing"`} {
+		if !strings.Contains(strings.ReplaceAll(doc.String(), " ", ""), strings.ReplaceAll(want, " ", "")) {
+			t.Errorf("--json lacks %s:\n%s", want, doc.String())
+		}
+	}
+	if got := evidenceCountsLine(evidence.Counts{Present: 3, Missing: 1}); got != "3 present, 1 missing" {
+		t.Errorf("export's counts line = %q", got)
+	}
+}

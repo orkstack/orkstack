@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 var confirmAttempt = InstanceAttempt{SourceID: recID, Index: 3, Epoch: 12, Attempt: 2}
@@ -226,4 +228,128 @@ func TestInstanceAttempt_OutlivesACrashLoop(t *testing.T) {
 			t.Errorf("attempt %d is one", n)
 		}
 	}
+}
+
+// TestPurge: what was kept under a source's id is removed, its specs last,
+// a batch at a time, and nothing that is another's: not another source's, not
+// a run's, not the tombstone, not a receipt.
+func TestPurge(t *testing.T) {
+	for name, s := range instanceStores(t) {
+		t.Run(name, func(t *testing.T) { purges(t, s) })
+	}
+}
+
+func purges(t *testing.T, s *EventSourceInstanceStore) {
+	const id, other = "evs-0123456789abcdef", "evs-0123456789abcde0"
+	ctx, digest := t.Context(), strings.Repeat("a", 64)
+	var kept []string
+	put := func(key string, err error) string {
+		t.Helper()
+		if err == nil {
+			err = s.b.create(ctx, key, "x", []byte("x"))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		kept = append(kept, key)
+		return key
+	}
+	of := func(id string) {
+		for attempt := 1; attempt <= 2; attempt++ {
+			a := InstanceAttempt{SourceID: id, Index: 1, Epoch: 1_800_000_000, Attempt: attempt}
+			put(SourceLogKey(a, 1))
+			put(SourceAttemptKey(a))
+			put(confirmKey(a))
+		}
+		put(eventSourceSpecKey(id, digest))
+	}
+	of(id)
+	mine := len(kept)
+	if found, err := s.KeepsSpecs(ctx, id); !found || err != nil {
+		t.Fatalf("a source with a spec: %v, %v", found, err)
+	}
+	kept = nil
+	of(other)
+	put(tombstoneKey(id))
+	put(LogPrefix+"/"+id+"-2/_source/00001/1", nil)
+	put(LogPrefix+"/ork-0/"+id+"/1", nil)
+	put(ReceiptKey(ReceiptKeyParts{Namespace: "team", SourceID: id, Taken: time.Unix(1, 0), Outcome: ReceiptAccepted, Identity: "x"}))
+
+	for n := 0; n < mine; n += 3 {
+		if found, err := s.KeepsSpecs(ctx, id); !found || err != nil {
+			t.Fatalf("after %d of %d its specs are gone: %v, %v", n, mine, found, err)
+		}
+		left, err := s.Purge(ctx, id, 3)
+		if err != nil || left != (n+3 < mine) {
+			t.Fatalf("after %d of %d: left %v, %v", n, mine, left, err)
+		}
+	}
+	if found, err := s.KeepsSpecs(ctx, id); found || err != nil {
+		t.Fatalf("after the purge: %v, %v", found, err)
+	}
+	if left, err := s.Purge(ctx, id, 3); left || err != nil {
+		t.Fatalf("a purge of nothing: %v, %v", left, err)
+	}
+	for _, key := range kept {
+		if _, err := s.b.head(ctx, key); err != nil {
+			t.Errorf("%s was removed: %v", key, err)
+		}
+	}
+	for _, bad := range []string{"", "evs-", "../evs-0123456789abcdef", id + "/x"} {
+		if _, err := s.Purge(ctx, bad, 3); err == nil {
+			t.Errorf("%q was purged", bad)
+		}
+		if _, err := s.KeepsSpecs(ctx, bad); err == nil {
+			t.Errorf("%q was asked for", bad)
+		}
+	}
+	if _, err := s.Purge(ctx, id, 0); err == nil {
+		t.Error("a purge of no object at a time never ends")
+	}
+}
+
+// TestTombstoneOf: a tombstone names its source, and one that cannot be read
+// is a tombstone all the same.
+func TestTombstoneOf(t *testing.T) {
+	const id = "evs-0123456789abcdef"
+	for backend, s := range instanceStores(t) {
+		t.Run(backend, func(t *testing.T) {
+			ctx := t.Context()
+			if ns, name, found, err := s.TombstoneOf(ctx, id); found || err != nil || ns != "" || name != "" {
+				t.Fatalf("%q %q %v %v", ns, name, found, err)
+			}
+			if err := s.Tombstone(ctx, id, strings.Repeat("n", 200), strings.Repeat("o", 200), claimAt); err != nil {
+				t.Fatal(err)
+			}
+			if ns, name, found, err := s.TombstoneOf(ctx, id); !found || err != nil || ns != strings.Repeat("n", 200) || name != strings.Repeat("o", 200) {
+				t.Fatalf("%q %q %v %v", ns, name, found, err)
+			}
+			key, _ := tombstoneKey(id)
+			for _, body := range []string{"", "x", `{"schemaVersion":2}`, `{"schemaVersion":1,"id":"evs-0123456789abcde0","namespace":"a","name":"b"}`,
+				`{"schemaVersion":1,"id":"` + id + `","namespace":"A B","name":"b"}`, `{"schemaVersion":1,"id":"` + id + `","namespace":"a","name":"b","later":1}`} {
+				if err := s.b.put(ctx, key, "x", []byte(body)); err != nil {
+					t.Fatal(err)
+				}
+				if ns, name, found, err := s.TombstoneOf(ctx, id); !found || err != nil || ns != "" || name != "" {
+					t.Errorf("%s: %q %q %v %v", body, ns, name, found, err)
+				}
+			}
+		})
+	}
+}
+
+// FuzzDecodeTombstone: whatever is under the key, what it names is a source's
+// name, or nothing.
+func FuzzDecodeTombstone(f *testing.F) {
+	const id = "evs-0123456789abcdef"
+	for _, seed := range []string{"", "x", `{"schemaVersion":1,"id":"` + id + `","namespace":"team","name":"orders","deletedAt":"2026-11-25T00:00:00Z"}`,
+		`{"schemaVersion":1,"id":"` + id + `","namespace":"Team","name":"orders"}`, `{"schemaVersion":1,"id":"evs-0"}`} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		ns, name := decodeTombstone(raw, id)
+		if (ns == "") != (name == "") || (ns != "" && (!eventsources.ValidName(ns) || !eventsources.ValidName(name))) {
+			t.Fatalf("%q names %q %q", raw, ns, name)
+		}
+	})
 }

@@ -342,6 +342,28 @@ func (b *localBlobs) replace(ctx context.Context, key, _ string, body []byte, ve
 	return nil
 }
 
+func (b *localBlobs) removeVersion(ctx context.Context, key, version string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	current, err := b.root.ReadFile(key)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if localVersion(current) != version {
+		return errBlobChanged
+	}
+	if err := b.root.Remove(key); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (b *localBlobs) remove(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err

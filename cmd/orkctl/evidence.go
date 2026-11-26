@@ -206,7 +206,7 @@ func evidenceCountsLine(c evidence.Counts) string {
 	for _, part := range []struct {
 		n    int
 		word string
-	}{{c.Reclaimed, "reclaimed"}, {c.Unrecorded, "unrecorded"}, {c.Rejected, "rejected"}, {c.Withheld, "withheld"}} {
+	}{{c.Reclaimed, "reclaimed"}, {c.Unrecorded, "unrecorded"}, {c.Rejected, "rejected"}, {c.Withheld, "withheld"}, {c.Missing, "missing"}} {
 		if part.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", part.n, part.word))
 		}
@@ -491,6 +491,16 @@ func renderVerifyReport(r *evidence.Report) string {
 	for _, member := range r.Withheld {
 		row("withheld", fmt.Sprintf("%s (%s)", member.Path, member.Reason), "")
 	}
+	// A missing record is the alarm a bundle can carry: the run says the task
+	// succeeded, and the store holds no record the engine should have made.
+	// The bundle still matches its manifest, so it is a gap, not a failure.
+	for i, member := range r.Missing {
+		label := ""
+		if i == 0 {
+			label = "record gaps"
+		}
+		row(label, fmt.Sprintf("%s: NOT ON RECORD (%s)", missingRecordName(member), member.Reason), member.Path)
+	}
 	// A gap is a notice, not a failure: the bundle is exactly what the
 	// archive holds, and the archive says what it does not hold and why —
 	// lost from object storage, or never published — in each row's sentence.
@@ -536,7 +546,7 @@ func writeFailures(b *strings.Builder, failures []evidence.Failure) {
 func reasonTokens(r *evidence.Report) []string {
 	var tokens []string
 	seen := map[string]bool{}
-	for _, list := range [][]evidence.Member{r.Reclaimed, r.Unrecorded, r.Rejected, r.Withheld} {
+	for _, list := range [][]evidence.Member{r.Reclaimed, r.Unrecorded, r.Rejected, r.Withheld, r.Missing} {
 		for _, member := range list {
 			if member.Reason != "" && !seen[member.Reason] {
 				seen[member.Reason] = true
@@ -616,4 +626,13 @@ func pluralForms(n int, one, many string) string {
 		return fmt.Sprintf("%d %s", n, one)
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// missingRecordName names a missing record by its task and kind: "task ship's
+// composed record", or "the run's outputs record".
+func missingRecordName(m evidence.Member) string {
+	if m.TaskID == "" {
+		return fmt.Sprintf("the run's %s record", m.Kind)
+	}
+	return fmt.Sprintf("task %s's %s record", m.TaskID, m.Kind)
 }

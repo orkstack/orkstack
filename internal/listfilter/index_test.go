@@ -63,7 +63,8 @@ func TestSpec_AnIndexedDeclarationIsHeldToItsRules(t *testing.T) {
 		want  string
 	}{
 		{"notequals", &orkstackv1.FilterableField{Path: "x", Label: "X", Operators: NE, Indexed: true}, "an indexed field takes equals only"},
-		{"flagalone", &orkstackv1.FilterableField{Path: "status", Label: "S", Operators: EQ, Flag: true}, "flag applies to an indexed field only"},
+		{"flagalone", &orkstackv1.FilterableField{Path: "status", Label: "S", Operators: EQ, Flag: true}, "flag and ended_matches apply to an indexed field only"},
+		{"endedalone", &orkstackv1.FilterableField{Path: "status", Label: "S", Operators: EQ, EndedMatches: true}, "flag and ended_matches apply to an indexed field only"},
 		{"requires", &orkstackv1.FilterableField{Path: "x", Label: "X", Operators: EQ, Indexed: true, Requires: "status"}, "an indexed field cannot declare requires, kept_when_unavailable, allowed_values or value_rule"},
 		{"allowed", &orkstackv1.FilterableField{Path: "x", Label: "X", Operators: EQ, Indexed: true, AllowedValues: []string{"A"}}, "an indexed field cannot declare requires, kept_when_unavailable, allowed_values or value_rule"},
 		{"dotted", &orkstackv1.FilterableField{Path: "x.y", Label: "X", Operators: EQ, Indexed: true}, "an indexed path is one name, with no dot"},
@@ -83,12 +84,19 @@ func TestSpec_AnIndexedDeclarationIsHeldToItsRules(t *testing.T) {
 	}
 }
 
-// TestSpec_IndexedFieldsResolveWithoutAResourceField: queued, queued_on and
-// holding name no field of Run (queued is even a message field), yet resolve,
-// because they are declared indexed.
+// TestSpec_IndexedFieldsResolveWithoutAResourceField: queued, queued_on,
+// holding and results_recorded name no field of Run (queued is even a message
+// field), yet resolve, because they are declared indexed; only
+// results_recorded matches an ended row too.
 func TestSpec_IndexedFieldsResolveWithoutAResourceField(t *testing.T) {
 	spec := servedRunsSpec(t)
-	want := map[string]listfilter.Kind{"queued": listfilter.KindBool, "queued_on": listfilter.KindText, "holding": listfilter.KindText}
+	want := map[string]listfilter.Kind{"queued": listfilter.KindBool, "queued_on": listfilter.KindText, "holding": listfilter.KindText,
+		"results_recorded": listfilter.KindBool}
+	for _, f := range spec.Fields {
+		if f.Indexed && f.EndedMatches != (f.Path == "results_recorded") {
+			t.Errorf("%s: ended_matches = %v", f.Path, f.EndedMatches)
+		}
+	}
 	for _, f := range spec.Fields {
 		kind, ok := want[f.Path]
 		if !ok {

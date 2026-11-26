@@ -474,6 +474,7 @@ type confirmWorld struct {
 
 // toldWorkflows is a source's workflow as the door tells it.
 type toldWorkflows struct {
+	started []held.Ref
 	reports []string
 	synced  []string
 	err     error
@@ -482,6 +483,15 @@ type toldWorkflows struct {
 func (w *toldWorkflows) Report(_ context.Context, ref held.Ref, what orkstackv1.InstanceReport, reason string) error {
 	w.reports = append(w.reports, fmt.Sprintf("%d/%d %s %s", ref.Index, ref.Epoch, what, reason))
 	return w.err
+}
+
+func (w *toldWorkflows) Started(_ context.Context, ref held.Ref) error {
+	w.started = append(w.started, ref)
+	return w.err
+}
+
+func (w *toldWorkflows) Start(context.Context, *orkstackv1.EventSource) (engine.SourceStart, error) {
+	return engine.SourceSignalled, w.err
 }
 
 func (w *toldWorkflows) Sync(_ context.Context, id string) error {
@@ -639,8 +649,14 @@ func TestConfirmInstance_FirstAndLater(t *testing.T) {
 	if again, _ := w.record(t); again != r {
 		t.Fatalf("the record changed: %+v, was %+v", again, r)
 	}
-	if len(w.workflows.synced)+len(w.workflows.reports) != 0 || w.stored(t).GetPause() != nil {
+	if len(w.workflows.synced)+len(w.workflows.reports) != 0 || len(w.workflows.started) != 1 || w.workflows.started[0].Attempt != 1 || w.stored(t).GetPause() != nil {
 		t.Fatalf("a confirmation told %+v", w.workflows)
+	}
+	// What the workflow is not told of does not hold the confirmation.
+	w = newConfirmWorld(t)
+	w.workflows.err = errors.New("unreachable")
+	if a := w.confirm(t, true, 0).GetAnswer(); a.GetDisposition() != orkstackv1.Disposition_DISPOSITION_OK || len(w.workflows.started) != 1 {
+		t.Fatalf("%+v, told %+v", a, w.workflows)
 	}
 }
 
@@ -852,7 +868,7 @@ func TestPauseSource(t *testing.T) {
 		},
 		eventsources.ReasonNotHeld: func(w *confirmWorld) {
 			src := w.stored(t)
-			if err := w.store.Delete(ctx, "default", "orders", src.GetId()); err != nil {
+			if err := w.store.Remove(ctx, "default", "orders", src.GetEtag()); err != nil {
 				t.Fatal(err)
 			}
 		},

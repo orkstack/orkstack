@@ -129,7 +129,7 @@ func (s *runState) dispatchHoldProto() orkstackv1.RunDispatchHold {
 // session-creation activity stays pending for the pin's whole life). A run
 // with nothing in flight counts 0.
 func (s *runState) inFlightWork(inFlight map[string]workflow.Future) int {
-	return len(inFlight) + s.livePins()
+	return len(inFlight) + s.livePins() + s.taskSlotsPending()
 }
 
 // pendingActivitiesOver is what the cluster counts, given work, the run's

@@ -210,3 +210,25 @@ func TestArchivedBody_RootRun(t *testing.T) {
 		t.Errorf("an older body reads as %v", older.GetOrigin())
 	}
 }
+
+// TestRunStartSearchAttributes_MarksARunWhoseResultsAreRecorded: a run whose
+// plan carries Identity is stamped "true" under OrkflowResultsRecorded only
+// when its plan pins that the cluster indexes it; a run with no identity plan,
+// and one whose plan says the cluster has no such index, carry no mark.
+func TestRunStartSearchAttributes_MarksARunWhoseResultsAreRecorded(t *testing.T) {
+	wf := &orkstackv1.Orkflow{Name: "leaf", Version: "1"}
+	marked := func(plan RunPlan) (string, bool) {
+		return temporal.NewSearchAttributes(RunStartSearchAttributes(wf, plan, true, true)...).GetKeyword(task.SearchKeyOrkflowResultsRecorded)
+	}
+	if got, ok := marked(RunPlan{Identity: &IdentityPlan{Indexed: true}}); !ok || got != "true" {
+		t.Errorf("indexed identity plan = %q, %v; want \"true\"", got, ok)
+	}
+	for name, plan := range map[string]RunPlan{
+		"no identity plan":      {},
+		"an unindexed identity": {Identity: &IdentityPlan{}},
+	} {
+		if got, ok := marked(plan); ok {
+			t.Errorf("%s: stamped %q, want no mark", name, got)
+		}
+	}
+}

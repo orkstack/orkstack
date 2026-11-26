@@ -60,6 +60,12 @@ func BuildResumeBlock(in ResumeBlockInput) (*orkstackv1.ResumeBlock, error) {
 			}
 			out.EncodedSize = size
 		case DispositionSettle:
+			if answered := in.Input.Evidence.Answered[u.Unit.Task]; answered != nil && (in.Input.Evidence.Recorded || !keptCandidate(row)) {
+				// The answer's row as its record gives it: for a recorded run
+				// always, since its state is no word on it, and an answer the
+				// run never applied otherwise (design §28.1, §28.9).
+				row = answered
+			}
 			out.Row, out.Epoch = cutRecordedRow(t.kind(), row), uint64(row.GetResultEpoch())
 			if why := recordedRowFault(t.kind(), out.Row); why != "" {
 				// An answer or a child's end the base's row does not hold: the

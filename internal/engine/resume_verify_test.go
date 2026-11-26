@@ -245,35 +245,3 @@ func TestResumeVerifier_MeasuresSettledValues(t *testing.T) {
 		t.Fatalf("lost = %v (%s), want its report gone", got.Evidence.Kept[nodeUnit("lost")], got.Evidence.Why[nodeUnit("lost")])
 	}
 }
-
-// TestResumeVerifier_AnAdmittedRunIsRefusedUntilItsRecordsAreRead: an admitted
-// run's results are what the engine recorded, and nothing an Orker committed.
-// While ResumeRun's verification finds none of them, it would run every kept
-// task again, so such a run must be refused; the change that reads them
-// deletes the refusal.
-func TestResumeVerifier_AnAdmittedRunIsRefusedUntilItsRecordsAreRead(t *testing.T) {
-	f, a := newVerifyFixture(t), nodeUnit("a")
-	uri := f.commit(t, a, func(c *orkstackv1.ActivityCommit) { c.Recorded = &orkstackv1.CommitRecording{} })
-	recorded, err := artifacts.AttestedCommitURI(uri)
-	if err != nil {
-		t.Fatal(err)
-	}
-	made, err := f.commits.Get(context.Background(), uri)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := artifacts.MarshalCommit(made.Commit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.commits = artifacts.NewMemoryCommitStore()
-	f.commits.PutRaw(recorded, raw)
-	read := f.verify(t).Evidence.Kept[a] == KeptValid
-	part, _, refused := ResumeNeedsUnbuilt(f.in.Definition, RunPlan{Identity: &IdentityPlan{}})
-	if refuses := refused && part == ResumePartAdmittedRun; !read && !refuses {
-		t.Error("an admitted run is resumed, and the result the engine recorded for it is not found")
-	}
-	if read {
-		t.Error("the verification reads records now: delete ResumePartAdmittedRun and this test")
-	}
-}

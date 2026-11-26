@@ -635,6 +635,10 @@ then the variable it becomes.
 | `event_sources.max_per_namespace` | `ORK_EVENT_SOURCE_MAX_PER_NAMESPACE` | `20` | `ork` | the most sources one namespace holds |
 | `event_sources.max_instances` | `ORK_EVENT_SOURCE_MAX_INSTANCES` | `4` | `ork` | the most a source's `instances` may be |
 | `event_sources.namespace_instances` | `ORK_EVENT_SOURCE_NAMESPACE_INSTANCES` | `20` | `ork` | the most instances one namespace's sources may sum to |
+| `event_sources.reconcile` | `ORK_EVENT_SOURCE_RECONCILE` | `1m` | `ork` | how often an engine begins a pass over the sources, at ten sources a second; 15s to 10m. A write or a report whose signal was lost is made good within one pass |
+| `event_sources.readmit` | `ORK_EVENT_SOURCE_READMIT` | `5m` | `ork` | how often a running instance is judged again against current policy; 1m to 30m. A source is paused for a revoked grant, audience or writer only after a check this long after it was first seen |
+| `event_sources.instance_max_age` | `ORK_EVENT_SOURCE_INSTANCE_MAX_AGE` | `168h` | `ork` | an instance is replaced at this age, beside itself, where a source host has room; one that nothing could replace runs on, and is stopped at four times this age; 2h to 720h. A source keeps the value it was first started with until it is restarted |
+| `event_sources.restart_max_interval` | `ORK_EVENT_SOURCE_RESTART_MAX_INTERVAL` | `5m` | `ork` | the longest wait between two starts of a failing instance; 1s to 1h. Kept as the age is |
 | `webhooks.allowed_networks` | `ORK_WEBHOOK_ALLOWED_NETWORKS` | *(empty)* | `ork` | comma-separated CIDRs (`10.0.0.0/8,fd00::/8`) of non-public networks a webhook may be delivered to. Empty admits public addresses only: a loopback, link-local (169.254.169.254 among them), private, shared, multicast or reserved address is refused with `WEBHOOK_DESTINATION_BLOCKED`, at registration for a URL whose host is one and at every connection a delivery makes, so a redirect or a name rebound to one is refused too. List the network of an in-cluster or local receiver (`127.0.0.0/8` for a stub on the engine's host). An entry with host bits set (`10.0.0.1/8`), or no length, is refused at boot. An entry that admits a whole address family (`0.0.0.0/0`, `::/0`, `::ffff:0:0/96`) is accepted and warned of at boot, naming the entry, because it turns the check off for that family. Applies to every webhook, whoever registered it |
 | `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes of UTF-8, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
@@ -708,6 +712,7 @@ then the variable it becomes.
 | `engine.continuation.restore_timeout` | `ORK_CONTINUATION_RESTORE_TIMEOUT` | `1h` | `ork` | how long a run that carried on waits for object storage to return its saved state before it fails `RUN_STATE_UNAVAILABLE`, explicitly. Each read is retried with a backoff doubling from 1 s to at most 1 minute, and a retry that would start past the timeout is not made, so the run stops at its last read inside the window — up to one backoff early (31 s into a 1m timeout, within the last minute of the default hour). 1m to 8h, and its worst-case history — about `128 + 3 per 8 s` events at the default bytes (1,478 at 1h, 10,928 at 8h)— must fit in a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled, naming this key, `engine.continuation.bytes` and `engine.history.max_events`. Each await still open when a run carries on adds one more event to that restore (its deadline timer, recreated), which the run's history guard counts like any other |
 | `engine.resume.confirm_timeout` | `ORK_RESUME_CONFIRM_TIMEOUT` | `30s` | `ork` | (No build resumes runs yet, so `engine.resume.*` has no effect.) how long a confirmed resume waits for its run to carry on before it answers `RESUME_UNCONFIRMED` (`not_carried_on`). It also bounds how late the cluster may still apply the resume: this plus 30 s, a deadline the cluster itself enforces. A resume whose answer was lost is settled 60 s after that deadline, so keep the engine replicas' clocks within 30 s of each other, and let nothing between an engine and the cluster drop a request's deadline ("A proxy between the engines and the cluster", below). 1s to 10m, refused at boot otherwise. Read at each request |
 | `engine.resume.visibility_lag_floor` | `ORK_RESUME_VISIBILITY_LAG_FLOOR` | `15s` | `ork` | how long after the last ending below a run the cluster's index of runs is trusted to show every run still open there; until then a resume of a run that started child runs is refused `STILL_STOPPING` (`children_unconfirmed`). Raise it where the cluster's index is slower. 1s to 10m, refused at boot otherwise. Read at each request |
+| `engine.resume.child_wait_hint` | `ORK_RESUME_CHILD_WAIT_HINT` | `24h` | `ork` | how long a run below a run being resumed may have been open before the `STILL_STOPPING` (`child_runs_open`, `child_running`) refusal leads with ending it rather than waiting for it. 1m to 30 days, refused at boot otherwise. Read at each request |
 | `engine.resume.max_seq_gap` | `ORK_RESUME_MAX_SEQ_GAP` | `4096` | `ork` | how far a run's stored events may go on above its ending before a resume is refused `STATE_UNREADABLE` (`events_above_terminal`) and asks to accept the gap (`--accept-sequence-gap`). 1 to 1,000,000, refused at boot otherwise. Read at each request |
 | `engine.resume.confirm_per_run` | `ORK_RESUME_CONFIRM_PER_RUN` | `6` | `ork` | how many confirms of one run's resume each engine replica serves a minute; one past it is refused `RESUME_CHECK_UNAVAILABLE` (`throttled`). Previews are not counted. 1 to 600, refused at boot otherwise. Read at each request |
 | `engine.definition_by_reference` | `ORK_DEFINITION_BY_REFERENCE` | `true` | `ork` | a top-level run whose planned definition is over the 256 KiB a run's start may carry travels by reference instead: the start carries a stub naming it, and the run copies the definition into its own history in bounded chunks, sharing the copy bound below (`engine.continuation.bytes`), of which it may take at most a quarter, compressed (2 MiB at the default); a larger one is refused at submit and at create, "split it into composed Orkflows" (`docs/DSL.md`, "How many tasks an Orkflow may declare"). Needs `engine.continuation.enabled`: an explicit `true` without it is refused at boot, naming both keys, and when neither the configuration file nor the environment sets this key it is on only where the built-in default is on and continuation is (the boot logs the effective value). A submit that needs it is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs an older release (§5, "Engine capabilities and the fleet check"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below that release (§4, R3) |
@@ -3798,6 +3803,7 @@ boot.
 | `OrkflowOriginId` | Keyword | filtering runs by `origin.id` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
 | `OrkflowOriginRootRunId` | Keyword | filtering runs by `origin.root_run_id` (everything below a root) | a list filtered by root walks every run instead, and fails rather than answer short when it cannot finish | `run_root_index` |
 | `OrkflowRunPaused` | Keyword | showing a paused run as `PAUSED` in lists, the `PAUSED` status filter, and the paused-runs count (`ork.runs.paused`) | a paused run lists as `RUNNING`, a list filtered on `PAUSED` is refused, and paused runs are not counted; once runs have written it, removing it stops them (below) | `run_paused_index` |
+| `OrkflowResultsRecorded` | Keyword | `true` on a run whose results are recorded by the engine (one that holds a task identity, or belongs to a run tree in which one does), stamped at its start: the `results_recorded` run filter and `orkctl run records --not-applied` | the engine warns at boot, naming it, and starts; its runs carry no mark, and the filter and the command are refused by name | `results_recorded_index` |
 | `OrkflowGatePhase` | Keyword | a concurrency gate's phase, `active` or `lingering`, so the cluster counts a namespace's active limit keys | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
 | `OrkflowRunQueued` | Keyword | `true` on a run waiting for a concurrency slot | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
 | `OrkflowConcurrencyHeld` | KeywordList | the gate ids a run holds, by which a rebuilding gate lists the open runs | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
@@ -3831,6 +3837,7 @@ temporal operator search-attribute create --namespace ork-main --name OrkflowOri
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginRootRunId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowRunPaused --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowResultsRecorded --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowGatePhase --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowRunQueued --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyHeld --type KeywordList
@@ -3853,6 +3860,7 @@ tcld namespace search-attributes add --namespace ork-main.acct1 \
   --search-attribute OrkflowOriginId=Keyword \
   --search-attribute OrkflowOriginRootRunId=Keyword \
   --search-attribute OrkflowRunPaused=Keyword \
+  --search-attribute OrkflowResultsRecorded=Keyword \
   --search-attribute OrkflowGatePhase=Keyword \
   --search-attribute OrkflowRunQueued=Keyword \
   --search-attribute OrkflowConcurrencyHeld=KeywordList \
@@ -3872,8 +3880,8 @@ counts your own attributes in the same namespace against them:
 | Temporal Cloud | 40 | 5 |
 | Elasticsearch | no Temporal limit | no Temporal limit |
 
-OrkStack uses seven Keyword and two KeywordList attributes, so a SQL-backed
-namespace has three Keyword and one KeywordList left for your own. On Elasticsearch an attribute is shared by every
+OrkStack uses eight Keyword and two KeywordList attributes, so a SQL-backed
+namespace has two Keyword and one KeywordList left for your own. On Elasticsearch an attribute is shared by every
 namespace of the cluster. Temporal Cloud does not support removing a custom
 attribute (its docs send you to Temporal Support), so one added there
 stays.
@@ -3915,6 +3923,7 @@ tcld namespace create --namespace ork-main --region <region> --retention-days 4 
   --search-attribute OrkflowOriginId=Keyword \
   --search-attribute OrkflowOriginRootRunId=Keyword \
   --search-attribute OrkflowRunPaused=Keyword \
+  --search-attribute OrkflowResultsRecorded=Keyword \
   --search-attribute OrkflowGatePhase=Keyword \
   --search-attribute OrkflowRunQueued=Keyword \
   --search-attribute OrkflowConcurrencyHeld=KeywordList \
@@ -5274,6 +5283,88 @@ while such a container exists; clearing it touches no other cause, and the
 next boot sets it again if its reap cannot remove one. A stuck service keeps
 its pool live for no submission: like an operator's cordon, it is a host to
 look at.
+
+### Event sources across releases
+
+What keeps a source's instances runs, and replays, only on the release that
+started it, as a run's does. A source therefore moves to another release by
+ending there and starting here with the record it kept, and event sources
+need a versioned deployment (`ORK_BUILD_ID`).
+
+When a source's release is no longer one new work is sent to, an engine of
+the current release hands the source over: its instances are stopped, and
+started again on the current release a second later, on the revision that
+last worked. So **a promotion and a rollback restart each source's instances
+once**: an at-least-once source's messages wait at the broker meanwhile, and
+an at-most-once source loses what is published in that gap. A ramp moves no
+source, and while one stands nothing is handed over.
+
+A source is handed over only into room the current release has. For each
+pool an engine counts the instance slots of its release's live, fit and
+uncordoned source hosts, less what they are spoken for: every instance a
+source of the current release wants, and every replacement it has scheduled;
+what a closed source will ask for; what of another release already came here
+or has nowhere else to go; and what a source with no document asks for. It
+spends the rest on the waiting sources in the order of their ids, ten at a
+time; the first that does not fit ends its pool's turn. The others go on
+running where they are, and their release is not drained. Provide a spare
+slot a pool: a pool filled to its last slot has none to roll a change into.
+
+A source stays where it is when the current release cannot carry it: its
+record, its document or its service spec was written by a newer release, or
+no source host of its pool on the current release hosts the contract and
+profile its image implements. Promote the newer release again, or change the
+source from the current one.
+
+#### A source its release cannot run
+
+A source is **blocked** when its workflow's task has been tried three times
+without completing, or no engine of its release polls. Nothing can tell such a
+workflow anything, and no other release can take it over; its instances go on
+for as long as they live. OrkStack ends no workflow. What to do is an
+operator's, with the cluster's own tooling, on the workflow whose id is the
+source's id (`evs-…`):
+
+```bash
+temporal workflow terminate --namespace ork-main --workflow-id evs-0123456789abcdef --reason "its release cannot run it"
+```
+
+| The source is blocked on | Do |
+|---|---|
+| a release the deployment routes to | roll it back or turn its ramp down, or deploy one that fixes it. **Never end the execution here**: it would start on the same release, and instances that still consume would stop |
+| a release no longer routed to, that the current release cannot carry | nothing yet: it keeps consuming. Promote a release that can run it and read it |
+| a release no longer routed to, that the current release can carry, with no ramp | terminate that one execution. An engine starts the source again within one pass, on the current release, from the record it kept |
+| the same, and its pool has no room | add a slot first, or accept that it waits with no instance |
+| any release, and the source is being deleted | terminate that one execution, where the current release can read its record: the pass starts it, and it removes what the source kept and ends |
+
+End blocked sources one at a time, in the order of their ids, while what has
+been ended still fits the pool's room, and never a release's source workflows
+as a batch: the ones that are not blocked wait their turn, and a batch ends
+them with no regard to room. A cancel or a reset does not help: a cancel is a
+task the workflow must run, and a reset replays the same history.
+
+#### A source with no document
+
+A document removed from the store by something other than OrkStack is not
+acted on: the source's workflow stops nothing and does not end, its load says
+`missing`, and an engine logs `EVENT_SOURCE_DOCUMENT_MISSING` when a load
+first finds it so and once a day after. Its instances are answered a wait, so
+it consumes nothing, and it holds its slots. Restore the bucket to a point in
+time, with engines and Orkers stopped, to have it back as it was. Otherwise,
+after checking that `orkctl event-source get` of the name says not found or
+shows another id, and that the engines read the right store, terminate that
+one execution. Never write a document into the store by hand.
+
+#### Hand-overs are withheld
+
+An engine that cannot tell what a pool's slots are spoken for hands nothing
+over in that walk, and logs at error with the cause and the ids:
+
+| Cause | Do |
+|---|---|
+| `index` | the cluster's own list of what runs cannot be read. Hand-overs resume by themselves once it answers |
+| `describe` | the cluster does not answer for the source whose id is logged, or its document or tombstone cannot be read. If it goes on and the source has no document, end it as above |
+| `count` | more sources have no document than `event_sources.max_sources`. End them, as above; it does not clear by itself |
 
 ### A proxy between the engines and the cluster
 
@@ -7084,6 +7175,29 @@ found) or `refused` (an engine's answer ended the attempt), and none for one
 stopped while it waited; and `ork.result.upstream_unrecorded`
 counts the attempts that failed `UPSTREAM_RESULT_NOT_RECORDED`.
 
+A run whose results the engine records counts what only its own workflow code
+decides, through the Temporal SDK's handler: so these leave on the default
+sink, never while a history replays, and carry no namespace, run or task (the
+run's own events and logs name them). `ork.run.record_reads_unanswered` counts
+each read of a resolution's record the store did not answer, by `kind`
+(`resolution`) and `reason` (`timeout`, `unavailable`, `denied`, `busy`,
+`unsupported` or `internal`). `ork.run.resolutions_coalesced` counts each
+telling of an await a run dropped unread, by `why`: `duplicate`, `confirming`,
+`nones`, `history`, `ending`, or `stale`, one dropped while the run's reads
+went unanswered. `ork.run.deadline_rereads` counts an await's deadline read
+again by `outcome`, and `ork.run.resolutions_unrecorded` each telling whose
+record was not there, which nothing through OrkStack produces: alert on any.
+The record stays in each case, and the run takes it when it is told again or
+at its deadline. After an outage, when either of the first two has risen, or
+`stale` at all, find and tell what was not taken:
+
+```bash
+orkctl run records -n NS --not-applied --redeliver
+```
+
+and run it again a minute later without `--redeliver` to see what the runs
+took ([TASK_IDENTITY.md](./TASK_IDENTITY.md#after-an-outage)).
+
 #### Go runtime metrics
 
 The Go runtime's metrics follow OpenTelemetry's semantic conventions, so a
@@ -7258,8 +7372,9 @@ refused it.
 (`started`, `canceled`, `timed_out`, `superseded`, `full`, `unavailable`,
 `unsupported`, `fenced`), and `ork.concurrency.queue.wait` how long it took,
 in seconds, under the same labels. Both are recorded once, on the first
-publication of the run's event that ended the wait: the event carries it as
-`Event.wait_end` (docs/API.md).
+publication of the event that ended the wait: the run's own, or, for a task's
+own limit (`ork.concurrency.level` `task`), the task's `TASK_SCHEDULED` or
+`TASK_FAILED`. The event carries it as `Event.wait_end` (docs/API.md).
 
 What a key's gate does is counted too, by the engine replica whose worker did
 it:

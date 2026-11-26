@@ -183,6 +183,17 @@ const SearchAttrOrkflowRunPaused = "OrkflowRunPaused"
 // SearchKeyOrkflowRunPaused is the typed key of SearchAttrOrkflowRunPaused.
 var SearchKeyOrkflowRunPaused = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowRunPaused)
 
+// SearchAttrOrkflowResultsRecorded is "true" on a run whose results the
+// engine records (its plan carries Identity), stamped at its start and absent
+// otherwise, so the runs a store outage may have left with a record not taken
+// are an index read (`orkctl run records --not-applied`). Only a run whose
+// plan says the cluster indexes it (engine.IdentityPlan.Indexed) carries it.
+const SearchAttrOrkflowResultsRecorded = "OrkflowResultsRecorded"
+
+// SearchKeyOrkflowResultsRecorded is the typed key of
+// SearchAttrOrkflowResultsRecorded.
+var SearchKeyOrkflowResultsRecorded = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowResultsRecorded)
+
 // SearchAttrOrkflowOriginRootRunId indexes the root of a run's composed chain,
 // so "everything below this root" is a predicate the cluster applies, on the
 // terms SearchAttrOrkflowNamespace states.
@@ -284,6 +295,33 @@ func ensureRunPausedSearchAttribute(
 ) (bool, error) {
 	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
 		SearchAttrOrkflowRunPaused: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	})
+}
+
+// EnsureRunResultsRecordedSearchAttribute registers
+// SearchAttrOrkflowResultsRecorded and reports whether it is usable, as its
+// own call on the terms EnsureRunRootSearchAttribute states. Usable is what
+// submit pins as engine.IdentityPlan.Indexed; unusable is not fatal: the
+// engine boots, its runs carry no mark, and a list by results_recorded is
+// refused by name.
+func EnsureRunResultsRecordedSearchAttribute(
+	ctx context.Context,
+	temporalClient client.Client,
+	namespace string,
+) (bool, error) {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
+	return ensureRunResultsRecordedSearchAttribute(ctx, temporalClient.OperatorService(), namespace)
+}
+
+func ensureRunResultsRecordedSearchAttribute(
+	ctx context.Context,
+	svc searchAttributeRegistrar,
+	namespace string,
+) (bool, error) {
+	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowResultsRecorded: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
 	})
 }
 

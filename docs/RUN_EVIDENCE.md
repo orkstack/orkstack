@@ -40,6 +40,10 @@ tasks/{task-id}/attempts/{n}.json          the TaskAttempt record, the stored by
 tasks/{task-id}/attempts/{n}/stdout.log    that attempt's uploaded streams
 tasks/{task-id}/attempts/{n}/stderr.log
 tasks/_inputs/artifacts/{member-name}      each artifact a child run received (after every task)
+tasks/{task-id}/records/[r{scope}/]resolution.json         a resolution the engine recorded, the stored bytes (see "Records")
+tasks/{task-id}/records/[r{scope}/]resolution-detail.json  that resolution's detail: who gave it, by which door, and why
+tasks/{task-id}/records/[r{scope}/]composed.json           a composed task's values the engine recorded
+records/outputs.json                       a child run's outputs record (last)
 ```
 
 Members appear in exactly this order: the run's members, then tasks in the
@@ -165,7 +169,34 @@ before 0.4.0 exported (versions 1 and 2). A change an older reader could misread
 bumps the version.
 
 Version 3 may carry `event_gaps`, the `withheld` state, `endings`,
-`orkflow_namespace` and an artifact's `source_*` keys.
+`orkflow_namespace`, an artifact's `source_*` keys, and the record members
+below with their `missing` state, `record_state`, `resume_scope` and the
+`missing` count.
+
+### Records
+
+A run whose results the engine records (`docs/TASK_IDENTITY.md`) has its
+records as members of their own kinds, after every task's and `_inputs`'
+members: `resolution` and `resolution-detail`, `composed` and `outputs`. A
+bundle holds one for every record found under the run's keys, whatever the
+run's state says of its task, so an approval recorded in time and never
+applied, the one to read when asking why a run timed out, is there. A
+present record member carries `record_state`, as `orkctl run records` says it:
+`on_record` (the run applied it), `not_applied` (recorded in time, not taken)
+or `not_taken` (too late, or under a resume a later one replaced), and its
+`resume_scope` when a resume made it. A resolution's detail lies beside it.
+A record the run's state says should be there, that the store said twice is
+not, while the run was not retired, is `missing`: the gap, which `verify`
+states and never passes as present. One that went with its retired run is
+`reclaimed`. A record names the pool and Orker that made it and where its
+values lie, so a caller who holds neither `run.artifacts.read` on the run's
+Orkflow nor `orker.read` is given it `withheld`, with no bytes, as
+`orkctl run records` hides those fields from them. A record that could not be
+read, or is in a format this engine does not read, or that the store listed
+and then said is not there, has no state: the export fails `Unavailable`. A
+run of container tasks alone whose results name no record is exported with no
+read for records. A bundle of a run
+with none of them holds none. Commits stay their tasks' members.
 
 ### A run whose stream has a gap
 
@@ -230,7 +261,8 @@ neither is a resume that never began, and no ending. One that does not decode is
 | `reclaimed` | the store answered NotFound for an object the run recorded: the cleanup worker (commits, attempt-linked logs), a bucket lifecycle rule or `DeleteUnreferencedObjects` (artifact objects), or `DeleteOrkflow` (the definition) | the **recorded** digest, preserved; empty for `source` and `ending` | no |
 | `unrecorded` | an attempt number between 1 and the highest known attempt for which the attempt store holds no record — the Orker died before filing one, or it was reclaimed | empty | no |
 | `rejected` | an object exists at the coordinates but is not what it should be: the definition, when the stored document does not hash to the run's definition digest, or an earlier ending's body that does not decode | empty; `definition.stored_definition_digest` carries the document's | no |
-| `withheld` | the exporter may not read the object: today only the definition of a shared Orkflow's child run, when the caller lacks `orkflow.read` on it in its owner's namespace. While the access document cannot be read and configuration's bindings do not grant it, the export fails `Unavailable` instead | empty | no |
+| `withheld` | the exporter may not read the object: the definition of a shared Orkflow's child run, when the caller lacks `orkflow.read` on it in its owner's namespace, or a record ("Records"), when the caller holds neither `run.artifacts.read` on the run's Orkflow nor `orker.read`. While the access document cannot be read and configuration's bindings do not grant it, the export fails `Unavailable` instead | empty | no |
+| `missing` | a record the engine should have made of a run whose results it records: the run's state says its task succeeded, the run was not retired, and the store said twice it is not there ("Records") | empty | no |
 
 Absence is a member, not a gap: nothing the run recorded is omitted silently.
 A store that cannot answer is not absence: the export fails `Unavailable`
@@ -258,6 +290,9 @@ are two members.
 | `ending_missing` | the archive body of this earlier ending was removed from the store |
 | `ending_damaged` | an object is stored for this earlier ending, but it does not decode as an archive body of this run |
 | `artifact_reclaimed` | the artifact GC deleted the object after its run was retired; its recorded digest is preserved |
+| `record_missing` | the store holds no record the engine should have made: the run's state says its task succeeded, and the run was not retired |
+| `record_reclaimed` | the run was retired, and its records went with its commits at cleanup |
+| `record_withheld` | the exporter may read neither the run's artifacts nor the Orkers, which a record names |
 
 A client prints the token and its sentence; an unknown token is printed as
 itself.
@@ -331,8 +366,8 @@ string. Its rules:
    entry is `not a regular file`.
 7. A `schema_version` other than 3 is refused ("Versions", above).
 8. The manifest must agree with itself: a member whose `state` is not one of
-   `present`, `reclaimed`, `unrecorded`, `rejected` or `withheld` is `unknown
-   state`, and
+   `present`, `reclaimed`, `unrecorded`, `rejected`, `withheld` or `missing` is
+   `unknown state`, and
    a `path` listed a second time is `listed twice in manifest`. The engine
    never writes either; the rule exists so that every listed member is
    accounted for exactly once, as verified, a finding, or a failure.
@@ -343,6 +378,10 @@ string. Its rules:
    skipped right before a scope `endings` names, where `RUN_RESUMED`, the run's
    end or the first number of a `gap` line stands, and the stream reaches that ending's own scope
    (`event sequence broken`, with the number wanted and the one found). A body that is no archive body is `not an archive body`.
+10. A present `resolution` member's detail must be the `resolution-detail`
+    member beside it, present, whose digest is the one the resolution's own
+    bytes name (`detailSha256`); one absent or another is `detail is not the
+    one its record names`, named by the detail's path.
 
 Reclaimed, unrecorded, rejected and withheld members are findings, not
 failures: the command exits 0 and lists each under its own state with its
@@ -355,6 +394,15 @@ bundle, printed as a notice:
 
 A gap the run never published reads `events 1–1 of this run were never
 published (the run's history holds no event under these numbers)`.
+
+A `missing` record is a gap of its own, as an event gap is: named by its
+task and kind, with its reason and path, and the command still exits 0, since
+the bundle is what the store holds. `--json` carries each under `missing`,
+with its `task_id` and `kind`:
+
+```text
+  record gaps     task ship's composed record: NOT ON RECORD (record_missing) tasks/ship/records/composed.json
+```
 
 Any failure exits 1 and is named, one line per member:
 

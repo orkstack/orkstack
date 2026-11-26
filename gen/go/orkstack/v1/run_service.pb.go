@@ -52,7 +52,9 @@ const (
 	ResumeCategory_RESUME_CATEGORY_WAITS_AGAIN ResumeCategory = 11
 	// A sleep that already started: it wakes when it would have.
 	ResumeCategory_RESUME_CATEGORY_SLEEP_KEPT ResumeCategory = 12
-	// Finished in an earlier part of the run, before it carried on.
+	// Kept, not run again: it finished in an earlier part of the run, before
+	// it carried on. Its result is not read back, so kept_count does not count
+	// it.
 	ResumeCategory_RESUME_CATEGORY_EARLIER ResumeCategory = 13
 	// Answered and on record: the answer given is used.
 	ResumeCategory_RESUME_CATEGORY_RESOLVED_ON_RECORD ResumeCategory = 14
@@ -1180,7 +1182,12 @@ type ResumeRunResponse struct {
 	// plan_digest names the plan: what reruns, what is kept and how.
 	PlanDigest string `protobuf:"bytes,4,opt,name=plan_digest,json=planDigest,proto3" json:"plan_digest,omitempty"`
 	// seq_base is RUN_RESUMED's sequence.
-	SeqBase   int64          `protobuf:"varint,5,opt,name=seq_base,json=seqBase,proto3" json:"seq_base,omitempty"`
+	SeqBase int64 `protobuf:"varint,5,opt,name=seq_base,json=seqBase,proto3" json:"seq_base,omitempty"`
+	// kept_count is the units listed KEPT or SETTLED: the results the resume
+	// reads back. It is not every unit that does not run again: one kept from an
+	// earlier part of the run (RESUME_CATEGORY_EARLIER), skipped, waiting, on
+	// record or a sleep that woke is counted only in counts. A unit runs again
+	// only when it is listed under a RESUME_CATEGORY_RERUN_* category.
 	KeptCount int32          `protobuf:"varint,6,opt,name=kept_count,json=keptCount,proto3" json:"kept_count,omitempty"`
 	Tasks     []*ResumeTask  `protobuf:"bytes,7,rep,name=tasks,proto3" json:"tasks,omitempty"`
 	Counts    []*ResumeCount `protobuf:"bytes,8,rep,name=counts,proto3" json:"counts,omitempty"`
@@ -1198,8 +1205,12 @@ type ResumeRunResponse struct {
 	TerminalSequence int64 `protobuf:"varint,16,opt,name=terminal_sequence,json=terminalSequence,proto3" json:"terminal_sequence,omitempty"`
 	// highest_sequence is the highest event sequence stored for the run.
 	HighestSequence int64 `protobuf:"varint,17,opt,name=highest_sequence,json=highestSequence,proto3" json:"highest_sequence,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// rerun_count is the units the resume runs again: those listed under a
+	// RESUME_CATEGORY_RERUN_* category. Every other unit of tasks, one kept
+	// from an earlier part of the run included, does not run again.
+	RerunCount    int32 `protobuf:"varint,18,opt,name=rerun_count,json=rerunCount,proto3" json:"rerun_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResumeRunResponse) Reset() {
@@ -1347,6 +1358,13 @@ func (x *ResumeRunResponse) GetTerminalSequence() int64 {
 func (x *ResumeRunResponse) GetHighestSequence() int64 {
 	if x != nil {
 		return x.HighestSequence
+	}
+	return 0
+}
+
+func (x *ResumeRunResponse) GetRerunCount() int32 {
+	if x != nil {
+		return x.RerunCount
 	}
 	return 0
 }
@@ -2842,7 +2860,10 @@ func (x *GetRunResponse) GetRun() *Run {
 // limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
 // waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
 // a run still going matches them, and a deployment that cannot index
-// concurrency limits refuses them.
+// concurrency limits refuses them. results_recorded=true keeps the runs whose
+// results are recorded by the engine, going or ended, as long as the cluster
+// still holds them: a run read from the archive is not listed by it, and a
+// deployment whose cluster cannot index it refuses it by name.
 type ListRunsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// page_size caps the runs returned; 0 means the default (200); above the
@@ -6791,7 +6812,7 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x13accept_sequence_gap\x18\t \x01(\bR\x11acceptSequenceGap\x120\n" +
 	"\x14accepted_highest_seq\x18\n" +
 	" \x01(\x03R\x12acceptedHighestSeq\x124\n" +
-	"\x16accept_unverified_stop\x18\v \x01(\bR\x14acceptUnverifiedStop\"\xe6\x05\n" +
+	"\x16accept_unverified_stop\x18\v \x01(\bR\x14acceptUnverifiedStop\"\x87\x06\n" +
 	"\x11ResumeRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12.\n" +
 	"\x06resume\x18\x02 \x01(\v2\x16.orkstack.v1.RunResumeR\x06resume\x12'\n" +
@@ -6812,7 +6833,9 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\fresumes_used\x18\x0e \x01(\x05R\vresumesUsed\x126\n" +
 	"\bwarnings\x18\x0f \x03(\v2\x1a.orkstack.v1.ResumeWarningR\bwarnings\x12+\n" +
 	"\x11terminal_sequence\x18\x10 \x01(\x03R\x10terminalSequence\x12)\n" +
-	"\x10highest_sequence\x18\x11 \x01(\x03R\x0fhighestSequence\"\xa2\x03\n" +
+	"\x10highest_sequence\x18\x11 \x01(\x03R\x0fhighestSequence\x12\x1f\n" +
+	"\vrerun_count\x18\x12 \x01(\x05R\n" +
+	"rerunCount\"\xa2\x03\n" +
 	"\n" +
 	"ResumeTask\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x17\n" +
@@ -6941,14 +6964,14 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"4\n" +
 	"\x0eGetRunResponse\x12\"\n" +
-	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\xc3\x05\n" +
+	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\x80\x06\n" +
 	"\x0fListRunsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x04 \x01(\tR\tpageToken\x12\x1c\n" +
 	"\tnamespace\x18\x05 \x01(\tR\tnamespace\x122\n" +
 	"\afilters\x18\n" +
-	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xc2\x03\xa2\xbb\x18\xbd\x03\n" +
+	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xff\x03\xa2\xbb\x18\xfa\x03\n" +
 	"\x0forkstack.v1.Run\x12 \n" +
 	"\forkflow_name\x12\aOrkflow\x1a\x05\x01\x02\x03\x04\x058\x01\x12U\n" +
 	"\x06status\x12\x06Status\x1a\x03\x01\x02\x03\"\aPENDING\"\aRUNNING\"\x06PAUSED\"\tSUCCEEDED\"\x06FAILED\"\bCANCELED\"\aSKIPPED\x12\x19\n" +
@@ -6961,7 +6984,8 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x12origin.root_run_id\x12\bRoot run\x1a\x01\x01\x12.\n" +
 	"\x06queued\x12\x1dQueued for a concurrency slot\x1a\x01\x01@\x01H\x01\x12 \n" +
 	"\tqueued_on\x12\x0eQueued for key\x1a\x01\x01@\x01\x12\x1b\n" +
-	"\aholding\x12\vHolding key\x1a\x01\x01@\x01J\x04\b\x01\x10\x02J\x04\b\x02\x10\x03J\x04\b\x06\x10\n" +
+	"\aholding\x12\vHolding key\x1a\x01\x01@\x01\x12;\n" +
+	"\x10results_recorded\x12\x1eResults recorded by the engine\x1a\x01\x01@\x01H\x01P\x01J\x04\b\x01\x10\x02J\x04\b\x02\x10\x03J\x04\b\x06\x10\n" +
 	"R\forkflow_nameR\x06statusR\rcreated_afterR\x0ecreated_beforeR\vorigin_kindR\torigin_id\"`\n" +
 	"\x10ListRunsResponse\x12$\n" +
 	"\x04runs\x18\x01 \x03(\v2\x10.orkstack.v1.RunR\x04runs\x12&\n" +

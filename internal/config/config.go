@@ -189,6 +189,10 @@ var Schema = []Var{
 	{Path: "event_sources.max_per_namespace", Env: eventsources.EnvMaxPerNamespace, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxPerNamespace)},
 	{Path: "event_sources.max_instances", Env: eventsources.EnvMaxInstances, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxInstances)},
 	{Path: "event_sources.namespace_instances", Env: eventsources.EnvNamespaceInstances, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultNamespaceInstances)},
+	{Path: "event_sources.reconcile", Env: eventsources.EnvReconcile, Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(eventsources.DefaultReconcile)},
+	{Path: "event_sources.readmit", Env: eventsources.EnvReadmit, Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(eventsources.DefaultReadmit)},
+	{Path: "event_sources.instance_max_age", Env: eventsources.EnvInstanceMaxAge, Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(eventsources.DefaultInstanceMaxAge)},
+	{Path: "event_sources.restart_max_interval", Env: eventsources.EnvRestartMaxInterval, Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(eventsources.DefaultRestartMaxInterval)},
 	{Path: "webhooks.allowed_networks", Env: "ORK_WEBHOOK_ALLOWED_NETWORKS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault,
 		DerivedNote: "empty admits public addresses only"},
 	{Path: "engine.stats_cache_ttl", Env: "ORK_STATS_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultStatsCacheTTL)},
@@ -220,6 +224,7 @@ var Schema = []Var{
 	// request; each default is the engine's.
 	{Path: "engine.resume.confirm_timeout", Env: "ORK_RESUME_CONFIRM_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultResumeConfirmTimeout)},
 	{Path: "engine.resume.visibility_lag_floor", Env: "ORK_RESUME_VISIBILITY_LAG_FLOOR", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultResumeVisibilityLagFloor)},
+	{Path: "engine.resume.child_wait_hint", Env: "ORK_RESUME_CHILD_WAIT_HINT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultResumeChildWaitHint)},
 	{Path: "engine.resume.max_seq_gap", Env: "ORK_RESUME_MAX_SEQ_GAP", Binaries: usesOrk, Kind: KindInt, Default: formatInt(engine.DefaultResumeMaxSequenceGap)},
 	{Path: "engine.resume.confirm_per_run", Env: "ORK_RESUME_CONFIRM_PER_RUN", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultResumeConfirmsPerRun))},
 	// ORK_DEFINITION_BY_REFERENCE's fallback is

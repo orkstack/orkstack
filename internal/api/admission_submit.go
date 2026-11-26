@@ -191,7 +191,7 @@ func (s *Service) admittedRunOf(ctx context.Context, in grantsIn, common artifac
 	if err := checkAdmissionTemplate(a); err != nil {
 		return nil, err
 	}
-	plan.Identity = identityPlanOf(a, placeholderAdmission())
+	plan.Identity = identityPlanOf(a, placeholderAdmission(), s.resultsRecordedIndexed)
 	run := &admittedRun{template: a, plan: plan}
 	for _, t := range wf.GetTasks() {
 		entry := plan.Children[t.GetId()]
@@ -426,7 +426,7 @@ func (s *Service) admitRun(ctx context.Context, sub *submission, runID string, s
 		if b.run == sub.admission.root {
 			plan = &sub.plan
 		}
-		plan.Identity = identityPlanOf(b.admission, b.sha256Hex)
+		plan.Identity = identityPlanOf(b.admission, b.sha256Hex, s.resultsRecordedIndexed)
 	}
 	return records, nil
 }
@@ -557,10 +557,11 @@ func (s *Service) completeChain(ctx context.Context, sub submission, runID, exec
 }
 
 // identityPlanOf is what a run's plan carries of its admission a, named
-// sha256Hex: derived from the record, never built beside it.
-func identityPlanOf(a artifacts.Admission, sha256Hex string) *engine.IdentityPlan {
+// sha256Hex: derived from the record, never built beside it, and the boot's
+// answer that the cluster indexes the mark such a run is started with.
+func identityPlanOf(a artifacts.Admission, sha256Hex string, indexed bool) *engine.IdentityPlan {
 	p := &engine.IdentityPlan{AdmissionSHA256: sha256Hex, Issuer: a.Issuer, TokenTTLSeconds: a.TokenTTL,
-		SpecVersion: uint32(a.SpecVersion), AttemptsExtra: a.AttemptsExtra, CommitWaitSeconds: a.CommitWait}
+		SpecVersion: uint32(a.SpecVersion), AttemptsExtra: a.AttemptsExtra, CommitWaitSeconds: a.CommitWait, Indexed: indexed}
 	if len(a.Grants) > 0 {
 		p.Grants = maps.Clone(a.Grants)
 	}

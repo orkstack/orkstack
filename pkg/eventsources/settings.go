@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The deployment's event_sources.* settings (docs/DEPLOY.md §1): each
@@ -19,6 +20,10 @@ const (
 	EnvMaxPerNamespace    = "ORK_EVENT_SOURCE_MAX_PER_NAMESPACE"
 	EnvMaxInstances       = "ORK_EVENT_SOURCE_MAX_INSTANCES"
 	EnvNamespaceInstances = "ORK_EVENT_SOURCE_NAMESPACE_INSTANCES"
+	EnvReconcile          = "ORK_EVENT_SOURCE_RECONCILE"
+	EnvReadmit            = "ORK_EVENT_SOURCE_READMIT"
+	EnvInstanceMaxAge     = "ORK_EVENT_SOURCE_INSTANCE_MAX_AGE"
+	EnvRestartMaxInterval = "ORK_EVENT_SOURCE_RESTART_MAX_INTERVAL"
 
 	DefaultEnabled            = false
 	DefaultAllowAsserted      = false
@@ -28,6 +33,10 @@ const (
 	DefaultMaxPerNamespace    = 20
 	DefaultMaxInstances       = 4
 	DefaultNamespaceInstances = 20
+	DefaultReconcile          = time.Minute
+	DefaultReadmit            = 5 * time.Minute
+	DefaultInstanceMaxAge     = 7 * 24 * time.Hour
+	DefaultRestartMaxInterval = 5 * time.Minute
 
 	// MaxMessageBytesCeiling and MaxInputBytesCeiling are the most the two
 	// bounds may be set to; a boot with more is refused.
@@ -45,6 +54,14 @@ type Settings struct {
 	// not authenticated. It never lets an instance run.
 	AllowAsserted bool
 	Limits        Limits
+	// Reconcile is how often an engine's pass over the sources begins.
+	Reconcile time.Duration
+	// Readmit is how often a running instance is judged again, and how long a
+	// revoke that was observed is held before it is checked.
+	Readmit time.Duration
+	// InstanceMaxAge is the age an instance is replaced at, and
+	// RestartMaxInterval the longest wait between two starts of a failing one.
+	InstanceMaxAge, RestartMaxInterval time.Duration
 }
 
 // DefaultSettings are the settings of a deployment that sets none.
@@ -53,7 +70,7 @@ func DefaultSettings() Settings {
 		MaxMessageBytes: DefaultMaxMessageBytes, MaxInputBytes: DefaultMaxInputBytes,
 		MaxRate: DefaultMaxRate, NamespaceRate: DefaultNamespaceRate, MaxSources: DefaultMaxSources,
 		MaxPerNamespace: DefaultMaxPerNamespace, MaxInstances: DefaultMaxInstances, NamespaceInstances: DefaultNamespaceInstances,
-	}}
+	}, Reconcile: DefaultReconcile, Readmit: DefaultReadmit, InstanceMaxAge: DefaultInstanceMaxAge, RestartMaxInterval: DefaultRestartMaxInterval}
 }
 
 // SettingsFromEnv reads the settings through lookup, refusing a value that
@@ -85,6 +102,18 @@ func SettingsFromEnv(lookup func(string) (string, bool)) (Settings, error) {
 		into(n)
 		return nil
 	}
+	span := func(env string, low, high time.Duration, into *time.Duration) error {
+		v, ok := lookup(env)
+		if !ok || strings.TrimSpace(v) == "" {
+			return nil
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(v))
+		if err != nil || d < low || d > high {
+			return fmt.Errorf("%s=%q: want a duration from %s to %s", env, v, low, high)
+		}
+		*into = d
+		return nil
+	}
 	l := &s.Limits
 	for _, err := range []error{
 		boolean(EnvEnabled, &s.Enabled),
@@ -97,6 +126,10 @@ func SettingsFromEnv(lookup func(string) (string, bool)) (Settings, error) {
 		integer(EnvMaxPerNamespace, 1, 1<<20, func(n int64) { l.MaxPerNamespace = int(n) }),
 		integer(EnvMaxInstances, 1, 1<<10, func(n int64) { l.MaxInstances = int32(n) }),
 		integer(EnvNamespaceInstances, 1, 1<<20, func(n int64) { l.NamespaceInstances = int(n) }),
+		span(EnvReconcile, 15*time.Second, 10*time.Minute, &s.Reconcile),
+		span(EnvReadmit, time.Minute, 30*time.Minute, &s.Readmit),
+		span(EnvInstanceMaxAge, 2*time.Hour, 30*24*time.Hour, &s.InstanceMaxAge),
+		span(EnvRestartMaxInterval, time.Second, time.Hour, &s.RestartMaxInterval),
 	} {
 		if err != nil {
 			return Settings{}, fmt.Errorf("event sources: %w", err)

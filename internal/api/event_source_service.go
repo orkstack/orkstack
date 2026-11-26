@@ -437,18 +437,6 @@ func recordedWriter(ctx context.Context, header http.Header) (string, bool) {
 	return recordedBinder(who.ID), who.Verified && who.ID != ""
 }
 
-// clearOutputOnly drops what a request may not set: a write takes these
-// from the stored source or derives them.
-func clearOutputOnly(src *orkstackv1.EventSource) {
-	src.Id, src.Image = "", ""
-	src.Paused, src.Pause = false, nil
-	src.CreatedAt, src.UpdatedAt, src.CreatedBy, src.UpdatedBy = nil, nil, "", ""
-	src.BoundBy, src.BoundByVerified, src.ConsentStale = "", false, false
-	src.AsksFor, src.Consented = nil, nil
-	src.ServiceRevision, src.JudgingRevision = 0, 0
-	src.DeletingSince = nil
-}
-
 // CreateEventSource stores a new source after every check, with its
 // counters at 1, its writer as its binder, and its first service spec.
 func (s *Service) CreateEventSource(ctx context.Context, req *connect.Request[orkstackv1.CreateEventSourceRequest]) (*connect.Response[orkstackv1.CreateEventSourceResponse], error) {
@@ -463,8 +451,7 @@ func (s *Service) CreateEventSource(ctx context.Context, req *connect.Request[or
 	if src.Namespace, err = sourceNamespace(src.GetNamespace()); err != nil {
 		return nil, err
 	}
-	clearOutputOnly(src)
-	src.Etag = ""
+	eventsources.ClearOutputOnly(src)
 	checked, err := s.checkSource(ctx, src, nil)
 	if err != nil {
 		return nil, err
@@ -478,6 +465,13 @@ func (s *Service) CreateEventSource(ctx context.Context, req *connect.Request[or
 	if err := s.sourceQuotas(ctx, store, src); err != nil {
 		return nil, err
 	}
+	// A name that is taken is refused before anything is written under an id
+	// that would then be no source's.
+	if _, err := store.Get(ctx, src.GetNamespace(), src.GetName()); err == nil {
+		return nil, sourceStoreError(eventsources.ErrNameTaken, src.GetNamespace(), src.GetName())
+	} else if !errors.Is(err, eventsources.ErrNotFound) {
+		return nil, sourceStoreError(err, src.GetNamespace(), src.GetName())
+	}
 	id, err := eventsources.NewID()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -490,13 +484,25 @@ func (s *Service) CreateEventSource(ctx context.Context, req *connect.Request[or
 	src.CreatedAt, src.UpdatedAt = now, now
 	src.CreatedBy, src.UpdatedBy, src.BoundBy, src.BoundByVerified = who, who, who, verified
 	src.Consented = consented
+	if err := s.writeServiceSpec(ctx, store, src, checked.labels, true); err != nil {
+		return nil, err
+	}
 	stored, err := store.Create(ctx, src)
 	if err != nil {
+		if errors.Is(err, eventsources.ErrNameTaken) {
+			// Another create took the name since it was looked at: the spec is
+			// under an id that is now no source's. Any other failure may have
+			// made the source.
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), startBound)
+			defer cancel()
+			if rerr := store.RemoveSpec(cleanup, src.GetId(), src.GetServiceDigest()); rerr != nil {
+				s.logger.WarnContext(ctx, "a service spec of a source that was not created could not be removed", "event_source_id", src.GetId(), "error", rerr)
+			}
+		}
 		return nil, sourceStoreError(err, src.GetNamespace(), src.GetName())
 	}
-	warnings := s.writeServiceSpec(ctx, store, stored, checked.labels)
 	noteAudit(ctx, "id="+stored.GetId()+" sha256="+documentDigest(stored))
-	return connect.NewResponse(&orkstackv1.CreateEventSourceResponse{EventSource: s.sourceView(ctx, nil, stored), SaveWarnings: warnings}), nil
+	return connect.NewResponse(&orkstackv1.CreateEventSourceResponse{EventSource: s.sourceView(ctx, nil, stored), SaveWarnings: s.startSource(ctx, stored)}), nil
 }
 
 // GetEventSource returns one source and its status.
@@ -591,10 +597,13 @@ func (s *Service) UpdateEventSource(ctx context.Context, req *connect.Request[or
 			"the source names Orkflow %q in namespace %q, which is not the Orkflow event source %q binds; it is fixed at creation; nothing was written",
 			next.GetOrkflowName(), next.GetNamespace(), next.GetName()))
 	}
+	if err := sourceMarked(stored); err != nil {
+		return nil, err
+	}
 	if etag != stored.GetEtag() {
 		return nil, sourceStoreError(eventsources.ErrChanged, next.GetNamespace(), next.GetName())
 	}
-	clearOutputOnly(next)
+	eventsources.ClearOutputOnly(next)
 	checked, err := s.checkSource(ctx, next, stored)
 	if err != nil {
 		return nil, err
@@ -617,32 +626,29 @@ func (s *Service) UpdateEventSource(ctx context.Context, req *connect.Request[or
 	service, judging := eventsources.Classify(stored, next)
 	now := timestamppb.New(s.now().UTC())
 
-	next.Id, next.Namespace = stored.GetId(), stored.GetNamespace()
+	eventsources.CarryOutputOnly(stored, next)
 	next.Image = checked.image
-	next.Pause = stored.GetPause()
-	next.DeletingSince = stored.GetDeletingSince()
-	next.CreatedAt, next.CreatedBy = stored.GetCreatedAt(), stored.GetCreatedBy()
 	next.UpdatedAt, next.UpdatedBy = now, who
-	next.ServiceRevision, next.JudgingRevision = stored.GetServiceRevision(), stored.GetJudgingRevision()
-	if service || next.GetImage() != stored.GetImage() {
+	changed := service || next.GetImage() != stored.GetImage()
+	if changed {
 		next.ServiceRevision++
 	}
 	if judging {
 		next.JudgingRevision++
 	}
-	next.BoundBy, next.BoundByVerified, next.Consented = stored.GetBoundBy(), stored.GetBoundByVerified(), consented
+	next.Consented = consented
 	if rebinds {
 		next.BoundBy, next.BoundByVerified = who, verified
+	}
+	if err := s.writeServiceSpec(ctx, store, next, checked.labels, changed); err != nil {
+		return nil, err
 	}
 	saved, err := store.Replace(ctx, next, etag)
 	if err != nil {
 		return nil, sourceStoreError(err, next.GetNamespace(), next.GetName())
 	}
-	// The spec is written at every save: it is create-only and named by its
-	// digest, so this repairs one an earlier save could not write.
-	warnings := s.writeServiceSpec(ctx, store, saved, checked.labels)
 	noteAudit(ctx, "id="+saved.GetId()+" sha256="+documentDigest(saved))
-	return connect.NewResponse(&orkstackv1.UpdateEventSourceResponse{EventSource: s.sourceView(ctx, nil, saved), SaveWarnings: warnings}), nil
+	return connect.NewResponse(&orkstackv1.UpdateEventSourceResponse{EventSource: s.sourceView(ctx, nil, saved), SaveWarnings: s.startSource(ctx, saved)}), nil
 }
 
 // PauseEventSource sets a source's pause with the operator's reason.
@@ -670,6 +676,9 @@ func (s *Service) PauseEventSource(ctx context.Context, req *connect.Request[ork
 	if err := s.recheckSource(ctx, authz.PermEventSourceOperate, stored); err != nil {
 		return nil, err
 	}
+	if err := sourceMarked(stored); err != nil {
+		return nil, err
+	}
 	var warnings []string
 	saved := stored
 	if stored.GetPause() != nil {
@@ -682,6 +691,7 @@ func (s *Service) PauseEventSource(ctx context.Context, req *connect.Request[ork
 	}); err != nil {
 		return nil, err
 	}
+	warnings = append(warnings, s.startSource(ctx, saved)...)
 	if eventsources.Effective(saved, s.eventSourceSettings.Limits).GetDelivery() == orkstackv1.DeliveryClass_DELIVERY_CLASS_AT_MOST_ONCE {
 		warnings = append(warnings, "this source is at-most-once: messages published while it is paused are lost")
 	}
@@ -713,19 +723,31 @@ func (s *Service) ResumeEventSource(ctx context.Context, req *connect.Request[or
 	if err := s.recheckSource(ctx, authz.PermRunSubmit, stored); err != nil {
 		return nil, err
 	}
+	if err := sourceMarked(stored); err != nil {
+		return nil, err
+	}
 	if stored.GetPause() == nil {
+		// It makes the start where the workflow is the only thing missing.
 		return connect.NewResponse(&orkstackv1.ResumeEventSourceResponse{EventSource: s.sourceView(ctx, nil, stored),
-			Notice: "source was not paused; nothing changed"}), nil
+			Notice: strings.Join(append([]string{"source was not paused; nothing changed"}, s.startSource(ctx, stored)...), "; ")}), nil
 	}
 	if _, err := s.checkSource(ctx, stored, stored); err != nil {
 		return nil, err
 	}
 	who, _ := recordedWriter(ctx, req.Header())
-	saved, err := s.replaceSource(ctx, store, stored, who, func(src *orkstackv1.EventSource) { src.Pause = nil })
+	saved, err := s.replaceSource(ctx, store, stored, who, func(src *orkstackv1.EventSource) {
+		src.ResumeSeq++
+		// A code of the closed set a source is paused with, or none.
+		src.TrialCode = ""
+		if code := src.GetPause().GetCode(); eventsources.PauseSentence(code) != "" {
+			src.TrialCode = code
+		}
+		src.Pause = nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&orkstackv1.ResumeEventSourceResponse{EventSource: s.sourceView(ctx, nil, saved)}), nil
+	return connect.NewResponse(&orkstackv1.ResumeEventSourceResponse{EventSource: s.sourceView(ctx, nil, saved), Notice: strings.Join(s.startSource(ctx, saved), "; ")}), nil
 }
 
 // replaceSource applies change to a source read with its etag and writes it
@@ -742,15 +764,62 @@ func (s *Service) replaceSource(ctx context.Context, store eventsources.Store, s
 	return saved, nil
 }
 
-// DeleteEventSource deletes the source of the id the request names; one of
-// another id under the name is refused EVENT_SOURCE_ID_MISMATCH, naming
-// it, and nothing is deleted. A request with no id deletes whatever the
-// name holds. A delete is never refused for the feature being off: a
-// source written before it was turned off can always be removed.
+// startBound is how long a write waits for its source's workflow to be told.
+const startBound = 10 * time.Second
+
+// startSource makes the one start there is of a source's workflow, for a
+// write that is done whatever this comes to: what was not told finds the
+// write at its next pass, and the answer says so.
+func (s *Service) startSource(ctx context.Context, src *orkstackv1.EventSource) (warnings []string) {
+	outcome, err := s.tellSource(ctx, src)
+	log := s.logger.With("namespace", src.GetNamespace(), "event_source", src.GetName(), "event_source_id", src.GetId())
+	switch {
+	case err != nil || outcome == engine.SourceUnanswered:
+		log.WarnContext(ctx, "an event source's workflow was not told of a write; it finds it at the next pass", "outcome", string(outcome), "error", err)
+		return []string{"the source was saved; what runs could not be told yet, and is at the engines' next pass, within a minute or two"}
+	case outcome == engine.SourceDeletedCopy:
+		return []string{eventsources.ReasonDeletedDocumentReappeared + ": this source was deleted, and its document has come back into the store; it is not run"}
+	case outcome == engine.SourceNewerCarry:
+		return []string{"the source was saved; a newer release last ran it, and an engine of that release applies it"}
+	}
+	return nil
+}
+
+// tellSource makes the start, whoever gave up on the write that asks for it.
+func (s *Service) tellSource(ctx context.Context, src *orkstackv1.EventSource) (engine.SourceStart, error) {
+	if s.sourceWorkflows == nil {
+		return engine.SourceNotRun, nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), startBound)
+	defer cancel()
+	return s.sourceWorkflows.Start(ctx, src)
+}
+
+// sourceMarked refuses a write to a source a delete has marked.
+func sourceMarked(src *orkstackv1.EventSource) error {
+	if src.GetDeletingSince() == nil {
+		return nil
+	}
+	return sourceRefusal(connect.CodeFailedPrecondition, eventsources.ReasonDeleting, fmt.Sprintf(
+		"event source %q in namespace %q is being deleted; its name is free once its instances have ended and what it kept is removed", src.GetName(), src.GetNamespace()))
+}
+
+// DeleteEventSource marks the source of the id the request names, and leaves
+// its tombstone: its workflow stops its instances, removes what it kept and
+// ends, and its document, which keeps its name meanwhile, is removed then. It
+// is repeatable. One of another id under the name is refused
+// EVENT_SOURCE_ID_MISMATCH, naming it, and nothing is written. A request with
+// no id deletes whatever the name holds. A delete is never refused for the
+// feature being off: a source written before it was turned off can always be
+// removed. An engine that does not run as a release refuses it and
+// writes nothing, since nothing there would finish it.
 func (s *Service) DeleteEventSource(ctx context.Context, req *connect.Request[orkstackv1.DeleteEventSourceRequest]) (*connect.Response[orkstackv1.DeleteEventSourceResponse], error) {
 	store, err := s.sourceReadGuard()
 	if err != nil {
 		return nil, err
+	}
+	if s.sourceRecords == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("this engine keeps no record of deleted event sources"))
 	}
 	ns, err := sourceNamespace(req.Msg.GetNamespace())
 	if err != nil {
@@ -764,46 +833,160 @@ func (s *Service) DeleteEventSource(ctx context.Context, req *connect.Request[or
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("id %q is not an event source's id (evs- and 16 hex digits)", id))
 	}
 	stored, err := store.Get(ctx, ns, name)
-	var unreadable *eventsources.UnreadableError
+	unreadable, _ := errors.AsType[*eventsources.UnreadableError](err)
+	missing := errors.Is(err, eventsources.ErrNotFound)
+	// What a caller may delete is decided before anything else is said: one
+	// that cannot be read, or is not there, at its namespace, never at an
+	// Orkflow a reader resolved of another.
+	who := stored
 	switch {
-	case errors.As(err, &unreadable) && id != "":
-		// A document this engine cannot decode is deleted by the id its
-		// caller names, so a damaged one never blocks its namespace.
-		// Nothing of it can be read, so it is decided at its namespace,
-		// never at an Orkflow a reader resolved before it became unreadable.
-		stored = &orkstackv1.EventSource{Id: id, Namespace: ns, Name: name}
-		if err := s.recheckSource(ctx, authz.PermEventSourceWrite, stored); err != nil {
-			return nil, err
-		}
+	case unreadable != nil || missing:
+		who = &orkstackv1.EventSource{Id: id, Namespace: ns, Name: name}
 	case err != nil:
 		return nil, sourceStoreError(err, ns, name)
-	default:
-		if err := s.recheckSource(ctx, authz.PermEventSourceWrite, stored); err != nil {
-			return nil, err
-		}
 	}
-	if id == "" {
-		id = stored.GetId()
+	if err := s.recheckSource(ctx, authz.PermEventSourceWrite, who); err != nil {
+		return nil, err
 	}
-	if stored.GetId() != id {
-		return nil, sourceRefusal(connect.CodeFailedPrecondition, eventsources.ReasonIDMismatch, fmt.Sprintf(
-			"event source %q in namespace %q is %s now, not %s; nothing was deleted", name, ns, stored.GetId(), id))
-	}
-	err = store.Delete(ctx, ns, name, id)
-	if errors.Is(err, eventsources.ErrSpecsLeft) {
-		// The source is deleted; what is left under its id admits nothing.
-		s.logger.Warn("event source deleted; its service specs were not all removed", "namespace", ns, "name", name, "id", id, "error", err)
-		err = nil
-	}
-	if err != nil {
-		if errors.Is(err, eventsources.ErrChanged) {
-			return nil, sourceRefusal(connect.CodeFailedPrecondition, eventsources.ReasonIDMismatch, fmt.Sprintf(
-				"event source %q in namespace %q became another source while it was being deleted; nothing was deleted", name, ns))
-		}
+	if id == "" && err != nil {
 		return nil, sourceStoreError(err, ns, name)
 	}
-	noteAudit(ctx, "id="+id)
+	if unreadable == nil && !missing && (id == "" || stored.GetId() == id) {
+		if err := s.deleteFinishes(); err != nil {
+			return nil, err
+		}
+		return s.markSource(ctx, req.Header(), store, stored)
+	}
+	// Deleted, or being: one that names this source in this namespace.
+	switch tombNS, tombName, found, err := s.sourceRecords.TombstoneOf(ctx, id); {
+	case err != nil:
+		return nil, sourceStoreError(err, ns, name)
+	case found && tombNS == ns && tombName == name && (unreadable == nil || (unreadable.ID != "" && unreadable.ID != id)):
+		noteAudit(ctx, "id="+id)
+		return connect.NewResponse(&orkstackv1.DeleteEventSourceResponse{}), nil
+	}
+	switch {
+	case missing:
+		return nil, sourceStoreError(eventsources.ErrNotFound, ns, name)
+	case unreadable != nil && (unreadable.ID == "" || unreadable.ID == id):
+		if unreadable.ID != "" {
+			if err := s.deleteFinishes(); err != nil {
+				return nil, err
+			}
+		}
+		return s.deleteUnreadable(ctx, req.Header(), store, unreadable, id)
+	}
+	holds := stored.GetId()
+	if unreadable != nil {
+		holds = unreadable.ID
+	}
+	return nil, sourceRefusal(connect.CodeFailedPrecondition, eventsources.ReasonIDMismatch, fmt.Sprintf(
+		"event source %q in namespace %q is %s now, not %s; nothing was deleted", name, ns, holds, id))
+}
+
+// deleteFinishes refuses a delete on an engine that is no release: it starts no
+// source's workflow, so nothing would finish what is begun.
+func (s *Service) deleteFinishes() error {
+	if s.system.BuildID != "" {
+		return nil
+	}
+	return sourceRefusal(connect.CodeFailedPrecondition, eventsources.ReasonRequireVersioning,
+		"this engine runs with no build id, and only one that runs as a release (ORK_BUILD_ID) stops a source's instances and removes what it kept; nothing was deleted")
+}
+
+// tombstoneTries is how often a delete tries to leave its tombstone.
+const tombstoneTries = 2
+
+// markSource writes the mark, then the tombstone, then makes the one start, in
+// that order: a mark whose tombstone could not be left makes the start all the
+// same, whose workflow leaves it, and is answered as a failure that is safe to
+// repeat.
+func (s *Service) markSource(ctx context.Context, header http.Header, store eventsources.Store, src *orkstackv1.EventSource) (*connect.Response[orkstackv1.DeleteEventSourceResponse], error) {
+	if src.GetDeletingSince() == nil {
+		who, _ := recordedWriter(ctx, header)
+		marked, err := s.replaceSource(ctx, store, src, who, func(next *orkstackv1.EventSource) { next.DeletingSince = timestamppb.New(s.now().UTC()) })
+		if err != nil {
+			return nil, err
+		}
+		src = marked
+	}
+	var left error
+	for range tombstoneTries {
+		if left = s.sourceRecords.Tombstone(ctx, src.GetId(), src.GetNamespace(), src.GetName(), s.now()); left == nil {
+			break
+		}
+	}
+	s.startSource(ctx, src)
+	if left != nil {
+		s.logger.ErrorContext(ctx, "a deleted event source's tombstone could not be written", "namespace", src.GetNamespace(), "event_source", src.GetName(),
+			"event_source_id", src.GetId(), "error", left)
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("the source is marked for deletion, and the record of it could not be written; delete it again"))
+	}
+	noteAudit(ctx, "id="+src.GetId())
 	return connect.NewResponse(&orkstackv1.DeleteEventSourceResponse{}), nil
+}
+
+// unreadableTries is how often a document that cannot be decoded, and changes
+// under its delete, is looked at again.
+const unreadableTries = 3
+
+// deleteUnreadable removes a document this engine cannot decode, so a damaged
+// one never blocks its name. It is the delete of a source only where its own
+// id can be read there: a caller's id alone marks no source. Once the
+// tombstone is left the source is deleted, whatever its document becomes
+// meanwhile, so the delete goes on with what the name then holds of it.
+func (s *Service) deleteUnreadable(ctx context.Context, header http.Header, store eventsources.Store, doc *eventsources.UnreadableError, id string) (*connect.Response[orkstackv1.DeleteEventSourceResponse], error) {
+	done := func() (*connect.Response[orkstackv1.DeleteEventSourceResponse], error) {
+		noteAudit(ctx, "id="+id)
+		return connect.NewResponse(&orkstackv1.DeleteEventSourceResponse{}), nil
+	}
+	if doc.ID != "" {
+		if err := s.sourceRecords.Tombstone(ctx, doc.ID, doc.Namespace, doc.Name, s.now()); err != nil {
+			return nil, sourceStoreError(err, doc.Namespace, doc.Name)
+		}
+		// Told while its document is there to be deleted again by: no pass finds
+		// a source that has none.
+		outcome, err := s.tellSource(ctx, &orkstackv1.EventSource{Id: doc.ID, Namespace: doc.Namespace, Name: doc.Name, DeletingSince: timestamppb.New(s.now().UTC())})
+		if err != nil || outcome == engine.SourceUnanswered {
+			s.logger.WarnContext(ctx, "a deleted event source's workflow was not told", "namespace", doc.Namespace, "event_source", doc.Name, "event_source_id", doc.ID,
+				"outcome", string(outcome), "error", err)
+			return nil, connect.NewError(connect.CodeUnavailable, errors.New("the source is deleted, and what runs could not be told; delete it again"))
+		}
+		if outcome == engine.SourceNewerCarry {
+			return nil, sourceRefusal(connect.CodeFailedPrecondition, eventsources.ReasonDocumentUnreadable,
+				"the source is deleted, and a newer release last ran it: delete it again from an engine of that release, which removes what it kept and its document")
+		}
+	} else {
+		s.logger.WarnContext(ctx, "an event source's document that cannot be decoded, its id included, is removed: what runs of it, if anything does, is not stopped (docs/DEPLOY.md, \"A source with no document\")",
+			"namespace", doc.Namespace, "event_source", doc.Name, "named_id", id)
+	}
+	etag := doc.Etag
+	for range unreadableTries {
+		err := store.Remove(ctx, doc.Namespace, doc.Name, etag)
+		if err == nil {
+			return done()
+		}
+		if !errors.Is(err, eventsources.ErrChanged) {
+			return nil, sourceStoreError(err, doc.Namespace, doc.Name)
+		}
+		if doc.ID == "" {
+			return nil, sourceRefusal(connect.CodeFailedPrecondition, eventsources.ReasonIDMismatch, fmt.Sprintf(
+				"event source %q in namespace %q changed while it was being deleted; nothing was deleted", doc.Name, doc.Namespace))
+		}
+		now, err := store.Get(ctx, doc.Namespace, doc.Name)
+		again, unreadable := errors.AsType[*eventsources.UnreadableError](err)
+		switch {
+		case errors.Is(err, eventsources.ErrNotFound), err == nil && now.GetId() != doc.ID, unreadable && again.ID != doc.ID:
+			// Its name holds nothing of it.
+			return done()
+		case err == nil:
+			return s.markSource(ctx, header, store, now)
+		case !unreadable:
+			return nil, sourceStoreError(err, doc.Namespace, doc.Name)
+		}
+		etag = again.Etag
+	}
+	return nil, connect.NewError(connect.CodeUnavailable, errors.New("the source is deleted, and its document, which keeps changing, could not be removed; delete it again"))
 }
 
 // EvaluateEventSourceMessage runs a stored or candidate source over one
@@ -997,6 +1180,12 @@ func (s *Service) sourceStatus(src *orkstackv1.EventSource) *orkstackv1.EventSou
 		return st
 	}
 	switch {
+	case src.GetDeletingSince() != nil && s.system.BuildID == "":
+		return set(orkstackv1.EventSourceState_EVENT_SOURCE_STATE_DELETING, eventsources.ReasonRequireVersioning,
+			"being deleted, and nothing finishes it here: this engine runs with no build id, and an engine that runs as a release (ORK_BUILD_ID) removes it")
+	case src.GetDeletingSince() != nil:
+		return set(orkstackv1.EventSourceState_EVENT_SOURCE_STATE_DELETING, eventsources.ReasonDeleting,
+			"being deleted; its name is free once its instances have ended and what it kept is removed")
 	case !s.eventSourceSettings.Enabled:
 		return set(orkstackv1.EventSourceState_EVENT_SOURCE_STATE_DISABLED, eventsources.ReasonDisabled,
 			"event sources are off on this deployment")
@@ -1015,19 +1204,26 @@ func (s *Service) sourceStatus(src *orkstackv1.EventSource) *orkstackv1.EventSou
 	}
 }
 
-// writeServiceSpec stores the service spec of the source's current service
-// revision under its id and digest. A spec that cannot be written is a
-// warning: the document is the truth, and a spec it calls for is rebuilt
-// from it.
-func (s *Service) writeServiceSpec(ctx context.Context, store eventsources.Store, src *orkstackv1.EventSource, img eventsources.Image) []string {
+// writeServiceSpec stores the service spec of the source's service revision
+// under its id and digest, and gives the document that digest, so a document
+// that is written names a spec that is there. The spec is written at every
+// save: it is create-only, and one whose document was then not written is
+// removed with the source. A save that changes no service field keeps the
+// spec its revision has, whatever one built now would say: a bound that is a
+// judging field, or the deployment's, is in it, and restarts nothing.
+func (s *Service) writeServiceSpec(ctx context.Context, store eventsources.Store, src *orkstackv1.EventSource, img eventsources.Image, changed bool) error {
 	body, digest, err := serviceSpec(src, img, s.eventSourceSettings.Limits)
-	if err == nil {
-		err = store.PutSpec(ctx, src.GetId(), digest, body)
-	}
 	if err != nil {
-		s.logger.Error("event source: write its service spec", "namespace", src.GetNamespace(), "name", src.GetName(), "id", src.GetId(), "error", err)
-		return []string{"the source was saved; its service spec could not be stored, and the next save of the source writes it again"}
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("event source %q: its service spec: %w", src.GetName(), err))
 	}
+	if !changed && src.GetServiceDigest() != digest {
+		return nil
+	}
+	if err := store.PutSpec(ctx, src.GetId(), digest, body); err != nil {
+		s.logger.Error("event source: write its service spec", "namespace", src.GetNamespace(), "name", src.GetName(), "id", src.GetId(), "error", err)
+		return connect.NewError(connect.CodeUnavailable, errors.New("the source's service spec could not be stored; nothing was written; try again"))
+	}
+	src.ServiceDigest = digest
 	return nil
 }
 

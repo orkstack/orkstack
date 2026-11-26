@@ -114,7 +114,7 @@ func (s *Service) queuedAtMaxRunning(
 	case err != nil:
 		s.logger.Warn("a max_running refusal could not count the namespace's queued runs",
 			"namespace", namespace, "error", err)
-		if wf.GetConcurrency() != nil {
+		if len(declaredLimits(wf)) > 0 {
 			return connect.CodeResourceExhausted
 		}
 		return connect.CodeFailedPrecondition

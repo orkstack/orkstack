@@ -19,9 +19,15 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
+
+	enumspb "go.temporal.io/api/enums/v1"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/identity"
 )
 
 // MaxResumesPerRun is the cap on resumes of one run that got going
@@ -188,10 +194,19 @@ type ResumeEvidence struct {
 	// Resolutions is, for an await that did not succeed in the base, the
 	// answer on record (or, for a run without records, in history after R).
 	Resolutions map[string]ResolutionAnswer
+	// Answered is the row an await is settled with: for a recorded run, the
+	// one its record of an answer given in time gives, kept or not (design
+	// §28.1, §28.9); for one without records, an answer the run never applied.
+	Answered map[string]*orkstackv1.TaskRun
 	// ChildOnRecord names the composed tasks of a recorded root run that
 	// did not succeed in the base but whose child closed SUCCEEDED with its
 	// outputs on record (design §28.3): they settle under the follows rule.
 	ChildOnRecord map[string]bool
+	// ChildFromOutputs names those of them with no record of their own, which
+	// a confirm records from their child's outputs before the reset.
+	ChildFromOutputs map[string]bool
+	// ChildCause is, for such a task that is not settled, why.
+	ChildCause map[string]ComposedCause
 }
 
 // ResetPoint is R: the base workflow task the reset re-executes from (design
@@ -221,6 +236,10 @@ type ResumeBaseFacts struct {
 	// StateUnreadable: the checkpoint or by-reference definition the
 	// generation started from does not verify.
 	StateUnreadable bool
+	// Resolved is, for each await the base left awaiting, the resolution it
+	// received after R and never applied (ResolutionsAfterR). A run without
+	// records settles from it; a recorded run never does (design §28.2).
+	Resolved map[string]ResumeResolved
 }
 
 // ResumePlanInput is everything PlanResume decides from.
@@ -327,6 +346,18 @@ const (
 	ComposedRunningAtForceCancel ComposedCause = "running_at_force_cancel"
 	// ComposedFollowsChanged: what its child's values followed has changed.
 	ComposedFollowsChanged ComposedCause = "follows_changed"
+	// ComposedChildRunning: in a recorded run, the child of a task that may be
+	// settled from its outputs is still open (design §28.12 F8).
+	ComposedChildRunning ComposedCause = "child_running"
+	// ComposedChildNotSucceeded: that child closed and did not succeed.
+	ComposedChildNotSucceeded ComposedCause = "child_not_succeeded"
+	// ComposedChildOutputsUnavailable: that child succeeded and no engine
+	// recorded its outputs (design §28.4).
+	ComposedChildOutputsUnavailable ComposedCause = "child_outputs_unavailable"
+	// ComposedResumedBefore: that task's values are not on record and its run
+	// was resumed before: a composed task is kept from its child only on its
+	// run's first resume (decision P14R4-2).
+	ComposedResumedBefore ComposedCause = "resumed_before"
 )
 
 // ResumeRefusal is a planned refusal: the run cannot be resumed as asked.
@@ -456,6 +487,11 @@ type planner struct {
 	// result), in a fixed order: permanent before wait (design §25.6).
 	unreadable  []ResumeUnit
 	unavailable []ResumeUnit
+
+	// follows is, for a recorded run, what each task follows by identity's
+	// rule (identity.Follows): what its record names, through fan-outs and
+	// sleeps, and never a need a none_failed join may skip.
+	follows map[string][]string
 }
 
 // PlanResume plans a resume. It returns a *ResumeRefusal when the run cannot
@@ -526,6 +562,15 @@ func RefuseResumeState(base *orkstackv1.Run, class ResumeBaseClass) *ResumeRefus
 		return refuse(RefuseStateNotResumable, RefusalPermanent, "run %s is in a state that can't be resumed", base.GetId())
 	}
 	return nil
+}
+
+// ClosedAs is how the cluster closes a base of the class: a failure, or a
+// force cancel's termination.
+func (c ResumeBaseClass) ClosedAs() enumspb.WorkflowExecutionStatus {
+	if c == ResumeBaseForceCanceled {
+		return enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED
+	}
+	return enumspb.WORKFLOW_EXECUTION_STATUS_FAILED
 }
 
 // refuseBase refuses a base the resume cannot start from, before any task
@@ -706,16 +751,23 @@ func newPlanner(in ResumePlanInput) (*planner, error) {
 		}
 	}
 	if in.Evidence.Recorded {
-		// The follows rule compares each succeeded need's current digest; a
-		// succeeded task of a recorded run without one would pass unchecked.
+		// The follows rule compares the current digest of each task a record
+		// follows; one kept as valid without one would pass unchecked.
+		refs, _ := identity.Follows(in.Definition)
+		p.follows = make(map[string][]string, len(refs))
+		followed := map[string]bool{}
+		for id, of := range refs {
+			for _, r := range of {
+				p.follows[id] = append(p.follows[id], r.TaskID)
+				followed[r.TaskID] = true
+			}
+		}
 		for _, id := range p.order {
-			task := p.tasks[id]
-			k := task.kind()
-			if in.Facts.Earlier[id] || k == kindSleep || task.row.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+			if !followed[id] || in.Evidence.Kept[nodeUnit(id)] != KeptValid {
 				continue
 			}
-			if _, has := in.Evidence.ResultSHA256[id]; !has && len(p.dependents[id]) > 0 {
-				return nil, fmt.Errorf("engine: plan resume: succeeded task %q of a recorded run has no result digest", id)
+			if _, has := in.Evidence.ResultSHA256[id]; !has {
+				return nil, fmt.Errorf("engine: plan resume: kept task %q of a recorded run has no result digest", id)
 			}
 		}
 	}
@@ -762,6 +814,15 @@ func isFailedSeed(row *orkstackv1.TaskRun) bool {
 // success, or a row an earlier resume kept and had not read back.
 func keptCandidate(row *orkstackv1.TaskRun) bool {
 	return row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED || unreadKept(row)
+}
+
+// lateCandidate reports a unit of a force-cancelled base that the base
+// dispatched and whose row was unfinished at the force cancel: its commit,
+// whatever the synthesized snapshot says, decides it (design §24.1), so it is
+// verified as a kept candidate is. A recorded failure stays a failure.
+func lateCandidate(in ResumePlanInput, kind taskKind, u ResumeUnit, row *orkstackv1.TaskRun) bool {
+	return in.Class == ResumeBaseForceCanceled && kind == kindContainer && in.Facts.Dispatched[u] &&
+		!keptCandidate(row) && !isFailedSeed(row)
 }
 
 // unreadKept reports whether an earlier resume kept row and did not read it
@@ -875,8 +936,7 @@ func (p *planner) classifyUnit(task *planTask, u ResumeUnit, row *orkstackv1.Tas
 	// A force-cancelled base: a container unit the base dispatched and that
 	// was still unfinished is judged by its commit, whatever the synthesized
 	// snapshot says (design §24.1). A recorded failure stays a failure.
-	if in.Class == ResumeBaseForceCanceled && kind == kindContainer && in.Facts.Dispatched[u] &&
-		!keptCandidate(row) && !isFailedSeed(row) {
+	if lateCandidate(in, kind, u, row) {
 		a, ok, err := p.answer(u)
 		switch {
 		case err != nil:
@@ -923,6 +983,13 @@ func (p *planner) classifyUnit(task *planTask, u ResumeUnit, row *orkstackv1.Tas
 			p.kept[u], p.settled[u] = true, true
 			return nil
 		}
+		if a := in.Evidence.Kept[u]; in.Evidence.Recorded && (a == KeptUnavailable || a == KeptUnreadable) {
+			// What its child left could not be read: the resume waits, or is
+			// refused.
+			_, _, err := p.answer(u)
+			p.kept[u] = true
+			return err
+		}
 	}
 	if isFailedSeed(row) {
 		p.roots[u] = CategoryRerunFailed
@@ -936,6 +1003,16 @@ func (p *planner) classifyUnit(task *planTask, u ResumeUnit, row *orkstackv1.Tas
 // from the answer on record or in history (design §28.1, §26.5).
 func (p *planner) classifyOpenAwait(task *planTask, u ResumeUnit, row *orkstackv1.TaskRun) error {
 	in := p.in
+	if in.Evidence.Recorded {
+		// A record that could not be read, or not as this task's, is no
+		// answer to wait again on: the resume waits, or is refused, unless
+		// the await runs again anyway.
+		if a := in.Evidence.Kept[u]; a == KeptUnavailable || a == KeptUnreadable {
+			_, _, err := p.answer(u)
+			p.kept[u] = true
+			return err
+		}
+	}
 	res, ok := in.Evidence.Resolutions[u.Task]
 	if ok && res.Completed && res.Rejected {
 		return fmt.Errorf("engine: plan resume: await %s was both completed and rejected", u)
@@ -975,19 +1052,21 @@ func (p *planner) classifyOpenAwait(task *planTask, u ResumeUnit, row *orkstackv
 }
 
 // followsCover is the second half of the follows rule (design §28.H2): the
-// record follows every need of the task that has a result, and each digest
-// it follows still equals that need's current result. The first half, that
-// no need is in S, is checked once S is known.
+// record follows every task the settled one follows by identity's rule
+// (identity.Follows) that has a result, and each digest it follows still
+// equals that task's current result. The first half, that no need is in S,
+// is checked once S is known.
 //
-// A need's current result is the kept row's digest. A need that has none
-// (it was skipped, slept, or reruns) is not compared: if it reruns, the
-// first half of the rule withdraws the settle anyway.
+// A followed task's current result is its kept record's digest. One that has
+// none (it was skipped, or reruns, or its record is gone) is not compared: if
+// it reruns, the first half of the rule withdraws the settle anyway, through
+// the needs, fan-outs and sleeps between them.
 func (p *planner) followsCover(task *planTask, follows []ResumeFollow) bool {
 	byTask := map[string]string{}
 	for _, f := range follows {
 		byTask[f.Task] = f.ResultSHA256
 	}
-	for _, need := range task.def.GetNeeds() {
+	for _, need := range p.follows[task.def.GetId()] {
 		cur, has := p.in.Evidence.ResultSHA256[need]
 		if !has {
 			continue
@@ -1206,6 +1285,8 @@ func (p *planner) refuseComposed() *ResumeRefusal {
 		switch {
 		case p.withdrawn[nodeUnit(id)] && !p.needInS(id):
 			cause = ComposedFollowsChanged
+		case p.in.Evidence.ChildCause[id] != "" && cat != CategoryRerunSelected && !p.needInS(id):
+			cause = p.in.Evidence.ChildCause[id]
 		case cat == CategoryRerunSelected:
 			cause = ComposedSelected
 		case cat == CategoryRerunDownstream || cat == CategoryRerunPinMember || cat == CategoryRerunEachSource:
@@ -1300,6 +1381,9 @@ func (p *planner) unitPlan(task *planTask, u ResumeUnit) (ResumePlanUnit, error)
 		if cat == CategoryRerunResultGone {
 			pu.Detail = p.why(u, row.GetError().GetMessage())
 		}
+		if kind == kindAwait && pu.Detail == "" {
+			pu.Detail = p.resolvedDetail(u, false)
+		}
 		return pu, nil
 	}
 	switch {
@@ -1317,6 +1401,8 @@ func (p *planner) unitPlan(task *planTask, u ResumeUnit) (ResumePlanUnit, error)
 		pu.Category, pu.Disposition = CategorySettled, DispositionSettle
 		if unreadKept(row) {
 			pu.Detail = unreadKeptDetail
+		} else if kind == kindAwait {
+			pu.Detail = p.resolvedDetail(u, true)
 		}
 	case p.kept[u] && kind != kindFanOut:
 		pu.Category, pu.Disposition = CategoryKept, DispositionAdopt
@@ -1330,6 +1416,48 @@ func (p *planner) unitPlan(task *planTask, u ResumeUnit) (ResumePlanUnit, error)
 		return pu, fmt.Errorf("engine: plan resume: %s is outside S and neither kept, settled, skipped nor waiting", u)
 	}
 	return pu, nil
+}
+
+// resolvedDetail is the dialog text of an await of a run without records whose
+// base received an answer after R it never applied (design §25.7, §26.5): who
+// answered, as the Signal said (asserted), when, and what becomes of it:
+// settled, or not. It is "" for any other unit.
+func (p *planner) resolvedDetail(u ResumeUnit, settled bool) string {
+	r, ok := p.in.Facts.Resolved[u.Task]
+	if p.in.Evidence.Recorded || !ok || u.Item >= 0 {
+		return ""
+	}
+	// Who answered is what a Signal said, which no door bounded: quoted, and
+	// cut to a line's length.
+	at, by := r.At.UTC().Format(time.RFC3339), signalText(r.By)
+	switch {
+	case settled:
+		return fmt.Sprintf("answered %s (asserted) at %s, which the run had not applied", by, at)
+	case r.Invalid != "":
+		return fmt.Sprintf("answered %s (asserted) at %s with values it could not take (%s); it waits again", by, at, signalText(r.Invalid))
+	case r.Answer.Rejected:
+		return fmt.Sprintf("rejected %s (asserted) at %s; the rejection is set aside and it waits again", by, at)
+	case r.Answer.Completed:
+		return fmt.Sprintf("answered %s (asserted) at %s; the answer is not used, and it waits again", by, at)
+	}
+	return ""
+}
+
+// signalTextMax is the most bytes of a Signal's text a dialog line quotes.
+const signalTextMax = 200
+
+// signalText is s as a dialog line quotes it: at most signalTextMax bytes of
+// it, cut at a rune, and quoted, so that no control character reaches a
+// terminal.
+func signalText(s string) string {
+	if len(s) > signalTextMax {
+		cut := signalTextMax
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
+	}
+	return strconv.Quote(s)
 }
 
 // checkResumePlan checks a plan against the invariants the design fuzzes
@@ -1351,6 +1479,12 @@ func checkResumePlan(in ResumePlanInput, plan *ResumePlan) error {
 		byUnit[u.Unit] = u
 	}
 	inS := func(u ResumeUnit) bool { return byUnit[u].InRerunSet }
+	// S as the plan has it, for the follows rule's invariant below.
+	for u, pu := range byUnit {
+		if pu.InRerunSet {
+			p.inS[u] = pu.Category
+		}
+	}
 	for _, id := range p.order {
 		task := p.tasks[id]
 		for _, u := range task.units() {
@@ -1379,6 +1513,13 @@ func checkResumePlan(in ResumePlanInput, plan *ResumePlan) error {
 			}
 		}
 		node := byUnit[nodeUnit(id)]
+		if in.Evidence.Recorded && node.Disposition == DispositionSettle {
+			// A settle of a recorded run rests on what its record follows: no
+			// task it follows, and nothing between them, runs again.
+			if p.needInS(id) {
+				return fmt.Errorf("%s settles from its record and something it follows runs again", id)
+			}
+		}
 		for _, i := range task.items {
 			if inS(ResumeUnit{Task: id, Item: i}) && !node.InRerunSet {
 				return fmt.Errorf("item %s[%d] is in S but its node is not", id, i)

@@ -1,5 +1,13 @@
 package eventsources
 
+import (
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+)
+
 // Reasons of a source: a refused write, or a state on read
 // (docs/REASONS.md, "Event sources").
 const (
@@ -62,6 +70,24 @@ var pauseSentences = map[string]string{
 // PauseSentence is the fixed sentence of a pause code; "" for a code OrkStack
 // never pauses with.
 func PauseSentence(code string) string { return pauseSentences[code] }
+
+// EnginePause is the pause OrkStack gives a source: nil for a code it pauses
+// nothing with. detail is of a closed set, or a name, beside the code's own
+// sentence; orker is the Orker that asked, or none.
+func EnginePause(code, refusal, detail, orker string, at time.Time) *orkstackv1.EventSourcePause {
+	sentence := PauseSentence(code)
+	if sentence == "" {
+		return nil
+	}
+	if detail != "" {
+		sentence += " (" + SafeText(detail, maxPauseDetail) + ")"
+	}
+	return &orkstackv1.EventSourcePause{Cause: orkstackv1.PauseCause_PAUSE_CAUSE_ENGINE, Code: code, RefusalCode: refusal,
+		Reason: sentence, Since: timestamppb.New(at.UTC()), RequestedByOrker: orker}
+}
+
+// maxPauseDetail bounds what a pause's reason says beside its sentence.
+const maxPauseDetail = 768
 
 // Reasons an attempt of a service ends with (docs/ORKER_SERVICE_CONTRACT.md):
 // the Orker's verdict on one container of one instance.

@@ -177,17 +177,18 @@ func (s *BlobEventSourceStore) read(ctx context.Context, key, namespace, name st
 		}
 		return nil, fmt.Errorf("artifacts: read event source %s/%s: %w", namespace, name, err)
 	}
+	unreadable := func(cause string) error {
+		return &eventsources.UnreadableError{Namespace: namespace, Name: name, Cause: cause, ID: tolerantRecordID(raw, namespace, name), Etag: version}
+	}
 	if len(raw) > maxEventSourceRecordBytes {
-		return nil, &eventsources.UnreadableError{Namespace: namespace, Name: name,
-			Cause: fmt.Sprintf("the document is over %d bytes", maxEventSourceRecordBytes)}
+		return nil, unreadable(fmt.Sprintf("the document is over %d bytes", maxEventSourceRecordBytes))
 	}
 	src, err := UnmarshalEventSourceRecord(raw)
 	if err != nil {
-		return nil, &eventsources.UnreadableError{Namespace: namespace, Name: name, Cause: err.Error()}
+		return nil, unreadable(err.Error())
 	}
 	if src.GetNamespace() != namespace || src.GetName() != name {
-		return nil, &eventsources.UnreadableError{Namespace: namespace, Name: name,
-			Cause: "the document names another source than its key"}
+		return nil, unreadable("the document names another source than its key")
 	}
 	src.Etag = version
 	return src, nil
@@ -228,6 +229,23 @@ func (s *BlobEventSourceStore) List(ctx context.Context, namespace string) ([]*o
 		return nil, nil, fmt.Errorf("artifacts: list event sources of %q: %w", namespace, err)
 	}
 	return docs, skipped, nil
+}
+
+// Names is every document's key, by its namespace and name.
+func (s *BlobEventSourceStore) Names(ctx context.Context) ([]eventsources.Key, error) {
+	var keys []eventsources.Key
+	err := listObjects(ctx, s.b, blobListInput{Prefix: EventSourcePrefix + "/"}, func(object blobObject) (bool, error) {
+		namespace, file, found := strings.Cut(strings.TrimPrefix(object.Key, EventSourcePrefix+"/"), "/")
+		name, json := strings.CutSuffix(file, ".json")
+		if found && json && eventSourceSlug.MatchString(namespace) && eventSourceSlug.MatchString(name) {
+			keys = append(keys, eventsources.Key{Namespace: namespace, Name: name})
+		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: list event sources: %w", err)
+	}
+	return keys, nil
 }
 
 // Count is how many documents the deployment holds.
@@ -291,6 +309,18 @@ func (s *BlobEventSourceStore) PutSpec(ctx context.Context, id, digest string, b
 	return nil
 }
 
+// RemoveSpec removes the spec of this id and digest.
+func (s *BlobEventSourceStore) RemoveSpec(ctx context.Context, id, digest string) error {
+	key, err := eventSourceSpecKey(id, digest)
+	if err != nil {
+		return err
+	}
+	if err := s.b.remove(ctx, key); err != nil {
+		return fmt.Errorf("artifacts: remove event source spec %s/%s: %w", id, digest, err)
+	}
+	return nil
+}
+
 // ReadSpec reads the bytes of the spec of this id and digest. Bytes that do
 // not hash to the digest are an error, never a spec.
 func (s *BlobEventSourceStore) ReadSpec(ctx context.Context, id, digest string) ([]byte, bool, error) {
@@ -311,82 +341,37 @@ func (s *BlobEventSourceStore) ReadSpec(ctx context.Context, id, digest string) 
 	return body, true, nil
 }
 
-// Delete removes the document of the source of this id, then the specs
-// under that id. A document this release cannot decode is still deleted by
-// the id its caller names, where its own id cannot be read or is that id:
-// an unreadable document is never a source nobody can remove. Specs are
-// removed only for an id the document itself carried, so a caller's id
-// never removes another source's. Just before the document is removed its
-// version is read again, and a document that changed meanwhile is
-// ErrChanged with nothing removed; the remove itself is not conditional, so
-// a delete and a create of the same name racing in that last instant are
-// not excluded (no source runs in this release, and the next release
-// replaces this delete with a mark). Specs that cannot all be removed after
-// the document was are ErrSpecsLeft: the source is deleted.
-func (s *BlobEventSourceStore) Delete(ctx context.Context, namespace, name, id string) error {
+// Remove removes a document while it still carries etag: the store holds the
+// condition, as every engine's boot asks it to (probeConditionalAnswers).
+func (s *BlobEventSourceStore) Remove(ctx context.Context, namespace, name, etag string) error {
 	key, err := eventSourceKey(namespace, name)
 	if err != nil {
 		return err
 	}
-	if !eventsources.ValidID(id) {
-		return fmt.Errorf("artifacts: delete event source %s/%s: id %q is not an event source's id", namespace, name, id)
-	}
-	raw, version, err := s.b.get(ctx, key, maxEventSourceRecordBytes+1)
-	if err != nil {
-		if errors.Is(err, errBlobNotFound) {
-			return eventsources.ErrNotFound
-		}
-		return fmt.Errorf("artifacts: read event source %s/%s: %w", namespace, name, err)
-	}
-	stored := ""
-	if src, err := UnmarshalEventSourceRecord(raw); err == nil {
-		stored = src.GetId()
-	} else {
-		stored = tolerantRecordID(raw)
-	}
-	if stored != "" && stored != id {
+	if etag == "" {
 		return eventsources.ErrChanged
 	}
-	if _, again, err := s.b.get(ctx, key, maxEventSourceRecordBytes+1); err != nil {
-		if errors.Is(err, errBlobNotFound) {
-			return eventsources.ErrNotFound
-		}
-		return fmt.Errorf("artifacts: read event source %s/%s: %w", namespace, name, err)
-	} else if again != version {
+	switch err := s.b.removeVersion(ctx, key, etag); {
+	case errors.Is(err, errBlobChanged):
 		return eventsources.ErrChanged
-	}
-	if err := s.b.remove(ctx, key); err != nil {
-		return fmt.Errorf("artifacts: delete event source %s/%s: %w", namespace, name, err)
-	}
-	if stored == "" {
-		return nil
-	}
-	keys, err := listKeys(ctx, s.b, EventSourceSpecPrefix+"/"+id+"/")
-	if err != nil {
-		return fmt.Errorf("%w: list %s: %v", eventsources.ErrSpecsLeft, id, err)
-	}
-	for start := 0; start < len(keys); start += blobRemoveBatch {
-		end := min(start+blobRemoveBatch, len(keys))
-		failed, err := s.b.removeKeys(ctx, keys[start:end])
-		if err != nil {
-			return fmt.Errorf("%w: remove the specs of %s: %v", eventsources.ErrSpecsLeft, id, err)
-		}
-		for key, cause := range failed {
-			return fmt.Errorf("%w: remove %s: %v", eventsources.ErrSpecsLeft, key, cause)
-		}
+	case err != nil:
+		return fmt.Errorf("artifacts: remove event source %s/%s: %w", namespace, name, err)
 	}
 	return nil
 }
 
 // tolerantRecordID reads the id of a record this release cannot decode in
-// full, "" when even that cannot be read.
-func tolerantRecordID(raw []byte) string {
+// full, "" when even that cannot be read, or when the record is not the one
+// its key names: a copy under another key has the id of the source it is of.
+func tolerantRecordID(raw []byte, namespace, name string) string {
 	var rec struct {
 		EventSource struct {
-			ID string `json:"id"`
+			ID        string `json:"id"`
+			Namespace string `json:"namespace"`
+			Name      string `json:"name"`
 		} `json:"eventSource"`
 	}
-	if json.Unmarshal(raw, &rec) != nil || !eventsources.ValidID(rec.EventSource.ID) {
+	if json.Unmarshal(raw, &rec) != nil || !eventsources.ValidID(rec.EventSource.ID) || rec.EventSource.Namespace != namespace || rec.EventSource.Name != name {
 		return ""
 	}
 	return rec.EventSource.ID

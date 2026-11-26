@@ -123,3 +123,54 @@ func TestListRuns_AConcurrencyAttributeItCannotReadLeavesTheClustersMatch(t *tes
 		t.Errorf("listed %v, want ork-odd, which the cluster matched", runs)
 	}
 }
+
+// TestListRuns_ResultsRecordedKeepsTheMarkedRunsOpenOrEnded: the mark of a
+// run whose results the engine records is its start's, so results_recorded
+// keeps a marked run that has ended as well as one still going, pushes its
+// predicate down, needs no gate, and does not ask for live runs only.
+func TestListRuns_ResultsRecordedKeepsTheMarkedRunsOpenOrEnded(t *testing.T) {
+	created := statsWindowEnd.Add(-10 * time.Minute)
+	going := statsCorpusRun{id: "ork-going", namespace: "alpha", orkflow: "deploy", createdAt: created,
+		status: orkstackv1.Status_STATUS_RUNNING, resultsRecorded: true}
+	ended := statsCorpusRun{id: "ork-ended", namespace: "alpha", orkflow: "deploy", createdAt: created,
+		closedAt: created.Add(time.Minute), status: orkstackv1.Status_STATUS_FAILED, resultsRecorded: true}
+	plain := statsCorpusRun{id: "ork-plain", namespace: "alpha", orkflow: "deploy", createdAt: created,
+		status: orkstackv1.Status_STATUS_RUNNING}
+	plainEnded := statsCorpusRun{id: "ork-plain-ended", namespace: "alpha", orkflow: "deploy", createdAt: created,
+		closedAt: created.Add(time.Minute), status: orkstackv1.Status_STATUS_SUCCEEDED}
+	index := statsIndexOver(t, []statsCorpusRun{going, ended, plain, plainEnded})
+
+	for _, tc := range []struct {
+		filters []string
+		want    []string
+	}{
+		{[]string{"results_recorded=true"}, []string{"ork-ended", "ork-going"}},
+		{[]string{"results_recorded=true", "status=FAILED"}, []string{"ork-ended"}},
+	} {
+		t.Run(strings.Join(tc.filters, ","), func(t *testing.T) {
+			index.queries = nil
+			q := RunListPlan(runFilters(t, tc.filters...))
+			q.Namespace, q.Complete, q.Limit = "alpha", true, 50
+			if q.Index == nil || q.Index.Gated() || !q.Index.ResultsRecorded() {
+				t.Fatalf("plan index = %+v; want an ungated results_recorded query", q.Index)
+			}
+			runs, err := newRunReader(index, converter.GetDefaultDataConverter()).ListRuns(context.Background(), q)
+			must.OKf(t, err, "ListRuns")
+			var got []string
+			for _, run := range runs {
+				got = append(got, run.GetId())
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("listed %v, want %v", got, tc.want)
+			}
+			predicate := task.SearchAttrOrkflowResultsRecorded + ` = "true"`
+			if !slices.ContainsFunc(index.queries, func(q string) bool { return strings.Contains(q, predicate) }) {
+				t.Errorf("no query pushed %q down: %q", predicate, index.queries)
+			}
+			if slices.ContainsFunc(index.queries, func(q string) bool { return livePredicate.MatchString(q) }) {
+				t.Errorf("a query asked for live runs only, which drops the ended marked run: %q", index.queries)
+			}
+		})
+	}
+}

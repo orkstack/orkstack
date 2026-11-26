@@ -335,7 +335,7 @@ var resumeSections = []resumeSection{
 		orkstackv1.ResumeCategory_RESUME_CATEGORY_SLEEP_KEPT,
 	}},
 	{"Stays skipped", []orkstackv1.ResumeCategory{orkstackv1.ResumeCategory_RESUME_CATEGORY_SKIPPED}},
-	{"From an earlier part of the run", []orkstackv1.ResumeCategory{orkstackv1.ResumeCategory_RESUME_CATEGORY_EARLIER}},
+	{"Kept from an earlier part of the run, not run again", []orkstackv1.ResumeCategory{orkstackv1.ResumeCategory_RESUME_CATEGORY_EARLIER}},
 }
 
 // otherSection lists a unit whose category no section claims (one a newer

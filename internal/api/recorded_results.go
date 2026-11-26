@@ -189,15 +189,25 @@ func (s *Service) recordedRunOf(ctx context.Context, run *orkstackv1.Run) (*reco
 		}
 		r.resumes = chain.Value
 	}
-	if r.showHeld, err = s.mayOnRun(ctx, run, authz.PermRunArtifactsRead); err != nil {
-		return nil, connect.NewError(connect.CodeUnavailable, errors.New("what the caller may read could not be decided; try again"))
-	}
-	if !r.showHeld {
-		if r.showHeld, err = s.mayOnDeployment(ctx, authz.PermOrkerRead); err != nil {
-			return nil, connect.NewError(connect.CodeUnavailable, errors.New("what the caller may read could not be decided; try again"))
-		}
+	if r.showHeld, err = s.mayShowHeld(ctx, run); err != nil {
+		return nil, err
 	}
 	return r, nil
+}
+
+// mayShowHeld says the caller may see where a run's records lie, the pool and
+// Orker that made them and their keys: with run.artifacts.read on the run's
+// Orkflow, or orker.read on the deployment. A decision that cannot be made is
+// unavailable, never a refusal.
+func (s *Service) mayShowHeld(ctx context.Context, run *orkstackv1.Run) (bool, error) {
+	may, err := s.mayOnRun(ctx, run, authz.PermRunArtifactsRead)
+	if err == nil && !may {
+		may, err = s.mayOnDeployment(ctx, authz.PermOrkerRead)
+	}
+	if err != nil {
+		return false, connect.NewError(connect.CodeUnavailable, errors.New("what the caller may read could not be decided; try again"))
+	}
+	return may, nil
 }
 
 // attestedRun says a run whose admission is gone had its results recorded: a

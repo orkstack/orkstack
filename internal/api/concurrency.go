@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -128,21 +130,81 @@ func (s *Service) queueTimeoutOf(spec *orkstackv1.ConcurrencySpec) time.Duration
 	return s.concurrency.DefaultQueueTimeout
 }
 
-// concurrencyBoundsError is a limit's declared queue_timeout outside the
-// deployment's bounds, naming the setting; nil within them or with none.
-func (s *Service) concurrencyBoundsError(wf *orkstackv1.Orkflow) error {
-	spec := wf.GetConcurrency()
-	if spec == nil || spec.GetQueueTimeoutSeconds() == 0 {
-		return nil
+// declaredLimit is one limit an Orkflow declares, the run's or a task's, and
+// how a refusal names it.
+type declaredLimit struct {
+	field, prefix string
+	taskID        string // "" for the run's
+	spec          *orkstackv1.ConcurrencySpec
+}
+
+// declaredLimits are wf's limits: the run's, then its tasks' as written.
+func declaredLimits(wf *orkstackv1.Orkflow) []declaredLimit {
+	var out []declaredLimit
+	if spec := wf.GetConcurrency(); spec != nil {
+		out = append(out, declaredLimit{field: "concurrency", spec: spec})
 	}
-	timeout := time.Duration(spec.GetQueueTimeoutSeconds()) * time.Second
-	switch {
-	case timeout < s.concurrency.MinQueueTimeout:
-		return fmt.Errorf("concurrency.queue_timeout is %s; this deployment allows at least %s (%s)",
-			timeout, s.concurrency.MinQueueTimeout, minQueueTimeoutSetting)
-	case timeout > s.concurrency.MaxQueueTimeout:
-		return fmt.Errorf("concurrency.queue_timeout is %s; this deployment allows at most %s (%s)",
-			timeout, s.concurrency.MaxQueueTimeout, maxQueueTimeoutSetting)
+	for i, t := range wf.GetTasks() {
+		if spec := t.GetConcurrency(); spec != nil {
+			out = append(out, declaredLimit{field: fmt.Sprintf("tasks[%d].concurrency", i),
+				prefix: fmt.Sprintf("task %q: ", t.GetId()), taskID: t.GetId(), spec: spec})
+		}
+	}
+	return out
+}
+
+// concurrencyBoundsError is the first limit of wf outside the deployment's
+// bounds, naming the setting; nil within them or with none. A limit's
+// queue_timeout is bounded, an Orkflow's limits are, and so are the slots one
+// run of it may hold or wait for at once: one for its own limit, and for each
+// key its tasks declare as many as its limit allows and one waiting, never
+// more than those tasks. Tasks that share a key template may each render a
+// key of their own, so each counts one.
+func (s *Service) concurrencyBoundsError(wf *orkstackv1.Orkflow) *validationFieldError {
+	limits := declaredLimits(wf)
+	if bound := s.concurrency.MaxLimitsPerOrkflow; len(limits) > bound {
+		return &validationFieldError{Field: limits[bound].field, Err: fmt.Errorf(
+			"the Orkflow declares %d concurrency limits; this deployment allows at most %d (engine.concurrency.max_limits_per_orkflow)", len(limits), bound)}
+	}
+	type key struct{ limit, tasks int }
+	keys, entries := map[string]key{}, 0
+	for _, l := range limits {
+		if seconds := l.spec.GetQueueTimeoutSeconds(); seconds != 0 {
+			timeout := time.Duration(seconds) * time.Second
+			field := l.field + ".queue_timeout"
+			switch {
+			case timeout < s.concurrency.MinQueueTimeout:
+				return &validationFieldError{Field: field, Err: fmt.Errorf("%sconcurrency.queue_timeout is %s; this deployment allows at least %s (%s)",
+					l.prefix, timeout, s.concurrency.MinQueueTimeout, minQueueTimeoutSetting)}
+			case timeout > s.concurrency.MaxQueueTimeout:
+				return &validationFieldError{Field: field, Err: fmt.Errorf("%sconcurrency.queue_timeout is %s; this deployment allows at most %s (%s)",
+					l.prefix, timeout, s.concurrency.MaxQueueTimeout, maxQueueTimeoutSetting)}
+			}
+		}
+		if l.taskID == "" {
+			entries++
+			continue
+		}
+		text := l.spec.GetKey()
+		switch {
+		case text == "":
+			text = engine.DefaultTaskConcurrencyKey("", "", l.taskID)
+		case strings.Contains(text, "{{"):
+			// A template may render to a key of its own for each task: a key
+			// of one task each, never fewer slots than one run can take.
+			text += "\x00" + l.taskID
+		}
+		k := keys[text]
+		keys[text] = key{limit: max(k.limit, int(l.spec.GetLimit())), tasks: k.tasks + 1}
+	}
+	for _, k := range keys {
+		// A run has one task of a key in its line at a time.
+		entries += min(k.limit+1, k.tasks)
+	}
+	if bound := s.concurrency.MaxRunSlotEntries; entries > bound {
+		return &validationFieldError{Field: limits[len(limits)-1].field, Err: fmt.Errorf(
+			"one run of the Orkflow could hold or wait for %d concurrency slots at once; this deployment allows at most %d (engine.concurrency.max_run_slot_entries)",
+			entries, bound)}
 	}
 	return nil
 }
@@ -151,7 +213,7 @@ func (s *Service) concurrencyBoundsError(wf *orkstackv1.Orkflow) error {
 // InvalidArgument on the field, as checkTaskCeiling refuses.
 func (s *Service) checkConcurrencyBounds(wf *orkstackv1.Orkflow) error {
 	if err := s.concurrencyBoundsError(wf); err != nil {
-		return connect.NewError(connect.CodeInvalidArgument, &validationFieldError{Field: "concurrency.queue_timeout", Err: err})
+		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return nil
 }
@@ -185,8 +247,8 @@ func (s *Service) keyBound(ctx context.Context, namespace string, claim claimCoo
 // planConcurrency is §7.1 steps 3 and 4 and the plan, for the run and for every
 // composed child that declares a limit (planChildLimits): it refuses a key
 // that does not render, a queue_timeout the deployment no longer allows and
-// a deployment that cannot hold a limit, and pins the run-level slot. A run
-// whose Orkflow declares none is untouched and asks nothing.
+// a deployment that cannot hold a limit, and pins the run's slot and its
+// tasks'. A run of a tree that declares none is untouched and asks nothing.
 func (s *Service) planConcurrency(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
@@ -202,8 +264,18 @@ func (s *Service) planConcurrency(
 	if err != nil {
 		return err
 	}
-	if spec == nil && !limitedChild {
+	limits := declaredLimits(planned)
+	if len(limits) == 0 && !limitedChild {
 		return nil // nothing of the tree is limited: nothing is asked
+	}
+	if err := s.concurrencyBoundsError(planned); err != nil {
+		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
+			"orkflow %s@%s: %w; create a new version within the bounds", planned.GetName(), planned.GetVersion(), err)))
+	}
+	if plan.History == nil && len(limits) > 0 {
+		// pinRunTreeLimits always runs first; a plan without its history
+		// limit would carry no reserve for the release.
+		return connect.NewError(connect.CodeInternal, errors.New("plan a concurrency limit: the run's history limit is not pinned"))
 	}
 	incarnation, err := concurrencyIncarnation(ns)
 	if err != nil {
@@ -214,18 +286,146 @@ func (s *Service) planConcurrency(
 			return err
 		}
 	}
+	if err := s.planTaskLimits(ns, planned, plan, msg, origin, incarnation); err != nil {
+		return err
+	}
+	if plan.Concurrency != nil {
+		plan.History = engine.ReserveConcurrencyRelease(plan.History, plan.Concurrency)
+	}
 	if err := s.planChildLimits(ns, planned, plan, incarnation); err != nil {
 		return err
 	}
-	if spec != nil {
+	if spec != nil && len(plan.Concurrency.Tasks) == 0 || s.keyBound(ctx, ns.GetName(), claim) {
 		return nil
 	}
-	// The run itself has no limit: what its children's need of the deployment
-	// is asked here, once.
-	if s.keyBound(ctx, ns.GetName(), claim) {
+	if spec == nil {
+		// The run itself has no limit: what its tasks' and its children's
+		// need of the deployment is asked here, once.
+		if err := s.concurrencySupport(ctx, planned, starter); err != nil {
+			return err
+		}
+	}
+	return s.taskKeysCheck(ctx, ns.GetName(), plan.Concurrency)
+}
+
+// keyRenderer renders the keys of a run's limits: its inputs, defaults
+// applied, and where it came from.
+func keyRenderer(planned *orkstackv1.Orkflow, msg *orkstackv1.SubmitRunRequest, origin *orkstackv1.RunOrigin) func(string) (string, error) {
+	inputs := engine.ApplyInputDefaults(planned, msg.GetInput()).GetData().AsMap()
+	run := dsl.ConcurrencyKeyRun{Orkflow: planned.GetName(), Version: planned.GetVersion(),
+		OriginKind: enumname.Of(origin.GetKind()), OriginID: origin.GetId()}
+	return func(template string) (string, error) {
+		key, err := dsl.RenderConcurrencyKey(template, inputs, run)
+		if err != nil {
+			// The key is rendered from the run's input: a message's values are
+			// its own.
+			return "", connect.NewError(connect.CodeInvalidArgument, refused(refusalReject, eventsources.ReasonMessageConcurrencyKeyInvalid, err))
+		}
+		return key, nil
+	}
+}
+
+// planTaskLimits pins the slots of the tasks that declare a limit of their
+// own (E88 §5.3). A task's key that renders to the run's own is refused: it
+// would wait for a slot its own run holds.
+func (s *Service) planTaskLimits(ns *orkstackv1.Namespace, planned *orkstackv1.Orkflow, plan *engine.RunPlan,
+	msg *orkstackv1.SubmitRunRequest, origin *orkstackv1.RunOrigin, incarnation string) error {
+	var runGate, runLabel string
+	if slot, ok := plan.RunConcurrencySlot(); ok {
+		runGate, runLabel = slot.GateID, slot.Label
+	}
+	render := keyRenderer(planned, msg, origin)
+	owner := artifacts.ResolveNamespace(planned.GetNamespace())
+	for _, l := range declaredLimits(planned) {
+		if l.taskID == "" {
+			continue
+		}
+		key, label := engine.DefaultTaskConcurrencyKey(owner, planned.GetName(), l.taskID), l.spec.GetKey()
+		if label == "" {
+			label = key
+		} else {
+			rendered, err := render(label)
+			if err != nil {
+				return err
+			}
+			key = rendered
+		}
+		slot := engine.ConcurrencySlotPlan{GateID: engine.GateID(ns.GetName(), incarnation, key), Key: key, Label: label,
+			Limit: int(l.spec.GetLimit()), Strategy: engine.ConcurrencyStrategyQueue,
+			QueueTimeoutSeconds: int64(s.queueTimeoutOf(l.spec) / time.Second)}
+		if slot.GateID == runGate {
+			// Keys rendered from the run's input conflict for this message
+			// alone; fixed keys conflict for every one.
+			class, code := refusalPause, engine.ConcurrencyKeyConflictCode
+			if strings.Contains(label, "{{") || strings.Contains(runLabel, "{{") {
+				class, code = refusalReject, eventsources.ReasonMessageConcurrencyKeyInvalid
+			}
+			return connect.NewError(connect.CodeInvalidArgument, refused(class, code, fmt.Errorf(
+				"%s: task %s's concurrency key %s is the run's own: the task would wait for a slot its own run holds",
+				engine.ConcurrencyKeyConflictCode, l.taskID, key)))
+		}
+		if plan.Concurrency == nil {
+			limit := s.concurrencyPlanOf(ns.GetName(), incarnation, planned.GetName())
+			plan.Concurrency = &limit
+		}
+		c := plan.Concurrency
+		ix := slices.Index(c.Slots, slot)
+		if ix < 0 {
+			ix, c.Slots = len(c.Slots), append(c.Slots, slot)
+		}
+		if c.Tasks == nil {
+			c.Tasks = map[string]int{}
+		}
+		c.Tasks[l.taskID] = ix
+	}
+	return nil
+}
+
+// taskKeysCheck is §7.1 step 5 for the tasks' keys: one not in use now counts
+// against its namespace's bound of keys in use. The keys in use are asked of
+// the cluster only when the bound could be reached, and a full line refuses
+// nothing: a task asks for its slot when it is ready, not now.
+func (s *Service) taskKeysCheck(ctx context.Context, namespace string, plan *engine.ConcurrencyPlan) error {
+	if plan == nil || len(plan.Tasks) == 0 {
 		return nil
 	}
-	return s.concurrencySupport(ctx, planned, starter)
+	gates := map[string]string{}
+	for _, ix := range plan.Tasks {
+		gates[plan.Slots[ix].GateID] = plan.Slots[ix].Key
+	}
+	unavailable := func(scope, what string, err error) error {
+		s.logger.Warn("concurrency check could not read the cluster", "scope", scope, "namespace", namespace, "error", err)
+		return unavailableCheck(connect.CodeUnavailable, fmt.Errorf("%s (scope=%s): %s could not be read; try again",
+			engine.ConcurrencyCheckUnavailableCode, scope, what))
+	}
+	reader := s.concurrencyReader
+	if reader == nil {
+		return unavailable("namespace", fmt.Sprintf("namespace %q's active keys", namespace), errors.New("this engine is not wired to a cluster"))
+	}
+	active, err := reader.ActiveGates(ctx, namespace)
+	if err != nil {
+		return unavailable("namespace", fmt.Sprintf("namespace %q's active keys", namespace), err)
+	}
+	bound := int64(s.concurrency.MaxActiveKeysPerNamespace)
+	if active+int64(len(gates)) <= bound {
+		return nil
+	}
+	fresh := int64(0)
+	for _, gate := range slices.Sorted(maps.Keys(gates)) {
+		line, err := reader.GateLine(ctx, gate)
+		if err != nil {
+			return unavailable("key", "the line for key "+gates[gate], err)
+		}
+		if !line.Present || line.Holders+line.Queued == 0 {
+			fresh++
+		}
+	}
+	if fresh > 0 && active+fresh > bound {
+		return busy(fmt.Errorf("%s: namespace %q already has %d keys with runs holding or queued, and this run's tasks would use %d more than that: "+
+			"its bound is %d (engine.concurrency.max_active_keys_per_namespace); submit again once one is free",
+			engine.ConcurrencyKeysExhaustedCode, namespace, active, fresh, bound))
+	}
+	return nil
 }
 
 // planRunLimit is planConcurrency's run-level slot.
@@ -241,30 +441,15 @@ func (s *Service) planRunLimit(
 	incarnation string,
 ) error {
 	spec := planned.GetConcurrency()
-	if err := s.concurrencyBoundsError(planned); err != nil {
-		return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
-			"orkflow %s@%s: %w; create a new version within the bounds", planned.GetName(), planned.GetVersion(), err)))
-	}
-	if plan.History == nil {
-		// pinRunTreeLimits always runs first; a plan without its history
-		// limit would carry no reserve for the release.
-		return connect.NewError(connect.CodeInternal, errors.New("plan a concurrency limit: the run's history limit is not pinned"))
-	}
 	namespace := ns.GetName()
 	owner := artifacts.ResolveNamespace(planned.GetNamespace())
 	key, label := engine.DefaultRunConcurrencyKey(owner, planned.GetName()), spec.GetKey()
 	if label == "" {
 		label = key
 	} else {
-		input := engine.ApplyInputDefaults(planned, msg.GetInput())
-		rendered, err := dsl.RenderConcurrencyKey(label, input.GetData().AsMap(), dsl.ConcurrencyKeyRun{
-			Orkflow: planned.GetName(), Version: planned.GetVersion(),
-			OriginKind: enumname.Of(origin.GetKind()), OriginID: origin.GetId(),
-		})
+		rendered, err := keyRenderer(planned, msg, origin)(label)
 		if err != nil {
-			// The key is rendered from the run's input: a message's values are
-			// its own.
-			return connect.NewError(connect.CodeInvalidArgument, refused(refusalReject, eventsources.ReasonMessageConcurrencyKeyInvalid, err))
+			return err
 		}
 		key = rendered
 	}
@@ -292,16 +477,25 @@ func (s *Service) planRunLimit(
 	}}
 	limit.Run = &run
 	plan.Concurrency = &limit
-	plan.History = engine.ReserveConcurrencyRelease(plan.History, &limit)
 	return nil
 }
 
-// runIndexGates readies ListRuns' concurrency filters (queued=, queued_on=,
-// holding=), which only the cluster's index of open runs can answer: a
-// deployment that does not index concurrency limits, or that has no read
-// model, refuses them, and otherwise a key stands for the gate submit plans
-// for it in this namespace's incarnation.
-func runIndexGates(index *engine.RunIndexQuery, ns *orkstackv1.Namespace, binding engine.Binding) error {
+// runIndexGates readies ListRuns' indexed filters, which only the cluster's
+// index can answer. results_recorded= is refused by a deployment whose
+// cluster does not index the mark (resultsRecordedIndexed) or that has no
+// read model. The concurrency filters (queued=, queued_on=, holding=) are
+// refused by a deployment that does not index concurrency limits, or that has
+// no read model, and otherwise a key stands for the gate submit plans for it
+// in this namespace's incarnation.
+func runIndexGates(index *engine.RunIndexQuery, ns *orkstackv1.Namespace, binding engine.Binding, resultsRecordedIndexed bool) error {
+	if index.ResultsRecorded() && (binding.Reader == nil || !resultsRecordedIndexed) {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"this deployment's cluster does not index runs whose results the engine records, so it cannot list runs by results_recorded=; "+
+				"docs/DEPLOY.md, \"Temporal search attributes\", says how to add it by hand"))
+	}
+	if !index.Gated() {
+		return nil
+	}
 	if binding.Reader == nil || !concurrencyIndexAnswer(binding.Starter) {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"this deployment does not index concurrency limits, so it cannot list runs by queued=, queued_on= or holding=; "+
@@ -325,41 +519,78 @@ func runIndexGates(index *engine.RunIndexQuery, ns *orkstackv1.Namespace, bindin
 // which starts it again), logs why at most once a minute, and never fails the
 // read. A run that is not queued, or has ended, asks nothing.
 func (s *Service) applyLiveQueued(ctx context.Context, run *orkstackv1.Run) {
-	snapshot := run.GetQueued()
-	if snapshot == nil || s.concurrencyReader == nil || runstatus.IsTerminal(run.GetStatus()) {
+	if run.GetQueued() == nil || s.concurrencyReader == nil || runstatus.IsTerminal(run.GetStatus()) {
 		return
-	}
-	now := time.Now()
-	notAnswering := func(why string, err error) {
-		run.Queued = engine.NotAnsweringQueued(snapshot, now.Add(s.concurrency.RequeueIntervalMax))
-		if ctx.Err() == nil && s.queuedWarn.allow(now, capacityWarnInterval) {
-			s.logger.Warn("get run: "+why+", so the run's place in line is unknown (said at most once a minute)",
-				"run_id", run.GetId(), "key", snapshot.GetKey(), "error", err)
-		}
 	}
 	rctx, cancel := context.WithTimeout(ctx, censusReadTimeout)
 	defer cancel()
+	run.Queued = s.livePlace(ctx, rctx, run, run.GetQueued(), "", engine.LiveQueued)
+}
+
+// applyTaskQueued is applyLiveQueued for the tasks of a run that wait for a
+// slot of their own limit (E88 P7, TaskRun.queued), within the same bound: at
+// most api_holders_shown tasks are read, a gate each (a run has one task in
+// a key's line at a time); the others' places are shown as not known.
+func (s *Service) applyTaskQueued(ctx context.Context, run *orkstackv1.Run) {
+	if s.concurrencyReader == nil || runstatus.IsTerminal(run.GetStatus()) {
+		return
+	}
+	var rows []*orkstackv1.TaskRun
+	for _, row := range run.GetTaskRuns() {
+		// A composed task's queued is its child run's (applyChildQueued).
+		if row.GetQueued() == nil || row.GetChild() != nil || row.GetStatus() != orkstackv1.Status_STATUS_PENDING {
+			continue
+		}
+		if len(rows) == s.concurrency.APIHoldersShown {
+			// Past the bound nothing is read: its recorded place is not live.
+			row.Queued = proto.Clone(row.GetQueued()).(*orkstackv1.ConcurrencyQueued)
+			row.Queued.Position, row.Queued.PositionKnown = 0, false
+			continue
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return
+	}
+	rctx, cancel := context.WithTimeout(ctx, censusReadTimeout)
+	defer cancel()
+	for _, row := range rows {
+		row.Queued = s.livePlace(ctx, rctx, run, row.GetQueued(), row.GetTaskId(), engine.LiveTaskQueued)
+	}
+}
+
+// livePlace reads where snapshot, the record of run or of its task taskID,
+// stands in its key's line now. A limit that cannot be read, or whose gate is
+// not running, leaves the place unknown and says so (NOT_ANSWERING: the run
+// asks the gate again, which starts it again), logs why at most once a
+// minute, and never fails the read.
+func (s *Service) livePlace(ctx, rctx context.Context, run *orkstackv1.Run, snapshot *orkstackv1.ConcurrencyQueued, taskID string,
+	place func(*orkstackv1.ConcurrencyQueued, string, engine.GateLine, int, time.Time) *orkstackv1.ConcurrencyQueued) *orkstackv1.ConcurrencyQueued {
+	now := time.Now()
+	notAnswering := func(why string, err error) *orkstackv1.ConcurrencyQueued {
+		if ctx.Err() == nil && s.queuedWarn.allow(now, capacityWarnInterval) {
+			s.logger.Warn("get run: "+why+", so a place in line is unknown (said at most once a minute)",
+				"run_id", run.GetId(), "task_id", taskID, "key", snapshot.GetKey(), "error", err)
+		}
+		return engine.NotAnsweringQueued(snapshot, now.Add(s.concurrency.RequeueIntervalMax))
+	}
 	ns, err := s.namespace(rctx, run.GetNamespace())
 	if err != nil {
-		notAnswering("the run's namespace could not be read", err)
-		return
+		return notAnswering("the run's namespace could not be read", err)
 	}
 	incarnation, err := concurrencyIncarnation(ns)
 	if err != nil {
-		notAnswering("the run's namespace has no incarnation for its limit", err)
-		return
+		return notAnswering("the run's namespace has no incarnation for its limit", err)
 	}
 	gate := engine.GateID(ns.GetName(), incarnation, snapshot.GetKey())
 	line, err := s.concurrencyReader.GateLine(rctx, gate)
 	switch {
 	case err != nil:
-		notAnswering("its limit "+gate+" did not answer", err)
-		return
+		return notAnswering("its limit "+gate+" did not answer", err)
 	case !line.Present:
-		notAnswering("its limit "+gate+" is not running", nil)
-		return
+		return notAnswering("its limit "+gate+" is not running", nil)
 	}
-	run.Queued = engine.LiveQueued(snapshot, run.GetId(), line, s.concurrency.APIHoldersShown, now)
+	return place(snapshot, run.GetId(), line, s.concurrency.APIHoldersShown, now)
 }
 
 // applyChildQueued says of each composed task whose child run waits for its
@@ -608,7 +839,7 @@ func (s *Service) fullKeyCheck(ctx context.Context, gateID, key, strategy string
 func childDeclaresLimit(planned *orkstackv1.Orkflow, plan *engine.RunPlan) (bool, error) {
 	limited := false
 	if err := engine.ForEachChild(planned, plan, func(_ string, _ *engine.ChildRunPlan, def *orkstackv1.Orkflow) error {
-		limited = limited || def.GetConcurrency() != nil
+		limited = limited || len(declaredLimits(def)) > 0
 		return nil
 	}); err != nil {
 		return false, connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
@@ -633,11 +864,11 @@ func (s *Service) planChildLimits(ns *orkstackv1.Namespace, planned *orkstackv1.
 				return connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
 			}
 			below := ancestors
+			if err := s.concurrencyBoundsError(def); err != nil {
+				return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
+					"orkflow %s@%s, composed by task %s: %w; create a new version within the bounds", def.GetName(), def.GetVersion(), t.GetId(), err)))
+			}
 			if spec := def.GetConcurrency(); spec != nil {
-				if err := s.concurrencyBoundsError(def); err != nil {
-					return connect.NewError(connect.CodeFailedPrecondition, refused(refusalPause, "CONCURRENCY_LIMIT_INVALID", fmt.Errorf(
-						"orkflow %s@%s, composed by task %s: %w; create a new version within the bounds", def.GetName(), def.GetVersion(), t.GetId(), err)))
-				}
 				strategy, err := planStrategy(spec.GetOnLimit())
 				if err != nil {
 					return err
@@ -664,6 +895,9 @@ func (s *Service) planChildLimits(ns *orkstackv1.Namespace, planned *orkstackv1.
 					below = append(slices.Clone(ancestors), gate)
 				}
 			}
+			if err := s.planChildTaskLimits(ns, t.GetId(), def, child, &below, incarnation); err != nil {
+				return err
+			}
 			if err := walk(def, &child.Plan, below); err != nil {
 				return err
 			}
@@ -671,6 +905,51 @@ func (s *Service) planChildLimits(ns *orkstackv1.Namespace, planned *orkstackv1.
 		return nil
 	}
 	return walk(planned, plan, plan.Concurrency.GateIDs())
+}
+
+// planChildTaskLimits pins the limits of a composed child's tasks, their keys
+// templates its parent renders when it starts it (E88 §22.3); a key that needs
+// no rendering is held to the ancestors' and the child's own here, and joins
+// below.
+func (s *Service) planChildTaskLimits(ns *orkstackv1.Namespace, composer string, def *orkstackv1.Orkflow, child *engine.ChildRunPlan,
+	below *[]string, incarnation string) error {
+	owner := artifacts.ResolveNamespace(def.GetNamespace())
+	var own string
+	if c := child.Concurrency; c != nil && !strings.Contains(c.Slot.Key, "{{") {
+		own = engine.GateID(ns.GetName(), incarnation, c.Slot.Key)
+	}
+	for _, l := range declaredLimits(def) {
+		if l.taskID == "" {
+			continue
+		}
+		key, label := engine.DefaultTaskConcurrencyKey(owner, def.GetName(), l.taskID), l.spec.GetKey()
+		if label == "" {
+			label = key
+		} else {
+			key = label
+		}
+		if child.Concurrency == nil {
+			child.Concurrency = &engine.ChildConcurrency{Plan: s.concurrencyPlanOf(ns.GetName(), incarnation, def.GetName()),
+				MaxActiveKeys: int64(s.concurrency.MaxActiveKeysPerNamespace)}
+		}
+		if child.Concurrency.Tasks == nil {
+			child.Concurrency.Tasks = map[string]engine.ConcurrencySlotPlan{}
+		}
+		child.Concurrency.Tasks[l.taskID] = engine.ConcurrencySlotPlan{Key: key, Label: label, Limit: int(l.spec.GetLimit()),
+			Strategy: engine.ConcurrencyStrategyQueue, QueueTimeoutSeconds: int64(s.queueTimeoutOf(l.spec) / time.Second)}
+		if strings.Contains(key, "{{") {
+			continue
+		}
+		gate := engine.GateID(ns.GetName(), incarnation, key)
+		if slices.Contains(*below, gate) || gate == own {
+			// Neither key is rendered (above): every message would conflict.
+			return connect.NewError(connect.CodeInvalidArgument, refused(refusalPause, engine.ConcurrencyKeyConflictCode, fmt.Errorf(
+				"%s: task %s composes %s@%s, whose task %s's concurrency key %s is one its run, or a run above it, holds: it would wait for a slot its own run keeps",
+				engine.ConcurrencyKeyConflictCode, composer, def.GetName(), def.GetVersion(), l.taskID, key)))
+		}
+		*below = append(slices.Clone(*below), gate)
+	}
+	return nil
 }
 
 // concurrencyPlanOf is a run's concurrency plan with no slot: what its limits
@@ -684,7 +963,7 @@ func (s *Service) concurrencyPlanOf(namespace, incarnation, orkflow string) engi
 		AcquireTimeout: gate.AcquireTimeout, AcquireBackoffMin: settings.AcquireBackoffMin, AcquireBackoffMax: settings.AcquireBackoffMax,
 		RequeueInterval: settings.RequeueInterval, RequeueBackoffFactor: settings.RequeueBackoffFactor,
 		RequeueIntervalMax: settings.RequeueIntervalMax, PerSlotBytes: settings.PerSlotBytes,
-		EventHoldersShown: settings.EventHoldersShown, Gate: gate,
+		EventHoldersShown: settings.EventHoldersShown, PerSlotEvents: engine.TaskSlotReserveEvents, Gate: gate,
 	}
 }
 
@@ -756,7 +1035,7 @@ func unsupported(wf *orkstackv1.Orkflow, causes []string, fleetOnly bool) error 
 // deployment finishing its rollout, or indexing the attributes, holds it
 // later. An Orkflow with no limit asks nothing.
 func (s *Service) concurrencyIssues(ctx context.Context, ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) []*orkstackv1.ValidationIssue {
-	if wf.GetConcurrency() == nil {
+	if len(declaredLimits(wf)) == 0 {
 		return nil
 	}
 	binding, err := s.binding(ns.GetName())

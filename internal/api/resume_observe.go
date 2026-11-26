@@ -38,11 +38,12 @@ func (s *Service) resumeAnomaly(ctx context.Context, namespace, kind string) {
 
 // observeResume counts one answer. A preview that planned, and a request that
 // named no run or was not one, resumed nothing and count as nothing.
-func (s *Service) observeResume(ctx context.Context, msg *orkstackv1.ResumeRunRequest, resp *orkstackv1.ResumeRunResponse, err error) {
+func (s *Service) observeResume(ctx context.Context, msg *orkstackv1.ResumeRunRequest, resp *orkstackv1.ResumeRunResponse, forced bool, err error) {
 	if s.resumeObserver == nil {
 		return
 	}
-	r := telemetry.ResumeRequest{Namespace: artifacts.ResolveNamespace(msg.GetNamespace()), Action: orkstackv1.ResumeAction_RESUME_ACTION_RESUME}
+	r := telemetry.ResumeRequest{Namespace: artifacts.ResolveNamespace(msg.GetNamespace()), Action: orkstackv1.ResumeAction_RESUME_ACTION_RESUME,
+		ForceCanceled: forced}
 	if msg.GetFromTaskId() != "" {
 		r.Action = orkstackv1.ResumeAction_RESUME_ACTION_RETRY_FROM
 	}

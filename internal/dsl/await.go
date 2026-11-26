@@ -68,6 +68,7 @@ func awaitExecutionKeys(td taskDocument) []struct {
 		{"run_as_orker_user", td.RunAsOrkerUser},
 		{"each", td.Each != nil},
 		{"cache", td.Cache != nil},
+		{"concurrency", td.Concurrency != nil},
 		// Unreachable from Compile, which takes a document declaring sleep:
 		// down compileSleepTask first; listed so the editor's schema forbids
 		// it beside await: too.
@@ -169,6 +170,7 @@ func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 		{"image", task.GetImage() != nil},
 		{"each", task.GetEach() != nil},
 		{"cache", task.GetCache() != nil},
+		{"concurrency", task.GetConcurrency() != nil},
 	}
 	for _, c := range checks {
 		if c.set {

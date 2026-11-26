@@ -247,7 +247,7 @@ func lossesWhileStopping(t *testing.T, n int, maxEvents int64) (h *harness, mete
 	// command after it is added as it is issued.
 	const started = 4
 	h.onSnapshot = func(*orkstackv1.Run, int64) error {
-		h.env.SetCurrentHistoryLength(int(started + meter.events()))
+		h.raiseHistory(int(started + meter.events()))
 		return nil
 	}
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-interrupted", compile(t, fmt.Sprintf(oneTaskDocument, "")),

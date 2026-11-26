@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -47,7 +48,12 @@ const ActivityRenderConcurrencyKeys = "RenderConcurrencyKeys"
 // rendered: the slot as its submit decided it, its key the template, and what
 // the child's plan carries of a limit besides.
 type ChildConcurrency struct {
+	// Slot is the child's own limit; its Key is empty for a child whose tasks
+	// alone have one.
 	Slot ConcurrencySlotPlan `json:"slot"`
+	// Tasks are the limits of the child's tasks, by task id, their keys the
+	// templates (E88 §22.3).
+	Tasks map[string]ConcurrencySlotPlan `json:"tasks,omitempty"`
 	// Plan is the child's ConcurrencyPlan with no slot.
 	Plan ConcurrencyPlan `json:"plan"`
 	// MaxActiveKeys bounds the namespace's keys in use.
@@ -85,6 +91,35 @@ type RenderConcurrencyKeysInput struct {
 	OriginKind string             `json:"origin_kind"`
 	OriginID   string             `json:"origin_id"`
 	Ancestors  []string           `json:"ancestors,omitempty"`
+	// RunGate is the child's own limit's gate, which none of its tasks may
+	// ask for; empty for its own.
+	RunGate string `json:"run_gate,omitempty"`
+}
+
+// ActivityRenderConcurrencyTaskKeys renders a child's tasks' keys.
+const ActivityRenderConcurrencyTaskKeys = "RenderConcurrencyTaskKeys"
+
+// ChildTaskSlots are a child's tasks' slots, by task id.
+type ChildTaskSlots struct {
+	Tasks map[string]ConcurrencySlotPlan `json:"tasks"`
+}
+
+// RenderConcurrencyTaskKeys renders each of a child's tasks' keys as
+// RenderConcurrencyKeys renders its own, in task id order: refused when it does
+// not render, is an ancestor's or the child's own key, or would be one key too
+// many.
+func (a *GateActivities) RenderConcurrencyTaskKeys(ctx context.Context, in RenderConcurrencyKeysInput) (ChildTaskSlots, error) {
+	out := ChildTaskSlots{Tasks: map[string]ConcurrencySlotPlan{}}
+	for _, id := range slices.Sorted(maps.Keys(in.Limit.Tasks)) {
+		one := in
+		one.Limit.Slot = in.Limit.Tasks[id]
+		slot, err := a.RenderConcurrencyKeys(ctx, one)
+		if err != nil {
+			return out, err
+		}
+		out.Tasks[id] = slot
+	}
+	return out, nil
 }
 
 // RenderConcurrencyKeys renders the child's key, refuses one an ancestor
@@ -120,7 +155,7 @@ func (a *GateActivities) RenderConcurrencyKeys(ctx context.Context, in RenderCon
 func (a *GateActivities) childSlot(ctx context.Context, in RenderConcurrencyKeysInput, key string) (ConcurrencySlotPlan, error) {
 	slot, plan := in.Limit.Slot, in.Limit.Plan
 	slot.Key, slot.GateID = key, GateID(plan.Namespace, plan.Incarnation, key)
-	if slices.Contains(in.Ancestors, slot.GateID) {
+	if slices.Contains(in.Ancestors, slot.GateID) || slot.GateID == in.RunGate {
 		return slot, composeActivityError(TaskConcurrencyKeyConflictCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
 			fmt.Sprintf("its concurrency key %s is one this run, or a run above it, holds: the child would wait for a slot its own parent keeps", key))
 	}
@@ -169,25 +204,56 @@ func (s *runState) limitChild(ctx workflow.Context, id string, c *childState, in
 	if err != nil {
 		return fail(TaskConcurrencyKeyInvalidCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, err.Error())
 	}
-	var slot ConcurrencySlotPlan
-	localCtx := composeLocalContext(ctx)
-	err = s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, ActivityRenderConcurrencyKeys, RenderConcurrencyKeysInput{
+	in := RenderConcurrencyKeysInput{
 		Limit: *limit, Inputs: inputs, Orkflow: c.wf.GetName(), Version: c.wf.GetVersion(),
 		OriginKind: RunOriginKindParentRun, OriginID: s.runID, Ancestors: childPlan.ConcurrencyAncestors,
-	}), &slot)
-	if categoryOf(err).canceled {
-		return s.canceledBeforeChildStart(ctx, id, err)
 	}
-	if err != nil {
-		code, category, message := renderFailure("TASK_CONCURRENCY_CHECK", err)
-		return fail(code, category, message)
+	// render runs one of the two renders, and ends the task as either fails.
+	render := func(activity string, out any) error {
+		localCtx := composeLocalContext(ctx)
+		err := s.getLocal(localCtx, workflow.ExecuteLocalActivity(localCtx, activity, in), out)
+		if categoryOf(err).canceled {
+			return s.canceledBeforeChildStart(ctx, id, err)
+		}
+		if err != nil {
+			code, category, message := renderFailure("TASK_CONCURRENCY_CHECK", err)
+			return fail(code, category, message)
+		}
+		return nil
 	}
-	if slot.GateID == "" || slot.Key == "" {
-		return fail(TaskConcurrencyCheckUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
-			"its key was not rendered")
+	plan := limit.Plan
+	plan.Slots, plan.Run, plan.Tasks = nil, nil, nil
+	if limit.Slot.Key != "" {
+		var slot ConcurrencySlotPlan
+		if err := render(ActivityRenderConcurrencyKeys, &slot); err != nil {
+			return err
+		}
+		if slot.GateID == "" || slot.Key == "" {
+			return fail(TaskConcurrencyCheckUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
+				"its key was not rendered")
+		}
+		run := 0
+		plan.Slots, plan.Run, in.RunGate = []ConcurrencySlotPlan{slot}, &run, slot.GateID
 	}
-	plan, run := limit.Plan, 0
-	plan.Slots, plan.Run = []ConcurrencySlotPlan{slot}, &run
+	if len(limit.Tasks) > 0 {
+		var tasks ChildTaskSlots
+		if err := render(ActivityRenderConcurrencyTaskKeys, &tasks); err != nil {
+			return err
+		}
+		plan.Tasks = map[string]int{}
+		for _, task := range slices.Sorted(maps.Keys(limit.Tasks)) {
+			slot, ok := tasks.Tasks[task]
+			if !ok || slot.GateID == "" {
+				return fail(TaskConcurrencyCheckUnavailableCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
+					fmt.Sprintf("task %s's key was not rendered", task))
+			}
+			ix := slices.Index(plan.Slots, slot)
+			if ix < 0 {
+				ix, plan.Slots = len(plan.Slots), append(plan.Slots, slot)
+			}
+			plan.Tasks[task] = ix
+		}
+	}
 	childPlan.Concurrency = &plan
 	// What the child's release appends after its failure path, as a
 	// submit reserves it (§5.2.7).

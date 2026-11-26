@@ -23,6 +23,9 @@ type Store interface {
 	// cannot read is listed as an *UnreadableError in skipped, never
 	// dropped in silence.
 	List(ctx context.Context, namespace string) (docs []*orkstackv1.EventSource, skipped []*UnreadableError, err error)
+	// Names is every source's name, by its namespace and name, with no read
+	// of a document.
+	Names(ctx context.Context) ([]Key, error)
 	// Count is how many sources the deployment holds, readable or not.
 	Count(ctx context.Context) (int, error)
 	// Replace writes a source's document while it still carries etag; a
@@ -32,26 +35,27 @@ type Store interface {
 	// create-only; one already there is success, since the digest names
 	// its bytes.
 	PutSpec(ctx context.Context, id, digest string, body []byte) error
+	// RemoveSpec removes one service spec; one that is not there is success.
+	RemoveSpec(ctx context.Context, id, digest string) error
 	// ReadSpec reads a service spec's bytes, which hash to its digest; found
 	// is false only when the store said it is not there.
 	ReadSpec(ctx context.Context, id, digest string) (body []byte, found bool, err error)
-	// Delete removes what the source of this id keeps under its id, then
-	// its document. A document of another id under the name is
-	// ErrChanged and nothing is removed.
-	Delete(ctx context.Context, namespace, name, id string) error
+	// Remove removes a document while it still carries etag; one that
+	// changed is ErrChanged, and one that is gone is success. What the
+	// source keeps under its id is its workflow's to remove.
+	Remove(ctx context.Context, namespace, name, etag string) error
 	// NamespaceHolds reports whether a namespace holds a source.
 	NamespaceHolds(ctx context.Context, namespace string) (bool, error)
 }
+
+// Key names a source's document.
+type Key struct{ Namespace, Name string }
 
 var (
 	// ErrNotFound is a name that holds no source.
 	ErrNotFound = errors.New("eventsources: no such event source")
 	// ErrNameTaken is a create under a name that holds a source.
 	ErrNameTaken = errors.New("eventsources: the name holds an event source")
-	// ErrSpecsLeft is a delete that removed the document and could not
-	// remove every spec under its id: the source is deleted, and what is
-	// left admits nothing.
-	ErrSpecsLeft = errors.New("eventsources: the source is deleted; some of its service specs were not removed")
 	// ErrSpecCorrupt is a service spec whose bytes are not its digest's.
 	ErrSpecCorrupt = errors.New("its bytes are not its digest's")
 	// ErrChanged is a conditional write or delete whose source changed,
@@ -60,11 +64,14 @@ var (
 )
 
 // UnreadableError is a stored document this release cannot read: written by
-// a newer release, or damaged. It names the source and holds nothing of it.
+// a newer release, or damaged. It names the source and holds nothing of it
+// but, where it can be read and the document is its key's own, its id.
 type UnreadableError struct {
 	Namespace string
 	Name      string
 	Cause     string
+	ID        string
+	Etag      string
 }
 
 func (e *UnreadableError) Error() string {

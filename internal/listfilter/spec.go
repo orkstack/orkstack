@@ -62,10 +62,14 @@ type Field struct {
 	Requires            string
 	ValueRule           orkstackv1.FilterValueRule
 	// Indexed: the path names no field of the resource, and a row's own
-	// fields never satisfy it; only the server's index of open rows does
+	// fields never satisfy it; only the server's index does
 	// (Set.MatchIndexed). It takes equals only. Its kind is KindBool for a
-	// flag, which takes the single value "true", and KindText otherwise.
+	// flag, which takes the single value "true", and KindText otherwise. A
+	// row that has ended never matches it unless EndedMatches.
 	Indexed bool
+	// EndedMatches, for an indexed field: what it selects is set when a row
+	// starts and stays true of it, so a row that has ended matches too.
+	EndedMatches bool
 
 	chain []protoreflect.FieldDescriptor
 	enum  protoreflect.EnumDescriptor
@@ -203,8 +207,8 @@ func resolveField(spec *Spec, decl *orkstackv1.FilterableField) (*Field, error) 
 	if decl.GetIndexed() {
 		return resolveIndexed(spec, field, decl)
 	}
-	if decl.GetFlag() {
-		return nil, fmt.Errorf("flag applies to an indexed field only")
+	if decl.GetFlag() || decl.GetEndedMatches() {
+		return nil, fmt.Errorf("flag and ended_matches apply to an indexed field only")
 	}
 	md := spec.Resource
 	parts := splitPath(field.Path)
@@ -302,7 +306,7 @@ func resolveIndexed(spec *Spec, field *Field, decl *orkstackv1.FilterableField) 
 		field.ValueRule != orkstackv1.FilterValueRule_FILTER_VALUE_RULE_UNSPECIFIED {
 		return nil, fmt.Errorf("an indexed field cannot declare requires, kept_when_unavailable, allowed_values or value_rule")
 	}
-	field.Indexed = true
+	field.Indexed, field.EndedMatches = true, decl.GetEndedMatches()
 	field.Kind = KindText
 	if decl.GetFlag() {
 		field.Kind = KindBool

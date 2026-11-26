@@ -263,7 +263,8 @@ func (s *runState) runTimeoutDue(ctx workflow.Context, inFlight map[string]workf
 // open, closing, ready or held. A run that is idle and done succeeds.
 func (s *runState) idleAndDone(inFlight map[string]workflow.Future) bool {
 	return len(inFlight) == 0 && s.openingPins() == 0 && s.openAwaits() == 0 && s.openSleeps() == 0 &&
-		len(s.waits) == 0 && !(s.quiescing && s.closingPins() > 0) && len(s.readyTasks()) == 0 && !s.heldFanOuts
+		len(s.waits) == 0 && !(s.quiescing && s.closingPins() > 0) && len(s.readyTasks()) == 0 && !s.heldFanOuts &&
+		s.taskSlotsPending() == 0
 }
 
 // takeRunTimeout marks D taken and returns the cause the run fails with. The

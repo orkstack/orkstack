@@ -171,17 +171,7 @@ func canonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	// and an absent key, queue timeout or max_queued is left out, so the
 	// defaults written out are the same definition.
 	if c := wf.GetConcurrency(); c != nil {
-		limit := map[string]any{"limit": int64(c.GetLimit()), "onLimit": concurrencyStrategyName(c.GetOnLimit())}
-		if c.GetKey() != "" {
-			limit["key"] = c.GetKey()
-		}
-		if seconds := c.GetQueueTimeoutSeconds(); seconds > 0 {
-			limit["queueTimeout"] = shortDuration(time.Duration(seconds) * time.Second)
-		}
-		if c.GetMaxQueued() > 0 {
-			limit["maxQueued"] = int64(c.GetMaxQueued())
-		}
-		out["concurrency"] = limit
+		out["concurrency"] = canonicalLimit(c)
 	}
 	// definition_namespace is NOT here: it is set only on a run's planned
 	// copy, never on a stored definition, and the digest is the owner's.
@@ -421,7 +411,26 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 			"scope":      int64(c.GetScope()),
 		}
 	}
+	// concurrency is emitted ONLY when set, as cache is.
+	if c := t.GetConcurrency(); c != nil {
+		out["concurrency"] = canonicalLimit(c)
+	}
 	return out, nil
+}
+
+// canonicalLimit renders one concurrency limit, a run's or a task's.
+func canonicalLimit(c *orkstackv1.ConcurrencySpec) map[string]any {
+	limit := map[string]any{"limit": int64(c.GetLimit()), "onLimit": concurrencyStrategyName(c.GetOnLimit())}
+	if c.GetKey() != "" {
+		limit["key"] = c.GetKey()
+	}
+	if seconds := c.GetQueueTimeoutSeconds(); seconds > 0 {
+		limit["queueTimeout"] = shortDuration(time.Duration(seconds) * time.Second)
+	}
+	if c.GetMaxQueued() > 0 {
+		limit["maxQueued"] = int64(c.GetMaxQueued())
+	}
+	return limit
 }
 
 // canonicalImageRef renders the seven enumerated ImageRef fields of §4.4.

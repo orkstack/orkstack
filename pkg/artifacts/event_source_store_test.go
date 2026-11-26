@@ -7,7 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -78,37 +78,60 @@ func TestEventSourceStore_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestEventSourceStore_DeleteByID(t *testing.T) {
+// Every document is named, in order, and nothing else is.
+func TestEventSourceStore_Names(t *testing.T) {
 	ctx := context.Background()
 	store, dir := newEventSourceStore(t)
+	for _, key := range []eventsources.Key{{Namespace: "b", Name: "x"}, {Namespace: "a", Name: "y"}, {Namespace: "a", Name: "x"}} {
+		if _, err := store.Create(ctx, storedSource(key.Namespace, key.Name, "evs-0123456789abcdef")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, stray := range []string{"a/Bad.json", "a/x.txt", "x.json", "a/b/c.json"} {
+		path := filepath.Join(dir, artifacts.EventSourcePrefix, stray)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := store.Names(ctx)
+	if want := []eventsources.Key{{Namespace: "a", Name: "x"}, {Namespace: "a", Name: "y"}, {Namespace: "b", Name: "x"}}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("%v, %v; want %v", got, err, want)
+	}
+}
+
+// A document is removed only as it was read.
+func TestEventSourceStore_Remove(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newEventSourceStore(t)
 	const id = "evs-0123456789abcdef"
-	if _, err := store.Create(ctx, storedSource("payments", "orders", id)); err != nil {
+	src, err := store.Create(ctx, storedSource("payments", "orders", id))
+	if err != nil {
 		t.Fatal(err)
 	}
-	digest := strings.Repeat("a", 64)
-	if err := store.PutSpec(ctx, id, digest, []byte(`{"format":1}`)); err != nil {
+	changed, err := store.Replace(ctx, src, src.GetEtag())
+	if err == nil {
+		changed.Description = "d"
+		changed, err = store.Replace(ctx, changed, changed.GetEtag())
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutSpec(ctx, id, digest, []byte(`{"format":1}`)); err != nil {
-		t.Fatalf("a spec written again is success: %v", err)
+	for _, etag := range []string{"", src.GetEtag(), "x"} {
+		if err := store.Remove(ctx, "payments", "orders", etag); !errors.Is(err, eventsources.ErrChanged) {
+			t.Fatalf("remove of %q: %v, want ErrChanged", etag, err)
+		}
 	}
-	if err := store.Delete(ctx, "payments", "orders", "evs-ffffffffffffffff"); !errors.Is(err, eventsources.ErrChanged) {
-		t.Fatalf("delete of another id: %v, want ErrChanged", err)
-	}
-	if _, err := store.Get(ctx, "payments", "orders"); err != nil {
-		t.Fatalf("a refused delete removed the source: %v", err)
-	}
-	if err := store.Delete(ctx, "payments", "orders", id); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := store.Remove(ctx, "payments", "orders", changed.GetEtag()); err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 	if _, err := store.Get(ctx, "payments", "orders"); !errors.Is(err, eventsources.ErrNotFound) {
-		t.Fatalf("Get after delete: %v", err)
+		t.Fatalf("Get after it: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, artifacts.EventSourceSpecPrefix, id, digest+".json")); !os.IsNotExist(err) {
-		t.Fatalf("the source's spec outlived it: %v", err)
-	}
-	if err := store.Delete(ctx, "payments", "orders", id); !errors.Is(err, eventsources.ErrNotFound) {
-		t.Fatalf("a second delete: %v, want ErrNotFound", err)
+	if err := store.Remove(ctx, "payments", "orders", changed.GetEtag()); err != nil {
+		t.Fatalf("a second: %v", err)
 	}
 }
 
@@ -140,54 +163,38 @@ func TestEventSourceStore_ReadsStrictly(t *testing.T) {
 	}
 }
 
-func TestEventSourceStore_DeletesAnUnreadableDocumentByID(t *testing.T) {
+// A document that cannot be decoded is named by its id only where that can
+// be read, and only where it is its key's own: a copy of another source's has
+// that source's id.
+func TestEventSourceStore_AnUnreadableDocumentsID(t *testing.T) {
 	ctx := context.Background()
 	store, dir := newEventSourceStore(t)
 	path := filepath.Join(dir, artifacts.EventSourcePrefix, "payments", "broken.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, tt := range []struct{ body, wrongID string }{
-		{`{"format":9,"eventSource":{"id":"evs-0123456789abcdef","future":1}}`, "evs-ffffffffffffffff"},
-		{`garbage`, ""},
+	for body, id := range map[string]string{
+		`{"format":9,"eventSource":{"id":"evs-0123456789abcdef","namespace":"payments","name":"broken","future":1}}`: "evs-0123456789abcdef",
+		`{"format":1,"eventSource":{"id":"evs-0123456789abcdef","namespace":"payments","name":"orders"}}`:            "",
+		`{"format":9,"eventSource":{"id":"evs-0123456789abcdef","namespace":"other","name":"broken","future":1}}`:    "",
+		`{"format":9,"eventSource":{"id":"x","namespace":"payments","name":"broken"}}`:                               "",
+		`garbage`: "",
 	} {
-		if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if tt.wrongID != "" {
-			if err := store.Delete(ctx, "payments", "broken", tt.wrongID); !errors.Is(err, eventsources.ErrChanged) {
-				t.Fatalf("an unreadable document whose id reads as another: %v, want ErrChanged", err)
-			}
+		_, err := store.Get(ctx, "payments", "broken")
+		unreadable, ok := errors.AsType[*eventsources.UnreadableError](err)
+		if !ok || unreadable.ID != id || unreadable.Etag == "" {
+			t.Errorf("%s: %+v, %v; want the id %q", body, unreadable, err, id)
+			continue
 		}
-		if err := store.Delete(ctx, "payments", "broken", "evs-0123456789abcdef"); err != nil {
-			t.Fatalf("delete of an unreadable document %q: %v", tt.body, err)
+		if err := store.Remove(ctx, "payments", "broken", unreadable.Etag); err != nil {
+			t.Errorf("remove of %s: %v", body, err)
 		}
 		if _, err := store.Get(ctx, "payments", "broken"); !errors.Is(err, eventsources.ErrNotFound) {
-			t.Fatalf("still there: %v", err)
+			t.Errorf("still there: %v", err)
 		}
-	}
-}
-
-func TestEventSourceStore_ACallersIDNeverRemovesAnotherSourcesSpecs(t *testing.T) {
-	ctx := context.Background()
-	store, dir := newEventSourceStore(t)
-	const healthy = "evs-1111111111111111"
-	if _, err := store.Create(ctx, storedSource("payments", "healthy", healthy)); err != nil {
-		t.Fatal(err)
-	}
-	digest := strings.Repeat("b", 64)
-	if err := store.PutSpec(ctx, healthy, digest, []byte(`{"format":1}`)); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, artifacts.EventSourcePrefix, "payments", "broken.json")
-	if err := os.WriteFile(path, []byte("garbage"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Delete(ctx, "payments", "broken", healthy); err != nil {
-		t.Fatalf("delete of an unreadable document: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, artifacts.EventSourceSpecPrefix, healthy, digest+".json")); err != nil {
-		t.Fatalf("an id the document did not carry removed another source's spec: %v", err)
 	}
 }
 

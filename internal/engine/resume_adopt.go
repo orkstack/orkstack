@@ -5,7 +5,6 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/pkg/artifacts"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -33,11 +32,6 @@ func (s *runState) adoptResume(ctx workflow.Context, deps workflowDeps) error {
 	// Set until the plan is carried out, and left set when it is not, so
 	// the ending that follows starts no failure handler.
 	s.resumeAdopting = true
-	// Before anything is set aside: a run held to a limit this build cannot
-	// retake is never resumed (§5.3 step 4).
-	if deps.limitUnbuilt(s.plan) {
-		return &resumeLoadFailure{code: RunConcurrencyUnsupportedCode, message: resumeConcurrencyUnbuilt, scope: h.key.Scope}
-	}
 	units, err := DecodeResumeUnits(s.wf, b, s.generation > 0)
 	if err != nil {
 		return &resumeLoadFailure{code: ReasonResumePlanInvalid, message: err.Error(), scope: h.key.Scope}
@@ -253,7 +247,7 @@ func (h *resumeHolder) entry() *orkstackv1.RunResume {
 		Principal: rec.GetPrincipal(), PrincipalVerified: rec.GetPrincipalVerified(),
 		Reason: rec.GetReason(), SupersededReason: rec.GetSupersededReason(),
 		ResumedAfterSequence: rec.GetBaseTerminalSequence(), Sequence: int64(b.GetSeqBase()),
-		FromState: from, Scope: b.GetScope(),
+		FromState: from, Scope: b.GetScope(), ForceCanceledBy: rec.GetForceCanceledBy(),
 	}
 }
 
@@ -304,20 +298,21 @@ func (s *runState) readBack(ctx workflow.Context, b *orkstackv1.ResumeBlock, uni
 			continue
 		}
 		if u.Disposition == orkstackv1.ResumeDisposition_RESUME_DISPOSITION_SETTLE {
-			entries = append(entries, settledEntryOf(s.wf, s.runID, s.tasks[id], u.Row.GetValuesRef()))
+			entry := settledEntryOf(s.wf, s.runID, s.tasks[id], u.Row.GetValuesRef())
+			if s.plan.Identity != nil {
+				// What the engine recorded, at the scope the row's result was made in.
+				entry = recordedEntryOf(s.wf, s.runID, s.tasks[id], u.Row.GetValuesRef(), u.Epoch, s.plan.Identity.AdmissionSHA256)
+			}
+			entries = append(entries, entry)
 			sizes = append(sizes, u.EncodedSize)
 			continue
 		}
 		// The entry the resume was verified with (ResumeVerifier).
-		entry, err := adoptEntryOf(s.wf, s.plan.CommitRoot, s.runID, s.tasks[id], int32(u.Item), int64(u.Epoch))
+		// What the engine recorded, for a run that holds an identity, and
+		// nothing an Orker committed.
+		entry, err := adoptEntryOf(s.wf, s.plan.CommitRoot, s.runID, s.tasks[id], int32(u.Item), int64(u.Epoch), s.plan.Identity != nil)
 		if err != nil {
 			return 0, 0, temporal.NewNonRetryableApplicationError(err.Error(), "INVALID_COMMIT_KEY", err)
-		}
-		if s.plan.Identity != nil {
-			// What the engine recorded, and nothing an Orker committed.
-			if entry.CommitUri, err = artifacts.AttestedCommitURI(entry.GetCommitUri()); err != nil {
-				return 0, 0, s.readBackFailed(ctx, adoptedUnit(entry), err)
-			}
 		}
 		entries = append(entries, entry)
 		sizes = append(sizes, u.EncodedSize)

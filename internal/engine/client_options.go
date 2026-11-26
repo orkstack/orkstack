@@ -40,9 +40,10 @@ func PayloadInterceptor(keys *payloadcrypt.EngineKeys) interceptor.Interceptor {
 // are written as they are where the execution carries no key: a run's, a
 // fire's and a force cancel's, which read them, and the gate's and the
 // census's, which hold no run's data (ids, counts and the cluster's own words)
-// and which an operator reads when a gate cannot rebuild. Any other type's are
-// withheld.
-var unsealedErrorTypes = []string{RunWorkflowType, ScheduleFireWorkflowType, ConcurrencyGateWorkflowType, ConcurrencyCensusWorkflowType, ForceCancelWorkflowType}
+// and which an operator reads when a gate cannot rebuild. A source's workflow
+// holds no run's data either, and an operator reads there why its load fails.
+// Any other type's are withheld.
+var unsealedErrorTypes = []string{RunWorkflowType, ScheduleFireWorkflowType, ConcurrencyGateWorkflowType, ConcurrencyCensusWorkflowType, ForceCancelWorkflowType, SourceWorkflowType}
 
 type payloadInterceptor struct {
 	interceptor.InterceptorBase

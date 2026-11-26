@@ -354,6 +354,10 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 		// did not start on (docs/DEPLOY.md, "Why a webhook delivery is
 		// Pinned").
 		engine.WebhookDeliveryWorkflowType: workflow.VersioningBehaviorPinned,
+		// A source's workflow moves to another release by ending there and
+		// starting here (AGENTS.md §7.2; docs/DEPLOY.md, "Event sources across
+		// releases").
+		engine.SourceWorkflowType: workflow.VersioningBehaviorPinned,
 	}
 	if len(registered) != len(want) {
 		t.Fatalf("registered %d workflow types (%+v), want %d", len(registered), registered, len(want))

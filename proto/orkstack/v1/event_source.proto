@@ -130,6 +130,21 @@ message EventSource {
   // deleting_since is output only: when a delete marked the source. A marked
   // source is stopped, and is gone once its instances have ended.
   google.protobuf.Timestamp deleting_since = 48;
+  // resume_seq is output only: it rises with each resume of a paused source.
+  int64 resume_seq = 54;
+  // trial_code is output only: the code of the pause the last resume lifted,
+  // empty for one an operator made. The instances a resume starts are on
+  // trial for it.
+  string trial_code = 55;
+  // in_place_revision is output only: the service revision a change or a
+  // restart asked to be applied in place, 0 for none.
+  int64 in_place_revision = 56;
+  // service_digest is output only: the SHA-256 of the service spec of
+  // service_revision, which its instances are started with.
+  string service_digest = 57;
+  // restart_revision is output only: the service revision the last restart
+  // raised, 0 for none.
+  int64 restart_revision = 58;
 }
 
 // DeliveryClass is what a source's image promises about a message that

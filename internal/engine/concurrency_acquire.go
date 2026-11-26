@@ -27,6 +27,8 @@ type ConcurrencyPlan struct {
 	Orkflow string `json:"orkflow,omitempty"`
 	// Run is the index in Slots of the run-level limit, nil without one.
 	Run *int `json:"run,omitempty"`
+	// Tasks are the indexes in Slots of the tasks' own limits, by task id.
+	Tasks map[string]int `json:"tasks,omitempty"`
 	// SeqBase is the run's incarnation at its gates: 1 for a fresh run
 	// (decision D2); a resumed run's is its resume's.
 	SeqBase int64 `json:"seq_base"`
@@ -45,6 +47,9 @@ type ConcurrencyPlan struct {
 	RequeueIntervalMax   time.Duration `json:"requeue_interval_max"`
 	PerSlotBytes         int64         `json:"per_slot_bytes"`
 	EventHoldersShown    int           `json:"event_holders_shown"`
+	// PerSlotEvents is what giving one task's slot, or its place in line, back
+	// appends to the run's history, reserved while it has one.
+	PerSlotEvents int64 `json:"per_slot_events,omitempty"`
 	// Gate is the tunables a gate this run starts runs on.
 	Gate GateTunables `json:"gate"`
 }
@@ -83,6 +88,18 @@ const (
 // definition. The reserved prefix keeps it from any authored key.
 func DefaultRunConcurrencyKey(owner, name string) string {
 	return "ork:orkflow:" + owner + "/" + name
+}
+
+// TaskSlotReserveEvents is the PerSlotEvents a submit pins: the release's two
+// events, the memo's and the attributes', the answer still on its way, and the
+// two timers' cancels, with room for one more.
+const TaskSlotReserveEvents = 8
+
+// DefaultTaskConcurrencyKey is a task's limit's key when it declares none
+// (§3.1): ork:task:<owner>/<orkflow>:<task id>, the task in every run and
+// version of its Orkflow.
+func DefaultTaskConcurrencyKey(owner, orkflow, taskID string) string {
+	return "ork:task:" + owner + "/" + orkflow + ":" + taskID
 }
 
 // runSlot is the plan's run-level slot, nil when it has none.

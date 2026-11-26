@@ -97,6 +97,11 @@ type Config struct {
 	// ResumeSnapshots answers the highest sequence stored for a run; nil
 	// serves no resume.
 	ResumeSnapshots ResumeSnapshots
+	// ResumeForceCancels verifies the record a force-cancelled base's close
+	// carries, under ResumeAuthMode, as the readers do; nil resumes no
+	// force-cancelled run.
+	ResumeForceCancels engine.ForceCancelVerifier
+	ResumeAuthMode     func() string
 	// ResumeEndings and ResumeArchiver keep the ending a resume sets aside;
 	// nil and ResumeRun resumes no run.
 	ResumeEndings  ResumeEndings
@@ -185,6 +190,11 @@ type Config struct {
 	EventSources eventsources.Store
 	// EventSourceSettings are the deployment's event_sources.* settings.
 	EventSourceSettings eventsources.Settings
+	// SourceWorkflows starts and tells the workflows of event sources; nil
+	// tells nobody. SourceRecords keeps what is left of deleted ones; without
+	// it none is deleted.
+	SourceWorkflows SourceWorkflows
+	SourceRecords   SourceRecords
 
 	// Schedules is the schedule seam (schedule.go): engine.TemporalScheduler
 	// in `ork`, so every schedule field is read from and written to the
@@ -255,6 +265,10 @@ type Config struct {
 	// RecordedResults is what ListRecordedResults reads; nil on an engine
 	// that keeps no identity records.
 	RecordedResults RecordedResults
+	// ComposedRecords records a composed task's values from its child's
+	// outputs on record, which a resume settles it with; nil on an engine
+	// that keeps no identity records.
+	ComposedRecords ComposedRecords
 	AwaitChecks     AwaitChecks
 	AwaitSpacings   *artifacts.RecordSpacings
 	ClockSkew       time.Duration
@@ -488,6 +502,12 @@ type Config struct {
 	// engine.PausePlan.Indexed: only such a run writes the attribute, so the
 	// cluster never refuses a run's write of one it does not index.
 	RunPauseIndexed bool
+	// ResultsRecordedIndexed is whether boot found OrkflowResultsRecorded
+	// usable (task.EnsureRunResultsRecordedSearchAttribute). It is pinned as
+	// engine.IdentityPlan.Indexed, so only then is a run whose results the
+	// engine records stamped with it; without it a list by results_recorded is
+	// refused by name.
+	ResultsRecordedIndexed bool
 
 	// DefinitionByReference is engine.definition_by_reference's effective
 	// value: a top-level run whose planned definition is over a start
@@ -677,6 +697,7 @@ type Service struct {
 	// what confirmations judged.
 	sourceInstances sourceInstances
 	sourceWorkflows SourceWorkflows
+	sourceRecords   SourceRecords
 	sourcePolicies  *sourcePolicies
 	// messageClaims binds messages to their runs; stagedParts is what Orkers
 	// staged for them.
@@ -716,6 +737,7 @@ type Service struct {
 	providers                provider.Set
 	awaitRecords             AwaitRecords
 	recordedResults          RecordedResults
+	composedRecords          ComposedRecords
 	recordedReads            *recordedReads
 	awaitChecks              AwaitChecks
 	awaitSpacings            *artifacts.RecordSpacings
@@ -813,8 +835,12 @@ type Service struct {
 	resumeGate      resumeGate
 	resumeSnapshots ResumeSnapshots
 	resumeEndings   ResumeEndings
-	newestEndings   NewestEndings
-	resumeArchiver  ResumeArchiver
+	// resumeForceCancels and resumeAuthMode are cfg's ResumeForceCancels and
+	// ResumeAuthMode.
+	resumeForceCancels engine.ForceCancelVerifier
+	resumeAuthMode     func() string
+	newestEndings      NewestEndings
+	resumeArchiver     ResumeArchiver
 	// queuedWarn spaces GetRun's warnings that a queued run's gate could
 	// not be read (applyLiveQueued): a run page polls GetRun.
 	queuedWarn warnLimiter
@@ -823,6 +849,8 @@ type Service struct {
 	runTimeoutGraceSeconds int64
 	// pausePlan is what pausePlanFor pins on every run.
 	pausePlan engine.PausePlan
+	// resultsRecordedIndexed is Config.ResultsRecordedIndexed.
+	resultsRecordedIndexed bool
 	// forceCancels is cfg.ForceCancels.
 	forceCancels ForceCanceler
 	// definitionByReference is Config.DefinitionByReference, only with
@@ -900,6 +928,8 @@ func NewService(cfg Config) *Service {
 		triggers:                 cfg.Triggers,
 		eventSources:             cfg.EventSources,
 		eventSourceSettings:      cfg.EventSourceSettings,
+		sourceWorkflows:          cfg.SourceWorkflows,
+		sourceRecords:            cfg.SourceRecords,
 		sourceCeiling:            newSourceCeiling(cfg.EventSourceSettings.Limits),
 		sourcePolicies:           newSourcePolicies(),
 		doorPools:                newKeptPools(time.Now),
@@ -921,6 +951,7 @@ func NewService(cfg Config) *Service {
 		providers:                cfg.Providers,
 		awaitRecords:             cfg.AwaitRecords,
 		recordedResults:          cfg.RecordedResults,
+		composedRecords:          cfg.ComposedRecords,
 		awaitChecks:              cfg.AwaitChecks,
 		awaitSpacings:            cfg.AwaitSpacings,
 		clockSkew:                cfg.ClockSkew,
@@ -942,6 +973,7 @@ func NewService(cfg Config) *Service {
 		runTimeoutGraceSeconds:   max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
 		forceCancels:             cfg.ForceCancels,
 		pausePlan:                pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
+		resultsRecordedIndexed:   cfg.ResultsRecordedIndexed,
 		historyMaxBytes:          positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:          composeMaxDepthOf(cfg.ComposeMaxDepth),
 		cacheMaxTTL:              cacheMaxTTLOf(cfg.CacheMaxTTL),
@@ -990,6 +1022,8 @@ func NewService(cfg Config) *Service {
 		resumeObserver:           cfg.ResumeObserver,
 		resumeSnapshots:          cfg.ResumeSnapshots,
 		resumeEndings:            cfg.ResumeEndings,
+		resumeForceCancels:       cfg.ResumeForceCancels,
+		resumeAuthMode:           cfg.ResumeAuthMode,
 		newestEndings:            cfg.NewestEndings,
 		resumeArchiver:           cfg.ResumeArchiver,
 	}
@@ -3183,6 +3217,7 @@ func (s *Service) GetRun(
 	SetRunTiming(run, time.Now())
 	s.applyCensusPendingReasons(ctx, run)
 	s.applyLiveQueued(ctx, run)
+	s.applyTaskQueued(ctx, run)
 	s.applyChildQueued(ctx, run)
 	if s.resumes && s.resumeRecords != nil {
 		run.ResumeHint = engine.ResumeHintOf(run)
@@ -3354,7 +3389,7 @@ func (s *Service) ListRuns(
 		return nil, err
 	}
 	if plan.Index != nil {
-		if err := runIndexGates(plan.Index, ns, binding); err != nil {
+		if err := runIndexGates(plan.Index, ns, binding, s.resultsRecordedIndexed); err != nil {
 			return nil, err
 		}
 	}
@@ -3389,7 +3424,9 @@ func (s *Service) ListRuns(
 		fromMemory = true
 	}
 	// An archived run has ended, so it waits on and holds nothing: under an
-	// index filter the archive cannot add a row, and is not read.
+	// index filter the archive cannot add a row, and is not read. The archive
+	// keeps no mark of a run whose results the engine records either, so
+	// results_recorded lists only the runs the cluster still holds.
 	if s.archive != nil && plan.Index == nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
 			Namespace:     ns.GetName(),

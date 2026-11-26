@@ -1159,6 +1159,19 @@ its own writes (`internal/api/audit.go`). A record is written once to
   wrote, nor another run's or task's. It gets no earlier start: the engine lets
   an attempt go only once every task it follows is on record under the resume
   that decides ([TASK_IDENTITY.md](TASK_IDENTITY.md), "What a task follows").
+  The same holds of one item of a fan-out a resume keeps: a resume's record
+  names the fan-out and not its items, so the same party can have the resume
+  keep an item's result from an earlier resume that ran the fan-out again, a
+  real result of that item, in place of the latest.
+  And the deadline a resume holds an await's answer to is the one the run's
+  state names: a party that writes the cluster, and an approver who answers
+  after the real deadline while the state still shows the await open, can have
+  that late answer kept. It is a real answer of that await, given by someone
+  the run's access allowed.
+  So too which composed task a resume may keep from its child: the state says
+  how the task ended, so the same party can have a task that failed for
+  another reason kept with the outputs its child succeeded with and the
+  engine recorded, rather than run again. They are that child's real outputs.
 - **The Temporal cluster.** Its security is outside OrkStack. Temporal's own
   external requirements are not OrkStack dependencies ([AGENTS.md](../AGENTS.md),
   §13).

@@ -53,6 +53,7 @@ func sleepExecutionKeys(td taskDocument) []struct {
 		{"run_as_orker_user", td.RunAsOrkerUser},
 		{"each", td.Each != nil},
 		{"cache", td.Cache != nil},
+		{"concurrency", td.Concurrency != nil},
 	}
 }
 
@@ -158,6 +159,7 @@ func validateSleepTask(taskIndex int, task *orkstackv1.Task) error {
 		{"orkflow", task.GetOrkflow() != nil},
 		{"each", task.GetEach() != nil},
 		{"cache", task.GetCache() != nil},
+		{"concurrency", task.GetConcurrency() != nil},
 	}
 	for _, c := range checks {
 		if c.set {

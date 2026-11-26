@@ -75,6 +75,14 @@ test('sections list every unit once, in order, and a newer category under Other'
 	}
 });
 
+test('what an earlier part of the run finished is shown as kept, not run again', () => {
+	const p = plan();
+	p.tasks.push(create(ResumeTaskSchema, { taskId: 'early', category: ResumeCategory.EARLIER }));
+	const earlier = planSections(p).find((x) => x.key === 'earlier');
+	expect(earlier?.title).toBe('Kept from an earlier part of the run, not run again');
+	expect(earlier?.reruns).toBe(false);
+});
+
 test('a confirm asks only when succeeded work would run again', () => {
 	expect(rerunSucceeded(plan())).toBe(1);
 	const p = plan();
