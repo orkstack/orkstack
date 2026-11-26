@@ -269,6 +269,10 @@ type taskDocument struct {
 	// "Caching"). KnownFields(true) applies inside it.
 	Cache *cacheDocument `yaml:"cache"`
 
+	// Concurrency is the task's own concurrency limit (docs/DSL.md
+	// "Concurrency limits"): its attempts hold one slot of its key.
+	Concurrency *taskConcurrencyDocument `yaml:"concurrency"`
+
 	// Join is when this task may start, decided from how its needs ended:
 	// all_succeeded (the default), none_failed, any_failed or all_done
 	// (docs/DSL.md "Joins and failure handlers"). Every task kind may carry
@@ -406,7 +410,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		return nil, err
 	}
 	wf.TimeoutSeconds = timeoutSeconds
-	concurrency, err := compileConcurrency(doc.Concurrency)
+	concurrency, err := compileConcurrency(doc.Concurrency, runLimitSite)
 	if err != nil {
 		return nil, err
 	}
@@ -498,6 +502,10 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		if err != nil {
 			return nil, err
 		}
+		limit, err := compileConcurrency(td.Concurrency.limit(), taskLimitSite(taskIndex, td.ID))
+		if err != nil {
+			return nil, err
+		}
 		identities, err := compileIdentities(taskIndex, td)
 		if err != nil {
 			return nil, err
@@ -510,6 +518,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			Join:           join,
 			Each:           each,
 			Cache:          cache,
+			Concurrency:    limit,
 			Id:             td.ID,
 			Uses:           td.Uses,
 			Command:        td.Command,

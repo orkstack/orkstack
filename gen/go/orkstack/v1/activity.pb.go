@@ -266,7 +266,8 @@ const (
 	// COMPOSED is a composed task's record of its child's values.
 	AdoptEntryKind_ADOPT_ENTRY_KIND_COMPOSED AdoptEntryKind = 3
 	// VALUES is the values.json of an awaited or composed task of a run whose
-	// results are not recorded.
+	// results are not recorded; RESOLUTION and COMPOSED are the records of one
+	// whose results are, which name its values.
 	AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES AdoptEntryKind = 4
 )
 
@@ -3140,10 +3141,13 @@ type AdoptEntry struct {
 	RecordScope uint64 `protobuf:"varint,6,opt,name=record_scope,json=recordScope,proto3" json:"record_scope,omitempty"`
 	// values is the values.json a VALUES entry reads, and inline_limit the most
 	// bytes of one it reads: a larger one is kept by reference alone.
-	Values        *ArtifactRef `protobuf:"bytes,7,opt,name=values,proto3" json:"values,omitempty"`
-	InlineLimit   int64        `protobuf:"varint,8,opt,name=inline_limit,json=inlineLimit,proto3" json:"inline_limit,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Values      *ArtifactRef `protobuf:"bytes,7,opt,name=values,proto3" json:"values,omitempty"`
+	InlineLimit int64        `protobuf:"varint,8,opt,name=inline_limit,json=inlineLimit,proto3" json:"inline_limit,omitempty"`
+	// admission_sha256 is the admission a RESOLUTION or COMPOSED record must be
+	// made under: the run's own, for a run whose results the engine records.
+	AdmissionSha256 string `protobuf:"bytes,9,opt,name=admission_sha256,json=admissionSha256,proto3" json:"admission_sha256,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AdoptEntry) Reset() {
@@ -3230,6 +3234,13 @@ func (x *AdoptEntry) GetInlineLimit() int64 {
 		return x.InlineLimit
 	}
 	return 0
+}
+
+func (x *AdoptEntry) GetAdmissionSha256() string {
+	if x != nil {
+		return x.AdmissionSha256
+	}
+	return ""
 }
 
 // ExpectedCommit is the identity a commit must name to be an activity's
@@ -7716,7 +7727,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\vget_timeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\n" +
 	"getTimeout\x12\x1b\n" +
 	"\tget_tries\x18\x04 \x01(\x05R\bgetTries\x12\x16\n" +
-	"\x06budget\x18\x05 \x01(\x03R\x06budget\"\xba\x02\n" +
+	"\x06budget\x18\x05 \x01(\x03R\x06budget\"\xe5\x02\n" +
 	"\n" +
 	"AdoptEntry\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x12\n" +
@@ -7727,7 +7738,8 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\bexpected\x18\x05 \x01(\v2\x1b.orkstack.v1.ExpectedCommitR\bexpected\x12!\n" +
 	"\frecord_scope\x18\x06 \x01(\x04R\vrecordScope\x120\n" +
 	"\x06values\x18\a \x01(\v2\x18.orkstack.v1.ArtifactRefR\x06values\x12!\n" +
-	"\finline_limit\x18\b \x01(\x03R\vinlineLimit\"\xe2\x01\n" +
+	"\finline_limit\x18\b \x01(\x03R\vinlineLimit\x12)\n" +
+	"\x10admission_sha256\x18\t \x01(\tR\x0fadmissionSha256\"\xe2\x01\n" +
 	"\x0eExpectedCommit\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +

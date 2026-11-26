@@ -3676,6 +3676,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   queued               =               true; a row that has ended never matches
   queued_on            =               text; a row that has ended never matches
   holding              =               text; a row that has ended never matches
+  results_recorded     =               true; a row that has ended matches too
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
@@ -3881,10 +3882,23 @@ state calls succeeded that has none.
 not on record is the alarm: the run says the task succeeded, and no engine
 recorded it. recorded, not applied is an answer the run has not taken.
 
-It exits non-zero when a row could not be read.
+With --not-applied and no run, it finds every answer on record that a run of
+the namespace has not taken: of its open runs, and with --include-ended of
+those that ended since --since (24 hours ago unless given), at most
+--max-runs of them. With --redeliver it tells each open run whose await is
+still before its deadline again. Told is not taken: run it again afterwards
+to see what the runs took.
+
+It exits non-zero when a row could not be read, and with --not-applied also
+when it stopped at --max-runs or a telling was refused or is pending.
 
 Flags:
 
+- `--include-ended` — with --not-applied, read runs that ended since --since too
+- `--max-runs INT` (default `200`) — with --not-applied, the most runs it reads
+- `--not-applied` — across the namespace, list every answer on record that a run has not taken
+- `--redeliver` — with --not-applied, tell each open run whose await is before its deadline again
+- `-s, --since STRING` — with --include-ended, the instant ended runs are read from (RFC 3339; default 24 hours ago)
 - `-t, --task STRING` — only this task's
 
 Inherited flags:

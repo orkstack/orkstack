@@ -82,6 +82,9 @@ type ResumeHistory struct {
 	// CloseTime is the closing event's time. A base is always closed: a
 	// history without a closing event is refused as truncated.
 	CloseTime time.Time
+	// CloseEvent is the closing event: a force-cancelled base's carries the
+	// record that ended it.
+	CloseEvent *historypb.HistoryEvent
 	// NeverRan: it ended as a resume whose plan could not be run, so it
 	// dispatched nothing past its reset point, which ResetFrom, the execution
 	// it was reset from, did (AddEarlier).
@@ -89,6 +92,9 @@ type ResumeHistory struct {
 	ResetFrom string
 	// DispatchedBefore is what the executions it was reset from dispatched.
 	DispatchedBefore map[ResumeUnit]bool
+	// resolve is what the resolve scan reads of the history after R
+	// (ResolutionsAfterR).
+	resolve *resumeResolveTrace
 }
 
 // AddEarlier takes what earlier, the history h's execution was reset from,
@@ -132,6 +138,9 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 		Published:  map[string]bool{},
 
 		WorkflowTaskTimeout: started.GetWorkflowTaskTimeout().AsDuration(),
+
+		resolve: &resumeResolveTrace{awaits: map[string]*resumeAwaitTrace{}, started: map[int64]int{}, signals: map[string][]resumeSignal{},
+			taskStarted: map[int64]time.Time{}, batchStarted: map[int64]int64{}},
 	}
 	// Generation 0 waits for its RUN_STARTED publish: the activity whose
 	// input is that event, then its completion.
@@ -142,7 +151,6 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 	children := map[int64]int{} // initiated event id -> index in Children
 	last := int64(0)
 	var closeCode string
-	resumed := false
 	for _, ev := range events {
 		if !h.ResetPoint.Found() {
 			h.PrefixBytes += int64(proto.Size(ev))
@@ -168,9 +176,11 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 					return nil, fmt.Errorf("engine: scan resume base: the event published at event %d has no type", ev.GetEventId())
 				}
 				h.MaxPublishedSequence = max(h.MaxPublishedSequence, event.GetSequence())
-				resumed = resumed || event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_RESUMED
 				if event.GetTaskId() != "" {
 					h.Published[event.GetTaskId()] = true
+				}
+				if h.ResetPoint.Found() {
+					h.resolve.published(event, attrs.GetWorkflowTaskCompletedEventId())
 				}
 				switch {
 				case h.Continued || runStartedScheduled != 0:
@@ -230,6 +240,7 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 			}
 			h.Children[i].Closed = true
 		case enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED:
+			h.resolve.workflowTask(ev)
 			if runStartedDone && !h.ResetPoint.Found() {
 				attrs := ev.GetWorkflowTaskCompletedEventAttributes()
 				h.ResetPoint = ResetPoint{
@@ -248,8 +259,21 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 				return nil, fmt.Errorf("engine: scan resume base: the closing event %d has no time", ev.GetEventId())
 			}
 			h.CloseTime = ev.GetEventTime().AsTime()
+			h.CloseEvent = ev
 			failure := ev.GetWorkflowExecutionFailedEventAttributes().GetFailure()
 			closeCode = failure.GetApplicationFailureInfo().GetType()
+		case enumspb.EVENT_TYPE_TIMER_STARTED, enumspb.EVENT_TYPE_TIMER_FIRED, enumspb.EVENT_TYPE_TIMER_CANCELED:
+			if h.ResetPoint.Found() {
+				h.resolve.timer(ev)
+			}
+		case enumspb.EVENT_TYPE_WORKFLOW_TASK_STARTED:
+			h.resolve.workflowTask(ev)
+		case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED:
+			h.resolve.cancel(ev)
+		case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED:
+			if h.ResetPoint.Found() {
+				h.resolve.signal(dc, ev)
+			}
 		case enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED:
 			// The newest reset is the one that made this execution.
 			if a := ev.GetWorkflowTaskFailedEventAttributes(); a.GetCause() == enumspb.WORKFLOW_TASK_FAILED_CAUSE_RESET_WORKFLOW {
@@ -257,10 +281,7 @@ func ScanResumeBase(events []*historypb.HistoryEvent, dc converter.DataConverter
 			}
 		}
 	}
-	// A reset run that could not take its limit back ended as one whose plan
-	// could not be run, before RUN_RESUMED; one that ended so later had run.
-	h.NeverRan = ResumePlanNeverRan(closeCode) ||
-		closeCode == RunConcurrencyUnsupportedCode && h.ResetFrom != "" && !resumed
+	h.NeverRan = ResumePlanNeverRan(closeCode)
 	if !h.ResetPoint.Found() {
 		h.PrefixBytes = 0
 	}
@@ -384,6 +405,7 @@ func (h *ResumeHistory) Facts(run *orkstackv1.Run) (ResumeBaseFacts, error) {
 		Continued:  h.Continued,
 		Dispatched: h.Dispatched,
 		Earlier:    map[string]bool{},
+		Resolved:   h.ResolutionsAfterR(run),
 	}
 	if h.NeverRan || ResumePlanNeverRan(run.GetError().GetCode()) {
 		// This execution dispatched nothing: its rows are those of the run it

@@ -68,6 +68,16 @@ type ResumeActivities struct {
 	temporalNamespace string
 	records           resumePlanSource
 	observer          ResumeObserver
+	// recorded reads the records an admitted run's settled tasks are read back
+	// from (RESOLUTION and COMPOSED entries).
+	recorded ResumeRecordStore
+}
+
+// WithRecordReads gives the activities the identity records an admitted
+// run's settled tasks are read back from.
+func (a *ResumeActivities) WithRecordReads(store ResumeRecordStore) *ResumeActivities {
+	a.recorded = store
+	return a
 }
 
 // NewResumeActivities builds them over the deployment's commit and
@@ -198,9 +208,15 @@ func adoptInputFault(in *orkstackv1.AdoptRecordedInput) string {
 	}
 	for _, e := range in.GetEntries() {
 		x := e.GetExpected()
-		if e.GetKind() == orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES {
+		switch e.GetKind() {
+		case orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES:
 			if x.GetRunId() == "" || x.GetTaskId() == "" || e.GetValues().GetUri() == "" || e.GetInlineLimit() <= 0 {
 				return fmt.Sprintf("%s names no values to read, or no bound on them", unitLabel(e))
+			}
+			continue
+		case orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_RESOLUTION, orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_COMPOSED:
+			if x.GetRunId() == "" || x.GetTaskId() == "" || e.GetValues().GetSha256() == "" || e.GetAdmissionSha256() == "" || e.GetInlineLimit() <= 0 {
+				return fmt.Sprintf("%s names no record to read, its values or no bound on them", unitLabel(e))
 			}
 			continue
 		}
@@ -215,8 +231,11 @@ func isFinal(err error) bool { return categoryOf(err).nonRetryable() }
 
 // adoptOne reads one entry, its tries bounded by getTimeout and tries.
 func (a *ResumeActivities) adoptOne(ctx context.Context, e *orkstackv1.AdoptEntry, getTimeout time.Duration, tries int) (*orkstackv1.ExecuteTaskResult, error) {
-	if e.GetKind() == orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES {
+	switch e.GetKind() {
+	case orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_VALUES:
 		return a.adoptValues(ctx, e, getTimeout, tries)
+	case orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_RESOLUTION, orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_COMPOSED:
+		return a.adoptRecordedValues(ctx, e, getTimeout, tries)
 	}
 	if e.GetKind() != orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_COMMIT {
 		return nil, temporal.NewNonRetryableApplicationError(
@@ -337,6 +356,57 @@ func (a *ResumeActivities) adoptValues(ctx context.Context, e *orkstackv1.AdoptE
 		}
 		retryWait(tctx, try, getTimeout)
 	}
+}
+
+// adoptRecordedValues is the result of a settled task of an admitted run: its
+// record, at the scope the entry names and under the run's admission, read
+// as ResumeRun verified it (design §28.9). The record is create-only, so one
+// that verified then stands now; its values must be the ones the resume kept,
+// and are then read as a VALUES entry's are. A record that is not there, or
+// whose values are not, is VALUES_MISSING; one that is not this task's, or
+// that no longer settles it, is RESOLUTION_RECORD_INVALID; both are final. A
+// store that does not answer is retried by the call.
+func (a *ResumeActivities) adoptRecordedValues(ctx context.Context, e *orkstackv1.AdoptEntry, getTimeout time.Duration, tries int) (*orkstackv1.ExecuteTaskResult, error) {
+	if a.recorded == nil {
+		return nil, temporal.NewApplicationError(fmt.Sprintf("%s: this engine reads no identity records; another replica may", unitLabel(e)), ReasonCommitReadFailed)
+	}
+	x := e.GetExpected()
+	of, want := artifacts.RecordComposed, orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_COMPOSED
+	if e.GetKind() == orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_RESOLUTION {
+		of, want = artifacts.RecordResolution, orkstackv1.RecordedValuesKind_RECORDED_VALUES_KIND_RESOLUTION
+	}
+	key, err := artifacts.RecordKey(of, x.GetNamespace(), x.GetRunId(), x.GetTaskId(), e.GetRecordScope())
+	if err != nil {
+		return nil, temporal.NewNonRetryableApplicationError(fmt.Sprintf("%s: %v", unitLabel(e), err), ResolutionRecordInvalidCode, err)
+	}
+	tctx := ctx
+	if getTimeout > 0 {
+		var cancel context.CancelFunc
+		tctx, cancel = context.WithTimeout(ctx, getTimeout)
+		defer cancel()
+	}
+	read, err := a.recorded.ReadRecordedValues(tctx, artifacts.SlotRun, nil, key, artifacts.RecordWant{Kind: want, Namespace: x.GetNamespace(),
+		RunID: x.GetRunId(), TaskID: x.GetTaskId(), Scope: e.GetRecordScope(), AdmissionSHA256: e.GetAdmissionSha256()})
+	if err != nil {
+		return nil, temporal.NewApplicationErrorWithCause(fmt.Sprintf("%s: its record could not be read: %v", unitLabel(e), err), ReasonCommitReadFailed, err)
+	}
+	switch {
+	case read.Answer == artifacts.RecordNone,
+		read.Answer == artifacts.RecordInvalid && read.Object == "values" && read.Reason == artifacts.RecordValuesMissing:
+		return nil, temporal.NewNonRetryableApplicationError(fmt.Sprintf("%s: its record, or the values it names, is gone", unitLabel(e)), ReasonValuesMissing, nil)
+	case read.Answer == artifacts.RecordUnsupported:
+		// A newer release's record: a replica of that release reads it.
+		return nil, temporal.NewApplicationError(fmt.Sprintf("%s: its record is of a newer format than this engine reads", unitLabel(e)), ReasonCommitReadFailed)
+	case read.Answer != artifacts.RecordFound:
+		return nil, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("%s: its record cannot be used (%s %s: %s)", unitLabel(e), read.Answer, read.Object, read.Reason), ResolutionRecordInvalidCode, nil)
+	}
+	rejected, valuesSHA256, _ := read.Value.Standing()
+	if rejected || valuesSHA256 != e.GetValues().GetSha256() {
+		return nil, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("%s: its record is not of the values the resume kept", unitLabel(e)), ResolutionRecordInvalidCode, nil)
+	}
+	return a.adoptValues(ctx, e, getTimeout, tries)
 }
 
 // retryWait spaces two tries of one read, so a store that fails fast does not

@@ -39,7 +39,6 @@ type resetHarness struct {
 	plan      *orkstackv1.ResumePlanRecord
 	planCalls atomic.Int32
 	commits   *artifacts.MemoryCommitStore
-	hasConc   bool
 	// runTimeout is the plan's, when the document declares a timeout.
 	runTimeout *engine.RunTimeoutPlan
 	children   map[string]*engine.ChildRunPlan
@@ -98,8 +97,7 @@ func newResetHarnessOn(t *testing.T, snapshots *testSnapshotStore, values *memVa
 	}, activity.RegisterOptions{Name: engine.ActivityAdoptRecorded})
 	h.env.RegisterActivityWithOptions(engine.NewSnapshotActivities(h.snapshots).WriteResumeEnding,
 		activity.RegisterOptions{Name: engine.ActivityWriteResumeEnding})
-	h.env.RegisterWorkflowWithOptions(engine.ResetRunWorkflow(false), workflow.RegisterOptions{Name: "ResetRunWorkflow"})
-	h.env.RegisterWorkflowWithOptions(engine.ResetRunWorkflow(true), workflow.RegisterOptions{Name: "ResetRunWorkflowWithConcurrency"})
+	h.env.RegisterWorkflowWithOptions(engine.ResetRunWorkflow(), workflow.RegisterOptions{Name: "ResetRunWorkflow"})
 	return h
 }
 
@@ -129,11 +127,7 @@ func (h *resetHarness) runResetWf(t *testing.T, wf *orkstackv1.Orkflow, input ma
 	if h.adjust != nil {
 		h.adjust(&plan)
 	}
-	name := "ResetRunWorkflow"
-	if h.hasConc {
-		name = "ResetRunWorkflowWithConcurrency"
-	}
-	h.env.ExecuteWorkflow(name, "ork-reset-1", wf, payload(t, input), plan, (*orkstackv1.RunContinuation)(nil))
+	h.env.ExecuteWorkflow("ResetRunWorkflow", "ork-reset-1", wf, payload(t, input), plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the reset run did not complete")
 	}
@@ -343,7 +337,6 @@ func TestResetRun_KeepsWhatSucceededAndRunsTheRestAgain(t *testing.T) {
 // place says.
 func (h *resetHarness) recordBuild(t *testing.T, edit func(*orkstackv1.ActivityCommit), place func(uri string) string) string {
 	t.Helper()
-	engine.ResumeAdmittedRunsForTest(t)
 	h.identity = recordedPlan().Identity
 	h.keepBuildRerunDeploy(t, false)
 	wf := compile(t, resumeTwoTaskDocument)
@@ -490,21 +483,6 @@ func packedUnits(t *testing.T, u *orkstackv1.ResumeUnits) []byte {
 	raw, err := proto.Marshal(u)
 	must.OK(t, err)
 	return raw
-}
-
-// A run held to a limit a resumed run cannot retake is never resumed past it
-// (§5.3 step 4).
-func TestResetRun_ARunWithConcurrencyIsNotResumedWithoutItsSlot(t *testing.T) {
-	h := newResetHarness(t)
-	h.hasConc = true
-	h.keepBuildRerunDeploy(t, true)
-	err := h.runResetOf(t, resumeTwoTaskDocument)
-	if err == nil || !strings.Contains(err.Error(), "concurrency") {
-		t.Fatalf("error = %v, want the concurrency refusal", err)
-	}
-	if n := len(h.taskCalls("deploy")); n != 0 {
-		t.Fatalf("deploy ran %d times without its slot", n)
-	}
 }
 
 // A key whose scope is not above this run's events is no seq_base of its

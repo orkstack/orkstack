@@ -19,9 +19,9 @@ import (
 // (ork:orkflow:…, ork:task:…), which the authored rule refuses: three places
 // held one to that rule before each said which it had.
 var concurrencyKeyCallers = map[string]string{
-	"internal/dsl/concurrency.go:ValidateConcurrency CheckConcurrencyKey":             "KeyAuthored", // a literal key, as written
+	"internal/dsl/concurrency.go:validateLimit CheckConcurrencyKey":                   "KeyAuthored", // a literal key, as written
 	"internal/dsl/concurrency_render.go:RenderConcurrencyKey CheckConcurrencyKey":     "KeyAuthored", // what a template rendered to
-	"internal/api/concurrency.go:planRunLimit RenderConcurrencyKey":                   "",            // a submit's, of a declared key
+	"internal/api/concurrency.go:keyRenderer RenderConcurrencyKey":                    "",            // a submit's, of a declared key
 	"internal/engine/concurrency_child.go:RenderConcurrencyKeys RenderConcurrencyKey": "",            // a child's, of a declared template
 	"internal/engine/concurrency_child.go:RenderConcurrencyKeys CheckConcurrencyKey":  "KeyPlanned",  // a child's key with no template
 	"internal/api/concurrency_service.go:concurrencyLimit CheckConcurrencyKey":        "KeyPlanned",  // a key read back

@@ -12,6 +12,10 @@ const (
 	// DefaultResumeVisibilityLagFloor is how long after the last ending below
 	// a run the cluster's index is trusted to show every run open there.
 	DefaultResumeVisibilityLagFloor = 15 * time.Second
+	// DefaultResumeChildWaitHint is how long a run below a resumed run may
+	// have been open before the refusal leads with ending it rather than
+	// waiting for it (design §28.12 F8).
+	DefaultResumeChildWaitHint = 24 * time.Hour
 	// DefaultResumeMaxSequenceGap is how far a run's stored events may go on
 	// above its ending before a resume asks its caller to accept them.
 	DefaultResumeMaxSequenceGap int64 = 4096

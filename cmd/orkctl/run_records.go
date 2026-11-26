@@ -33,18 +33,65 @@ var errRecordsIncomplete = errors.New("the listing is not complete: some records
 // newRunRecordsCommand lists what the engine recorded for a run
 // (docs/TASK_IDENTITY.md, "Reading what is on record").
 func newRunRecordsCommand(g *globalFlags) *cobra.Command {
-	var task string
+	var (
+		task                               string
+		unapplied, includeEnded, redeliver bool
+		since                              string
+		maxRuns                            int
+	)
 	cmd := &cobra.Command{
-		Use:   "records <run-id>",
+		Use:   "records [run-id]",
 		Short: "List what the engine recorded for a run that holds a task identity",
 		Long: "records lists, for a run whose results the engine records, each result,\n" +
 			"resolution, composed task and outputs on record, and each result the run's\n" +
 			"state calls succeeded that has none.\n\n" +
 			"not on record is the alarm: the run says the task succeeded, and no engine\n" +
 			"recorded it. recorded, not applied is an answer the run has not taken.\n\n" +
-			"It exits non-zero when a row could not be read.",
-		Args: cobra.ExactArgs(1),
+			"With --not-applied and no run, it finds every answer on record that a run of\n" +
+			"the namespace has not taken: of its open runs, and with --include-ended of\n" +
+			"those that ended since --since (24 hours ago unless given), at most\n" +
+			"--max-runs of them. With --redeliver it tells each open run whose await is\n" +
+			"still before its deadline again. Told is not taken: run it again afterwards\n" +
+			"to see what the runs took.\n\n" +
+			"It exits non-zero when a row could not be read, and with --not-applied also\n" +
+			"when it stopped at --max-runs or a telling was refused or is pending.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if unapplied {
+				if len(args) != 0 {
+					return errors.New("--not-applied reads the whole namespace: name no run")
+				}
+				if task != "" {
+					return errors.New("--task names a task of one run: it does not go with --not-applied")
+				}
+				return nil
+			}
+			for _, name := range []string{"include-ended", "since", "redeliver", "max-runs"} {
+				if cmd.Flags().Changed(name) {
+					return fmt.Errorf("--%s goes with --not-applied", name)
+				}
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if unapplied {
+				o := notAppliedOptions{namespace: g.namespace, includeEnded: includeEnded, redeliver: redeliver, maxRuns: maxRuns, now: time.Now()}
+				if maxRuns < 1 || maxRuns > maxNotAppliedRuns {
+					return fmt.Errorf("--max-runs %d: give at least 1 and at most %d", maxRuns, maxNotAppliedRuns)
+				}
+				if since != "" && !includeEnded {
+					return errors.New("--since goes with --include-ended")
+				}
+				o.since = o.now.Add(-24 * time.Hour)
+				if since != "" {
+					at, err := time.Parse(time.RFC3339, since)
+					if err != nil {
+						return fmt.Errorf("--since %q: want an RFC 3339 instant with a zone (2026-10-09T00:00:00Z)", since)
+					}
+					o.since = at
+				}
+				door := connectNotAppliedDoor{g: g, call: func() (context.Context, context.CancelFunc) { return g.unaryContext(cmd) }}
+				return notApplied(cmd.Context(), door, o, cmd.OutOrStdout())
+			}
 			rows, complete, err := listRecorded(cmd.Context(), pause, func(_ context.Context, token string) (*orkstackv1.ListRecordedResultsResponse, error) {
 				ctx, cancel := g.unaryContext(cmd)
 				defer cancel()
@@ -70,6 +117,11 @@ func newRunRecordsCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&task, "task", "t", "", "only this task's")
+	cmd.Flags().BoolVar(&unapplied, "not-applied", false, "across the namespace, list every answer on record that a run has not taken")
+	cmd.Flags().BoolVar(&includeEnded, "include-ended", false, "with --not-applied, read runs that ended since --since too")
+	cmd.Flags().StringVarP(&since, "since", "s", "", "with --include-ended, the instant ended runs are read from (RFC 3339; default 24 hours ago)")
+	cmd.Flags().BoolVar(&redeliver, "redeliver", false, "with --not-applied, tell each open run whose await is before its deadline again")
+	cmd.Flags().IntVar(&maxRuns, "max-runs", defaultNotAppliedMaxRuns, "with --not-applied, the most runs it reads")
 	return cmd
 }
 

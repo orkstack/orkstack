@@ -1551,6 +1551,7 @@
               "cache": false,
               "cancellation_grace_period_seconds": false,
               "command": false,
+              "concurrency": false,
               "credentials": false,
               "devices": false,
               "each": false,
@@ -1721,6 +1722,7 @@
             "cache": false,
             "cancellation_grace_period_seconds": false,
             "command": false,
+            "concurrency": false,
             "credentials": false,
             "devices": false,
             "each": false,
@@ -1789,6 +1791,14 @@
             ]
           },
           "type": "array"
+        },
+        "concurrency": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/orkflow.taskConcurrency"
+            }
+          ],
+          "description": "optional: how many tasks share one key's slots at once (see \"Concurrency limits\")"
         },
         "condition": {
           "description": "optional templated gate",
@@ -1965,6 +1975,7 @@
           "cache": false,
           "cancellation_grace_period_seconds": false,
           "command": false,
+          "concurrency": false,
           "credentials": false,
           "devices": false,
           "each": false,
@@ -1983,6 +1994,33 @@
           "with": false
         }
       },
+      "type": "object"
+    },
+    "orkflow.taskConcurrency": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "on_limit": {
+          "enum": [
+            "queue"
+          ]
+        },
+        "queue_timeout": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "limit"
+      ],
       "type": "object"
     },
     "orkflow.template": {

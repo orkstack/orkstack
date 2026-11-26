@@ -238,10 +238,12 @@ message TaskRun {
   // interruptions is set from E92; unset until it lands (v0.4.0 proto batch).
   TaskInterruptions interruptions = 28;
 
-  // queued is present while a composed task's child run waits in line for a
-  // slot of its concurrency limit: the child's own Run.queued, read live by
-  // GetRun only, for at most engine.concurrency.api_holders_shown of a run's
-  // composed tasks and for a caller who may read the child run.
+  // queued is present while the task waits in line for a slot of its own
+  // concurrency limit (status PENDING), or while a composed task's child run
+  // waits for a slot of its own: then it is the child's Run.queued, shown
+  // only to a caller who may read the child run. Its position is read live
+  // by GetRun only, for at most engine.concurrency.api_holders_shown of a
+  // run's tasks of each kind.
   ConcurrencyQueued queued = 29;
 
   // pending_reason says why a task, or a fan-out item, of a live run is not
@@ -1528,6 +1530,9 @@ message RunResumeEnded {
 message ResumeForceCanceledBy {
   string principal = 1;
   bool principal_verified = 2;
+  // request_id is the force cancel's own request id, which its audit record
+  // and the run's ending event carry.
+  string request_id = 3;
 }
 
 // RunResumed is how a run was resumed, carried by RUN_RESUMED.
@@ -1537,7 +1542,13 @@ message RunResumed {
   string from_task_id = 2;
   // resumed_after_sequence is the sequence of the ending set aside.
   int64 resumed_after_sequence = 3;
+  // rerun_count is the units the resume runs again, a fan-out counted by its
+  // items; no other unit runs again.
   int32 rerun_count = 4;
+  // kept_count is the units whose results the resume reads back, from their
+  // commits or their records (ResumeRunResponse's KEPT and SETTLED). It does
+  // not count a unit kept from an earlier part of the run, a skipped one, a
+  // waiting one or a sleep that woke, none of which runs again either.
   int32 kept_count = 5;
   // principal is who confirmed the resume, as recorded: asserted unless
   // principal_verified (AGENTS.md §7).
@@ -1553,7 +1564,9 @@ message RunResumed {
 // RunResultsKept is what a resumed run read back, carried by
 // RUN_RESULTS_KEPT.
 message RunResultsKept {
-  // kept_count is the results read back from their commits.
+  // kept_count is the results read back from their commits. A unit kept from
+  // an earlier part of the run is not read back and is not counted here;
+  // ResumeRunResponse.counts holds it, under RESUME_CATEGORY_EARLIER.
   int32 kept_count = 1;
   // settled_count is the awaited and composed tasks kept from their records.
   int32 settled_count = 2;

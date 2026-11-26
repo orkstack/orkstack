@@ -382,7 +382,7 @@ func TestEachLines_GuardChargesIndexDispatch(t *testing.T) {
 				return &orkstackv1.IndexEachLinesResult{Count: 3, TotalLines: 3, Index: linesIndex}, nil
 			})
 			if tc.length > 0 {
-				h.onSnapshot = onceAt(h.env, tc.length, taskStatusIs("list", orkstackv1.Status_STATUS_SUCCEEDED))
+				h.onSnapshot = onceAt(h, tc.length, taskStatusIs("list", orkstackv1.Status_STATUS_SUCCEEDED))
 			}
 			plan := guardedPlan(1000, engine.DefaultHistoryMaxBytes)
 			plan.EachLines = engine.DefaultEachLinesPolicy()
@@ -450,7 +450,7 @@ func TestEachLines_SwitchWaitsForIndex(t *testing.T) {
 						}
 					}
 					raiseOnce.Do(func() {
-						h.env.SetCurrentHistoryLength(650)
+						h.raiseHistory(650)
 						close(raised)
 					})
 				}

@@ -360,4 +360,8 @@ message ResumePlanRecord {
   // plan_digest is the digest a preview shows and a confirm names the plan by:
   // what the resume does with each unit, with no time and no caller in it.
   string plan_digest = 19;
+  // force_canceled_by is who force-cancelled the run, from the record that
+  // verified against the ending this resume sets aside; unset for a failed
+  // run.
+  ResumeForceCanceledBy force_canceled_by = 20;
 }

@@ -191,7 +191,7 @@ tasks:
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
 		if statusOf(run, "fast") == orkstackv1.Status_STATUS_SUCCEEDED {
 			once.Do(func() {
-				h.env.SetCurrentHistoryLength(650)
+				h.raiseHistory(650)
 				h.env.RegisterDelayedCallback(h.env.CancelWorkflow, time.Millisecond)
 			})
 		}

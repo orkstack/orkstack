@@ -48,8 +48,9 @@ func (s *Service) ResumeRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ResumeRunRequest],
 ) (*connect.Response[orkstackv1.ResumeRunResponse], error) {
-	resp, err := s.resumeRun(ctx, req)
-	s.observeResume(ctx, req.Msg, respMsg(resp), err)
+	var forced bool
+	resp, err := s.resumeRun(ctx, req, &forced)
+	s.observeResume(ctx, req.Msg, respMsg(resp), forced, err)
 	return resp, err
 }
 
@@ -64,6 +65,7 @@ func respMsg(resp *connect.Response[orkstackv1.ResumeRunResponse]) *orkstackv1.R
 func (s *Service) resumeRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ResumeRunRequest],
+	forced *bool,
 ) (*connect.Response[orkstackv1.ResumeRunResponse], error) {
 	msg, started := req.Msg, s.now()
 	if err := checkResumeRequest(msg); err != nil {
@@ -74,7 +76,7 @@ func (s *Service) resumeRun(
 		return nil, s.resumeError(ctx, msg.GetRunId(), err)
 	}
 	defer release()
-	base, err := s.resumeBase(ctx, msg)
+	base, err := s.resumeBase(ctx, msg, forced)
 	var done *resumeDone
 	if errors.As(err, &done) {
 		return s.answerResumed(ctx, done)
@@ -198,6 +200,10 @@ type resumeBase struct {
 	previous    uint64
 	// scope is that of the resume the base is of; 0 for a base no resume made.
 	scope uint64
+	// class is how the base ended; forceCancel is the verified record of a
+	// force-cancelled one.
+	class       engine.ResumeBaseClass
+	forceCancel engine.ForceCancelClose
 }
 
 // planInput is the base as the planner reads it, for what msg asks.
@@ -205,7 +211,7 @@ func (b *resumeBase) planInput(msg *orkstackv1.ResumeRunRequest) engine.ResumePl
 	in := engine.ResumePlanInput{
 		Definition:  b.definition,
 		Base:        b.run,
-		Class:       engine.ResumeBaseFailed,
+		Class:       b.class,
 		Facts:       b.facts,
 		ResumesUsed: b.resumesUsed,
 		FromTask:    msg.GetFromTaskId(),
@@ -219,7 +225,9 @@ func (b *resumeBase) planInput(msg *orkstackv1.ResumeRunRequest) engine.ResumePl
 // resumeBase reads the run a resume names and the execution it would start
 // from, and refuses a run that is in no state to be resumed, cheapest first:
 // its status, then the cluster's word on its execution, then its history.
-func (s *Service) resumeBase(ctx context.Context, msg *orkstackv1.ResumeRunRequest) (*resumeBase, error) {
+// forced is set once the run is read, to whether a force cancel ended it, so
+// that a refusal of its base is counted as one of a force-cancelled run.
+func (s *Service) resumeBase(ctx context.Context, msg *orkstackv1.ResumeRunRequest, forced *bool) (*resumeBase, error) {
 	runID := msg.GetRunId()
 	ns, err := s.namespace(ctx, msg.GetNamespace())
 	if err != nil {
@@ -233,6 +241,8 @@ func (s *Service) resumeBase(ctx context.Context, msg *orkstackv1.ResumeRunReque
 	if err != nil {
 		return nil, err
 	}
+	class := resumeBaseClass(run)
+	*forced = class == engine.ResumeBaseForceCanceled
 	if binding.Resume == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("this engine resumes no runs"))
 	}
@@ -246,10 +256,10 @@ func (s *Service) resumeBase(ctx context.Context, msg *orkstackv1.ResumeRunReque
 			return nil, err
 		}
 	}
-	if r := engine.RefuseResumeState(run, engine.ResumeBaseFailed); r != nil {
+	if r := engine.RefuseResumeState(run, class); r != nil {
 		return nil, r
 	}
-	b := &resumeBase{namespace: ns.GetName(), binding: binding, run: run, sequence: sequence}
+	b := &resumeBase{namespace: ns.GetName(), binding: binding, run: run, sequence: sequence, class: class}
 	if b.execution, err = binding.Resume.DescribeResumeExecution(ctx, runID, ""); err != nil {
 		return nil, s.historyReadError(ctx, runID, err)
 	}
@@ -265,7 +275,102 @@ func (s *Service) resumeBase(ctx context.Context, msg *orkstackv1.ResumeRunReque
 	if b.facts, err = b.history.Facts(run); err != nil {
 		return nil, err
 	}
+	if class == engine.ResumeBaseForceCanceled {
+		if err := s.verifyForceCancel(ctx, b); err != nil {
+			return nil, err
+		}
+		b.facts.OpenPins = engine.OpenPinsAt(b.definition, run, b.history)
+	}
 	return b, nil
+}
+
+// errStreamEnded stops a stream once what it was read for is found.
+var errStreamEnded = errors.New("found")
+
+// causeForceCancelIncomplete: the run's events do not end with its force
+// cancel's ending yet.
+const causeForceCancelIncomplete = "force_cancel_incomplete"
+
+// forceCancelEnded is check 2 (design §28.13 N6, decision P5B-1): the run's
+// events, as every reader reads them, hold the ending of the force cancel the
+// record names, at or above the base's own first sequence. Readers build it
+// from the close and its record, so it is there once the run's history is
+// whole; what it checks is that this execution ended under that request.
+func (s *Service) forceCancelEnded(ctx context.Context, b *resumeBase) error {
+	id := b.run.GetId()
+	first := max(int64(b.scope), 1)
+	request := b.forceCancel.Record.RequestID
+	ended := false
+	// The run was closed when it was described, so its stream ends at its
+	// ending; but the stream follows the run's current execution, which a
+	// reset since may have opened, so it is bounded, and stops at that ending.
+	reading, cancel := context.WithTimeout(ctx, min(s.resumeSettings.ConfirmTimeout, resumeBodyBudget))
+	defer cancel()
+	err := b.binding.Reader.StreamEvents(reading, id, first-1, func(e *orkstackv1.Event) error {
+		if e.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED && e.GetRequestId() == request {
+			ended = true
+			return errStreamEnded
+		}
+		return nil
+	})
+	switch {
+	case ended:
+		return nil
+	case ctx.Err() == nil && reading.Err() != nil:
+		s.logger.WarnContext(ctx, "resume: a force-cancelled run's events could not be read in time", "run_id", id)
+		return resumeUnavailable("run %s's events can't be read right now; try again shortly", id)
+	case err != nil:
+		return s.historyReadError(ctx, id, err)
+	case ctx.Err() != nil:
+		// The caller went away while the stream ended without a word of it.
+		return ctxError(ctx)
+	}
+	s.logger.WarnContext(ctx, "resume: a force-cancelled run's events do not end with its force cancel's ending", "run_id", id, "request_id", request)
+	r := refuseResume(resumeStillStopping, engine.RefusalWait,
+		"run %s's force cancel has not finished its ending; run orkctl run cancel --force %s again", id, id)
+	r.Cause, r.RetryAfter = causeForceCancelIncomplete, resumeCheckRetry
+	return r
+}
+
+// resumeBaseClass is how the run ended, as the planner reads it: a force
+// cancel's ending (design §23, G-c), or any other, which only a failure makes
+// resumable.
+func resumeBaseClass(run *orkstackv1.Run) engine.ResumeBaseClass {
+	if run.GetStatus() == orkstackv1.Status_STATUS_CANCELED && run.GetError().GetCode() == engine.RunForceCanceledCode {
+		return engine.ResumeBaseForceCanceled
+	}
+	return engine.ResumeBaseFailed
+}
+
+// verifyForceCancel holds a force-cancelled base to the record its own close
+// carries (design §28.0, §28.12 F2): one that verifies, for this run and this
+// execution, as the readers decide it. One that does not is a plain
+// termination, which nothing resumes; keys that cannot be read now are a wait.
+func (s *Service) verifyForceCancel(ctx context.Context, b *resumeBase) error {
+	id := b.run.GetId()
+	if s.resumeForceCancels == nil {
+		return connect.NewError(connect.CodeFailedPrecondition, errors.New("this engine resumes no force-cancelled runs: it verifies no force cancel's record"))
+	}
+	mode := ""
+	if s.resumeAuthMode != nil {
+		mode = s.resumeAuthMode()
+	}
+	b.forceCancel = engine.ReadForceCancelClose(ctx, s.resumeForceCancels, mode, b.namespace, id,
+		b.execution.ExecutionRunID, b.history.CloseEvent, b.history.CloseTime)
+	switch {
+	case b.forceCancel.IsForceCancel():
+		return s.forceCancelEnded(ctx, b)
+	case b.forceCancel.Verification == engine.ForceCancelUnavailable, b.forceCancel.Verification == engine.ForceCancelUnknownKey:
+		// A key this engine has not read yet (another engine's, just
+		// published) is a wait too: the readers that showed the run
+		// force-cancelled knew it.
+		s.logger.WarnContext(ctx, "resume: a force cancel's record could not be checked now", "run_id", id, "verification", b.forceCancel.Verification)
+		return resumeUnavailable("who force-cancelled run %s can't be checked right now; try again shortly", id)
+	}
+	s.logger.WarnContext(ctx, "resume: a run reads as force-cancelled but its close carries no record of it that verifies",
+		"run_id", id, "verification", b.forceCancel.Verification)
+	return refuseResume(engine.RefuseStateNotResumable, engine.RefusalPermanent,
+		"run %s was ended from outside with no force cancel's record that verifies, so it can't be resumed. Run again starts a fresh run", id)
 }
 
 // readHistory reads what the base's history says: from the last minute's
@@ -410,7 +515,7 @@ func (b *resumeBase) refuseExecution(msg *orkstackv1.ResumeRunRequest) *resumeRe
 			id, resumeClosingRetry)
 		r.Cause, r.RetryAfter = causeRunClosing, resumeClosingRetry
 		return r
-	case b.execution.Status != enumspb.WORKFLOW_EXECUTION_STATUS_FAILED:
+	case b.execution.Status != b.class.ClosedAs():
 		return refuseResume(engine.RefuseStateNotResumable, engine.RefusalPermanent,
 			"run %s did not end the way its record says, so nothing can be resumed from it. Run again starts a fresh run", id)
 	case !msg.GetDryRun() && msg.GetExpectedTerminalSequence() != b.sequence:

@@ -12,6 +12,9 @@ type ResumeSettings struct {
 	// VisibilityLagFloor is how long after the last ending below a run the
 	// cluster's index of runs is trusted to show every run still open there.
 	VisibilityLagFloor time.Duration
+	// ChildWaitHint is how long a run below the base may have been open
+	// before a refusal leads with ending it rather than waiting for it.
+	ChildWaitHint time.Duration
 	// MaxSequenceGap is how far a run's stored events may go on above its
 	// ending before a resume asks its caller to accept them.
 	MaxSequenceGap int64
@@ -26,7 +29,8 @@ type ResumeSettings struct {
 // DefaultResumeSettings are the defaults of engine.resume.*.
 func DefaultResumeSettings() ResumeSettings {
 	return ResumeSettings{
-		VisibilityLagFloor: engine.DefaultResumeVisibilityLagFloor, MaxSequenceGap: engine.DefaultResumeMaxSequenceGap,
+		VisibilityLagFloor: engine.DefaultResumeVisibilityLagFloor, ChildWaitHint: engine.DefaultResumeChildWaitHint,
+		MaxSequenceGap: engine.DefaultResumeMaxSequenceGap,
 		ConfirmTimeout: engine.DefaultResumeConfirmTimeout, ConfirmsPerMinute: engine.DefaultResumeConfirmsPerRun,
 	}
 }
@@ -35,6 +39,9 @@ func DefaultResumeSettings() ResumeSettings {
 func resumeSettingsOf(set ResumeSettings) ResumeSettings {
 	if set.VisibilityLagFloor <= 0 {
 		set.VisibilityLagFloor = DefaultResumeSettings().VisibilityLagFloor
+	}
+	if set.ChildWaitHint <= 0 {
+		set.ChildWaitHint = DefaultResumeSettings().ChildWaitHint
 	}
 	if set.MaxSequenceGap <= 0 {
 		set.MaxSequenceGap = DefaultResumeSettings().MaxSequenceGap

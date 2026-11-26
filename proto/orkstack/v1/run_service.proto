@@ -245,6 +245,11 @@ message ResumeRunResponse {
   string plan_digest = 4;
   // seq_base is RUN_RESUMED's sequence.
   int64 seq_base = 5;
+  // kept_count is the units listed KEPT or SETTLED: the results the resume
+  // reads back. It is not every unit that does not run again: one kept from an
+  // earlier part of the run (RESUME_CATEGORY_EARLIER), skipped, waiting, on
+  // record or a sleep that woke is counted only in counts. A unit runs again
+  // only when it is listed under a RESUME_CATEGORY_RERUN_* category.
   int32 kept_count = 6;
   repeated ResumeTask tasks = 7;
   repeated ResumeCount counts = 8;
@@ -262,6 +267,10 @@ message ResumeRunResponse {
   int64 terminal_sequence = 16;
   // highest_sequence is the highest event sequence stored for the run.
   int64 highest_sequence = 17;
+  // rerun_count is the units the resume runs again: those listed under a
+  // RESUME_CATEGORY_RERUN_* category. Every other unit of tasks, one kept
+  // from an earlier part of the run included, does not run again.
+  int32 rerun_count = 18;
 }
 
 // ResumeTask is one task, or one fan-out item, of a resume's plan.
@@ -331,7 +340,9 @@ enum ResumeCategory {
   RESUME_CATEGORY_WAITS_AGAIN = 11;
   // A sleep that already started: it wakes when it would have.
   RESUME_CATEGORY_SLEEP_KEPT = 12;
-  // Finished in an earlier part of the run, before it carried on.
+  // Kept, not run again: it finished in an earlier part of the run, before
+  // it carried on. Its result is not read back, so kept_count does not count
+  // it.
   RESUME_CATEGORY_EARLIER = 13;
   // Answered and on record: the answer given is used.
   RESUME_CATEGORY_RESOLVED_ON_RECORD = 14;
@@ -673,7 +684,10 @@ message GetRunResponse { Run run = 1; }
 // limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
 // waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
 // a run still going matches them, and a deployment that cannot index
-// concurrency limits refuses them.
+// concurrency limits refuses them. results_recorded=true keeps the runs whose
+// results are recorded by the engine, going or ended, as long as the cluster
+// still holds them: a run read from the archive is not listed by it, and a
+// deployment whose cluster cannot index it refuses it by name.
 message ListRunsRequest {
   option (orkstack.v1.filterable) = {
     resource: "orkstack.v1.Run"
@@ -730,6 +744,14 @@ message ListRunsRequest {
         label: "Holding key"
         operators: [FILTER_OPERATOR_EQUALS]
         indexed: true
+      },
+      {
+        path: "results_recorded"
+        label: "Results recorded by the engine"
+        operators: [FILTER_OPERATOR_EQUALS]
+        indexed: true
+        flag: true
+        ended_matches: true
       }
     ]
   };

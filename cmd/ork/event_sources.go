@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
@@ -48,4 +49,11 @@ func eventSourceSettingsFor(apply func(lookup func(string) (string, bool), seten
 		v, ok := values[k]
 		return v, ok
 	})
+}
+
+// sourcesRun reports whether this deployment runs event sources: the feature
+// is on, it runs as a release, and its callers are authenticated. Elsewhere a
+// source is stored, and only the workflow of one being deleted is started.
+func sourcesRun(s eventsources.Settings, c config) bool {
+	return s.Enabled && c.deployment.BuildID != "" && c.auth.mode == authn.ModeEnforce
 }

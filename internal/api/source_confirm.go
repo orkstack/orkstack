@@ -188,6 +188,12 @@ func (s *Service) ConfirmInstance(ctx context.Context, req *connect.Request[orks
 		if record.OrkerID != caller.OrkerID || record.ServiceDigest != call.ref.ServiceDigest {
 			return answered(doorStop(eventsources.ReasonNotHeld))
 		}
+		if s.sourceWorkflows != nil {
+			if err := s.sourceWorkflows.Started(ctx, call.ref); err != nil {
+				s.logger.WarnContext(ctx, "an instance's workflow was not told that it was taken; it finds out at its next pass", "event_source_id", call.ref.SourceID,
+					"index", call.ref.Index, "epoch", call.ref.Epoch, "error", err)
+			}
+		}
 	}
 	// A revoke of the attempt's save holds it before it starts. One that
 	// waited is on record already, so that it has none is not what tells: it

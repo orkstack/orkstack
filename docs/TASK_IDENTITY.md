@@ -654,6 +654,52 @@ replica makes 50 reads a second for these calls, sixteen at a time; and what a
 replica has found costs none of these. None is drawn on by a mint, a commit, a
 door or a run's own reads.
 
+### After an outage
+
+While the store does not answer, a run cannot read the answers people give
+its awaits: each stays on record, and the run takes it when it is told again
+or at the await's deadline. One command finds what was not taken:
+
+```bash
+orkctl run records -n NS --not-applied
+```
+
+It lists the namespace's runs whose results the engine records (the
+`results_recorded=true` run filter: the open ones, and with `--include-ended`
+those that ended since `--since`, 24 hours ago unless given), at most
+`--max-runs` of them (200 unless given), which it says before it starts. For
+each it prints one line a record not applied: the run, the task, who gave it,
+when it was asked and stored, its deadline, and what to do:
+
+| What to do | When |
+|---|---|
+| tell the run again | the run is open and its task awaits before its deadline |
+| past its deadline; the run decides | the run is open and the deadline has passed: the run reads the record there |
+| resume the run | a root run that ended without the answer |
+| run the parent again; this answer is not carried over | a child run that ended, or whose task stopped waiting |
+| stored after its deadline; not used | the answer came too late, and is never taken |
+
+With `--redeliver` it tells each open run of the first row again
+(`ResolveAwait` with `redeliver`, under `run.await.resolve`, paced as any
+telling is) and prints the answer's words: `told at T`, `refused: REASON` or
+`pending`. It never tells an await whose deadline has passed, a record stored
+after its deadline, or a child whose parent has ended, and says why it skipped
+each. It exits non-zero when a run's records could not all be read, when it
+stopped at `--max-runs`, or when a telling was refused, errored or is pending.
+Told is not taken: run it again after a minute to see what the runs took.
+
+It reads only the runs started with the mark the cluster indexes: a run
+submitted before the cluster indexed `OrkflowResultsRecorded`, or by a replica
+whose boot could not register it, is not listed, and the command says so
+before it starts. `--max-runs` is at most 1000, and a pass lists at most ten
+times that many marked runs while it looks for ended ones; a pass that stops
+short, or whose listing does not page on, says so and exits non-zero.
+
+It is a loop in `orkctl` and keeps no state on any engine. It needs the
+cluster to index `OrkflowResultsRecorded` ([DEPLOY.md](./DEPLOY.md#temporal-search-attributes));
+where it does not, the engine warns at boot and the command is refused by name.
+A run already retired to the archive is not listed by it.
+
 ## Which Orkers serve it
 
 An Orker serves task identity only while it has checked that it may: at
@@ -865,9 +911,16 @@ since is a miss. An approval or a composed result left standing by a later
 resume must still follow what is current: one given on a result since
 replaced by a different one is a miss too.
 
-No run that holds an identity is resumed in this release: the check of what a
-resume would keep reads no record yet, so it is refused (`admitted_run`). What
-the attempts of a resumed run are held to is this.
+A resume of a run that holds an identity keeps what the engine recorded and
+nothing an Orker committed: each kept result is read from its record, at the
+resume its run's resume records give it, never at the one its state names; an
+approval or a composed task is kept only while what its record follows is
+current, and an answer recorded in time that the run never applied is applied
+then. A composed task whose values were not recorded is kept from its child's
+outputs on record, once the cluster says the child the run's plan names
+succeeded: the resume records its values from them, by the steps any composed
+task's are recorded with, before it resets the run. What the attempts of a
+resumed run are held to is this.
 
 A resume opens a new set of the attempts that may hold a task's identities,
 and nothing else does: an attempt's slot, its commit key and its idempotency

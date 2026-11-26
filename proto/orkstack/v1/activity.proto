@@ -620,6 +620,9 @@ message AdoptEntry {
   // bytes of one it reads: a larger one is kept by reference alone.
   ArtifactRef values = 7;
   int64 inline_limit = 8;
+  // admission_sha256 is the admission a RESOLUTION or COMPOSED record must be
+  // made under: the run's own, for a run whose results the engine records.
+  string admission_sha256 = 9;
 }
 
 // AdoptEntryKind is what a read-back entry reads.
@@ -632,7 +635,8 @@ enum AdoptEntryKind {
   // COMPOSED is a composed task's record of its child's values.
   ADOPT_ENTRY_KIND_COMPOSED = 3;
   // VALUES is the values.json of an awaited or composed task of a run whose
-  // results are not recorded.
+  // results are not recorded; RESOLUTION and COMPOSED are the records of one
+  // whose results are, which name its values.
   ADOPT_ENTRY_KIND_VALUES = 4;
 }
 

@@ -45,7 +45,7 @@ func TestHistoryGuard_TwoHundredBouncesStayWithinTheBound(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			length += 12
-			h.env.SetCurrentHistoryLength(length)
+			h.raiseHistory(length)
 			return nil
 		}
 		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-bounces", compile(t, fmt.Sprintf(oneTaskDocument, "")),
@@ -66,7 +66,7 @@ func TestHistoryGuard_TwoHundredBouncesStayWithinTheBound(t *testing.T) {
 		b := script()
 		h := newHarnessCtx(t, nil, b.run)
 		// Past the hundredth bounce the cluster's history is at its line.
-		h.onSnapshot = onceAt(h.env, int(engine.DefaultHistoryMaxEvents)-10, func(run *orkstackv1.Run) bool {
+		h.onSnapshot = onceAt(h, int(engine.DefaultHistoryMaxEvents)-10, func(run *orkstackv1.Run) bool {
 			for _, tr := range run.GetTaskRuns() {
 				if tr.GetTaskId() == "work" {
 					return tr.GetInterruptions().GetNeverStarted() >= bounces/2

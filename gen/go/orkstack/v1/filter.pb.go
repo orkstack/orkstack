@@ -245,12 +245,15 @@ type FilterableField struct {
 	// value must spell. UNSPECIFIED means any text.
 	ValueRule FilterValueRule `protobuf:"varint,7,opt,name=value_rule,json=valueRule,proto3,enum=orkstack.v1.FilterValueRule" json:"value_rule,omitempty"`
 	// indexed: the path names no field of the resource. The server answers it
-	// from its index of open rows, so a row that has ended never matches it,
-	// and it takes equals only. Its values are text, or, with flag, the single
-	// value "true".
+	// from its index and it takes equals only. Its values are text, or, with
+	// flag, the single value "true". A row that has ended never matches it,
+	// unless ended_matches says it does.
 	Indexed bool `protobuf:"varint,8,opt,name=indexed,proto3" json:"indexed,omitempty"`
 	// flag, for an indexed field only: it takes the single value "true".
-	Flag          bool `protobuf:"varint,9,opt,name=flag,proto3" json:"flag,omitempty"`
+	Flag bool `protobuf:"varint,9,opt,name=flag,proto3" json:"flag,omitempty"`
+	// ended_matches, for an indexed field only: what it selects is set when a
+	// row starts and stays true of it, so a row that has ended matches it too.
+	EndedMatches  bool `protobuf:"varint,10,opt,name=ended_matches,json=endedMatches,proto3" json:"ended_matches,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -344,6 +347,13 @@ func (x *FilterableField) GetIndexed() bool {
 func (x *FilterableField) GetFlag() bool {
 	if x != nil {
 		return x.Flag
+	}
+	return false
+}
+
+func (x *FilterableField) GetEndedMatches() bool {
+	if x != nil {
+		return x.EndedMatches
 	}
 	return false
 }
@@ -444,7 +454,7 @@ const file_orkstack_v1_filter_proto_rawDesc = "" +
 	"\vFieldFilter\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12+\n" +
 	"\x02op\x18\x02 \x01(\x0e2\x1b.orkstack.v1.FilterOperatorR\x02op\x12\x16\n" +
-	"\x06values\x18\x03 \x03(\tR\x06values\"\xd8\x02\n" +
+	"\x06values\x18\x03 \x03(\tR\x06values\"\xfd\x02\n" +
 	"\x0fFilterableField\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x129\n" +
@@ -455,7 +465,9 @@ const file_orkstack_v1_filter_proto_rawDesc = "" +
 	"\n" +
 	"value_rule\x18\a \x01(\x0e2\x1c.orkstack.v1.FilterValueRuleR\tvalueRule\x12\x18\n" +
 	"\aindexed\x18\b \x01(\bR\aindexed\x12\x12\n" +
-	"\x04flag\x18\t \x01(\bR\x04flag\"\x8f\x01\n" +
+	"\x04flag\x18\t \x01(\bR\x04flag\x12#\n" +
+	"\rended_matches\x18\n" +
+	" \x01(\bR\fendedMatches\"\x8f\x01\n" +
 	"\x0eListFilterSpec\x12\x1a\n" +
 	"\bresource\x18\x01 \x01(\tR\bresource\x124\n" +
 	"\x06fields\x18\x02 \x03(\v2\x1c.orkstack.v1.FilterableFieldR\x06fields\x12+\n" +

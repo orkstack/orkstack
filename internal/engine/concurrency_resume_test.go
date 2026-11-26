@@ -59,7 +59,7 @@ func newResumedConcHarness(t *testing.T, answers ...AcquireConcurrencyResult) *r
 // resumedConcWorkflow is the run of concOrkflow as a resume's reset run
 // executes it.
 func resumedConcWorkflow(ctx workflow.Context, plan RunPlan) (*orkstackv1.Run, error) {
-	deps := workflowDeps{isResetRun: func(*workflow.Info) bool { return true }, limitUnbuilt: ResumeLimitUnbuilt}
+	deps := workflowDeps{isResetRun: func(*workflow.Info) bool { return true }}
 	return runWorkflowReleasing(ctx, deps, concRunID, concOrkflow(), &orkstackv1.Payload{}, plan, nil)
 }
 
@@ -333,6 +333,32 @@ func TestResumedRun_ACarriedRunWhosePlanCannotBeLoadedReleasesItsResumedSlot(t *
 // carriedResetWorkflow is a carried generation of concOrkflow as a reset run
 // executes it.
 func carriedResetWorkflow(ctx workflow.Context, plan RunPlan, carry *orkstackv1.RunContinuation) (*orkstackv1.Run, error) {
-	deps := workflowDeps{isResetRun: func(*workflow.Info) bool { return true }, limitUnbuilt: ResumeLimitUnbuilt}
+	deps := workflowDeps{isResetRun: func(*workflow.Info) bool { return true }}
 	return runWorkflowReleasing(ctx, deps, "", concOrkflow(), &orkstackv1.Payload{}, plan, carry)
+}
+
+// TestResumedRun_RetakesItsTasksSlots: a run whose only limits are its tasks'
+// is resumed (E88 P7): every slot of its earlier incarnations is given up
+// before anything is asked, the run asks for nothing of its own, and the task
+// run again asks for its slot at the resume's incarnation, from its first
+// ordinal, and gives it back as it ends.
+func TestResumedRun_RetakesItsTasksSlots(t *testing.T) {
+	h := newResumedConcHarness(t, granted(7))
+	plan := concPlan()
+	plan.Concurrency.Run, plan.Concurrency.Tasks = nil, map[string]int{"apply": 0}
+	h.env.OnSignalExternalWorkflow(mock.Anything, "ork-conc-test", "", GateSignalRelease, mock.Anything).Return(nil)
+	h.resume(plan)
+	must.OK(t, h.env.GetWorkflowError())
+	if len(h.acquires) != 1 || h.acquires[0].Request.SeqBase != 42 || h.acquires[0].Request.N != 0 || h.acquires[0].Request.TaskIx != 0 {
+		t.Fatalf("acquires %+v; want the resumed task's alone, at 42", h.acquires)
+	}
+	if len(h.releases) == 0 || h.releases[0] != (GateReleaseAll{Run: concRunID, Below: 42}) {
+		t.Fatalf("releases %+v; want every earlier incarnation's first", h.releases)
+	}
+	if len(h.single) != 1 || h.single[0] != (GateRelease{Run: concRunID, SeqBase: 42, TaskIx: 0}) {
+		t.Fatalf("task releases %+v; want the resumed task's own, at 42, as it ends", h.single)
+	}
+	if h.ran != 1 {
+		t.Fatalf("%d tasks ran, want the one run again", h.ran)
+	}
 }

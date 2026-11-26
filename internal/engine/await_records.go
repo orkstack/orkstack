@@ -68,13 +68,16 @@ func (s *runState) dropResolution(ctx workflow.Context, id, why string) resolveO
 	return resolveDropped
 }
 
-// countRecords counts through the replay-aware handler of workflow code.
+// countRecords counts through the replay-aware handler of workflow code. It
+// is the SDK's, which leaves on the default sink, so it names no namespace: a
+// record carrying one leaves only on that namespace's own sink (AGENTS.md
+// §11).
 func (s *runState) countRecords(ctx workflow.Context, name string, tags map[string]string) {
-	with := map[string]string{"ork_namespace": s.wf.GetNamespace()}
-	for k, v := range tags {
-		with[k] = v
+	handler := workflow.GetMetricsHandler(ctx)
+	if len(tags) > 0 {
+		handler = handler.WithTags(tags)
 	}
-	workflow.GetMetricsHandler(ctx).WithTags(with).Counter(name).Inc(1)
+	handler.Counter(name).Inc(1)
 }
 
 // receivedResolution counts a resolution taken off the channel.

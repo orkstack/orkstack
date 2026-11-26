@@ -16,5 +16,12 @@ func TestMain(m *testing.M) {
 	if ready := os.Getenv(undumpableVar); ready != "" {
 		os.Exit(beUndumpableUntilStopped(ready))
 	}
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "dist-builds-")
+	if err != nil {
+		panic(err)
+	}
+	sharedBuildDir = dir
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }

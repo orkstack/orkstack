@@ -31,7 +31,7 @@ func TestResetRun_AResumedRunCarriesOn(t *testing.T) {
 		return func(h *resetHarness) {
 			h.behave = func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				if in.GetTaskId() == at {
-					h.env.SetCurrentHistoryLength(held)
+					h.raiseHistory(held)
 				}
 				return succeeded(in.TaskId, map[string]any{"ok": true}), nil
 			}

@@ -293,11 +293,26 @@ type sourceInstances interface {
 // SourceWorkflows tells a source's workflow what the door learned. Each is
 // best-effort where the workflow finds the same by itself.
 type SourceWorkflows interface {
+	// Start makes the one start there is of the source's workflow: one that is
+	// open is told to load again.
+	Start(ctx context.Context, src *orkstackv1.EventSource) (engine.SourceStart, error)
+	// Started relays that an attempt confirmed, while the workflow waits for
+	// it.
+	Started(ctx context.Context, ref held.Ref) error
 	// Report relays what an instance reported, while the workflow waits for
 	// it.
 	Report(ctx context.Context, ref held.Ref, what orkstackv1.InstanceReport, reason string) error
 	// Sync asks the workflow to load its source again.
 	Sync(ctx context.Context, sourceID string) error
+}
+
+// SourceRecords is what the API keeps of deleted sources.
+type SourceRecords interface {
+	// Tombstone records that a source was deleted; one already there is
+	// success.
+	Tombstone(ctx context.Context, sourceID, namespace, name string, at time.Time) error
+	// TombstoneOf reads whose it is.
+	TombstoneOf(ctx context.Context, sourceID string) (namespace, name string, found bool, err error)
 }
 
 // pauseSource pauses call's source with one of OrkStack's codes, where it is
@@ -308,8 +323,9 @@ type SourceWorkflows interface {
 // source is paused, or it is being deleted, or is no longer the one the call
 // holds, which nothing is written to.
 func (s *Service) pauseSource(ctx context.Context, call *heldCall, code, refusalCode, orker string) (reason string, changed *orkstackv1.EventSource, err error) {
-	sentence := eventsources.PauseSentence(code)
-	if sentence == "" {
+	now := s.now().UTC()
+	pause := eventsources.EnginePause(code, refusalCode, "", orker, now)
+	if pause == nil {
 		return "", nil, fmt.Errorf("%q is no code a source is paused with", code)
 	}
 	src := call.src
@@ -328,10 +344,8 @@ func (s *Service) pauseSource(ctx context.Context, call *heldCall, code, refusal
 		return reason, nil, nil
 	}
 	next := proto.Clone(src).(*orkstackv1.EventSource)
-	now := timestamppb.New(s.now().UTC())
-	next.Pause = &orkstackv1.EventSourcePause{Cause: orkstackv1.PauseCause_PAUSE_CAUSE_ENGINE, Code: code, RefusalCode: refusalCode,
-		Reason: sentence, Since: now, RequestedByOrker: orker}
-	next.UpdatedAt, next.UpdatedBy = now, ""
+	next.Pause = pause
+	next.UpdatedAt, next.UpdatedBy = timestamppb.New(now), ""
 	_, err = s.eventSources.Replace(ctx, next, src.GetEtag())
 	switch {
 	case errors.Is(err, eventsources.ErrChanged):

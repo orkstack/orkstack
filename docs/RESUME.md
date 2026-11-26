@@ -34,6 +34,7 @@ What else must rerun is added for you, and the preview says why:
 | Kept | Its saved result is read back; it runs no container. |
 | Already done | An awaited task or a composed task whose result is kept, or a sleep that woke. |
 | Stays skipped | It was skipped, and nothing it depends on reruns. |
+| Kept from an earlier part of the run, not run again | It finished before the run carried on, in an earlier part of its history: its result is kept as it is and is not read back again. |
 
 A fan-out's items keep their own results: only the items that failed, or never
 ran, run again, unless the task the fan-out is over reruns, in which case every
@@ -118,15 +119,34 @@ A refusal names its reason, listed in [REASONS.md](REASONS.md).
 - A run is resumed at most **20** times, counting every resume that got going,
   including one that then ended waiting for a concurrency slot. After that,
   run it again.
-- This release cannot resume every failed run. It refuses one
-  (`RELEASE_UNSUPPORTED`, whose cause says which) whose tasks or child runs'
-  tasks hold an identity, or that is held to a concurrency limit. Run it again
-  instead.
+- This release cannot resume every failed run. It refuses one held to a
+  concurrency limit (`RELEASE_UNSUPPORTED`, whose cause says which). Run it
+  again instead.
+- A run whose tasks or child runs' tasks hold an identity keeps only what the
+  engine recorded for it, as the record stood when the run ended: an answer
+  recorded after that is not used, and is asked for again. The store's clock
+  and the cluster's may differ by a second or two; an answer given in the last
+  second before the run ended can be asked for again because of it.
 - A long run carries on in a fresh history now and then. A resume reaches only
   what ended since it last did: a task that finished before that cannot be
   retried from (`RETRY_FROM_TOO_EARLY`), and its result is kept.
 - A composed task that would have to run again refuses the resume
   (`COMPOSED_TASK`), and so does a run started by another run's composed task
-  (`CHILD_RUN`).
+  (`CHILD_RUN`). In a run whose results the engine records, a composed task
+  that failed because its values could not be recorded
+  (`CHILD_VALUES_UNSTORED`, `CHILD_VALUES_NOT_RECORDED`), or that a force cancel
+  left running, is kept when its child succeeded and the engine recorded the
+  child's outputs, and the tasks it needs are kept: its values are recorded
+  from those outputs when the resume is confirmed. While that child is still
+  open the resume waits (`STILL_STOPPING`, `child_running`), and the message
+  says what the child waits on and how to end it, leading with ending it once
+  the child has been open longer than `engine.resume.child_wait_hint`. A child
+  that did not succeed, or whose outputs are not on record, refuses
+  `COMPOSED_TASK` (`child_not_succeeded`, `child_outputs_unavailable`). Such a
+  task is kept from its child only on its run's first resume: a run resumed
+  before refuses `COMPOSED_TASK` (`resumed_before`), since a composed task runs
+  only as submitted and its values are recorded under the run as submitted. What a
+  kept composed task passed its child is held to the records of the tasks that
+  produced it, or to what the run received from the run above it.
 - A resume needs `run.resume` and `run.submit` on the run's Orkflow; a preview
   needs `run.read` ([ACCESS.md](ACCESS.md)).

@@ -111,7 +111,7 @@ func raiseHistoryWhen(h *harness, length int, when func(*orkstackv1.Run) bool) {
 	var once sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
 		if when(run) {
-			once.Do(func() { h.env.SetCurrentHistoryLength(length) })
+			once.Do(func() { h.raiseHistory(length) })
 		}
 		return nil
 	}
@@ -271,7 +271,7 @@ func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
 				close(probe.released)
 				return nil
 			}, activity.RegisterOptions{Name: task.ActivityReleasePin})
-			h.env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, err error) {
+			h.onActivityCompleted(func(info *activity.Info, _ converter.EncodedValue, err error) {
 				if info.ActivityType.Name == sessionCompletionActivityName && err == nil {
 					probe.mu.Lock()
 					probe.completed = true
@@ -670,7 +670,7 @@ tasks:
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
 		if statusOf(run, "fast") == orkstackv1.Status_STATUS_SUCCEEDED {
 			once.Do(func() {
-				h.env.SetCurrentHistoryLength(650)
+				h.raiseHistory(650)
 				h.env.RegisterDelayedCallback(h.env.CancelWorkflow, time.Millisecond)
 			})
 		}
@@ -964,7 +964,7 @@ func watchPinCloses(h *harness) *pinCloses {
 			c.notePinChange(&c.opened)
 		}
 	})
-	h.env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, _ error) {
+	h.onActivityCompleted(func(info *activity.Info, _ converter.EncodedValue, _ error) {
 		if info.ActivityType.Name == sessionCompletionActivityName {
 			c.notePinChange(&c.closed)
 		}

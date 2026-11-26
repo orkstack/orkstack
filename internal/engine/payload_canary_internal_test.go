@@ -56,7 +56,7 @@ func NewPlaintextSpy(run string, keys *payloadcrypt.EngineKeys) *PlaintextSpy {
 
 // Options is a run worker's options as production builds them, under the spy.
 func (s *PlaintextSpy) Options(keys *payloadcrypt.EngineKeys, o worker.Options) worker.Options {
-	o.Interceptors = append([]interceptor.WorkerInterceptor{s, PayloadInterceptor(keys)}, RunWorkerInterceptors()...)
+	o.Interceptors = append(append([]interceptor.WorkerInterceptor{s, PayloadInterceptor(keys)}, o.Interceptors...), RunWorkerInterceptors()...)
 	if o.DeadlockDetectionTimeout == 0 {
 		o.DeadlockDetectionTimeout = testDeadlockDetectionTimeout
 	}
@@ -370,7 +370,7 @@ func TestPlaintext_ASealedRunsSlotRecordsHoldNoRunData(t *testing.T) {
 	spy := NewPlaintextSpy(concRunID, keys)
 	h := newPausedConcHarness(t, granted(1), queued(7, 2), granted(9))
 	h.env.SetDataConverter(dc)
-	h.env.SetWorkerOptions(spy.Options(keys, worker.Options{}))
+	h.env.SetWorkerOptions(spy.Options(keys, worker.Options{Interceptors: []interceptor.WorkerInterceptor{h.recorder}}))
 	must.OK(t, h.env.SetMemoOnStart(map[string]any{payloadcrypt.MemoField: memo}))
 	plan := pausedConcPlan(t)
 	plan.Concurrency.Slots[0].Key = Canary

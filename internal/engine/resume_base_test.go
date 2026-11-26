@@ -344,7 +344,7 @@ func TestScanResumeBase_AResumeThatNeverRan(t *testing.T) {
 		"invalid":                         {ReasonResumePlanInvalid, false, true},
 		"unreadable":                      {ReasonResumePlanUnreadable, false, true},
 		"failed":                          {"RUN_FAILED", false, false},
-		"its limit could not be taken":    {RunConcurrencyUnsupportedCode, false, true},
+		"its limit failed it":             {RunConcurrencyUnsupportedCode, false, false},
 		"its limit failed it, once going": {RunConcurrencyUnsupportedCode, true, false},
 	} {
 		code, never := tc.code, tc.never
@@ -583,5 +583,34 @@ func TestResumeHistory_ContainersStoppedBy(t *testing.T) {
 				t.Fatalf("stopped by close+%s, want close+%s", got.Sub(closed), tc.want)
 			}
 		})
+	}
+}
+
+// TestScanResumeBase_AForceCanceledLoop: a run force-cancelled while its
+// workflow tasks kept failing (design §23.10) is read like any other base:
+// R is before the loop, the task still running at the termination is open,
+// and its close is the termination.
+func TestScanResumeBase_AForceCanceledLoop(t *testing.T) {
+	b := &historyBuilder{t: t}
+	want := gen0Prefix(b)
+	b.task("a", -1)
+	for range 20 {
+		b.wft()
+		b.wftFailed()
+	}
+	b.wft()
+	closing := b.add(enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED, nil)
+	h, err := ScanResumeBase(b.events, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.ResetPoint != want {
+		t.Errorf("R = %+v, want %+v (no failed workflow task of the loop is R)", h.ResetPoint, want)
+	}
+	if len(h.Dispatches) != 1 || !h.Dispatches[0].Open {
+		t.Errorf("D = %+v, want a open", h.Dispatches)
+	}
+	if h.CloseEvent.GetEventId() != closing || !h.CloseTime.Equal(b.events[closing-1].GetEventTime().AsTime()) {
+		t.Errorf("close = %v at %v, want the termination", h.CloseEvent, h.CloseTime)
 	}
 }

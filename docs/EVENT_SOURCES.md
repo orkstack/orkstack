@@ -22,7 +22,7 @@ written:
    `EVENT_SOURCES_DISABLED` and a source reads `DISABLED`.
 2. The deployment runs as a release: `ORK_BUILD_ID` set on `ork` and
    `orker`, and the release promoted (`orkctl release promote`). Without
-   it every write but a delete is refused
+   it every write, a delete too, is refused
    `EVENT_SOURCES_REQUIRE_VERSIONING`.
 3. Callers are authenticated (`auth.mode: enforce`,
    [AUTHENTICATION.md](AUTHENTICATION.md)). Otherwise every request of the
@@ -252,13 +252,54 @@ NAME --id ID`) is decided at its namespace. An update whose source names
 another Orkflow than the stored one is refused
 `EVENT_SOURCE_NAMESPACE_MISMATCH`, naming both.
 
+A delete **marks** the source: its instances are stopped, what it kept in the
+store is removed, and then its document. Until that is done the source reads
+`DELETING`, is listed, keeps its name and takes no write but a delete; it
+counts toward no quota of its namespace meanwhile. A delete is repeatable. Its
+tombstone stays under the source's id for good, so a copy of the document that
+comes back into the store (a restore, a rollback of a versioned bucket) is not
+run: it reads `EVENT_SOURCE_DELETED_DOCUMENT_REAPPEARED`.
+
 A delete names the source by its id, on every attempt. A name that now
 holds another source is refused `EVENT_SOURCE_ID_MISMATCH`, naming the id it
-holds, and nothing is deleted. `orkctl event-source delete` and `orkctl
+holds, and nothing is deleted; where the id named is one that was deleted
+under this name, it succeeds and touches nothing. `orkctl event-source delete` and `orkctl
 automation apply` send a delete whose answer is not known again with the
 same id, five attempts in all, and report a delete answered `NOT_FOUND`, or
 never answered, as not finished, never as gone. A namespace that holds a
 source cannot be deleted.
+
+## How its instances are kept
+
+A source's instances are kept by the cluster, one long-running activity each,
+on [source hosts](DEPLOY.md#source-hosts) of the source's pool. Nothing else
+starts, places or counts them, and nothing is stopped because its document
+could not be read or is not there.
+
+- **A write is applied where the source runs.** Every write tells what runs
+  at once, or starts it where nothing does; where it cannot be told the write
+  is done all the same and says so, and an engine's next pass
+  (`event_sources.reconcile`) tells it.
+- **A change to what a container is** (`uses`, `with`, `env`, a secret,
+  `resources`, `pool`, `concurrency`, `delivery`) replaces the instances one
+  at a time, each beside the one it replaces, and stops the old one only when
+  the new one is ready. Where the pool has no room for one more it waits. A
+  revision that was tried and did not work leaves the last one that did
+  running, and is not tried again by itself. A change to how messages are
+  judged (`match`, `map`, `max_bytes`, …) restarts nothing.
+- **A failing instance** is started again after 1 s, then 2 s, up to
+  `event_sources.restart_max_interval`, for as long as it takes. A reason
+  that trying again cannot change pauses the source
+  (`EVENT_SOURCE_INSTANCE_FAILED`), and nothing is started for it meanwhile.
+- **An instance is replaced** at `event_sources.instance_max_age`, beside
+  itself. On a pool with no room it works on, and is stopped at four times
+  that age.
+- **A promotion and a rollback restart each source's instances once**, as the
+  release they go to has room ([DEPLOY.md](DEPLOY.md#event-sources-across-releases)).
+
+The numbers a source's instances are kept by are fixed when it first starts;
+a release or a setting that changes one moves only sources that start after
+it.
 
 ## Who bound a source
 

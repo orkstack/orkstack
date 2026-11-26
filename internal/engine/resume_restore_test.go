@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,7 +69,7 @@ func carryOn(t *testing.T, document string, input map[string]any, plan func(*eng
 	var h *harness
 	h = newHarnessShared(t, nil, c.snapshots, c.values, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		// Past the budget once build ends, so it carries on there.
-		h.env.SetCurrentHistoryLength(100)
+		h.raiseHistory(100)
 		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
 	})
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-reset-1"})
@@ -195,16 +196,19 @@ func TestResetRun_CanceledWhileItsPlanIsLoaded(t *testing.T) {
 				if !tc.noBase {
 					h.baseEnded(t, c.wf.GetNamespace())
 				}
-				calls := 0
+				// The reset is read again while the first read is answered, on
+				// goroutines of their own.
+				var calls atomic.Int32
 				if tc.facts {
 					h.env.OnActivity(engine.ActivityReadResetFacts, mock.Anything, mock.Anything).Return(func(context.Context, engine.ReadResetFactsInput) (engine.ResetFacts, error) {
-						if calls++; calls == 1 {
+						call := calls.Add(1)
+						if call == 1 {
 							h.env.CancelWorkflow()
 						}
 						if tc.byHand {
 							return engine.ResetFacts{Reason: "by hand"}, nil
 						}
-						if calls == 1 || tc.unread {
+						if call == 1 || tc.unread {
 							return engine.ResetFacts{}, errors.New("unavailable")
 						}
 						return key, nil
@@ -518,7 +522,7 @@ func TestResetRun_ACarriedRunsMemosAreReadAsItsNewPlanSays(t *testing.T) {
 	h := newResetHarness(t)
 	h.behave = func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetTaskId() == "convert" {
-			h.env.SetCurrentHistoryLength(650)
+			h.raiseHistory(650)
 		}
 		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
 	}

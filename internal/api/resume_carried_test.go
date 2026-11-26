@@ -71,6 +71,10 @@ func TestResumeRun_OfARunThatCarriedOn(t *testing.T) {
 	if categories["a"] != orkstackv1.ResumeCategory_RESUME_CATEGORY_EARLIER || categories["b"] != orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_FAILED {
 		t.Fatalf("categories = %v", categories)
 	}
+	// What the earlier part finished is not run again, and is not read back.
+	if got.GetRerunCount() != 1 || got.GetKeptCount() != 0 {
+		t.Fatalf("rerun_count %d, kept_count %d; want 1 and 0", got.GetRerunCount(), got.GetKeptCount())
+	}
 	_, err = f.resume(&orkstackv1.ResumeRunRequest{DryRun: true, FromTaskId: "a"})
 	refusedAs(t, err, "RETRY_FROM_TOO_EARLY", orkstackv1.ResumeRefusalClass_RESUME_REFUSAL_CLASS_PERMANENT)
 }

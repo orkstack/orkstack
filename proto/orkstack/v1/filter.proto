@@ -78,12 +78,15 @@ message FilterableField {
   // value must spell. UNSPECIFIED means any text.
   FilterValueRule value_rule = 7;
   // indexed: the path names no field of the resource. The server answers it
-  // from its index of open rows, so a row that has ended never matches it,
-  // and it takes equals only. Its values are text, or, with flag, the single
-  // value "true".
+  // from its index and it takes equals only. Its values are text, or, with
+  // flag, the single value "true". A row that has ended never matches it,
+  // unless ended_matches says it does.
   bool indexed = 8;
   // flag, for an indexed field only: it takes the single value "true".
   bool flag = 9;
+  // ended_matches, for an indexed field only: what it selects is set when a
+  // row starts and stays true of it, so a row that has ended matches it too.
+  bool ended_matches = 10;
 }
 
 // ListFilterSpec is one list request's allowlist.

@@ -445,6 +445,12 @@ func runWorkflow(
 			} else if due {
 				return state.fail(ctx, cancelRun, inFlight, "", state.pauseExpiredCause(ctx, inFlight))
 			}
+			// Nothing of a paused run, or of one carrying a pause request to
+			// its switch, starts: a task slot it was left with (a lost task's,
+			// once its wait is over) goes back, so the run can switch.
+			if state.paused() || state.deferHold {
+				state.dropTaskSlots(ctx)
+			}
 			// A paused run's run-level slot (concurrency_pause.go), after its
 			// pause's expiry: a pause that reaches its wait for the slot again
 			// leaves the line; a quiet paused run gives the slot back; an
@@ -570,8 +576,10 @@ func runWorkflow(
 				continue
 			}
 			// A quiesce or the in-flight cap holds new dispatch: the task
-			// stays PENDING and nothing is emitted (hold.go).
-			if state.holdDispatch(ctx, id, inFlight) {
+			// stays PENDING and nothing is emitted (hold.go). A task that
+			// was granted its concurrency slot is in-flight work already; the
+			// run's own slot, given back, holds it all the same.
+			if t := state.taskSlot(id); (t == nil || !t.held || state.concWaiting()) && state.holdDispatch(ctx, id, inFlight) {
 				continue
 			}
 			// A fan-out counts its array once and dispatches its items; it
@@ -607,8 +615,16 @@ func runWorkflow(
 			if hold {
 				continue
 			}
+			// A task with a limit of its own asks for its slot, and is
+			// dispatched once it holds it (concurrency_task.go).
+			if held, err := state.askTaskSlot(ctx, id); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, id, err)
+			} else if !held {
+				continue
+			}
 			future, err := state.schedule(state.dispatchContext(runCtx, id), id)
 			if err != nil {
+				state.dispatchFailed(ctx, id)
 				return state.fail(ctx, cancelRun, inFlight, id, err)
 			}
 			inFlight[id] = future
@@ -626,7 +642,7 @@ func runWorkflow(
 		// this is the loop's original idle check.
 		// A run waiting for its slot again holds every dispatch: it waits in
 		// the selector for the wait's grant, deadline or re-assert.
-		if len(inFlight) == 0 && state.openingPins() == 0 && !state.concWaiting() {
+		if len(inFlight) == 0 && state.openingPins() == 0 && !state.concWaiting() && !state.taskSlotsWaiting() {
 			if (state.quiescing || state.heldFanOuts) && ctx.Err() != nil {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
@@ -805,6 +821,9 @@ func runWorkflow(
 		if state.concWaiting() {
 			selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
 		}
+		// Then every task that waits for its own slot.
+		var slotWoke taskWake
+		state.addTaskSlotCases(ctx, selector, &slotWoke)
 		// The run timeout's timer, last of all: it only wakes a blocked run,
 		// and the next pass's ending check decides. Registered even when
 		// ready: one that fired during this pass's dispatch would otherwise
@@ -890,6 +909,16 @@ func runWorkflow(
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
 			continue // the pass top applies the request or takes the expiry
+		}
+		if slotWoke.kind != taskWakeNone {
+			if err := state.takeTaskWake(ctx, slotWoke); err != nil {
+				id := ""
+				if slotWoke.slot != nil {
+					id = slotWoke.slot.id
+				}
+				return state.fail(ctx, cancelRun, inFlight, id, err)
+			}
+			continue
 		}
 		if concWoke != concWaitNone {
 			if err := state.takeConcWait(ctx, concWoke); err != nil {
@@ -1016,6 +1045,9 @@ type runState struct {
 	// eventWaitEnd is how a wait in line ended, for the next event
 	// (noteWaitEnd).
 	eventWaitEnd *orkstackv1.ConcurrencyWaitEnd
+	// taskWaitEnds is, by task, how its wait in line for a slot of its own
+	// limit ended, for that task's next event (noteTaskWaitEnd).
+	taskWaitEnds map[string]*orkstackv1.ConcurrencyWaitEnd
 
 	// eaches is one entry per fan-out task, keyed by task id, built once in
 	// newRunState; iteration is over order, never the map. eachShare is the
@@ -1360,6 +1392,7 @@ func buildRunState(
 	state.conc = newConcRunState(plan.Concurrency)
 	if state.conc != nil {
 		state.conc.pausable = plan.Pause != nil
+		state.conc.addTasks(wf)
 	}
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
@@ -2845,6 +2878,7 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 	// This task is terminal on every path out of here, so this is where its
 	// pin learns whether it was the last one.
 	defer s.closePinFor(ctx, id)
+	defer s.taskEnded(ctx, id)
 	taskRun := s.taskRuns[id]
 
 	result := &orkstackv1.ExecuteTaskResult{}
@@ -3073,6 +3107,7 @@ func (s *runState) markCanceled(ctx workflow.Context, id, reason string) error {
 	// CANCELED, which is what makes every pin's members terminal on the
 	// failure path and lets fail() wait on `closed` without hanging.
 	defer s.closePinFor(ctx, id)
+	s.taskEnded(ctx, id)
 	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, id,
 		orkstackv1.Status_STATUS_CANCELED, "task canceled: "+reason)
 }
@@ -3284,6 +3319,8 @@ func (s *runState) fail(
 	// run's handler loop would, but a canceled, timed-out or handler-less one
 	// has none.
 	s.dropDeferredPause(ctx, "the run is ending")
+	// What its tasks asked for and have not used: nothing of it starts now.
+	s.dropTaskSlots(ctx)
 	// A run that gave its slot back while paused, or waits for it again,
 	// holds none: a failure handler would run outside the limit, so it
 	// starts none, as a run that ends in line does (failInLine).
@@ -3731,7 +3768,7 @@ func (s *runState) emitTaskEvent(
 		// Set only on an interruption's notice (emitInterruption).
 		Interruption: s.takeEventInterruption(),
 		// Set only on the event that ends a wait in line (noteWaitEnd).
-		WaitEnd: s.takeEventWaitEnd(eventType),
+		WaitEnd: s.takeEventWaitEnd(eventType, taskID),
 		// Set only on a resumed run's RUN_RESUMED and RUN_RESULTS_KEPT.
 		Resumed:     s.takeEventResumed(),
 		ResultsKept: s.takeEventResultsKept(),

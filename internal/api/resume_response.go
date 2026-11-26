@@ -29,7 +29,7 @@ var resumeCategories = []struct {
 	{engine.CategorySkipped, orkstackv1.ResumeCategory_RESUME_CATEGORY_SKIPPED, "it stays skipped"},
 	{engine.CategoryWaitsAgain, orkstackv1.ResumeCategory_RESUME_CATEGORY_WAITS_AGAIN, "it waits again, from the resume"},
 	{engine.CategorySleepKept, orkstackv1.ResumeCategory_RESUME_CATEGORY_SLEEP_KEPT, "it wakes when it would have"},
-	{engine.CategoryEarlier, orkstackv1.ResumeCategory_RESUME_CATEGORY_EARLIER, "it finished in an earlier part of the run"},
+	{engine.CategoryEarlier, orkstackv1.ResumeCategory_RESUME_CATEGORY_EARLIER, "it finished in an earlier part of the run, before it carried on: its result is kept, and it does not run again"},
 }
 
 // resumePreview is a planned resume as a preview answers it.
@@ -43,14 +43,29 @@ func resumePreview(base *resumeBase, p *resumePlanned, warnings []*orkstackv1.Re
 		ResumesUsed:      int32(p.input.ResumesUsed),
 		TerminalSequence: base.sequence,
 		HighestSequence:  p.highest,
-		Warnings:         warnings,
+		Warnings:         append(slices.Clone(warnings), p.warnings...),
 
 		EstimatedReadbackSeconds: int64(p.preflight.EstimatedReadback.Seconds()),
 	}
-	if base.run.GetPause() != nil || base.run.GetPausedByParent() != nil {
+	forced := base.class == engine.ResumeBaseForceCanceled
+	if forced {
+		// G-f: it replays on the build it stalled on.
+		build := "the build it ran on"
+		if b := base.execution.BuildID; b != "" {
+			build = "build " + b
+		}
 		out.Warnings = append(out.Warnings, &orkstackv1.ResumeWarning{
-			Kind:    orkstackv1.ResumeWarningKind_RESUME_WARNING_KIND_WAS_PAUSED,
-			Message: fmt.Sprintf("run %s was paused when it ended; it resumes unpaused", base.run.GetId()),
+			Kind: orkstackv1.ResumeWarningKind_RESUME_WARNING_KIND_FORCE_CANCELED_SAME_BUILD, BuildId: base.execution.BuildID,
+			Message: fmt.Sprintf("run %s was force-cancelled on %s; resuming replays on it and may stall the same way", base.run.GetId(), build),
+		})
+	}
+	if base.run.GetPause() != nil || base.run.GetPausedByParent() != nil {
+		message := fmt.Sprintf("run %s was paused when it ended; it resumes unpaused", base.run.GetId())
+		if forced {
+			message = fmt.Sprintf("run %s was paused when it was force-cancelled; it resumes unpaused, and you can pause it again", base.run.GetId())
+		}
+		out.Warnings = append(out.Warnings, &orkstackv1.ResumeWarning{
+			Kind: orkstackv1.ResumeWarningKind_RESUME_WARNING_KIND_WAS_PAUSED, Message: message,
 		})
 	}
 	if secs := base.run.GetTimeout().GetSeconds(); secs > 0 {
@@ -102,7 +117,24 @@ func resumePreview(base *resumeBase, p *resumePlanned, warnings []*orkstackv1.Re
 		}
 	}
 	out.KeptCount = counts[orkstackv1.ResumeCategory_RESUME_CATEGORY_KEPT] + counts[orkstackv1.ResumeCategory_RESUME_CATEGORY_SETTLED]
+	for c, n := range counts {
+		if rerunCategory(c) {
+			out.RerunCount += n
+		}
+	}
 	return out
+}
+
+// rerunCategory reports whether a unit listed under c runs again.
+func rerunCategory(c orkstackv1.ResumeCategory) bool {
+	switch c {
+	case orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_FAILED, orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_SELECTED,
+		orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_DOWNSTREAM, orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_RESULT_GONE,
+		orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_UNFINISHED, orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_PIN_MEMBER,
+		orkstackv1.ResumeCategory_RESUME_CATEGORY_RERUN_EACH_SOURCE:
+		return true
+	}
+	return false
 }
 
 // resumeWarningKinds names the kinds among warnings, each once.

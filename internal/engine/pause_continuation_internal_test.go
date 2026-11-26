@@ -162,7 +162,7 @@ func TestResetRun_ACarriedPauseIsSetAside(t *testing.T) {
 	must.OK(t, EncodeResumeUnits(g.wf, block, units, true))
 	h := newTimeoutHarnessOver(t, g.store)
 	h.carriesOn()
-	h.env.RegisterWorkflowWithOptions(ResetRunWorkflow(false), workflow.RegisterOptions{Name: "ResetRunWorkflow"})
+	h.env.RegisterWorkflowWithOptions(ResetRunWorkflow(), workflow.RegisterOptions{Name: "ResetRunWorkflow"})
 	h.env.RegisterActivityWithOptions(func(context.Context, ReadResetFactsInput) (ResetFacts, error) {
 		return ResetFacts{Reason: key.String()}, nil
 	}, activity.RegisterOptions{Name: ActivityReadResetFacts})

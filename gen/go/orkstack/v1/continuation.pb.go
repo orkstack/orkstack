@@ -1735,9 +1735,13 @@ type ResumePlanRecord struct {
 	RequestId            string                 `protobuf:"bytes,18,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// plan_digest is the digest a preview shows and a confirm names the plan by:
 	// what the resume does with each unit, with no time and no caller in it.
-	PlanDigest    string `protobuf:"bytes,19,opt,name=plan_digest,json=planDigest,proto3" json:"plan_digest,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	PlanDigest string `protobuf:"bytes,19,opt,name=plan_digest,json=planDigest,proto3" json:"plan_digest,omitempty"`
+	// force_canceled_by is who force-cancelled the run, from the record that
+	// verified against the ending this resume sets aside; unset for a failed
+	// run.
+	ForceCanceledBy *ResumeForceCanceledBy `protobuf:"bytes,20,opt,name=force_canceled_by,json=forceCanceledBy,proto3" json:"force_canceled_by,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ResumePlanRecord) Reset() {
@@ -1903,6 +1907,13 @@ func (x *ResumePlanRecord) GetPlanDigest() string {
 	return ""
 }
 
+func (x *ResumePlanRecord) GetForceCanceledBy() *ResumeForceCanceledBy {
+	if x != nil {
+		return x.ForceCanceledBy
+	}
+	return nil
+}
+
 var File_orkstack_v1_continuation_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_continuation_proto_rawDesc = "" +
@@ -2054,7 +2065,7 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\rretry_initial\x18\b \x01(\v2\x19.google.protobuf.DurationR\fretryInitial\x12+\n" +
 	"\x11retry_coefficient\x18\t \x01(\x01R\x10retryCoefficient\x12$\n" +
 	"\x0ecalls_per_task\x18\n" +
-	" \x01(\x05R\fcallsPerTask\"\xda\x05\n" +
+	" \x01(\x05R\fcallsPerTask\"\xaa\x06\n" +
 	"\x10ResumePlanRecord\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\x05R\x06format\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x15\n" +
@@ -2078,7 +2089,8 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x12 \x01(\tR\trequestId\x12\x1f\n" +
 	"\vplan_digest\x18\x13 \x01(\tR\n" +
-	"planDigestB\xad\x01\n" +
+	"planDigest\x12N\n" +
+	"\x11force_canceled_by\x18\x14 \x01(\v2\".orkstack.v1.ResumeForceCanceledByR\x0fforceCanceledByB\xad\x01\n" +
 	"\x0fcom.orkstack.v1B\x11ContinuationProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -2129,6 +2141,7 @@ var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(ResumeAction)(0),             // 31: orkstack.v1.ResumeAction
 	(ResumeDisposition)(0),        // 32: orkstack.v1.ResumeDisposition
 	(*durationpb.Duration)(nil),   // 33: google.protobuf.Duration
+	(*ResumeForceCanceledBy)(nil), // 34: orkstack.v1.ResumeForceCanceledBy
 }
 var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ContinuationObject.parts:type_name -> orkstack.v1.ContinuationPart
@@ -2174,11 +2187,12 @@ var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	23, // 40: orkstack.v1.ResumePlanRecord.at:type_name -> google.protobuf.Timestamp
 	23, // 41: orkstack.v1.ResumePlanRecord.expires_at:type_name -> google.protobuf.Timestamp
 	16, // 42: orkstack.v1.ResumePlanRecord.block:type_name -> orkstack.v1.ResumeBlock
-	43, // [43:43] is the sub-list for method output_type
-	43, // [43:43] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	34, // 43: orkstack.v1.ResumePlanRecord.force_canceled_by:type_name -> orkstack.v1.ResumeForceCanceledBy
+	44, // [44:44] is the sub-list for method output_type
+	44, // [44:44] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_continuation_proto_init() }

@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -30,9 +31,12 @@ func TestResumeHintOf(t *testing.T) {
 		state   orkstackv1.ResumeHintState
 		refusal ResumeRefusalCode
 	}{
-		"a running run":              {&orkstackv1.Run{Status: sRun}, none, ""},
-		"a run that succeeded":       {&orkstackv1.Run{Status: sOK}, none, ""},
-		"a canceled run":             {&orkstackv1.Run{Status: sCanc, Error: &orkstackv1.Error{Code: "RUN_CANCELED"}}, none, ""},
+		"a running run":         {&orkstackv1.Run{Status: sRun}, none, ""},
+		"a run that succeeded":  {&orkstackv1.Run{Status: sOK}, none, ""},
+		"a canceled run":        {&orkstackv1.Run{Status: sCanc, Error: &orkstackv1.Error{Code: "RUN_CANCELED"}}, none, ""},
+		"a force-cancelled run": {&orkstackv1.Run{Status: sCanc, Error: &orkstackv1.Error{Code: RunForceCanceledCode}, TaskRuns: []*orkstackv1.TaskRun{prow("bad", sCanc)}}, orkstackv1.ResumeHintState_RESUME_HINT_STATE_RESUMABLE_FROM_TASK, ""},
+		"a force-cancelled child run": {&orkstackv1.Run{Status: sCanc, Error: &orkstackv1.Error{Code: RunForceCanceledCode}, TaskRuns: []*orkstackv1.TaskRun{prow("bad", sCanc)},
+			Origin: &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-p"}}, not, RefuseChildRun},
 		"a failed task":              {failed("RUN_FAILED"), resumable, ""},
 		"its timeout":                {failed(RunTimedOutCode), resumable, ""},
 		"a history limit":            {failed(RunHistoryLimitCode), not, RefuseNotATaskFailure},
@@ -67,5 +71,20 @@ func TestResumeHintOf_TaskActions(t *testing.T) {
 	want := []string{"ok resume=false from=true", "bad resume=true from=true", "late resume=false from=true"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("actions = %q, want %q", got, want)
+	}
+}
+
+// TestResumeHintOf_AForceCanceledRun: a force-cancelled run offers no task to
+// resume from and every task but a composed one to retry from (design §23.8).
+func TestResumeHintOf_AForceCanceledRun(t *testing.T) {
+	run := &orkstackv1.Run{Id: "ork-x", Status: sCanc, Error: &orkstackv1.Error{Code: RunForceCanceledCode},
+		TaskRuns: []*orkstackv1.TaskRun{prow("ok", sOK), prow("stopped", sCanc), prow("never", sPend),
+			{TaskId: "composed", Status: sCanc, Child: &orkstackv1.TaskChild{RunId: "ork-c"}}}}
+	var got []string
+	for _, a := range ResumeHintOf(run).GetTaskActions() {
+		got = append(got, fmt.Sprintf("%s resume=%t from=%t", a.GetTaskId(), a.GetResume(), a.GetRetryFrom()))
+	}
+	if want := "ok resume=false from=true,stopped resume=false from=true,never resume=false from=true"; strings.Join(got, ",") != want {
+		t.Fatalf("actions = %v, want %s", got, want)
 	}
 }

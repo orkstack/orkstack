@@ -30,15 +30,15 @@ func guardedPlan(maxEvents, maxBytes int64) engine.RunPlan {
 }
 
 // onceAt returns an onSnapshot hook that moves the run's raw history length to
-// length the first time a snapshot satisfies when. It runs in the snapshot
-// write's own goroutine while the workflow waits on it, so the next guard
-// check reads the moved counter — the test's way of making the cluster's
-// history jump at an exact point of the run.
-func onceAt(env *testsuite.TestWorkflowEnvironment, length int, when func(*orkstackv1.Run) bool) func(*orkstackv1.Run, int64) error {
+// length the first time a snapshot satisfies when, as that snapshot's write
+// completes (raiseHistory), so the next guard check reads the moved counter —
+// the test's way of making the cluster's history jump at an exact point of the
+// run.
+func onceAt(h *harness, length int, when func(*orkstackv1.Run) bool) func(*orkstackv1.Run, int64) error {
 	var once sync.Once
 	return func(run *orkstackv1.Run, _ int64) error {
 		if when(run) {
-			once.Do(func() { env.SetCurrentHistoryLength(length) })
+			once.Do(func() { h.raiseHistory(length) })
 		}
 		return nil
 	}
@@ -98,7 +98,7 @@ func TestHistoryGuard_FailsRunHistoryLimitBeforeTheClusterLimit(t *testing.T) {
 		}
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
-	h.onSnapshot = onceAt(h.env, 900, taskStatusIs("fast", orkstackv1.Status_STATUS_SUCCEEDED))
+	h.onSnapshot = onceAt(h, 900, taskStatusIs("fast", orkstackv1.Status_STATUS_SUCCEEDED))
 	asked := 0
 	h.env.OnGetVersion(engine.HistoryGuardChange, workflow.DefaultVersion, workflow.Version(1)).
 		Run(func(mock.Arguments) { asked++ }).Return(workflow.Version(1)).Once()
@@ -312,7 +312,7 @@ func runGuardWithHandlers(t *testing.T) (*harness, *orkstackv1.Run) {
 	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
-	h.onSnapshot = onceAt(h.env, 850, taskStatusIs("a", orkstackv1.Status_STATUS_SUCCEEDED))
+	h.onSnapshot = onceAt(h, 850, taskStatusIs("a", orkstackv1.Status_STATUS_SUCCEEDED))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-handlers", compile(t, guardHandlersDocument), payload(t, nil),
 		guardedPlan(1000, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
@@ -398,7 +398,7 @@ func TestHistoryGuard_FailingPhaseStopsStartingHandlers(t *testing.T) {
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
 	// 900 + Fixed 96 + 8 for each of two pending handlers = 1,012.
-	h.onSnapshot = onceAt(h.env, 900, taskStatusIs("a", orkstackv1.Status_STATUS_FAILED))
+	h.onSnapshot = onceAt(h, 900, taskStatusIs("a", orkstackv1.Status_STATUS_FAILED))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-failing", compile(t, guardFailingPhaseDocument), payload(t, nil),
 		guardedPlan(1000, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {

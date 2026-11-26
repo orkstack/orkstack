@@ -41,8 +41,8 @@ export interface FilterField {
 	valueRule: FilterValueRule;
 	/**
 	 * The path names no field of the resource: the server answers it from its
-	 * index of open rows, so a row that has ended never matches it. Equals only;
-	 * a bool one (a flag) takes only "true".
+	 * index, and a row that has ended never matches it unless the field says
+	 * ended_matches. Equals only; a bool one (a flag) takes only "true".
 	 */
 	indexed: boolean;
 }

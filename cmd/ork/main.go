@@ -39,6 +39,7 @@ import (
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/eventsource"
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/held"
 	"github.com/orkstack/orkstack/internal/identity"
@@ -1168,10 +1169,6 @@ func apiHandler(tcfg telemetry.Config, sinks *telemetry.Sinks, mux *http.ServeMu
 		append(telemetry.InboundHTTPOptions(sinks.Default()), otelhttp.WithFilter(traceAPIRequest))...)
 }
 
-// heldInventoryAge is how long the held check keeps an Orker's account of
-// itself as a source host, which may confirm and never refuse.
-const heldInventoryAge = time.Minute
-
 func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -1323,6 +1320,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"run_origin_index", index.Origin,
 		"run_root_index", index.Root,
 		"run_paused_index", index.Paused,
+		"results_recorded_index", index.ResultsRecorded,
 		"concurrency_index", index.Limits())
 
 	// Every read is answered by Temporal and the archive (AGENTS.md §7), so
@@ -1675,7 +1673,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return fmt.Errorf("open the resume record store: %w", err)
 	}
 	resume := engine.NewResumeActivities(commitStore, artifactStore).
-		WithHistory(temporalClient.WorkflowService(), cfg.temporalNamespace, resumeRecords)
+		WithHistory(temporalClient.WorkflowService(), cfg.temporalNamespace, resumeRecords).
+		WithRecordReads(resumeRecords)
 	runWorker.RegisterActivityWithOptions(resume.ReadResetFacts,
 		activity.RegisterOptions{Name: engine.ActivityReadResetFacts})
 	runWorker.RegisterActivityWithOptions(resume.LoadResumePlan,
@@ -1711,6 +1710,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	auditVerified := func() bool { return cfg.auth.enabled() }
 	gateActivities.WithResetRecords(auditStore, auditVerified, nil)
 	engine.RegisterGateActivities(runWorker, gateActivities)
+	// What event sources' workflows ask of the engine that runs their tasks.
+	sourcePin := eventsource.Pin(eventSourceSettings.InstanceMaxAge, eventSourceSettings.RestartMaxInterval, eventSourceSettings.Readmit)
+	sourceStarter := &engine.SourceStarter{Client: temporalClient, Tombstoned: eventSourceInstances.Tombstoned, Namespaces: namespaces, DefaultQueue: cfg.orkerQueue,
+		Pin: sourcePin, Versioned: cfg.deployment.BuildID != "", Runs: sourcesRun(eventSourceSettings, cfg), Logger: logger}
+	engine.RegisterSourceActivities(runWorker, &engine.SourceWorker{Documents: eventSourceStore, Records: eventSourceInstances, Namespaces: namespaces,
+		DefaultQueue: cfg.orkerQueue, MaxEvents: cfg.historyMaxEvents, MaxBytes: cfg.historyMaxBytes, Now: time.Now, Logger: logger,
+		Pin: sourcePin})
 	concurrencyGauges := telemetry.NewConcurrencyGauges(sinks.Default(), cfg.censusSettings.Interval,
 		cfg.censusSettings.Timeout, !index.Limits(), logger)
 	engine.RegisterCensusActivities(runWorker, engine.NewCensusActivities(temporalClient, censusSink{gauges: concurrencyGauges}))
@@ -2108,7 +2114,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	recorder := newRecorder(minter, issuedRecords, orkflows.Get, engineBuild(cfg.deployment.BuildID))
 	// The two local activities that record a child run's outputs and a
 	// composed task's values, of a run whose results the engine records.
-	valueRecords := engine.NewValueRecordActivities(newValuesRecorder(minter, issuedRecords, orkflows.Get, compose, engineBuild(cfg.deployment.BuildID)))
+	valuesRecorder := newValuesRecorder(minter, issuedRecords, orkflows.Get, compose, engineBuild(cfg.deployment.BuildID))
+	valueRecords := engine.NewValueRecordActivities(valuesRecorder)
 	runWorker.RegisterActivityWithOptions(valueRecords.RecordOutputs,
 		activity.RegisterOptions{Name: engine.ActivityRecordOutputs})
 	runWorker.RegisterActivityWithOptions(valueRecords.RecordComposed,
@@ -2138,6 +2145,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		ResumeSnapshots:        resumeSnapshots,
 		ResumeEndings:          endings,
 		ResumeArchiver:         historyArchiver,
+		ResumeForceCancels:     forceCancels,
+		ResumeAuthMode:         deployed.Mode,
 		NewestEndings:          newestEndings,
 		Pools:                  pools,
 		Orkers:                 starter,
@@ -2173,6 +2182,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Triggers:                 triggerStore,
 		EventSources:             eventSourceStore,
 		EventSourceSettings:      eventSourceSettings,
+		SourceWorkflows:          sourceStarter,
+		SourceRecords:            eventSourceInstances,
 		Schedules:                scheduler,
 		ScheduleBindings:         scheduleBindings,
 		Incarnations:             incarnations,
@@ -2187,6 +2198,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		AwaitRecords:             awaitRecords(minter, issuedRecords),
 		AwaitChecks:              awaitChecks(minter),
 		RecordedResults:          recordedResults(issuedRecords),
+		ComposedRecords:          composedRecords(valuesRecorder),
 		ClockSkew:                cfg.auth.clockSkew,
 		EngineBuild:              engineBuild(cfg.deployment.BuildID),
 		Issuer:                   issuer,
@@ -2226,6 +2238,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		RunPauseTimeoutMax:            cfg.runPauseTimeoutMax,
 		ForceCancels:                  engine.NewForceCancelStarter(forceCancelDeps, cfg.forceCancel),
 		RunPauseIndexed:               index.Paused,
+		ResultsRecordedIndexed:        index.ResultsRecorded,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
 		RunContexts:                   runContexts,
@@ -2278,7 +2291,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			Confirmed:  eventSourceInstances.Confirmed,
 			Orker:      api.HeldOrkerRow(starter),
 			Access:     api.HeldAccess(auth.access.Policies),
-		}, held.Options{InventoryAge: heldInventoryAge})}); err != nil {
+		}, held.Options{InventoryAge: eventSourceSettings.Reconcile})}); err != nil {
 			return err
 		}
 	}
@@ -2301,6 +2314,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	logger.Info("temporal workers started",
 		"task_queue", q.run, "event_queue", q.events, "presence_queue", task.EnginesQueue,
 		"orker_queue", q.orker, "pool", cfg.pool)
+	// What a signal to a source's workflow missed is made good here.
+	go (&engine.SourcePass{Starter: sourceStarter, Documents: eventSourceStore, Confirmed: eventSourceInstances.Confirmed,
+		Interval: eventSourceSettings.Reconcile, Readmit: eventSourceSettings.Readmit, Logger: logger,
+		Handover: &engine.SourceHandover{BuildID: cfg.deployment.BuildID, Releases: releases, Fleet: starter, Index: engine.SourceIndex(temporalClient, cfg.temporalNamespace),
+			Spec: eventSourceStore.ReadSpec, MaxSources: eventSourceSettings.Limits.MaxSources}}).Run(ctx)
 	// The versioning line is separate and always printed, because "which
 	// version am I" is the first question of any rollout. The Orker must
 	// report the same pair, or a pinned run's tasks fall through to the task

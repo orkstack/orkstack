@@ -131,6 +131,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   queued               =               true; a row that has ended never matches
   queued_on            =               text; a row that has ended never matches
   holding              =               text; a row that has ended never matches
+  results_recorded     =               true; a row that has ended matches too
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 

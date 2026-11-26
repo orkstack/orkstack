@@ -282,6 +282,8 @@ func referenceRerunSet(in ResumePlanInput, plan *ResumePlan) map[ResumeUnit]bool
 // refuses no evidence makes plannable.
 func FuzzResumePlan(f *testing.F) {
 	f.Add([]byte{})
+	// A recorded run whose await follows a fan-out of an earlier task.
+	f.Add([]byte{3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0})
 	f.Add([]byte{5, 1, 1, 0, 0, 1, 2, 3})
 	f.Add([]byte{9, 0, 2, 0, 4, 1, 1, 1, 0, 3, 0, 2, 1, 0, 1, 6, 0, 2, 0, 1, 1})
 	f.Add([]byte{3, 1, 0, 0, 3, 0, 2, 1, 1, 0, 4, 0, 2, 2, 1, 0, 0, 1, 0, 1, 0, 0, 0})

@@ -95,3 +95,15 @@ func settledEntryOf(wf *orkstackv1.Orkflow, runID string, t *orkstackv1.Task, va
 		Expected: &orkstackv1.ExpectedCommit{Namespace: artifacts.ResolveNamespace(wf.GetNamespace()), RunId: runID, TaskId: t.GetId()},
 	}
 }
+
+// recordedEntryOf is settledEntryOf for a run whose results the engine records
+// (design §28.9): the task's record, at scope and under admission, whose
+// values must be values.
+func recordedEntryOf(wf *orkstackv1.Orkflow, runID string, t *orkstackv1.Task, values *orkstackv1.ArtifactRef, scope uint64, admission string) *orkstackv1.AdoptEntry {
+	e := settledEntryOf(wf, runID, t, values)
+	e.Kind, e.RecordScope, e.AdmissionSha256 = orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_COMPOSED, scope, admission
+	if (&planTask{def: t}).kind() == kindAwait {
+		e.Kind = orkstackv1.AdoptEntryKind_ADOPT_ENTRY_KIND_RESOLUTION
+	}
+	return e
+}

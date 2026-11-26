@@ -51,6 +51,29 @@ const (
 	KindAttempt  Kind = "attempt"
 	KindStdout   Kind = "stdout"
 	KindStderr   Kind = "stderr"
+	// The records the engine makes of a run whose results it records
+	// (docs/TASK_IDENTITY.md): an awaited task's resolution and the detail of
+	// who gave it, a composed task's values, and the run's outputs. A bundle
+	// holds one for every record found under the run's keys, applied or not.
+	KindResolution       Kind = "resolution"
+	KindResolutionDetail Kind = "resolution-detail"
+	KindComposed         Kind = "composed"
+	KindOutputs          Kind = "outputs"
+)
+
+// RecordState is what became of a record member, as ListRecordedResults says
+// it: set on every present member of the four record kinds but a detail.
+type RecordState string
+
+// The record states, complete.
+const (
+	// RecordOnRecord: the run applied it.
+	RecordOnRecord RecordState = "on_record"
+	// RecordNotApplied: recorded in time, and the run did not take it.
+	RecordNotApplied RecordState = "not_applied"
+	// RecordNotTaken: recorded after its task stopped waiting or its run
+	// ended, or under a scope a later resume opened again.
+	RecordNotTaken RecordState = "not_taken"
 )
 
 // State is whether a member's bytes are in the bundle, and if not, why.
@@ -71,8 +94,13 @@ const (
 	// run pinned (today only the definition).
 	StateRejected State = "rejected"
 	// StateWithheld: the caller who exported the bundle may not read the
-	// object (today only another namespace's shared definition).
+	// object: another namespace's shared definition, or a record the engine
+	// made, which needs run.artifacts.read or orker.read.
 	StateWithheld State = "withheld"
+	// StateMissing: a record the store said twice is not there, while the
+	// run's state says its task succeeded and the run was not retired. The
+	// gap: the verifier states it, and never passes it as present.
+	StateMissing State = "missing"
 )
 
 // The reason tokens, complete. A client prints the token's sentence
@@ -87,6 +115,9 @@ const (
 	ReasonArtifactReclaimed        = "artifact_reclaimed"
 	ReasonEndingMissing            = "ending_missing"
 	ReasonEndingDamaged            = "ending_damaged"
+	ReasonRecordMissing            = "record_missing"
+	ReasonRecordReclaimed          = "record_reclaimed"
+	ReasonRecordWithheld           = "record_withheld"
 )
 
 var reasonSentences = map[string]string{
@@ -99,6 +130,9 @@ var reasonSentences = map[string]string{
 	ReasonEndingMissing:            "the archive body of this earlier ending was removed from the store",
 	ReasonEndingDamaged:            "an object is stored for this earlier ending, but it does not decode as an archive body of this run",
 	ReasonArtifactReclaimed:        "the artifact GC deleted the object after its run was retired; its recorded digest is preserved",
+	ReasonRecordMissing:            "the store holds no record the engine should have made: the run's state says its task succeeded, and the run was not retired",
+	ReasonRecordReclaimed:          "the run was retired, and its records went with its commits at cleanup",
+	ReasonRecordWithheld:           "the exporter may read neither the run's artifacts nor the Orkers, which a record names",
 }
 
 // ReasonText is the documented sentence for a reason token; an unknown token
@@ -237,6 +271,12 @@ type Member struct {
 	SourceRunID  string `json:"source_run_id,omitempty"`
 	SourceTaskID string `json:"source_task_id,omitempty"`
 	SourceName   string `json:"source_name,omitempty"`
+	// RecordState is what became of a present record member of kind
+	// resolution, composed or outputs; empty for every other member.
+	RecordState RecordState `json:"record_state,omitempty"`
+	// ResumeScope is the resume a record member was made under; 0 for one
+	// made before any resume, and for every other member.
+	ResumeScope uint64 `json:"resume_scope,omitzero"`
 }
 
 // Counts tallies the members by state.
@@ -246,6 +286,7 @@ type Counts struct {
 	Unrecorded   int   `json:"unrecorded"`
 	Rejected     int   `json:"rejected"`
 	Withheld     int   `json:"withheld,omitzero"`
+	Missing      int   `json:"missing,omitzero"`
 	BytesPresent int64 `json:"bytes_present"`
 }
 
@@ -265,6 +306,8 @@ func CountMembers(members []Member) Counts {
 			c.Rejected++
 		case StateWithheld:
 			c.Withheld++
+		case StateMissing:
+			c.Missing++
 		}
 	}
 	return c

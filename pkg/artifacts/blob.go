@@ -69,6 +69,10 @@ type blobs interface {
 	list(ctx context.Context, in blobListInput) (blobListPage, error)
 	// remove deletes the object at key. A missing object is not an error.
 	remove(ctx context.Context, key string) error
+	// removeVersion deletes the object at key only while it still carries
+	// version (S3 If-Match, local compare-and-remove). A changed object is
+	// errBlobChanged; a missing one is not an error.
+	removeVersion(ctx context.Context, key, version string) error
 	// removeKeys deletes up to blobRemoveBatch keys in one request. A failure
 	// of the request as a whole is err; a key the store refused is in failed,
 	// keyed by key. A missing key is not a refusal.

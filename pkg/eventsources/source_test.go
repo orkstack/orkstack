@@ -4,8 +4,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -276,6 +278,91 @@ func TestNewID_Shape(t *testing.T) {
 	for _, bad := range []string{"", "evs-", "evs-0123456789ABCDEF", "trg-0123456789abcdef", "evs-0123456789abcdef0"} {
 		if ValidID(bad) {
 			t.Errorf("ValidID(%q) = true", bad)
+		}
+	}
+}
+
+// What is OrkStack's is cleared from what a caller writes, and carried from
+// what is stored, whatever field is added to it.
+func TestOutputOnly_IsNeverACallers(t *testing.T) {
+	fill := func(text string, n int64) *orkstackv1.EventSource {
+		src := &orkstackv1.EventSource{}
+		m := src.ProtoReflect()
+		fields := m.Descriptor().Fields()
+		for i := range fields.Len() {
+			switch fd := fields.Get(i); {
+			case fd.IsList() || fd.IsMap():
+			case fd.Kind() == protoreflect.StringKind:
+				m.Set(fd, protoreflect.ValueOfString(text))
+			case fd.Kind() == protoreflect.Int64Kind:
+				m.Set(fd, protoreflect.ValueOfInt64(n))
+			case fd.Kind() == protoreflect.BoolKind:
+				m.Set(fd, protoreflect.ValueOfBool(true))
+			case fd.Kind() == protoreflect.MessageKind:
+				m.Mutable(fd)
+			}
+		}
+		return src
+	}
+	stored, next := fill("stored", 7), fill("caller", 9)
+	CarryOutputOnly(stored, next)
+	cleared := fill("caller", 9)
+	ClearOutputOnly(cleared)
+	fields := next.ProtoReflect().Descriptor().Fields()
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		output := fieldClass[string(fd.Name())] == classOutput
+		if fd.IsList() || fd.IsMap() {
+			continue
+		}
+		if cleared.ProtoReflect().Has(fd) == output && fd.Kind() != protoreflect.EnumKind && fd.Kind() != protoreflect.Int32Kind {
+			t.Errorf("%s: cleared %v", fd.Name(), !output)
+		}
+		switch got := next.ProtoReflect().Get(fd); fd.Kind() {
+		case protoreflect.StringKind:
+			if (got.String() == "stored") != output {
+				t.Errorf("%s is %q", fd.Name(), got.String())
+			}
+		case protoreflect.Int64Kind:
+			if (got.Int() == 7) != output {
+				t.Errorf("%s is %d", fd.Name(), got.Int())
+			}
+		}
+	}
+	// Nothing of the stored source is shared with it.
+	next.GetPause().Code = "X"
+	if stored.GetPause().GetCode() == "X" {
+		t.Error("a write changed the stored source's pause")
+	}
+}
+
+// The durations a workflow is pinned with have a range each: a boot with one
+// outside it, or that does not parse, does not start.
+func TestSettings_Durations(t *testing.T) {
+	with := func(env, v string) (Settings, error) {
+		return SettingsFromEnv(func(k string) (string, bool) { return v, k == env })
+	}
+	for env, tc := range map[string]struct {
+		read             func(Settings) time.Duration
+		low, high, unset time.Duration
+	}{
+		EnvReconcile:          {func(s Settings) time.Duration { return s.Reconcile }, 15 * time.Second, 10 * time.Minute, time.Minute},
+		EnvReadmit:            {func(s Settings) time.Duration { return s.Readmit }, time.Minute, 30 * time.Minute, 5 * time.Minute},
+		EnvInstanceMaxAge:     {func(s Settings) time.Duration { return s.InstanceMaxAge }, 2 * time.Hour, 720 * time.Hour, 168 * time.Hour},
+		EnvRestartMaxInterval: {func(s Settings) time.Duration { return s.RestartMaxInterval }, time.Second, time.Hour, 5 * time.Minute},
+	} {
+		for _, d := range []time.Duration{tc.low, tc.high} {
+			if s, err := with(env, d.String()); err != nil || tc.read(s) != d {
+				t.Errorf("%s=%s: %s, %v", env, d, tc.read(s), err)
+			}
+		}
+		if s, err := with(env, " "); err != nil || tc.read(s) != tc.unset {
+			t.Errorf("%s unset: %s, %v", env, tc.read(s), err)
+		}
+		for _, v := range []string{"x", "5", (tc.low - 1).String(), (tc.high + 1).String(), "-1m"} {
+			if _, err := with(env, v); err == nil || !strings.Contains(err.Error(), env) {
+				t.Errorf("%s=%s: %v", env, v, err)
+			}
 		}
 	}
 }

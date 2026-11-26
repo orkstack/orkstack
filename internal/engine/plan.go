@@ -437,6 +437,11 @@ type IdentityPlan struct {
 	// takes before it drops the rest until the deadline.
 	ResolutionsPerPass int32 `json:"resolutions_per_pass,omitzero"`
 	NonesPerAwait      int32 `json:"nones_per_await,omitzero"`
+	// Indexed is the boot's answer that the cluster indexes
+	// task.SearchAttrOrkflowResultsRecorded, pinned at submit: only then is
+	// the run's start stamped with it, so the cluster never refuses a start
+	// for an attribute it does not have (RunStartSearchAttributes).
+	Indexed bool `json:"indexed,omitzero"`
 }
 
 // RecordBudget is the bounds of the local activities that read and make a

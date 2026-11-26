@@ -87,6 +87,14 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 		VersioningBehavior: workflow.VersioningBehaviorPinned,
 	})
 
+	// Pinned: a source's workflow decides its commands by its release's code,
+	// and moves to another release by ending here and starting there
+	// (signal handover), never by replaying its history on it.
+	w.RegisterWorkflowWithOptions(EventSourceWorkflow, workflow.RegisterOptions{
+		Name:               SourceWorkflowType,
+		VersioningBehavior: workflow.VersioningBehaviorPinned,
+	})
+
 	// Pinned: a delivery lives at most its ladder and its settle (about a
 	// minute at the default policy), so it holds its version open no longer
 	// than the runs whose transitions queued it, and its history — two
@@ -107,4 +115,13 @@ func RegisterWebhookDeliveryActivities(w ActivityRegistrar, a *WebhookDeliveryAc
 // ActivityRegistrar is the slice of worker.Worker that registers activities.
 type ActivityRegistrar interface {
 	RegisterActivityWithOptions(a any, options activity.RegisterOptions)
+}
+
+// RegisterSourceActivities registers what a source's workflow asks of the
+// engine that runs its task, as local activities.
+func RegisterSourceActivities(w ActivityRegistrar, work SourceWork) {
+	w.RegisterActivityWithOptions(work.LoadEventSource, activity.RegisterOptions{Name: ActivityLoadEventSource})
+	w.RegisterActivityWithOptions(work.PurgeEventSource, activity.RegisterOptions{Name: ActivityPurgeEventSource})
+	w.RegisterActivityWithOptions(work.PauseEventSource, activity.RegisterOptions{Name: ActivityPauseEventSource})
+	w.RegisterActivityWithOptions(work.CheckEventSource, activity.RegisterOptions{Name: ActivityCheckEventSource})
 }

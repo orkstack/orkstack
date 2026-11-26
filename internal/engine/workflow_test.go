@@ -36,6 +36,12 @@ type harness struct {
 
 	mu    sync.Mutex
 	calls []*orkstackv1.ExecuteTaskInput
+	// historyLength is a raw history length raiseHistory asked for and the
+	// environment has not been given yet.
+	historyLength *int
+	// activityDone, when set, is called after an activity completes, on the
+	// workflow's side (onActivityCompleted).
+	activityDone func(*activity.Info, converter.EncodedValue, error)
 	// queues records the task queue each task's activity actually arrived on,
 	// read from Temporal's own activity info rather than from the engine. It
 	// is what lets a test check the pool a client is TOLD against the Orkers
@@ -101,6 +107,36 @@ func (c *eachCounter) CountEachItems(ctx context.Context, ref *orkstackv1.Artifa
 	return c.real.CountEachItems(ctx, ref, path, over, maxBytes)
 }
 
+// raiseHistory moves the run's raw history length to length once the activity
+// or local activity it is called from completes, as the run sees that
+// completion. An activity's mock, or an onSnapshot hook, runs on a goroutine
+// of its own while the run may be reading the length: setting it there races.
+func (h *harness) raiseHistory(length int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.historyLength = &length
+}
+
+// applyHistory gives the environment the length raiseHistory asked for.
+func (h *harness) applyHistory() {
+	h.mu.Lock()
+	length := h.historyLength
+	h.historyLength = nil
+	h.mu.Unlock()
+	if length != nil {
+		h.env.SetCurrentHistoryLength(*length)
+	}
+}
+
+// onActivityCompleted has done called after every activity completes, on the
+// workflow's side; it takes the place of the environment's own listener,
+// which the harness holds.
+func (h *harness) onActivityCompleted(done func(*activity.Info, converter.EncodedValue, error)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.activityDone = done
+}
+
 func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
 	t.Helper()
 	return newHarnessCtx(t, suite, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
@@ -143,6 +179,19 @@ func newHarnessShared(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshot
 		continuations: map[string]int{},
 	}
 	h.env.SetTestTimeout(60 * time.Second)
+	// The environment runs both listeners on the workflow's side, between its
+	// workflow tasks: the one place a history length may be set while the run
+	// can read it (raiseHistory).
+	h.env.SetOnActivityCompletedListener(func(info *activity.Info, result converter.EncodedValue, err error) {
+		h.applyHistory()
+		h.mu.Lock()
+		done := h.activityDone
+		h.mu.Unlock()
+		if done != nil {
+			done(info, result, err)
+		}
+	})
+	h.env.SetOnLocalActivityCompletedListener(func(*activity.Info, converter.EncodedValue, error) { h.applyHistory() })
 	h.env.RegisterActivityWithOptions((&eachCounter{h: h, real: engine.NewEachActivities(h.values)}).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
 	// The two compose activities, over the same in-memory store, so a run

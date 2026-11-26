@@ -10,7 +10,6 @@ import (
 	"go.temporal.io/sdk/temporal"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -23,7 +22,6 @@ import (
 // task takes ten seconds, and which records every single-slot release.
 type pausedConcHarness struct {
 	*concRunHarness
-	single []GateRelease
 	// queuedSeen is every Run.queued a snapshot carried, in order.
 	queuedSeen []*orkstackv1.ConcurrencyQueued
 	// fail names the tasks whose activity fails; ranIDs is every task
@@ -58,12 +56,7 @@ func newPausedConcHarness(t *testing.T, answers ...AcquireConcurrencyResult) *pa
 			return "memory://x", nil
 		})
 	h.env.OnSignalExternalWorkflow(mock.Anything, "ork-conc-test", "", GateSignalRelease, mock.Anything).Return(
-		func(_, _, _, _ string, arg any) error {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			h.single = append(h.single, payloadcrypt.Unplain(arg).(GateRelease))
-			return nil
-		})
+		func(_, _, _, _ string, _ any) error { return nil }) // recorded in workflow code (concRunHarness.single)
 	return h
 }
 

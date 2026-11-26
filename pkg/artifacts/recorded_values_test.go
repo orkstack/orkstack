@@ -92,6 +92,12 @@ func TestReadRecordedValues_Found(t *testing.T) {
 	if found.Detail().GetPrincipal() != "alice" || found.StoredAt().IsZero() || len(found.RecordSHA256()) != 64 {
 		t.Fatalf("found = %+v", found)
 	}
+	// What an evidence bundle holds: the stored bytes, which hash to the
+	// digests the record and its detail are known by.
+	detail, detailKey := found.DetailRaw()
+	if hexOf(found.Raw()) != found.RecordSHA256() || hexOf(detail) != found.record.GetDetailSha256() || detailKey == "" {
+		t.Fatalf("raw bytes: record %d, detail %d at %q", len(found.Raw()), len(detail), detailKey)
+	}
 	adopted, ok := found.InTime(found.StoredAt().Add(time.Minute), time.Time{})
 	if !ok || string(adopted.Inline()) != string(f.values) || adopted.Record().GetTaskId() != "approve" {
 		t.Fatalf("in time = %v, %+v", ok, adopted)

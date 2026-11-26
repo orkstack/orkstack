@@ -11,8 +11,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -32,6 +34,16 @@ type concRunHarness struct {
 	answers  []AcquireConcurrencyResult
 	acquires []AcquireConcurrencyInput
 	releases []GateReleaseAll
+	// single is every single-slot release the run sent to ork-conc-test,
+	// the harness's gate, recorded in its
+	// workflow code as it sends it (releaseRecorder), so the whole of it is
+	// there once the run has ended: the test environment calls a signal's
+	// mock on a goroutine of its own, which a run that ends in the same
+	// workflow task may not have waited for.
+	single []GateRelease
+	// singleAt is the same, by gate, for every other gate.
+	singleAt map[string][]GateRelease
+	recorder *releaseRecorder
 	events   []*orkstackv1.Event
 	last     *orkstackv1.Run
 	ran      int
@@ -58,7 +70,9 @@ func concOrkflow() *orkstackv1.Orkflow {
 func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concRunHarness {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	h := &concRunHarness{t: t, env: generousDeadlock(suite.NewTestWorkflowEnvironment()), answers: answers}
+	h := &concRunHarness{t: t, env: suite.NewTestWorkflowEnvironment(), answers: answers}
+	h.recorder = &releaseRecorder{h: h}
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{h.recorder}}))
 	h.env.SetTestTimeout(30 * time.Second)
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
 	h.env.RegisterWorkflowWithOptions(RunWorkflowRaw, workflow.RegisterOptions{Name: "raw"})
@@ -547,4 +561,46 @@ func TestConcurrencyRun_TheEventThatEndsAWaitSaysHow(t *testing.T) {
 	if ends := granted.waitEnds(); len(ends) != 0 {
 		t.Fatalf("a run granted at once carries wait ends %v; want none", ends)
 	}
+}
+
+// releaseRecorder records every single-slot release a run sends, in its
+// workflow code, into its harness's single (see concRunHarness.single).
+type releaseRecorder struct {
+	interceptor.WorkerInterceptorBase
+	h *concRunHarness
+}
+
+func (r *releaseRecorder) InterceptWorkflow(_ workflow.Context, next interceptor.WorkflowInboundInterceptor) interceptor.WorkflowInboundInterceptor {
+	return &releaseRecorderInbound{WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{Next: next}, h: r.h}
+}
+
+type releaseRecorderInbound struct {
+	interceptor.WorkflowInboundInterceptorBase
+	h *concRunHarness
+}
+
+func (w *releaseRecorderInbound) Init(outbound interceptor.WorkflowOutboundInterceptor) error {
+	return w.Next.Init(&releaseRecorderOutbound{WorkflowOutboundInterceptorBase: interceptor.WorkflowOutboundInterceptorBase{Next: outbound}, h: w.h})
+}
+
+type releaseRecorderOutbound struct {
+	interceptor.WorkflowOutboundInterceptorBase
+	h *concRunHarness
+}
+
+func (w *releaseRecorderOutbound) SignalExternalWorkflow(ctx workflow.Context, workflowID, runID, signalName string, arg any) workflow.Future {
+	if signalName == GateSignalRelease {
+		release := payloadcrypt.Unplain(arg).(GateRelease)
+		w.h.mu.Lock()
+		if workflowID == "ork-conc-test" {
+			w.h.single = append(w.h.single, release)
+		} else {
+			if w.h.singleAt == nil {
+				w.h.singleAt = map[string][]GateRelease{}
+			}
+			w.h.singleAt[workflowID] = append(w.h.singleAt[workflowID], release)
+		}
+		w.h.mu.Unlock()
+	}
+	return w.Next.SignalExternalWorkflow(ctx, workflowID, runID, signalName, arg)
 }

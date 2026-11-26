@@ -529,6 +529,7 @@ func TestRecordComposed_Refuses(t *testing.T) {
 			a.ChildAdmissionSHA256 = w.admission(w.child)
 		}, "not this task's"},
 		{"a task that composes nothing", func(_ *valuesWorld, a *ComposedAsk) { a.TaskID = "build" }, "composes no run"},
+		{"a scope no resume gave it", func(_ *valuesWorld, a *ComposedAsk) { a.Scopes.Resume = 42 }, ""},
 		{"what it follows is not on record", func(w *valuesWorld, _ *ComposedAsk) {
 			w.removeRecord(artifacts.RecordResolution, "ork-1", "approve")
 		}, "approve"},
@@ -539,18 +540,32 @@ func TestRecordComposed_Refuses(t *testing.T) {
 				ChildOutputsSha256: otherSHA, Values: &orkstackv1.ArtifactRef{Uri: "file:///none", Sha256: strings.Repeat("e", 64), SizeBytes: 5000}})
 		}, "another child"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			w := newValuesWorld(t, nil)
-			w.ready()
-			if _, err := w.rec.RecordOutputs(context.Background(), w.outputsAsk()); err != nil {
-				t.Fatal(err)
-			}
-			ask := w.composedAsk(hexSum(w.raw))
-			tc.make(w, &ask)
-			_, err := w.rec.RecordComposed(context.Background(), ask)
-			refusedWith(t, err, ReasonChildValuesNotRecorded, tc.says)
-		})
+		// Each is refused alike for a resume of a run that has ended.
+		for _, closed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/closed=%t", tc.name, closed), func(t *testing.T) {
+				t.Parallel()
+				w := newValuesWorld(t, nil)
+				w.ready()
+				if _, err := w.rec.RecordOutputs(context.Background(), w.outputsAsk()); err != nil {
+					t.Fatal(err)
+				}
+				if closed {
+					describe := w.rec.Describe
+					w.rec.Describe = func(ctx context.Context, run string) (ExecutionFacts, error) {
+						f, err := describe(ctx, run)
+						if run == "ork-1" {
+							f.Open = false
+						}
+						return f, err
+					}
+				}
+				ask := w.composedAsk(hexSum(w.raw))
+				ask.Closed = closed
+				tc.make(w, &ask)
+				_, err := w.rec.RecordComposed(context.Background(), ask)
+				refusedWith(t, err, ReasonChildValuesNotRecorded, tc.says)
+			})
+		}
 	}
 }
 
@@ -594,5 +609,52 @@ func TestRecordOutputs_AsksByTheList(t *testing.T) {
 	// build and src's producer by commit; the rest by the listing.
 	if n := counted.commits.Load(); n != 2 {
 		t.Fatalf("%d commits read", n)
+	}
+}
+
+// TestRecordComposed_OfAClosedRun: a composed task's values are recorded from
+// its child's outputs for a run that has ended only when the ask says so (a
+// resume of the run, which the cluster still holds); without it, and for a
+// run the cluster no longer holds, they are refused.
+func TestRecordComposed_OfAClosedRun(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		closed bool
+		gone   bool
+		says   string
+	}{
+		{"recorded for a resume", true, false, ""},
+		{"refused when not asked for a resume", false, false, "not executing"},
+		{"refused when the cluster no longer holds it", true, true, "not executing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			w := newValuesWorld(t, nil)
+			w.ready()
+			if _, err := w.rec.RecordOutputs(ctx, w.outputsAsk()); err != nil {
+				t.Fatal(err)
+			}
+			describe := w.rec.Describe
+			w.rec.Describe = func(ctx context.Context, run string) (ExecutionFacts, error) {
+				f, err := describe(ctx, run)
+				if run == "ork-1" {
+					if tc.gone {
+						return ExecutionFacts{}, ErrNoSuchExecution
+					}
+					f.Open = false
+				}
+				return f, err
+			}
+			ask := w.composedAsk(hexSum(w.raw))
+			ask.Closed = tc.closed
+			got, err := w.rec.RecordComposed(ctx, ask)
+			if tc.says != "" {
+				refusedWith(t, err, ReasonChildValuesNotRecorded, tc.says)
+				return
+			}
+			if err != nil || got.RecordSHA256 == "" {
+				t.Fatalf("%+v, %v", got, err)
+			}
+		})
 	}
 }

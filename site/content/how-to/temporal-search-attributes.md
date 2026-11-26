@@ -28,6 +28,7 @@ temporal operator search-attribute create --namespace ork-main --name OrkflowOri
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginRootRunId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowRunPaused --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowResultsRecorded --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowGatePhase --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowRunQueued --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyHeld --type KeywordList
@@ -46,7 +47,7 @@ On a cluster another team runs, ask its admin to create the namespace with a ret
 
 ## Mind the limits
 
-Temporal limits custom attributes per namespace. A SQL visibility store (PostgreSQL, MySQL, SQLite) takes 10 Keyword and 3 KeywordList attributes. OrkStack uses seven Keyword and two KeywordList, leaving three and one for your own.
+Temporal limits custom attributes per namespace. A SQL visibility store (PostgreSQL, MySQL, SQLite) takes 10 Keyword and 3 KeywordList attributes. OrkStack uses eight Keyword and two KeywordList, leaving two and one for your own.
 
 ## Never remove one while runs are open
 

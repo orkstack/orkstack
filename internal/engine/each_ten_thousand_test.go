@@ -70,7 +70,7 @@ func TestEach_TenThousandItemsSpanGenerations(t *testing.T) {
 			var once sync.Once
 			h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
 				if itemsSucceeded(run, "spread") >= threshold {
-					once.Do(func() { h.env.SetCurrentHistoryLength(30000) })
+					once.Do(func() { h.raiseHistory(30000) })
 				}
 				return nil
 			}

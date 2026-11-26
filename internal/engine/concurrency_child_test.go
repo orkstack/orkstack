@@ -317,3 +317,57 @@ func TestWaitingRuns(t *testing.T) {
 		t.Fatalf("waiting %v, %v; want b and a, and the runs that could not be described", got, err)
 	}
 }
+
+// TestRenderConcurrencyTaskKeys: each of a child's tasks' keys is rendered, and
+// one that is its own run's, or an ancestor's, is refused.
+func TestRenderConcurrencyTaskKeys(t *testing.T) {
+	limit := childLimit("")
+	limit.Tasks = map[string]ConcurrencySlotPlan{"b": childLimit("push:{{ .inputs.env }}").Slot, "a": childLimit(DefaultTaskConcurrencyKey("team-a", "inner", "a")).Slot}
+	render := func(runGate string, ancestors ...string) (ChildTaskSlots, error) {
+		return (&GateActivities{client: &keysClient{}}).RenderConcurrencyTaskKeys(context.Background(), RenderConcurrencyKeysInput{
+			Limit: limit, Inputs: stablejson.RawJSON(`{"env":"prod"}`), Orkflow: "inner", Version: "1.0.0",
+			OriginKind: RunOriginKindParentRun, OriginID: "ork-parent", Ancestors: ancestors, RunGate: runGate})
+	}
+	got, err := render("")
+	must.OK(t, err)
+	if got.Tasks["b"].Key != "push:prod" || got.Tasks["b"].GateID != GateID("team-a", "", "push:prod") ||
+		got.Tasks["a"].Key != "ork:task:team-a/inner:a" || len(got.Tasks) != 2 {
+		t.Fatalf("slots %+v", got)
+	}
+	for _, c := range [][]string{{GateID("team-a", "", "push:prod")}, {"", GateID("team-a", "", "push:prod")}} {
+		_, err := render(c[0], c[1:]...)
+		if code, _, _ := renderFailure("TASK_CONCURRENCY_CHECK", err); code != TaskConcurrencyKeyConflictCode {
+			t.Errorf("run gate %q, ancestors %v = %v; want %s", c[0], c[1:], err, TaskConcurrencyKeyConflictCode)
+		}
+	}
+}
+
+// TestComposedChild_StartsWithItsTasksSlots: the parent renders the child's
+// tasks' keys after its own and starts it with every slot, its own first.
+func TestComposedChild_StartsWithItsTasksSlots(t *testing.T) {
+	limit := childLimit("db")
+	own := limit.Slot
+	own.GateID = "ork-conc-child"
+	limit.Tasks = map[string]ConcurrencySlotPlan{"apply": childLimit("push").Slot}
+	h, plan, parent, asked := childHarness(t, &limit, func(in RenderConcurrencyKeysInput) (ConcurrencySlotPlan, error) { return own, nil }, granted(1), granted(5), granted(6))
+	var tasked []RenderConcurrencyKeysInput
+	h.env.RegisterActivityWithOptions(func(_ context.Context, in RenderConcurrencyKeysInput) (ChildTaskSlots, error) {
+		tasked = append(tasked, in)
+		push := in.Limit.Tasks["apply"]
+		push.GateID = "ork-conc-push"
+		return ChildTaskSlots{Tasks: map[string]ConcurrencySlotPlan{"apply": push}}, nil
+	}, activity.RegisterOptions{Name: ActivityRenderConcurrencyTaskKeys})
+	h.env.OnSignalExternalWorkflow(mock.Anything, mock.Anything, "", mock.Anything, mock.Anything).Return(nil)
+	h.runOrkflow(plan, parent)
+	must.OK(t, h.env.GetWorkflowError())
+	if len(*asked) != 1 || len(tasked) != 1 || tasked[0].RunGate != "ork-conc-child" {
+		t.Fatalf("rendered %d own keys and %+v", len(*asked), tasked)
+	}
+	var gates []string
+	for _, a := range h.acquires {
+		gates = append(gates, a.GateID)
+	}
+	if !slices.Equal(gates, []string{"ork-conc-test", "ork-conc-child", "ork-conc-push"}) {
+		t.Fatalf("asked %v; want the parent's, the child's own, then its task's", gates)
+	}
+}

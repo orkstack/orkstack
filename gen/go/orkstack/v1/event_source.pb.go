@@ -546,8 +546,23 @@ type EventSource struct {
 	// deleting_since is output only: when a delete marked the source. A marked
 	// source is stopped, and is gone once its instances have ended.
 	DeletingSince *timestamppb.Timestamp `protobuf:"bytes,48,opt,name=deleting_since,json=deletingSince,proto3" json:"deleting_since,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// resume_seq is output only: it rises with each resume of a paused source.
+	ResumeSeq int64 `protobuf:"varint,54,opt,name=resume_seq,json=resumeSeq,proto3" json:"resume_seq,omitempty"`
+	// trial_code is output only: the code of the pause the last resume lifted,
+	// empty for one an operator made. The instances a resume starts are on
+	// trial for it.
+	TrialCode string `protobuf:"bytes,55,opt,name=trial_code,json=trialCode,proto3" json:"trial_code,omitempty"`
+	// in_place_revision is output only: the service revision a change or a
+	// restart asked to be applied in place, 0 for none.
+	InPlaceRevision int64 `protobuf:"varint,56,opt,name=in_place_revision,json=inPlaceRevision,proto3" json:"in_place_revision,omitempty"`
+	// service_digest is output only: the SHA-256 of the service spec of
+	// service_revision, which its instances are started with.
+	ServiceDigest string `protobuf:"bytes,57,opt,name=service_digest,json=serviceDigest,proto3" json:"service_digest,omitempty"`
+	// restart_revision is output only: the service revision the last restart
+	// raised, 0 for none.
+	RestartRevision int64 `protobuf:"varint,58,opt,name=restart_revision,json=restartRevision,proto3" json:"restart_revision,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *EventSource) Reset() {
@@ -865,6 +880,41 @@ func (x *EventSource) GetDeletingSince() *timestamppb.Timestamp {
 		return x.DeletingSince
 	}
 	return nil
+}
+
+func (x *EventSource) GetResumeSeq() int64 {
+	if x != nil {
+		return x.ResumeSeq
+	}
+	return 0
+}
+
+func (x *EventSource) GetTrialCode() string {
+	if x != nil {
+		return x.TrialCode
+	}
+	return ""
+}
+
+func (x *EventSource) GetInPlaceRevision() int64 {
+	if x != nil {
+		return x.InPlaceRevision
+	}
+	return 0
+}
+
+func (x *EventSource) GetServiceDigest() string {
+	if x != nil {
+		return x.ServiceDigest
+	}
+	return ""
+}
+
+func (x *EventSource) GetRestartRevision() int64 {
+	if x != nil {
+		return x.RestartRevision
+	}
+	return 0
 }
 
 // MatchRule is one test of a source's filter: exactly one selector and
@@ -2054,7 +2104,7 @@ var File_orkstack_v1_event_source_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_event_source_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorkstack/v1/event_source.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\"orkstack/v1/activity_service.proto\x1a\x18orkstack/v1/common.proto\"\xc0\x0f\n" +
+	"\x1eorkstack/v1/event_source.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\"orkstack/v1/activity_service.proto\x1a\x18orkstack/v1/common.proto\"\xfc\x10\n" +
 	"\vEventSource\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x12\n" +
@@ -2102,7 +2152,14 @@ const file_orkstack_v1_event_source_proto_rawDesc = "" +
 	"\x03env\x18- \x03(\v2!.orkstack.v1.EventSource.EnvEntryR\x03env\x12)\n" +
 	"\x10service_revision\x18. \x01(\x03R\x0fserviceRevision\x12)\n" +
 	"\x10judging_revision\x18/ \x01(\x03R\x0fjudgingRevision\x12A\n" +
-	"\x0edeleting_since\x180 \x01(\v2\x1a.google.protobuf.TimestampR\rdeletingSince\x1aL\n" +
+	"\x0edeleting_since\x180 \x01(\v2\x1a.google.protobuf.TimestampR\rdeletingSince\x12\x1d\n" +
+	"\n" +
+	"resume_seq\x186 \x01(\x03R\tresumeSeq\x12\x1d\n" +
+	"\n" +
+	"trial_code\x187 \x01(\tR\ttrialCode\x12*\n" +
+	"\x11in_place_revision\x188 \x01(\x03R\x0finPlaceRevision\x12%\n" +
+	"\x0eservice_digest\x189 \x01(\tR\rserviceDigest\x12)\n" +
+	"\x10restart_revision\x18: \x01(\x03R\x0frestartRevision\x1aL\n" +
 	"\bMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12*\n" +
 	"\x05value\x18\x02 \x01(\v2\x14.orkstack.v1.MapRuleR\x05value:\x028\x01\x1aV\n" +

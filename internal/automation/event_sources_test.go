@@ -6,8 +6,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 const sourcesDoc = `apiVersion: orkstack/v1
@@ -225,6 +227,53 @@ func TestExport_EventSourcesBlockStyle(t *testing.T) {
 	}
 	if strings.Contains(text, "{\"") || strings.Contains(text, "[{") || strings.Contains(text, "evs-") || strings.Contains(text, "etag") {
 		t.Fatalf("export is not block style, or names what is output only:\n%s", text)
+	}
+}
+
+// TestEventSources_WhatIsOrkStacksIsNoOnesText: what the engine keeps of a
+// source is in no export, in no plan's changes, and in no write a plan makes.
+func TestEventSources_WhatIsOrkStacksIsNoOnesText(t *testing.T) {
+	plain, kept := liveSource("orders", "evs-0123456789abcdef"), liveSource("orders", "evs-0123456789abcdef")
+	kept.ResumeSeq, kept.TrialCode, kept.InPlaceRevision, kept.ServiceDigest, kept.RestartRevision = 7, "EVENT_SOURCE_INSTANCE_FAILED", 8, strings.Repeat("a", 64), 9
+	kept.ServiceRevision, kept.JudgingRevision, kept.Etag, kept.DeletingSince = 11, 12, "e9", timestamppb.Now()
+	ns := &orkstackv1.Namespace{Name: "payments"}
+	export := func(src *orkstackv1.EventSource) string {
+		t.Helper()
+		text, _, err := Export("payments", Live{Namespace: ns, EventSources: []*orkstackv1.EventSource{src}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return text
+	}
+	text := export(plain)
+	if got := export(kept); got != text {
+		t.Errorf("the export of what the engine keeps differs:\n%s\n%s", got, text)
+	}
+	live := Live{Namespace: ns, EventSources: []*orkstackv1.EventSource{kept}, Orkflows: map[OrkflowRef]bool{{Name: "handle-order"}: true}}
+	steps, issues := Plan(parsed(t, text), live, Options{})
+	if HasErrors(issues) {
+		t.Fatal(issues)
+	}
+	if step := sourceStep(t, steps, "orders"); step.GetAction() != actionUnchanged || len(step.GetChanges()) != 0 {
+		t.Errorf("it plans %v", step)
+	}
+	// And where something of the user's changed, that alone is written.
+	doc := parsed(t, text)
+	doc.EventSources["orders"].Source.Rate = 3
+	steps, issues = Plan(doc, live, Options{})
+	if HasErrors(issues) {
+		t.Fatal(issues)
+	}
+	step := sourceStep(t, steps, "orders")
+	written := proto.Clone(step.GetUpdateEventSource().GetEventSource()).(*orkstackv1.EventSource)
+	if len(step.GetChanges()) != 1 || step.GetChanges()[0].GetField() != "rate" || written.GetEtag() != "e9" {
+		t.Errorf("it plans %v", step)
+	}
+	before := proto.Clone(written).(*orkstackv1.EventSource)
+	written.Etag, before.Etag = "", ""
+	eventsources.ClearOutputOnly(written)
+	if !proto.Equal(before, written) {
+		t.Errorf("it writes what is OrkStack's: %v", before)
 	}
 }
 

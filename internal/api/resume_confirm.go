@@ -77,6 +77,11 @@ func (s *Service) confirmResume(
 	if err := s.archiveSetAside(ctx, base); err != nil {
 		return nil, err
 	}
+	// Before the plan is recorded: a task it settles from its child's outputs
+	// has its values on record by then, as the read-back reads them.
+	if err := s.resumeChildRecords(ctx, base, p); err != nil {
+		return nil, err
+	}
 	send, err := s.recordResume(ctx, req, base, p)
 	if err != nil {
 		return nil, err
@@ -513,6 +518,16 @@ func resumeOf(rec *orkstackv1.ResumePlanRecord) *orkstackv1.RunResume {
 		Principal: rec.GetPrincipal(), PrincipalVerified: rec.GetPrincipalVerified(),
 		Reason: rec.GetReason(), SupersededReason: rec.GetSupersededReason(),
 		ResumedAfterSequence: rec.GetBaseTerminalSequence(), Sequence: int64(rec.GetBlock().GetSeqBase()),
-		FromState: orkstackv1.ResumeFromState_RESUME_FROM_STATE_FAILED, Scope: rec.GetScope(),
+		FromState: resumeFromState(rec.GetSupersededReason()), Scope: rec.GetScope(),
+		ForceCanceledBy: rec.GetForceCanceledBy(),
 	}
+}
+
+// resumeFromState is how the ending a resume set aside came about, from the
+// reason it ended for.
+func resumeFromState(reason string) orkstackv1.ResumeFromState {
+	if reason == engine.RunForceCanceledCode {
+		return orkstackv1.ResumeFromState_RESUME_FROM_STATE_FORCE_CANCELED
+	}
+	return orkstackv1.ResumeFromState_RESUME_FROM_STATE_FAILED
 }

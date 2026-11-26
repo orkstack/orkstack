@@ -172,7 +172,9 @@ func TestReadResolution_AnAnswerThatDoesNotOpen(t *testing.T) {
 	})
 }
 
-// countedRecords keeps what workflow code counted, by name and tags.
+// countedRecords keeps what workflow code counted, by name and every tag.
+// Its counts leave on the default sink, which carries no namespace
+// (AGENTS.md §11), so a namespace tag would show in the key and fail the test.
 type countedRecords struct {
 	client.MetricsHandler
 	tags string
@@ -182,9 +184,7 @@ type countedRecords struct {
 func (c *countedRecords) WithTags(tags map[string]string) client.MetricsHandler {
 	out := c.tags
 	for _, k := range slices.Sorted(maps.Keys(tags)) {
-		if k == "kind" || k == "reason" || k == "why" {
-			out += " " + k + "=" + tags[k]
-		}
+		out += " " + k + "=" + tags[k]
 	}
 	return &countedRecords{MetricsHandler: c.MetricsHandler, tags: out, seen: c.seen}
 }

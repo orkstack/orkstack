@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 
@@ -72,7 +73,13 @@ func newResumeStack(t *testing.T, ctx context.Context, scenario string) *resumeS
 	if !ok {
 		t.Fatalf("run archive %T keeps one ending a run", archive)
 	}
-	s := &resumeStack{chaosStack: newChaosStackWith(t, ctx, scenario, cfg, archive), endings: endings, created: map[string]time.Time{}}
+	return resumeStackOn(t, ctx, newChaosStackWith(t, ctx, scenario, cfg, archive), endings)
+}
+
+// resumeStackOn is the suite's stack over c, whose run archive is endings.
+func resumeStackOn(t *testing.T, ctx context.Context, c *chaosStack, endings artifacts.RunEndingStore) *resumeStack {
+	t.Helper()
+	s := &resumeStack{chaosStack: c, endings: endings, created: map[string]time.Time{}}
 	s.reader.WithEndings(s.archive)
 	s.stores = s.realStores()
 	records, err := artifacts.NewRecordStore(ctx, s.cfg)
@@ -95,6 +102,14 @@ func (s *resumeStack) startResumingReplica(name string, o replicaOptions, f resu
 	if o.client == nil {
 		o.client = s.dial(name, o.temporal)
 	}
+	o.extra = append(o.extra, s.registeringResume(o.client, f))
+	return s.startReplica(name, o)
+}
+
+// registeringResume registers a resumed run's activities on a run worker
+// whose client is c.
+func (s *resumeStack) registeringResume(c client.Client, f resumeFaults) func(worker.Worker) {
+	s.t.Helper()
 	commits, values, records := s.stores.commits, s.stores.store, s.records
 	if f.results != nil {
 		commits, values = s.storesVia(f.results)
@@ -106,15 +121,15 @@ func (s *resumeStack) startResumingReplica(name string, o replicaOptions, f resu
 		records, err = artifacts.NewRecordStore(s.ctx, cfg)
 		must.OKf(s.t, err, "record store through the proxy")
 	}
-	o.extra = append(o.extra, func(w worker.Worker) {
+	return func(w worker.Worker) {
 		w.RegisterActivityWithOptions(engine.NewSnapshotActivities(s.store).WriteResumeEnding,
 			activity.RegisterOptions{Name: engine.ActivityWriteResumeEnding})
-		resume := engine.NewResumeActivities(commits, values).WithHistory(o.client.WorkflowService(), s.namespace, records)
+		resume := engine.NewResumeActivities(commits, values).WithHistory(c.WorkflowService(), s.namespace, records).
+			WithRecordReads(records)
 		w.RegisterActivityWithOptions(resume.ReadResetFacts, activity.RegisterOptions{Name: engine.ActivityReadResetFacts})
 		w.RegisterActivityWithOptions(resume.LoadResumePlan, activity.RegisterOptions{Name: engine.ActivityLoadResumePlan})
 		w.RegisterActivityWithOptions(resume.AdoptRecorded, activity.RegisterOptions{Name: engine.ActivityAdoptRecorded})
-	})
-	return s.startReplica(name, o)
+	}
 }
 
 // storesVia are the commit and artifact stores dialing proxy instead of the
@@ -644,7 +659,13 @@ func (s *resumeStack) startFailing(wf *orkstackv1.Orkflow) string {
 
 func (s *resumeStack) awaitFailed(runID string) {
 	s.t.Helper()
-	if status, err := s.wait(runID, 10*time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_FAILED {
+	s.awaitFailedWithin(runID, 10*time.Minute)
+}
+
+// awaitFailedWithin is awaitFailed for a run that may take up to within.
+func (s *resumeStack) awaitFailedWithin(runID string, within time.Duration) {
+	s.t.Helper()
+	if status, err := s.wait(runID, within); status != enums.WORKFLOW_EXECUTION_STATUS_FAILED {
 		s.t.Fatalf("run %s closed %v (%v); it was meant to fail", runID, status, err)
 	}
 	awaitArchivedEvents(s.t, s.ctx, s.archive, runID)

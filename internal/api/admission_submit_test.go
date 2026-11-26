@@ -76,6 +76,8 @@ type admissionOptions struct {
 	// fleet is the Orkers a submit asks; nil wires no inventory.
 	fleet engine.OrkerFleet
 	pools engine.PoolProbe
+	// resultsRecordedIndexed is boot's answer for OrkflowResultsRecorded.
+	resultsRecordedIndexed bool
 }
 
 func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
@@ -135,6 +137,7 @@ func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
 		Providers:              o.providers,
 		Fleet:                  o.fleet,
 		Pools:                  o.pools,
+		ResultsRecordedIndexed: o.resultsRecordedIndexed,
 	})
 	return &admissionWorld{svc: svc, records: records, dir: o.dir, starter: starter, runContexts: runContexts}
 }
@@ -869,5 +872,27 @@ func TestSubmitRun_AnAdmittedRunWritesItsRunContext(t *testing.T) {
 	}
 	if obj.Root.Orkflow.Name != "deploy" {
 		t.Fatalf("run context root = %+v", obj.Root)
+	}
+}
+
+// TestSubmitRun_PinsTheResultsRecordedIndex: every run of a tree that holds an
+// identity pins the boot's answer for OrkflowResultsRecorded in its identity
+// plan, the child's in its own entry, so its start is stamped with the mark
+// only where the cluster indexes it; unindexed, no plan says so.
+func TestSubmitRun_PinsTheResultsRecordedIndex(t *testing.T) {
+	for _, indexed := range []bool{true, false} {
+		parent, child := composingOrkflows()
+		w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{child, parent}, resultsRecordedIndexed: indexed})
+		if _, err := w.submit(t, "release", ""); err != nil {
+			t.Fatalf("indexed=%v: submit: %v", indexed, err)
+		}
+		plan := w.starter.startedPlans()[0]
+		entry := plan.Children["ship"]
+		if plan.Identity == nil || entry == nil || entry.Plan.Identity == nil {
+			t.Fatalf("indexed=%v: a plan of the tree names no admission", indexed)
+		}
+		if plan.Identity.Indexed != indexed || entry.Plan.Identity.Indexed != indexed {
+			t.Errorf("indexed=%v: parent pins %v, child %v", indexed, plan.Identity.Indexed, entry.Plan.Identity.Indexed)
+		}
 	}
 }

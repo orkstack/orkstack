@@ -167,7 +167,7 @@ test('equalityOf is the one non-empty equals on a path', () => {
 test('an indexed field names no field of the resource and still resolves', () => {
 	const runs = specFor(ListRunsRequestSchema);
 	const indexed = runs.fields.filter((f) => f.indexed).map((f) => `${f.path}:${f.kind}`);
-	expect(indexed).toEqual(['queued:bool', 'queued_on:text', 'holding:text']);
+	expect(indexed).toEqual(['queued:bool', 'queued_on:text', 'holding:text', 'results_recorded:bool']);
 	for (const f of runs.fields.filter((f) => f.indexed)) expect(f.operators).toEqual([FilterOperator.EQUALS]);
 	expect(runs.fields.find((f) => f.path === 'status')?.indexed).toBe(false);
 });

@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/filter.proto.
  */
 export const file_orkstack_v1_filter: GenFile = /*@__PURE__*/
-  fileDesc("ChhvcmtzdGFjay92MS9maWx0ZXIucHJvdG8SC29ya3N0YWNrLnYxIlUKC0ZpZWxkRmlsdGVyEg0KBWZpZWxkGAEgASgJEicKAm9wGAIgASgOMhsub3Jrc3RhY2sudjEuRmlsdGVyT3BlcmF0b3ISDgoGdmFsdWVzGAMgAygJIvgBCg9GaWx0ZXJhYmxlRmllbGQSDAoEcGF0aBgBIAEoCRINCgVsYWJlbBgCIAEoCRIuCglvcGVyYXRvcnMYAyADKA4yGy5vcmtzdGFjay52MS5GaWx0ZXJPcGVyYXRvchIWCg5hbGxvd2VkX3ZhbHVlcxgEIAMoCRIdChVrZXB0X3doZW5fdW5hdmFpbGFibGUYBSABKAgSEAoIcmVxdWlyZXMYBiABKAkSMAoKdmFsdWVfcnVsZRgHIAEoDjIcLm9ya3N0YWNrLnYxLkZpbHRlclZhbHVlUnVsZRIPCgdpbmRleGVkGAggASgIEgwKBGZsYWcYCSABKAgiawoOTGlzdEZpbHRlclNwZWMSEAoIcmVzb3VyY2UYASABKAkSLAoGZmllbGRzGAIgAygLMhwub3Jrc3RhY2sudjEuRmlsdGVyYWJsZUZpZWxkEhkKEXVuYXZhaWxhYmxlX2ZpZWxkGAMgASgJKvwBCg5GaWx0ZXJPcGVyYXRvchIfChtGSUxURVJfT1BFUkFUT1JfVU5TUEVDSUZJRUQQABIaChZGSUxURVJfT1BFUkFUT1JfRVFVQUxTEAESHgoaRklMVEVSX09QRVJBVE9SX05PVF9FUVVBTFMQAhIWChJGSUxURVJfT1BFUkFUT1JfSU4QAxIcChhGSUxURVJfT1BFUkFUT1JfQ09OVEFJTlMQBBIaChZGSUxURVJfT1BFUkFUT1JfUFJFRklYEAUSHwobRklMVEVSX09QRVJBVE9SX0FUX09SX0FGVEVSEAYSGgoWRklMVEVSX09QRVJBVE9SX0JFRk9SRRAHKnAKD0ZpbHRlclZhbHVlUnVsZRIhCh1GSUxURVJfVkFMVUVfUlVMRV9VTlNQRUNJRklFRBAAEhoKFkZJTFRFUl9WQUxVRV9SVUxFX05BTUUQARIeChpGSUxURVJfVkFMVUVfUlVMRV9PUktFUl9JRBACOl4KCmZpbHRlcmFibGUSHy5nb29nbGUucHJvdG9idWYuTWVzc2FnZU9wdGlvbnMYtIcDIAEoCzIbLm9ya3N0YWNrLnYxLkxpc3RGaWx0ZXJTcGVjUgpmaWx0ZXJhYmxlQqcBCg9jb20ub3Jrc3RhY2sudjFCC0ZpbHRlclByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_descriptor]);
+  fileDesc("ChhvcmtzdGFjay92MS9maWx0ZXIucHJvdG8SC29ya3N0YWNrLnYxIlUKC0ZpZWxkRmlsdGVyEg0KBWZpZWxkGAEgASgJEicKAm9wGAIgASgOMhsub3Jrc3RhY2sudjEuRmlsdGVyT3BlcmF0b3ISDgoGdmFsdWVzGAMgAygJIo8CCg9GaWx0ZXJhYmxlRmllbGQSDAoEcGF0aBgBIAEoCRINCgVsYWJlbBgCIAEoCRIuCglvcGVyYXRvcnMYAyADKA4yGy5vcmtzdGFjay52MS5GaWx0ZXJPcGVyYXRvchIWCg5hbGxvd2VkX3ZhbHVlcxgEIAMoCRIdChVrZXB0X3doZW5fdW5hdmFpbGFibGUYBSABKAgSEAoIcmVxdWlyZXMYBiABKAkSMAoKdmFsdWVfcnVsZRgHIAEoDjIcLm9ya3N0YWNrLnYxLkZpbHRlclZhbHVlUnVsZRIPCgdpbmRleGVkGAggASgIEgwKBGZsYWcYCSABKAgSFQoNZW5kZWRfbWF0Y2hlcxgKIAEoCCJrCg5MaXN0RmlsdGVyU3BlYxIQCghyZXNvdXJjZRgBIAEoCRIsCgZmaWVsZHMYAiADKAsyHC5vcmtzdGFjay52MS5GaWx0ZXJhYmxlRmllbGQSGQoRdW5hdmFpbGFibGVfZmllbGQYAyABKAkq/AEKDkZpbHRlck9wZXJhdG9yEh8KG0ZJTFRFUl9PUEVSQVRPUl9VTlNQRUNJRklFRBAAEhoKFkZJTFRFUl9PUEVSQVRPUl9FUVVBTFMQARIeChpGSUxURVJfT1BFUkFUT1JfTk9UX0VRVUFMUxACEhYKEkZJTFRFUl9PUEVSQVRPUl9JThADEhwKGEZJTFRFUl9PUEVSQVRPUl9DT05UQUlOUxAEEhoKFkZJTFRFUl9PUEVSQVRPUl9QUkVGSVgQBRIfChtGSUxURVJfT1BFUkFUT1JfQVRfT1JfQUZURVIQBhIaChZGSUxURVJfT1BFUkFUT1JfQkVGT1JFEAcqcAoPRmlsdGVyVmFsdWVSdWxlEiEKHUZJTFRFUl9WQUxVRV9SVUxFX1VOU1BFQ0lGSUVEEAASGgoWRklMVEVSX1ZBTFVFX1JVTEVfTkFNRRABEh4KGkZJTFRFUl9WQUxVRV9SVUxFX09SS0VSX0lEEAI6XgoKZmlsdGVyYWJsZRIfLmdvb2dsZS5wcm90b2J1Zi5NZXNzYWdlT3B0aW9ucxi0hwMgASgLMhsub3Jrc3RhY2sudjEuTGlzdEZpbHRlclNwZWNSCmZpbHRlcmFibGVCpwEKD2NvbS5vcmtzdGFjay52MUILRmlsdGVyUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_descriptor]);
 
 /**
  * FieldFilter is one predicate over one field of the listed object.
@@ -116,9 +116,9 @@ export type FilterableField = Message<"orkstack.v1.FilterableField"> & {
 
   /**
    * indexed: the path names no field of the resource. The server answers it
-   * from its index of open rows, so a row that has ended never matches it,
-   * and it takes equals only. Its values are text, or, with flag, the single
-   * value "true".
+   * from its index and it takes equals only. Its values are text, or, with
+   * flag, the single value "true". A row that has ended never matches it,
+   * unless ended_matches says it does.
    *
    * @generated from field: bool indexed = 8;
    */
@@ -130,6 +130,14 @@ export type FilterableField = Message<"orkstack.v1.FilterableField"> & {
    * @generated from field: bool flag = 9;
    */
   flag: boolean;
+
+  /**
+   * ended_matches, for an indexed field only: what it selects is set when a
+   * row starts and stays true of it, so a row that has ended matches it too.
+   *
+   * @generated from field: bool ended_matches = 10;
+   */
+  endedMatches: boolean;
 };
 
 /**
