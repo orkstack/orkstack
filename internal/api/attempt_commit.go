@@ -85,10 +85,6 @@ func (s *Service) CommitResult(ctx context.Context, req *connect.Request[orkstac
 		return nil, s.commitRefused(ctx, msg, caller, &identity.MintError{Reason: identity.ReasonEngineRefused, Audit: true,
 			Message: fmt.Sprintf("the credential of %q names no Orker", caller.ID)})
 	}
-	if msg.GetResumeScope() != 0 || msg.GetRootScope() != 0 {
-		return nil, s.commitRefused(ctx, msg, caller, &identity.MintError{Reason: identity.ReasonNotAdmitted, Audit: true,
-			Message: "a resumed run's scope is not admitted in this build"})
-	}
 	s.access.init()
 	creq := commitRequestOf(msg)
 	// Step 2. Its refusals come before the caller's permission is known, so
@@ -148,7 +144,8 @@ func (s *Service) CommitResult(ctx context.Context, req *connect.Request[orkstac
 func commitRequestOf(msg *orkstackv1.CommitResultRequest) identity.CommitRequest {
 	r := identity.CommitRequest{Namespace: artifacts.ResolveNamespace(msg.GetNamespace()), RunID: msg.GetRunId(), TaskID: msg.GetTaskId(),
 		Attempt: msg.GetAttempt(), TaskSpecSHA256: msg.GetTaskSpecSha256(), AdmissionSHA256: msg.GetAdmissionSha256(),
-		CommitKey: msg.GetCommitKey(), Commit: msg.GetCommit(), Preflight: msg.GetPreflight()}
+		CommitKey: msg.GetCommitKey(), Commit: msg.GetCommit(), Preflight: msg.GetPreflight(),
+		Scopes: identity.Scopes{Resume: msg.GetResumeScope(), Root: msg.GetRootScope()}}
 	if msg.Item != nil {
 		r.Item = artifacts.Item{Index: msg.GetItem(), Set: true}
 	}

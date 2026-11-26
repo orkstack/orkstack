@@ -414,19 +414,34 @@ type platformEntry struct {
 	nested   bool   // the entry is itself an index
 }
 
+// indexPlatform is an index entry's platform.
+type indexPlatform struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	Variant      string `json:"variant"`
+}
+
+// platformPart is an os, architecture or variant: a name, never a separator.
+var platformPart = regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9._-]*\z`)
+
+// runnable reports whether an index entry names a platform an image runs on: its
+// os is a name and not "unknown" (an attestation), its architecture, where given, is
+// a name, and so is its variant, which is given only beside an architecture. Every
+// reader of an index skips the same entries.
+func (p *indexPlatform) runnable() bool {
+	return p != nil && p.OS != "unknown" && platformPart.MatchString(p.OS) &&
+		(p.Architecture == "" || platformPart.MatchString(p.Architecture)) &&
+		(p.Variant == "" || p.Architecture != "" && platformPart.MatchString(p.Variant))
+}
+
 // runnablePlatforms lists an index's runnable platforms in index order, the
-// entries selectPlatformManifest walks: one whose os is empty or "unknown"
-// (an attestation) is skipped.
+// entries selectPlatformManifest walks.
 func runnablePlatforms(index []byte) []platformEntry {
 	var parsed struct {
 		Manifests []struct {
-			MediaType string `json:"mediaType"`
-			Digest    string `json:"digest"`
-			Platform  *struct {
-				OS           string `json:"os"`
-				Architecture string `json:"architecture"`
-				Variant      string `json:"variant"`
-			} `json:"platform"`
+			MediaType string         `json:"mediaType"`
+			Digest    string         `json:"digest"`
+			Platform  *indexPlatform `json:"platform"`
 		} `json:"manifests"`
 	}
 	if err := json.Unmarshal(index, &parsed); err != nil {
@@ -434,7 +449,7 @@ func runnablePlatforms(index []byte) []platformEntry {
 	}
 	var entries []platformEntry
 	for _, m := range parsed.Manifests {
-		if m.Platform == nil || m.Platform.OS == "" || m.Platform.OS == "unknown" {
+		if !m.Platform.runnable() {
 			continue
 		}
 		platform := m.Platform.OS + "/" + m.Platform.Architecture
@@ -645,26 +660,24 @@ func digestOf(body []byte) string {
 // sha256DigestPattern is a content digest this resolver can verify.
 var sha256DigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
-// selectPlatformManifest picks the FIRST entry, in index order, whose
-// platform.os is present and is not "unknown" — buildx attestation manifests
-// carry os: unknown and are skipped. It reports false when no entry
+// selectPlatformManifest picks the FIRST runnable entry, in index order
+// (indexPlatform.runnable): buildx attestation manifests carry os: unknown
+// and are skipped, as is an entry whose platform is not made of names. It reports false when no entry
 // qualifies, when the selected entry is itself an index, or when it names no
 // sha256 digest this resolver could verify.
 func selectPlatformManifest(index []byte) (string, bool) {
 	var parsed struct {
 		Manifests []struct {
-			MediaType string `json:"mediaType"`
-			Digest    string `json:"digest"`
-			Platform  *struct {
-				OS string `json:"os"`
-			} `json:"platform"`
+			MediaType string         `json:"mediaType"`
+			Digest    string         `json:"digest"`
+			Platform  *indexPlatform `json:"platform"`
 		} `json:"manifests"`
 	}
 	if err := json.Unmarshal(index, &parsed); err != nil {
 		return "", false
 	}
 	for _, m := range parsed.Manifests {
-		if m.Platform == nil || m.Platform.OS == "" || m.Platform.OS == "unknown" {
+		if !m.Platform.runnable() {
 			continue
 		}
 		switch mediaTypeOf(m.MediaType) {

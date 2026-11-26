@@ -420,6 +420,10 @@ type IdentityPlan struct {
 	// CommitWaitSeconds is identity.results.commit_wait as admitted: how long
 	// an attempt waits at its commit for an engine to record its result.
 	CommitWaitSeconds int32 `json:"commit_wait_seconds"`
+	// RootScope is, for a run below a root, the root's resume scope when this
+	// run was started, set by the run that starts it; 0 for a tree never
+	// resumed, and for a root.
+	RootScope uint64 `json:"root_scope,omitzero"`
 	// Grants are the run's grants as admitted, by name; nil when it names
 	// none.
 	Grants map[string]artifacts.GrantSelection `json:"grants,omitempty"`

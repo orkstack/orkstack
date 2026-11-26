@@ -31,9 +31,11 @@ type CommitObserver interface {
 type CommitRequest struct {
 	Namespace, RunID, TaskID string
 	Item                     artifacts.Item
-	Attempt                  int32
-	TaskSpecSHA256           string
-	AdmissionSHA256          string
+	// Scopes are the resume scopes the attempt says it was dispatched under.
+	Scopes          Scopes
+	Attempt         int32
+	TaskSpecSHA256  string
+	AdmissionSHA256 string
 	// CommitKey is the commit key the attempt's input named, under
 	// metadata/commits/.
 	CommitKey string
@@ -68,7 +70,7 @@ type Recorder struct {
 // Admit is step 2: the admission the request names, with the task in its
 // table.
 func (r *Recorder) Admit(ctx context.Context, req CommitRequest) (Admitted, error) {
-	adm, row, err := admitTask(ctx, r.Stores, attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item))
+	adm, row, err := admitTask(ctx, r.Stores, attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item, req.Scopes))
 	if err != nil {
 		return Admitted{}, err
 	}
@@ -89,7 +91,7 @@ type Recorded struct {
 // answered, Created false: a repeat of this attempt, or another attempt
 // that committed first.
 func (r *Recorder) Record(ctx context.Context, a Admitted, req CommitRequest, caller Caller) (Recorded, error) {
-	c := attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item)
+	c := attemptOf(req.Namespace, req.RunID, req.TaskID, req.AdmissionSHA256, req.Item, req.Scopes)
 	held, err := checkAttempt(ctx, attemptChecks{Describe: r.Describe, Starts: r.Starts, Follows: r.Follows}, a.Admission, c,
 		req.Attempt, req.TaskSpecSHA256, caller)
 	if err != nil {
@@ -181,14 +183,15 @@ func (r *Recorder) checkDocument(ctx context.Context, adm artifacts.Admission, r
 }
 
 // commitCoordinates is the commit key and the idempotency key of the
-// attempt the request names.
+// attempt the request names, under its own run's resume scope: a run below a
+// root has its own id and its keys have none.
 func commitCoordinates(req CommitRequest) (key, idempotency string, err error) {
 	if req.Item.Set {
-		key, err = artifacts.ItemCommitKey(req.Namespace, req.RunID, req.TaskID, req.Item.Index)
-		return key, task.ItemIdempotencyKeyFor(req.Namespace, req.RunID, req.TaskID, req.Item.Index), err
+		key, err = artifacts.ScopedItemCommitKey(req.Namespace, req.RunID, req.TaskID, req.Item.Index, req.Scopes.Resume)
+		return key, task.ScopedItemIdempotencyKeyFor(req.Namespace, req.RunID, req.TaskID, req.Item.Index, req.Scopes.Resume), err
 	}
-	key, err = artifacts.CommitKey(req.Namespace, req.RunID, req.TaskID)
-	return key, task.IdempotencyKeyFor(req.Namespace, req.RunID, req.TaskID), err
+	key, err = artifacts.ScopedCommitKey(req.Namespace, req.RunID, req.TaskID, req.Scopes.Resume)
+	return key, task.ScopedIdempotencyKeyFor(req.Namespace, req.RunID, req.TaskID, req.Scopes.Resume), err
 }
 
 func mismatch(format string, args ...any) *MintError {

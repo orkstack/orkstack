@@ -1149,6 +1149,16 @@ its own writes (`internal/api/audit.go`). A record is written once to
   id, before any engine has written that run's `chain.json`, would have the
   new execution taken for the run ([TASK_IDENTITY.md](TASK_IDENTITY.md),
   "Which run a token is for").
+- **An earlier resume's record in place of the latest.** In a resumed run
+  whose results the engine records, a holder of the cluster's write access,
+  which every Orker's cluster credential is unless the deployment narrows it,
+  can have an honest Orker stage an earlier resume's record of a task, or of an
+  approval, once a newer one exists. What it gets is a dependent that works on
+  a result, or an approval's values, the task really had in that run under the
+  same definition and a resume has since replaced: never a record no engine
+  wrote, nor another run's or task's. It gets no earlier start: the engine lets
+  an attempt go only once every task it follows is on record under the resume
+  that decides ([TASK_IDENTITY.md](TASK_IDENTITY.md), "What a task follows").
 - **The Temporal cluster.** Its security is outside OrkStack. Temporal's own
   external requirements are not OrkStack dependencies ([AGENTS.md](../AGENTS.md),
   §13).

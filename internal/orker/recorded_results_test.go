@@ -643,6 +643,64 @@ func TestRecordedRun_ADependentStagesWhatItsProducerReported(t *testing.T) {
 	}
 }
 
+// TestCheckUpstreamRecord_AResumesScopes: in a resumed run a producer's
+// record lies under the scope its result was made in, the base's or a
+// resume's up to the attempt's own, and is held to that scope's key and
+// idempotency key; a scope past the attempt's own, or spelled as no key is,
+// is no record.
+func TestCheckUpstreamRecord_AResumesScopes(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		scope   uint64 // where the record lies
+		idem    uint64 // the scope its idempotency key is of
+		attempt uint64 // the attempt's own
+		edit    func(*orkstackv1.UpstreamRef)
+		staged  bool
+	}{
+		{"a result kept from the base", 0, 0, 9, nil, true},
+		{"a result kept from an earlier resume", 5, 5, 9, nil, true},
+		{"a result of the attempt's own resume", 9, 9, 9, nil, true},
+		{"a later resume's", 12, 12, 9, nil, false},
+		{"a resume's, in a run that names none", 5, 5, 0, nil, false},
+		{"the base's idempotency key at a resume's key", 5, 0, 9, nil, false},
+		{"a resume's idempotency key at the base's key", 0, 5, 9, nil, false},
+		{"scope 0 spelled out", 5, 5, 9, func(up *orkstackv1.UpstreamRef) {
+			up.CommitUri = strings.Replace(up.CommitUri, "/r00000000000000000005/", "/r00000000000000000000/", 1)
+		}, false},
+		{"a scope not spelled as a key spells it", 5, 5, 9, func(up *orkstackv1.UpstreamRef) {
+			up.CommitUri = strings.Replace(up.CommitUri, "/r00000000000000000005/", "/r5/", 1)
+		}, false},
+		{"an item's record", 5, 5, 9, func(up *orkstackv1.UpstreamRef) {
+			up.CommitUri = strings.Replace(up.CommitUri, "/commit.json", "/00001/commit.json", 1)
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := recordedRunInput(t, "build")
+			in.Identity.ResumeScope = tc.attempt
+			store := artifacts.NewMemoryCommitStore()
+			up := upstreamRecord(t, store, in, "compile", true)
+			rec, err := store.Get(ctx, up.GetCommitUri())
+			must.OK(t, err)
+			c := rec.Commit
+			c.IdempotencyKey = task.ScopedIdempotencyKeyFor(in.GetNamespace(), in.GetRunId(), "compile", tc.idem)
+			key, err := artifacts.ScopedCommitKey(in.GetNamespace(), in.GetRunId(), "compile", tc.scope)
+			must.OK(t, err)
+			up.CommitUri, err = artifacts.AttestedCommitURI("mem://store/" + key)
+			must.OK(t, err)
+			store = artifacts.NewMemoryCommitStore()
+			if tc.edit != nil {
+				tc.edit(up)
+			}
+			plant(t, store, up.GetCommitUri(), c)
+			f := (&OCIDispatcher{Commits: store}).checkUpstreamRecord(ctx, in, up)
+			if tc.staged != (f == nil) || (f != nil && f.Reason != ReasonUpstreamNotRecorded) {
+				t.Fatalf("check = %v, want staged %v", f, tc.staged)
+			}
+		})
+	}
+}
+
 // TestRecordedRun_ANestedKeyIsNoRecord: an object under metadata/commits/,
 // where an Orker writes, whose key ends as an engine's record does, is never
 // one: not adopted, not staged, not read as an item, and never the source of

@@ -104,6 +104,43 @@ func AttestedCommitKey(commitKey string) (string, error) {
 	return AttestedPrefix + "/" + rest, nil
 }
 
+// RecordKeyScope is the resume scope a task's record key spells, 0 for none. It
+// says nothing of whether key is one: RecordKey's own rendering at that scope
+// does.
+func RecordKeyScope(key string) uint64 {
+	rest, ok := strings.CutPrefix(key, AttestedPrefix+"/")
+	// {ns}/{run}/{task}/[r{e}/]{leaf}
+	segs := strings.Split(rest, "/")
+	if !ok || len(segs) != 5 {
+		return 0
+	}
+	scope, _ := parseScopeSegment(segs[3])
+	return scope
+}
+
+// IsAttestedURI reports whether uri is a store root then an attested commit
+// key: the twin of a well-formed commit key, and nothing that only holds the
+// prefix somewhere in its path.
+func IsAttestedURI(uri string) bool {
+	i := strings.LastIndex(uri, "/"+AttestedPrefix+"/")
+	if i < 0 {
+		return false
+	}
+	twin, err := AttestedCommitURI(uri[:i+1] + CommitPrefix + uri[i+1+len(AttestedPrefix):])
+	return err == nil && twin == uri
+}
+
+// CommitKeyScope is the resume scope a commit key lies under, 0 for none. A
+// key that is not a commit key is ErrInvalidRecordKey.
+func CommitKeyScope(commitKey string) (uint64, error) {
+	if _, err := AttestedCommitKey(commitKey); err != nil {
+		return 0, err
+	}
+	// {prefix}/{ns}/{run}/{task}/[r{e}/]...
+	scope, _ := parseScopeSegment(strings.Split(strings.TrimPrefix(commitKey, CommitPrefix+"/"), "/")[3])
+	return scope, nil
+}
+
 // AttestedCommitURI maps a commit uri, a store root then a commit key as a
 // task's input names it, to the uri of its attested twin: the same root and
 // the key AttestedCommitKey maps it to. A uri that holds no commit key, or

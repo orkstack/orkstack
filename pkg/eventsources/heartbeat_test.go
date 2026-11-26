@@ -73,6 +73,11 @@ func TestReadHeartbeatDetails_NotItsOwn(t *testing.T) {
 	if got, ok := ReadHeartbeatDetails([]byte(`{"v":1,"epoch":3,"later":{"a":1}}`)); !ok || got.Epoch != 3 {
 		t.Errorf("a later field: %+v, %v", got, ok)
 	}
+	// An instant no beat can carry is none, as it is once beaten again.
+	got, ok := ReadHeartbeatDetails([]byte(`{"v":1,"epoch":3,"heldSince":"0000-01-01T00:00:00Z","refusedSince":"0000-12-31T23:59:59Z","broker":{"checkedAt":"0000-06-01T00:00:00Z"}}`))
+	if !ok || !got.HeldSince.IsZero() || !got.RefusedSince.IsZero() || !got.Broker.CheckedAt.IsZero() {
+		t.Errorf("an instant before year 1: %+v, %v", got, ok)
+	}
 }
 
 func FuzzReadHeartbeatDetails(f *testing.F) {
@@ -87,7 +92,8 @@ func FuzzReadHeartbeatDetails(f *testing.F) {
 			return
 		}
 		again, ok := ReadHeartbeatDetails(got.Encode())
-		if !ok || again.Epoch != got.Epoch || !again.RefusedSince.Equal(got.RefusedSince) || !again.HeldSince.Equal(got.HeldSince) {
+		if !ok || again.Epoch != got.Epoch || !again.RefusedSince.Equal(got.RefusedSince) || !again.HeldSince.Equal(got.HeldSince) ||
+			!again.Since.Equal(got.Since) || !again.ConfirmedAt.Equal(got.ConfirmedAt) || !again.LastAcceptedAt.Equal(got.LastAcceptedAt) || !again.LastPollOkAt.Equal(got.LastPollOkAt) {
 			t.Fatalf("%q read as %+v, and its own encoding as %+v, %v", raw, got, again, ok)
 		}
 	})

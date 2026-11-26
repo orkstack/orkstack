@@ -130,6 +130,47 @@ func TestCheckUpstreamValues(t *testing.T) {
 	}
 }
 
+// TestCheckUpstreamValues_AResumesScopes: in a resumed run an awaited or a
+// composed upstream's record lies under the scope it was made in, the base's
+// or a resume's up to the attempt's own, and says that scope itself.
+func TestCheckUpstreamValues_AResumesScopes(t *testing.T) {
+	ctx := context.Background()
+	for _, kind := range []artifacts.RecordKind{artifacts.RecordResolution, artifacts.RecordComposed} {
+		for _, tc := range []struct {
+			name    string
+			at      uint64 // where the ref says the record lies
+			says    uint64 // the scope the record says
+			attempt uint64
+			staged  bool
+		}{
+			{"the base's", 0, 0, 9, true},
+			{"an earlier resume's", 5, 5, 9, true},
+			{"the attempt's own", 9, 9, 9, true},
+			{"a later resume's", 12, 12, 9, false},
+			{"a resume's, in a run that names none", 5, 5, 0, false},
+			{"the base's record, at a resume's key", 5, 0, 9, false},
+			{"a resume's record, at the base's key", 0, 5, 9, false},
+		} {
+			in, v := recordedRunInput(t, "build"), newValuesRecords(t)
+			in.Identity.ResumeScope = tc.attempt
+			up := v.record(t, in, kind, func(r *orkstackv1.RecordedValues) { r.ResumeScope = tc.says })
+			base, err := artifacts.RecordKey(kind, in.GetNamespace(), in.GetRunId(), "gate", 0)
+			must.OK(t, err)
+			at, err := artifacts.RecordKey(kind, in.GetNamespace(), in.GetRunId(), "gate", tc.at)
+			must.OK(t, err)
+			body, err := os.ReadFile(filepath.Join(v.dir, filepath.FromSlash(base)))
+			must.OK(t, err)
+			must.OK(t, os.MkdirAll(filepath.Dir(filepath.Join(v.dir, filepath.FromSlash(at))), 0o755))
+			must.OK(t, os.WriteFile(filepath.Join(v.dir, filepath.FromSlash(at)), body, 0o644))
+			up.RecordUri = "mem://store/" + at
+			f := (&OCIDispatcher{Records: v, CommitRoot: "mem://store"}).checkUpstreamValues(ctx, in, up)
+			if tc.staged != (f == nil) || (f != nil && f.Reason != ReasonUpstreamNotRecorded) {
+				t.Errorf("kind %v, %s: %v, want staged %v", kind, tc.name, f, tc.staged)
+			}
+		}
+	}
+}
+
 // TestCheckReceived: what a run received is staged only as the engine answers
 // it, and nothing of it unasked.
 func TestCheckReceived(t *testing.T) {

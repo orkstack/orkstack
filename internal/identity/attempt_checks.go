@@ -23,14 +23,13 @@ type admissionReader interface {
 type attemptCoords struct {
 	Namespace, RunID, TaskID, AdmissionSHA256 string
 	Item                                      artifacts.Item
-	// Scopes are the resume scopes the attempt names; none in this build,
-	// whose API refuses a request that names one, so a run that was resumed
-	// is refused at every attempt after.
+	// Scopes are the resume scopes the attempt names, held against its
+	// root's resumes and never believed (FollowsCheck.CheckScope).
 	Scopes Scopes
 }
 
-func attemptOf(namespace, runID, taskID, admissionSHA256 string, item artifacts.Item) attemptCoords {
-	return attemptCoords{Namespace: namespace, RunID: runID, TaskID: taskID, AdmissionSHA256: admissionSHA256, Item: item}
+func attemptOf(namespace, runID, taskID, admissionSHA256 string, item artifacts.Item, scopes Scopes) attemptCoords {
+	return attemptCoords{Namespace: namespace, RunID: runID, TaskID: taskID, AdmissionSHA256: admissionSHA256, Item: item, Scopes: scopes}
 }
 
 // admitTask is step 2's shared part: the admission record the request

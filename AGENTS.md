@@ -1829,6 +1829,12 @@ includes:
 - a resumed run, including a second resume, a continued run and a run with
   task-only gates: `RUN_RESUMED`, read-back, `RUN_RESULTS_KEPT`, steps 4.1–4.4
   (E85's resume holder), every earlier holder released;
+- a resumed run: an engine killed during its read-back, an Orker killed under
+  a task run again, concurrent confirms, a service killed before and after the
+  reset, a forged or misplaced reset, and a container, an attempt or a pin of
+  the run still held: one reset, no kept task run again, nothing beside a
+  container still running unless its attempt was acknowledged, and an explicit
+  ending;
 - a release during a frontend outage;
 - a cancel and a supersede racing a grant;
 - a Worker Deployment rollout with runs queued and a gate continuing as new;

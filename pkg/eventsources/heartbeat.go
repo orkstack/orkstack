@@ -75,12 +75,10 @@ func (d HeartbeatDetails) Encode() []byte {
 	d.V = heartbeatFormat
 	d.Phase, d.State, d.Reason = oneLine(d.Phase, 32), oneLine(d.State, 32), oneLine(d.Reason, 96)
 	d.Held, d.Image = oneLine(d.Held, 64), oneLine(d.Image, 384)
-	for _, at := range []*time.Time{&d.Since, &d.ConfirmedAt, &d.LastAcceptedAt, &d.LastPollOkAt, &d.HeldSince, &d.RefusedSince} {
-		*at = encodable(*at)
-	}
+	d.bound()
 	if d.Broker != nil {
 		b := *d.Broker
-		b.Object, b.CheckedAt = oneLine(b.Object, 200), encodable(b.CheckedAt)
+		b.Object = oneLine(b.Object, 200)
 		d.Broker = &b
 	}
 	var warnings []string
@@ -110,7 +108,23 @@ func ReadHeartbeatDetails(raw []byte) (HeartbeatDetails, bool) {
 	if err := json.Unmarshal(raw, &d); err != nil || d.V != heartbeatFormat {
 		return HeartbeatDetails{}, false
 	}
+	// An instant Encode would not write is none, as it is in what is beaten
+	// next: a reader and a writer hold one bound.
+	d.bound()
 	return d, true
+}
+
+// bound holds every instant of d to what Encode writes, a copy of its broker's
+// included.
+func (d *HeartbeatDetails) bound() {
+	for _, at := range []*time.Time{&d.Since, &d.ConfirmedAt, &d.LastAcceptedAt, &d.LastPollOkAt, &d.HeldSince, &d.RefusedSince} {
+		*at = encodable(*at)
+	}
+	if d.Broker != nil {
+		b := *d.Broker
+		b.CheckedAt = encodable(b.CheckedAt)
+		d.Broker = &b
+	}
 }
 
 // oneLine is s as one printable line of at most limit bytes.

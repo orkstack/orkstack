@@ -370,9 +370,48 @@ func TestResolveOrkflow_AnUnreadableOtherPlatformIsNamed(t *testing.T) {
 	}
 }
 
+// TestRunnablePlatforms_NamesOnly: an entry whose os, architecture or variant is not a
+// name is no runnable platform, and the first runnable one is the one whose config is
+// read.
+func TestRunnablePlatforms_NamesOnly(t *testing.T) {
+	a, b := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	entry := func(digest, platform string) string {
+		return `{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"` + digest + `","platform":` + platform + `}`
+	}
+	for name, tc := range map[string]struct {
+		first string
+		want  []string
+	}{
+		"an os that is a separator": {`{"os":"/"}`, []string{"linux/amd64"}},
+		"an os with a separator":    {`{"os":"linux/x","architecture":"amd64"}`, []string{"linux/amd64"}},
+		"an architecture with one":  {`{"os":"linux","architecture":"/"}`, []string{"linux/amd64"}},
+		"a variant with one":        {`{"os":"linux","architecture":"arm64","variant":"v8/"}`, []string{"linux/amd64"}},
+		"a space":                   {`{"os":"linux","architecture":"amd 64"}`, []string{"linux/amd64"}},
+		"a variant of nothing":      {`{"os":"linux","variant":"v8"}`, []string{"linux/amd64"}},
+		"an attestation":            {`{"os":"unknown","architecture":"unknown"}`, []string{"linux/amd64"}},
+		"one that is":               {`{"os":"linux","architecture":"arm64","variant":"v8"}`, []string{"linux/arm64/v8", "linux/amd64"}},
+		"one with no architecture":  {`{"os":"windows"}`, []string{"windows/", "linux/amd64"}},
+		"names of dots and dashes":  {`{"os":"linux","architecture":"x86_64-v2.1"}`, []string{"linux/x86_64-v2.1", "linux/amd64"}},
+	} {
+		index := []byte(`{"manifests":[` + entry(a, tc.first) + `,` + entry(b, `{"os":"linux","architecture":"amd64"}`) + `]}`)
+		var got []string
+		for _, e := range runnablePlatforms(index) {
+			got = append(got, e.platform)
+		}
+		want := b
+		if len(tc.want) == 2 {
+			want = a
+		}
+		if digest, ok := selectPlatformManifest(index); !slices.Equal(got, tc.want) || !ok || digest != want {
+			t.Errorf("%s: %q, and the config of %s, %v", name, got, digest, ok)
+		}
+	}
+}
+
 // FuzzRunnablePlatforms: an index a registry serves is untrusted; the list of
-// its runnable platforms never panics, never holds an attestation entry or
-// one with no os, and never holds more entries than the index lists.
+// its runnable platforms never panics, never holds an attestation entry, one
+// with no os or one whose parts are not names, never holds more entries than
+// the index lists, and begins with the entry whose config is read.
 func FuzzRunnablePlatforms(f *testing.F) {
 	for _, seed := range []string{
 		`{"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:` + strings.Repeat("a", 64) +
@@ -388,8 +427,13 @@ func FuzzRunnablePlatforms(f *testing.F) {
 		if len(entries) > bytes.Count(index, []byte("{")) {
 			t.Fatalf("runnablePlatforms(%q) listed %d platforms", index, len(entries))
 		}
+		// The config read is the first runnable platform's, where it is one to read.
+		if digest, ok := selectPlatformManifest(index); ok && (len(entries) == 0 || entries[0].digest != digest) {
+			t.Fatalf("selectPlatformManifest(%q) read %s, the first runnable platform is %+v", index, digest, entries)
+		}
 		for _, entry := range entries {
-			if entry.platform == "" || strings.HasPrefix(entry.platform, "/") || strings.HasPrefix(entry.platform, "unknown/") {
+			if entry.platform == "" || strings.HasPrefix(entry.platform, "/") || strings.HasPrefix(entry.platform, "unknown/") ||
+				strings.Count(entry.platform, "/") > 2 || strings.Contains(entry.platform, "//") {
 				t.Fatalf("runnablePlatforms(%q) listed the platform %q", index, entry.platform)
 			}
 			if entry.platform != SafeReason(entry.platform) {

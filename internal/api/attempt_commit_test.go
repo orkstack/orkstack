@@ -363,3 +363,30 @@ func TestCommitResult_IsCounted(t *testing.T) {
 type countedCommits map[string]int
 
 func (c countedCommits) Committed(reason string) { c[reason]++ }
+
+// TestAttemptRequests_NameTheirScopes: a mint and a commit carry the resume
+// scopes their request names to the checks that hold them, and neither
+// opens a budget of its own.
+func TestAttemptRequests_NameTheirScopes(t *testing.T) {
+	want := identity.Scopes{Resume: 5, Root: 7}
+	mint := mintRequestOf(&orkstackv1.MintAttemptTokensRequest{RunId: "ork-1", TaskId: "build", Attempt: 1, ResumeScope: 5, RootScope: 7})
+	commit := commitRequestOf(&orkstackv1.CommitResultRequest{RunId: "ork-1", TaskId: "build", Attempt: 1, ResumeScope: 5, RootScope: 7})
+	if mint.Scopes != want || commit.Scopes != want {
+		t.Fatalf("scopes: mint %+v, commit %+v; want %+v", mint.Scopes, commit.Scopes, want)
+	}
+	plain := mintRequestOf(&orkstackv1.MintAttemptTokensRequest{RunId: "ork-1", TaskId: "build", Attempt: 1})
+	if attemptKey(mint) != attemptKey(plain) || commitAttemptKey(commit) != attemptKey(plain) {
+		t.Fatal("a scope named in a request opens a budget of its own")
+	}
+}
+
+// TestCommitResult_AScopeThisEngineCannotCheckIsRefused: an engine with no
+// check of a run's resumes records nothing of an attempt that names one.
+func TestCommitResult_AScopeThisEngineCannotCheckIsRefused(t *testing.T) {
+	s, req, _ := commitService(t, committers, commitBinding("pool:main"))
+	req.ResumeScope = 5
+	_, err := s.CommitResult(asOrker(authn.ModeEnforce, anOrker), connect.NewRequest(req))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(errString(err), identity.ReasonEngineRefused) {
+		t.Fatalf("err = %v, want %s", err, identity.ReasonEngineRefused)
+	}
+}

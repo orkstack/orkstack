@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"v\":1,\"judging\":1,\"phase\":\"0\",\"lanes\":{\"oldestStepSeconds\":1},\"broker\":{\"checkedAt\":\"0001-01-01T00:00:01Z\",\"object\":\"ze\"},\"warnings\":[\"8E\"],\"image\":\"ghcn7\",\"held\":\"*8rpec\",\"heldSince\":\"0000-01-01T00:00:00Z\",\"000000000000\":\"00000000000000000000\"}")

@@ -2535,6 +2535,7 @@ func (s *runState) taskDispatchInput(
 	}
 	input.IdempotencyKey = key
 	input.CommitUri = commitURI
+	s.nameScope(input, s.taskRuns[id].GetResultEpoch())
 	// A failure handler is told how its needs ended. Set before the size
 	// check, so the bounded errors count toward the wire bound; unset for
 	// every other task, whose payload stays byte-identical.
@@ -2689,7 +2690,7 @@ func (s *runState) executeTaskInput(
 // admitted run, whatever the task holds. Everything in it comes from the plan
 // the submitting engine pinned and from the definition, copied verbatim, so
 // an Orker that hashes its input computes the digest the admission recorded.
-// The scopes are 0: this release resumes no run under a new scope.
+// The attempt's own resume scope is its dispatch's to name (nameScope).
 func (s *runState) identityContextFor(t *orkstackv1.Task) *orkstackv1.IdentityContext {
 	id := s.plan.Identity
 	if id == nil {
@@ -2702,6 +2703,7 @@ func (s *runState) identityContextFor(t *orkstackv1.Task) *orkstackv1.IdentityCo
 		Grants:          IdentityGrants(t, id.Grants),
 		AdmissionSha256: id.AdmissionSHA256,
 		DigestVersion:   id.SpecVersion,
+		RootScope:       id.RootScope,
 
 		CommitWaitSeconds: id.CommitWaitSeconds,
 	}

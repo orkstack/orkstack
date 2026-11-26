@@ -5,6 +5,7 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -311,6 +312,12 @@ func (s *runState) readBack(ctx workflow.Context, b *orkstackv1.ResumeBlock, uni
 		entry, err := adoptEntryOf(s.wf, s.plan.CommitRoot, s.runID, s.tasks[id], int32(u.Item), int64(u.Epoch))
 		if err != nil {
 			return 0, 0, temporal.NewNonRetryableApplicationError(err.Error(), "INVALID_COMMIT_KEY", err)
+		}
+		if s.plan.Identity != nil {
+			// What the engine recorded, and nothing an Orker committed.
+			if entry.CommitUri, err = artifacts.AttestedCommitURI(entry.GetCommitUri()); err != nil {
+				return 0, 0, s.readBackFailed(ctx, adoptedUnit(entry), err)
+			}
 		}
 		entries = append(entries, entry)
 		sizes = append(sizes, u.EncodedSize)

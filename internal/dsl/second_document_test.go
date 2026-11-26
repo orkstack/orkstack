@@ -28,6 +28,9 @@ var secondDocumentCases = []struct {
 	{"content on the marker's line", singleOrkflow + "--- {name: b}\n", 8},
 	{"a document after an end marker, with no start marker", singleOrkflow + "...\nname: b\n", 9},
 	{"a start marker after an end marker", singleOrkflow + "...\n---\nname: b\n", 9},
+	{"a marker after a folded scalar at the root", ">\n0\n---", 3},
+	{"a marker after a folded scalar at the root, CR line ends", ">\r0\r---", 3},
+	{"a marker after a literal scalar at the root, LS line ends", "|\u20280\u2028---", 3},
 	{"CRLF line ends", strings.ReplaceAll(singleOrkflow, "\n", "\r\n") + "---\r\nname: b\r\n", 8},
 }
 

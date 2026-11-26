@@ -48,6 +48,49 @@ func planCarriesRecords(plan RunPlan) bool {
 		b.MissConfirmMS > 0 && b.ReaskInitialMS > 0 && b.ReaskMaxMS >= b.ReaskInitialMS && b.AttemptMarginMS >= 0
 }
 
+// resumeScope is the resume scope task id's result is made in, or was: its
+// row's, 0 before a resume and in a run below a root, whose ids are its own.
+func (s *runState) resumeScope(id string) uint64 {
+	return uint64(max(s.taskRuns[id].GetResultEpoch(), 0))
+}
+
+// rootScope is the root's resume scope when this run below it was started; 0
+// for a root.
+func (s *runState) rootScope() uint64 {
+	if s.plan.Identity == nil {
+		return 0
+	}
+	return s.plan.Identity.RootScope
+}
+
+// nameScope names the resume input's attempt is dispatched under, where the
+// engine records its result: the scope its keys are made with.
+func (s *runState) nameScope(input *orkstackv1.ExecuteTaskInput, epoch int64) {
+	if input.GetIdentity() != nil {
+		input.Identity.ResumeScope = uint64(max(epoch, 0))
+	}
+}
+
+// nameRootScope names, on the plan composed task id's child is started with,
+// the root's resume scope: this root's own when it starts the child, and for a
+// run below one the scope it was itself started under. The identity is
+// copied: the planned one is the replayed plan's.
+func (s *runState) nameRootScope(childPlan *RunPlan, id string) {
+	if childPlan.Identity == nil {
+		return
+	}
+	scope := s.resumeScope(id)
+	if s.isChildRun() {
+		scope = s.rootScope()
+	}
+	if scope == childPlan.Identity.RootScope {
+		return
+	}
+	own := *childPlan.Identity
+	own.RootScope = scope
+	childPlan.Identity = &own
+}
+
 // recordContext is the options of the activities that make a record, from the
 // run's own budget.
 func (s *runState) recordContext(ctx workflow.Context) workflow.Context {
@@ -84,7 +127,8 @@ func (s *runState) recordComposed(ctx workflow.Context, id string, raw []byte, c
 	var got RecordedValuesResult
 	recordCtx := s.recordContext(ctx)
 	err = s.getLocal(recordCtx, workflow.ExecuteLocalActivity(recordCtx, ActivityRecordComposed, RecordComposedRequest{
-		Namespace: artifacts.ResolveNamespace(s.wf.GetNamespace()), RunID: s.runID, AdmissionSHA256: s.plan.Identity.AdmissionSHA256, TaskID: id, Input: input,
+		Namespace: artifacts.ResolveNamespace(s.wf.GetNamespace()), RunID: s.runID, AdmissionSHA256: s.plan.Identity.AdmissionSHA256, TaskID: id,
+		ResumeScope: s.resumeScope(id), RootScope: s.rootScope(), Input: input,
 		ChildAdmissionSHA256: admission, ValuesSHA256: hex.EncodeToString(sum[:]), Spacings: s.plan.Identity.RecordBudget.Spacings(),
 	}), &got)
 	if err != nil {
@@ -132,7 +176,7 @@ func (s *runState) recordOutputs(ctx workflow.Context, returned []*orkstackv1.Na
 		names[a.GetTaskId()] = true
 	}
 	req := RecordOutputsRequest{Namespace: artifacts.ResolveNamespace(s.wf.GetNamespace()), RunID: s.runID, AdmissionSHA256: s.plan.Identity.AdmissionSHA256,
-		Input: input, MaxBytes: s.plan.Limits.Proto().GetValuesMaxBytes(), Spacings: s.plan.Identity.RecordBudget.Spacings()}
+		RootScope: s.rootScope(), Input: input, MaxBytes: s.plan.Limits.Proto().GetValuesMaxBytes(), Spacings: s.plan.Identity.RecordBudget.Spacings()}
 	for _, id := range slices.Sorted(maps.Keys(names)) {
 		if ref := s.results[id].GetValuesRef(); ref.GetSha256() != "" && s.taskRuns[id].GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
 			req.Offered = append(req.Offered, ComposeUpstream{TaskID: id, URI: ref.GetUri(), SHA256: ref.GetSha256()})
@@ -227,7 +271,7 @@ func (s *runState) recordURI(id string) string {
 	if s.plan.CommitRoot == "" {
 		return "" // as commitFor's
 	}
-	key, err := artifacts.RecordKey(kind, artifacts.ResolveNamespace(s.wf.GetNamespace()), s.runID, id, 0)
+	key, err := artifacts.RecordKey(kind, artifacts.ResolveNamespace(s.wf.GetNamespace()), s.runID, id, s.resumeScope(id))
 	if err != nil {
 		return "" // no such task: the Orker refuses a ref with no record
 	}
