@@ -14,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -34,6 +35,11 @@ func (s *resumeStack) admittedPlan() engine.RunPlan {
 	budget := engine.DefaultRecordBudget
 	plan.Identity = &engine.IdentityPlan{AdmissionSHA256: strings.Repeat("a", 64), ValueRecords: 1, RecordBudget: &budget,
 		ResolutionsPerPass: engine.DefaultResolutionsPerPass, NonesPerAwait: engine.DefaultNonesPerAwait}
+	// A run that holds an identity was started by someone: here a person who
+	// submitted it, verified, as SubmitRun records one. A resume refuses a
+	// start that is neither a person's nor an object's.
+	plan.Origin = engine.OriginFromProto(&orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT,
+		Principal: "alice", PrincipalVerified: true, AuthMethod: authn.MethodOIDC})
 	return plan
 }
 

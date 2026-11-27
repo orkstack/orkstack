@@ -276,7 +276,8 @@ func newResumeFixture(t *testing.T, change func(*resumeFixture)) *resumeFixture 
 	t.Helper()
 	f := &resumeFixture{
 		run: &orkstackv1.Run{Id: "ork-r", OrkflowName: "wf", OrkflowVersion: "1", Status: orkstackv1.Status_STATUS_FAILED,
-			Error: &orkstackv1.Error{Code: "RUN_FAILED"},
+			Error:  &orkstackv1.Error{Code: "RUN_FAILED"},
+			Origin: &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT},
 			TaskRuns: []*orkstackv1.TaskRun{
 				{TaskId: "a", Status: orkstackv1.Status_STATUS_SUCCEEDED},
 				{TaskId: "b", Status: orkstackv1.Status_STATUS_FAILED},

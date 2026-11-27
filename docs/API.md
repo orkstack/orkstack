@@ -1831,7 +1831,7 @@ Orkflow it binds are fixed when it is created.
 | `asks_for` | [`AsksFor`](#asksfor) | asks_for is output only: what the Orkflow asks for now, as a consent digest. |
 | `consented` | [`ConsentView`](#consentview) | consented is output only: the consent recorded with the binder. |
 | `secrets` | repeated [`SecretRef`](#secretref) | secrets are files the instance's container receives, as a task's. |
-| `identities` | repeated [`IdentityRef`](#identityref) | identities and credentials are as a task's; refused until task identity is available. |
+| `identities` | repeated [`IdentityRef`](#identityref) | identities and credentials are as a task's; refused on a source, which holds none yet. |
 | `credentials` | repeated [`CredentialRef`](#credentialref) |  |
 | `env` | map&lt;`string`, `string`&gt; | env is environment for the container; configuration, never a secret. |
 | `service_revision` | `int64` | service_revision is output only: it rises when what the source's containers are or hold changes (uses, with, env, secrets, identities, credentials, resources, pool, concurrency, delivery), so its containers are replaced. |
@@ -3289,7 +3289,7 @@ answer is the TaskAttempt record the Orker writes.
 | `store_outage_wait` | [`StoreOutageWait`](#storeoutagewait) | store_outage_wait is set when this attempt is waiting out an object storage outage: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, at least one Orker of its pool is cordoned only because the store does not answer it, and no Orker of the pool takes new tasks. Derived on read like capacity_wait, and unset for the same reasons. The attempt has used nothing while it waits, and starts once the store answers. |
 | `usage` | [`LiveUsage`](#liveusage) | usage is the attempt's latest CPU and memory, from its Orker's last heartbeat, or why there is none. |
 | `reserved` | [`ReservedResources`](#reservedresources) | reserved is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `identity` | repeated [`LiveIdentity`](#liveidentity) | identity is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `identity` | repeated [`LiveIdentity`](#liveidentity) | identity is each identity the attempt holds now, by name, with its state; never a token. |
 
 ### LiveIdentity
 
@@ -3500,7 +3500,7 @@ nothing still has one namespace, and every orkflow that names none is in it.
 | `require_signed_by` | `string` | require_signed_by names a signer every image executed in this namespace must satisfy: "cosign:&lt;key-name>", where &lt;key-name> is one of the deployment's ImagePolicy.signing_keys. Unset means no signature is required, which is what every namespace has today and what an upgrade preserves. A namespace may only TIGHTEN the deployment policy: this is its one field for doing so, and there is none for loosening.<br><br>It is enforced in the three places an image passes: at apply and validate, with the file in hand (a field-anchored issue on tasks[i].uses); at submit, before a run id is minted, which catches a definition stored before the requirement existed; and by the Orker at dispatch, which verifies the signature itself against the key the run pinned at submit. Only "cosign:" exists; it is a closed set, not an extension point (AGENTS.md §13). |
 | `budget` | [`Budget`](#budget) | budget bounds this namespace's reserved consumption over a rolling period. Unset means unbounded, which is what every namespace has today and what an upgrade preserves.<br><br>An enforced budget is checked in exactly one place — the admission gate in SubmitRun's preparation, after the hold and max_running — by reading the namespace's usage over the trailing period. That read is a read-then-act with no lock, cached for at most ORK_USAGE_CACHE_TTL, and counts a run only once it has finished, so enforcement is best-effort by a bounded margin: the runs that finished inside one cache lifetime, every run still in flight, and submits racing the check. A lock would remove the margin and AGENTS.md §2.1 forbids building one. |
 | `fair_share_weight` | `double` | fair_share_weight is this namespace's share of dispatch when tasks of several namespaces wait for the same pool's Orkers: every task of a run carries its namespace as a fairness key, and the cluster dispatches the keys in proportion to their weights. 0, the default, is a weight of 1; otherwise from 0.001 to 1000.<br><br>It is pinned in each run's plan at submit, so a change applies to runs submitted after it and never reorders work already waiting. It takes effect only on a cluster whose operator enabled fair dispatch (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch is first in, first out, whatever the weights. |
-| `identity` | [`NamespaceIdentity`](#namespaceidentity) | identity is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `identity` | [`NamespaceIdentity`](#namespaceidentity) | identity is the namespace's identity policy: the audiences and grants its tasks may hold (docs/TASK_IDENTITY.md). |
 
 ### NamespaceHold
 
@@ -5040,8 +5040,8 @@ appears in a proto message, in Temporal history, or in the archive.
 |---|---|---|
 | `name` | `string` | name is the file name the workload reads under /orkstack/input/secrets/. Validated: ^[A-Za-z0-9._-]{1,128}$. |
 | `source` | `string` | source is an Orker-resolvable locator, e.g. "env:DB_PASSWORD" or "file:/etc/orkstack/secrets/db". Orker policy decides which schemes exist. |
-| `grant` | `string` | grant is set from identity (E83); unset until it lands (v0.4.0 proto batch). |
-| `ciphertext` | `string` | ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+| `grant` | `string` | grant names the namespace grant a provider secret is read under; empty for one of the Orker's own sources. |
+| `ciphertext` | `string` | ciphertext is the base64 a provider decrypts for this secret, read under its grant; empty for one that is read, not decrypted. |
 | `unmasked` | `bool` | unmasked is the DSL's `mask: false`: the value is neither masked in the task's logs nor looked for in its values.json. Absent means masked. A value is unmasked only when every secret holding it says so. |
 
 ### SeenPrincipal
@@ -5411,7 +5411,7 @@ execution on an Orker, and an activity is an OCI image.
 | `devices` | repeated `string` | devices names the operator-defined profiles the task's container gets (devices:), never a device path. |
 | `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts are a composed task's artifacts: bindings, one per artifact input of the child Orkflow, sorted by input. The engine resolves each from a recorded result at child start and hands the child a reference, never the bytes. Part of canonicalOrkflow(Task) ONLY when set. |
 | `input_artifacts` | repeated `string` | input_artifacts names, sorted, the artifact inputs of this task's Orkflow that its fields name literally ({{ artifact "_inputs/&lt;name>" }}); only those are staged for it, under the reserved producer _inputs. Part of canonicalOrkflow(Task) ONLY when set. |
-| `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `identities` | repeated [`IdentityRef`](#identityref) | identities are the tokens the task holds, one for each audience, minted for each attempt (docs/TASK_IDENTITY.md). |
 | `credentials` | repeated [`CredentialRef`](#credentialref) | credentials are the credentials the task holds, issued for each attempt by the namespace's grants (docs/PROVIDERS.md). In the canonical definition only when set. |
 | `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88's task-level limits; unset until they land. |
 | `device_contracts` | map&lt;`string`, `string`&gt; | device_contracts maps a profile the task names in devices to the contract label the task needs of it: the image's declaration, or the author's `name@label`. Written at create, only when non-empty. |
@@ -5455,7 +5455,7 @@ change what the attempt itself reported.
 | `timing` | [`AttemptTiming`](#attempttiming) | timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker never writes it. |
 | `profiles` | repeated [`EffectiveProfile`](#effectiveprofile) | profiles are the profiles the attempt ran under. |
 | `measured` | [`MeasuredUsage`](#measuredusage) | measured is what the attempt's container used, as its cgroup reported it. Unset on a record an Orker older than v0.4.0 wrote. |
-| `identities` | repeated [`AttemptIdentity`](#attemptidentity) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `identities` | repeated [`AttemptIdentity`](#attemptidentity) | identities are the tokens this attempt was issued, by name, as its Orker recorded them; never a token. |
 | `credentials` | repeated [`AttemptCredential`](#attemptcredential) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
 | `masked_occurrences` | `int64` | masked_occurrences is how many runs of bytes the attempt's masker replaced with `***` in its two streams: a count, never which secret or where. 0 when nothing was masked. |
 

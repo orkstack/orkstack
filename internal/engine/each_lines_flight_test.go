@@ -123,11 +123,14 @@ func TestEachLines_NotRedispatchedWhileIndexing(t *testing.T) {
 
 // TestEachLines_FailFastCollectsIndex: a sibling that fails while the index
 // is in flight fails the run with its own reason; the index is collected,
-// the fan-out never expands and no item starts.
+// the fan-out never expands and no item starts. The sibling fails only once
+// the index is in flight: both are dispatched in one pass, and a sibling that
+// failed first would end the run before the index's activity ever ran.
 func TestEachLines_FailFastCollectsIndex(t *testing.T) {
-	sideRan := make(chan struct{})
-	var once sync.Once
+	indexing, sideRan := make(chan struct{}), make(chan struct{})
+	var entered, once sync.Once
 	h := newLinesHarness(t, func(ctx context.Context, _ *orkstackv1.IndexEachLinesInput) (*orkstackv1.IndexEachLinesResult, error) {
+		entered.Do(func() { close(indexing) })
 		select {
 		case <-sideRan:
 		case <-ctx.Done():
@@ -143,6 +146,13 @@ func TestEachLines_FailFastCollectsIndex(t *testing.T) {
 		}
 	}, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetTaskId() == "side0" {
+			select {
+			case <-indexing:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("the index was never in flight while side0 ran")
+			}
 			once.Do(func() { close(sideRan) })
 			return nil, exploded("side")
 		}

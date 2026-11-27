@@ -1928,7 +1928,8 @@ export type LiveAttempt = Message<"orkstack.v1.LiveAttempt"> & {
   reserved?: ReservedResources | undefined;
 
   /**
-   * identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   * identity is each identity the attempt holds now, by name, with its
+   * state; never a token.
    *
    * @generated from field: repeated orkstack.v1.LiveIdentity identity = 24;
    */

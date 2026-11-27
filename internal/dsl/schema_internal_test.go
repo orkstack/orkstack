@@ -444,7 +444,6 @@ func refusedOn(err error, field string, line int) bool {
 // and D — and each class excuses at least one pair the compiler accepted, so
 // a class goes stale when the compiler tightens.
 func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
-	taskIdentityFor(t)
 	b, _ := buildOrkflowSchema()
 	tree := orkflowSchemaTree(t)
 	contexts := slots()
@@ -505,7 +504,6 @@ func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
 // absence fails Compile; a key not required compiles absent. uses is
 // required by the task kind (the else branch), not by an annotation.
 func TestOrkflowSchema_RequiredKeysAreRequiredByTheCompiler(t *testing.T) {
-	taskIdentityFor(t)
 	annotations := orkflowAnnotations()
 	tree := orkflowSchemaTree(t)
 	for path, ctx := range slots() {
@@ -654,14 +652,4 @@ func TestOrkflowSchema_DescriptionsAreDSLText(t *testing.T) {
 			t.Errorf("task key %s has no description", path)
 		}
 	}
-}
-
-// taskIdentityFor makes task identity available for t, so the schema's
-// identity keys are held to what the compiler would accept once it is; t
-// must not be parallel.
-func taskIdentityFor(t *testing.T) {
-	t.Helper()
-	was := taskIdentityAvailable
-	taskIdentityAvailable = true
-	t.Cleanup(func() { taskIdentityAvailable = was })
 }

@@ -157,9 +157,6 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 		"keep the temporary workspaces for inspection")
 	cmd.Flags().BoolVar(&identity, "with-identity", false,
 		"also check that the image reads an identity's files through current and sees a refresh swap them")
-	if !dsl.TaskIdentityAvailable() {
-		_ = cmd.Flags().MarkHidden("with-identity")
-	}
 	return cmd
 }
 

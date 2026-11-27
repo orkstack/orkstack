@@ -106,6 +106,41 @@ stack first (`make down`), since an engine refuses to start below the mode a
 deployment's bucket records, and lowering it is `orkctl admin auth lower`
 (docs/AUTHENTICATION.md).
 
+### Task identity on the development stack
+
+With `IDENTITY=1`, the default, a task may hold an identity
+([docs/TASK_IDENTITY.md](./docs/TASK_IDENTITY.md)). An Orker serves task
+identity only with a storage key scoped to its own prefixes, so `make up`
+gives this worktree's Orker one: a SeaweedFS identity named
+`orkstack-dev-orker-<hash of the worktree's path>`, its secret made once in
+`.data/identity/orker-store.secret`, granted the documented Orker policy
+(docs/DEPLOY.md, "An Orker's own storage credential") on the stack's bucket
+alone, `ORK_S3_BUCKET` or `orkstack-artifacts`, through the shared store's
+own `weed shell` `s3.configure`, under a host-wide lock. SeaweedFS's `Write`
+action covers delete too, so the Orker may also delete under the prefixes it
+may write, wider than the documented policy, which grants delete only under
+`metadata/probes/`; it still reaches no control-plane prefix. It changes no other identity and not the
+`orkstack` key the engine signs with, and `make up` refuses a bucket shaped
+like a proof's own. `make down` removes it, and `make reset` with it. The
+default namespace's tasks may ask for one audience, `dev.orkstack.invalid`,
+and `deploy/dev/identity.ork.yaml` is a task that holds an identity for it
+and prints its token's claims:
+
+```bash
+./bin/orkctl orkflow create deploy/dev/identity.ork.yaml
+./bin/orkctl run submit dev-identity
+./bin/orkctl run logs <run id>
+```
+
+Its `sub` names the namespace, Orkflow and task, `aud` the audience and
+`ork_run_id` the run; nothing here verifies the token, and a relying party
+such as AWS or Vault would, against the keys the engine publishes. The
+tests of the stack are `TestDevStack_TheOrkerHasAStorageKeyOfItsOwn`,
+`TestDevStack_GrantsNothingOnAProofsBucket`,
+`TestDevStack_AStoreThatIgnoresTheGrantFailsUp`,
+`TestDevStack_DownKeepsTheRecordOfAKeyItCouldNotRemove` and
+`TestDevStack_TheIdentityTaskAsksForTheStacksAudience`.
+
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl orkflow create examples/each-fan-out.ork.yaml` and the
 rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,
@@ -193,6 +228,8 @@ does not exist, as production does, so a wrong `ORK_S3_ACCESS_KEY`,
 No binary falls back to its key: `make up`, `make run-ork`, `make run-orker`, the
 integration tests and the proofs each set it, so a binary you start yourself needs
 `ORK_S3_ACCESS_KEY=orkstack` and `ORK_S3_SECRET_KEY=orkstack-secret`.
+`make up`'s Orker signs with a key of its own instead ("Task identity on the
+development stack").
 A request by hand signs with the development keys:
 
 ```bash
@@ -209,7 +246,7 @@ recreate it. Its data stays.
 with `-short`, which skips the scale tests and the tests that compile binaries;
 it keeps the test cache, except for the packages whose unit tests run git
 (`GIT_STATE_PACKAGES`: the documentation checks, the engine's golden-fixture
-check, the release guards and the proof harness), which it runs with `-count=1`. Go's cache records
+check and the proof harness), which it runs with `-count=1`. Go's cache records
 only the files the test process itself opens inside the module, never what git
 reads in a subprocess (HEAD, the index, `info/exclude`, a global ignore file),
 so a cached pass there could survive a change to what git tracks or ignores.

@@ -249,7 +249,14 @@ func (s *Service) checkedBinder(ctx context.Context, ns *orkstackv1.Namespace, m
 	if err != nil {
 		return nil, err
 	}
-	orkflow := msg.GetOrkflowName()
+	return s.judgeStarter(ctx, ns, origin, st, msg.GetOrkflowName(), msg.GetOrkflowVersion())
+}
+
+// judgeStarter is checkedBinder's judgement of st, the starter of a run of
+// orkflow at version (as written: "" is the current one): its binder
+// recorded with the binding that let it bind, that binding still granting
+// it run.submit, and its consent to what the version asks for now.
+func (s *Service) judgeStarter(ctx context.Context, ns *orkstackv1.Namespace, origin *orkstackv1.RunOrigin, st starter, orkflow, version string) (*artifacts.AdmittedBinder, error) {
 	if !st.verified || st.binder == "" || st.binding == nil {
 		if origin.GetKind() == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE {
 			// No save of a source records a binding yet, so no rebind helps.
@@ -276,7 +283,7 @@ func (s *Service) checkedBinder(ctx context.Context, ns *orkstackv1.Namespace, m
 			"%s: %s %s's binder %s may no longer submit Orkflow %s: %s; rebind it as a principal who may",
 			reasonStarterNotPermitted, st.kind, st.name, st.binder, orkflow, why)))
 	}
-	asks, err := s.asksFor(ctx, ns.GetName(), orkflow, msg.GetOrkflowVersion())
+	asks, err := s.asksFor(ctx, ns.GetName(), orkflow, version)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +293,65 @@ func (s *Service) checkedBinder(ctx context.Context, ns *orkstackv1.Namespace, m
 			reasonStarterNotConsented, orkflow, st.kind, st.name, consent.Difference(st.consent.view(), asks), st.kind, st.name, asks.Digest)))
 	}
 	return &artifacts.AdmittedBinder{Principal: st.binder, Verified: st.verified, Binding: *st.binding}, nil
+}
+
+// judgeResumedStarter holds a resume of a run a schedule, a trigger or an
+// event source started, that holds an identity, to its starter as a fire is
+// held (AGENTS.md §7 reads a run's admission for this one decision): the
+// binder is the one the run's admission recorded at submit, never one found
+// from what the run submitted, which a schedule whose version floats does not
+// name. That binder must still be granted run.submit by the binding recorded
+// with it, and the consent its starter holds for it now must be to what the
+// run's version asks for now: a trigger's own when that binder still binds
+// it, or the newest entry of the schedule for this Orkflow by that binder,
+// whatever version it names. A consent changed or revoked since refuses; so
+// does a run whose admission recorded no binder. An event source records
+// none, as at a fire.
+func (s *Service) judgeResumedStarter(ctx context.Context, ns *orkstackv1.Namespace, origin *orkstackv1.RunOrigin, admitted *artifacts.AdmittedBinder, orkflow, version string) error {
+	var st starter
+	switch origin.GetKind() {
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE:
+		st = starter{kind: "schedule", name: origin.GetDescription()}
+		if admitted != nil && s.scheduleBindings != nil {
+			doc, err := s.scheduleBindings.Get(ctx, ns.GetName(), origin.GetId())
+			if err != nil {
+				return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("schedule %s's record could not be read: %w", st.name, err)))
+			}
+			for i := len(doc.Entries) - 1; i >= 0; i-- {
+				// Only an entry a verified binder saved holds its consent: one
+				// saved since under the same name, unverified, is nobody's.
+				if e := doc.Entries[i]; e.OrkflowName == orkflow && e.Binder == admitted.Principal && e.BinderVerified {
+					st.consent = scheduleConsentOf(e)
+					break
+				}
+			}
+		}
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER:
+		st = starter{kind: "trigger", name: origin.GetId()}
+		if admitted != nil && s.triggers != nil {
+			t, found, err := s.triggers.Get(ctx, origin.GetId())
+			if err != nil {
+				return connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("trigger %s's record could not be read: %w", origin.GetId(), err)))
+			}
+			if found && t.Binding.Binder == admitted.Principal && t.Binding.Verified {
+				st.consent = triggerConsentOf(t.Binding)
+			}
+		}
+	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_EVENT_SOURCE:
+		st = starter{kind: "event-source", name: origin.GetId()}
+		admitted = nil
+	default:
+		return unknownStart(origin)
+	}
+	if admitted != nil {
+		binding := admitted.Binding
+		st.binder, st.verified = admitted.Principal, admitted.Verified
+		if binding != (artifacts.BinderBinding{}) {
+			st.binding = &binding
+		}
+	}
+	_, err := s.judgeStarter(ctx, ns, origin, st, orkflow, version)
+	return err
 }
 
 // readStarter reads the record of the object that starts the run. A record
@@ -311,6 +377,10 @@ func (s *Service) readStarter(ctx context.Context, ns string, msg *orkstackv1.Su
 		}
 		return st, nil
 	case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER:
+		if s.triggers == nil {
+			// An engine that keeps no triggers records no trigger's binder.
+			return starter{kind: "trigger", name: origin.GetId()}, nil
+		}
 		t, found, err := s.triggers.Get(ctx, origin.GetId())
 		if err != nil {
 			return starter{}, connect.NewError(connect.CodeUnavailable, outage(fmt.Errorf("trigger %s's record could not be read: %w", origin.GetId(), err)))

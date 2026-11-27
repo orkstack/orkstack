@@ -288,9 +288,8 @@ func checkLiteral(v *structpb.Value) error {
 }
 
 // validateGrants holds secrets, identities and credentials to a task's
-// rules. A source's identities, credentials and grant-backed secrets need
-// task identity, which this release does not have: they are refused by
-// name.
+// rules. A task holds identities, credentials and grant-backed secrets; a
+// source does not yet, so a source's own are refused by name.
 func validateGrants(src *orkstackv1.EventSource) error {
 	if len(src.GetSecrets()) > MaxSecrets {
 		return refuse("secrets", "%d; at most %d", len(src.GetSecrets()), MaxSecrets)
@@ -303,11 +302,11 @@ func validateGrants(src *orkstackv1.EventSource) error {
 	}
 	if len(src.GetIdentities()) > 0 {
 		return &Error{Reason: ReasonIdentityUnsupported, Field: "identities",
-			Message: "a source's own identities need task identity, which this release does not have"}
+			Message: "a source holds no identities of its own yet; a task of its Orkflow does"}
 	}
 	if len(src.GetCredentials()) > 0 {
 		return &Error{Reason: ReasonIdentityUnsupported, Field: "credentials",
-			Message: "a source's own credentials need task identity, which this release does not have"}
+			Message: "a source holds no credentials of its own yet; a task of its Orkflow does"}
 	}
 	names := map[string]bool{}
 	for i, s := range src.GetSecrets() {
@@ -324,7 +323,7 @@ func validateGrants(src *orkstackv1.EventSource) error {
 		}
 		if s.GetGrant() != "" || s.GetCiphertext() != "" {
 			return &Error{Reason: ReasonIdentityUnsupported, Field: field,
-				Message: "a secret through a grant needs task identity, which this release does not have"}
+				Message: "a source reads no secret through a grant yet; a task of its Orkflow does"}
 		}
 	}
 	return nil

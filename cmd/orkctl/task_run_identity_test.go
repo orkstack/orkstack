@@ -15,7 +15,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -270,13 +269,13 @@ func TestSuppliedIdentities_ReadTheFileAtEachRefresh(t *testing.T) {
 	}
 }
 
-// The flags are for a build that runs task identity; until this one does they
-// are in no help and no reference.
-func TestTaskRun_IdentityFlagsAreHiddenBehindTheGate(t *testing.T) {
+// TestTaskRun_IdentityFlagsAreShown: task identity is available, so its
+// flags are in the help like any other.
+func TestTaskRun_IdentityFlagsAreShown(t *testing.T) {
 	cmd := newTaskRunCommand(&globalFlags{})
 	for _, name := range []string{"identity", "omit-identity", "credential", "omit-credential"} {
-		if f := cmd.Flags().Lookup(name); f == nil || f.Hidden == dsl.TaskIdentityAvailable() {
-			t.Errorf("--%s: %+v, with task identity available %v", name, f, dsl.TaskIdentityAvailable())
+		if f := cmd.Flags().Lookup(name); f == nil || f.Hidden {
+			t.Errorf("--%s: %+v; want it shown", name, f)
 		}
 	}
 }

@@ -25,6 +25,10 @@ const (
 	// maxRunsAbove bounds the walk from a child run up to the run a follow
 	// names; a composed tree is far shallower.
 	maxRunsAbove = 64
+	// foundMax bounds the records one read keeps: as many as a record may
+	// name it follows (artifacts' maxSourceRows), which is more than one
+	// attempt's checks read.
+	foundMax = 180
 )
 
 // Scopes are the resume scopes an attempt names: Resume its own run's, for
@@ -126,6 +130,77 @@ func DecidingScope(chain []artifacts.ResumeRecord, taskID string) uint64 {
 	return 0
 }
 
+// FollowsRead is one read of a run's records for an attempt's checks (the
+// scope, what its task follows and what it receives): the root's resumes and
+// the admissions above the run read once, and each record found kept for the
+// read's other checks. A record not found, or a store that did not answer, is
+// never kept: it is asked again. A FollowsRead serves one attempt's checks and
+// is then dropped; nothing is kept across them. It holds the root's resumes as
+// they stood when it began: one snapshot for the attempt's checks, which a
+// resume accepted since replaces at the attempt's next check. Its methods are
+// not called at once, though each reads its records at once. A record it
+// answers is shared by the checks that read it, and is not to be changed.
+type FollowsRead struct {
+	c      *followsRead
+	adm    artifacts.Admission
+	sha    string
+	scopes Scopes
+	resume artifacts.ResumeRecord
+}
+
+// Begin holds the scope named for adm's run against its root's resumes, as
+// Establish does, and answers the read its checks share.
+func (f *FollowsCheck) Begin(ctx context.Context, adm artifacts.Admission, admissionSHA256 string, scopes Scopes) (*FollowsRead, error) {
+	chain, err := f.established(ctx, adm, scopes)
+	if err != nil {
+		return nil, err
+	}
+	c := f.newRead(adm, admissionSHA256, scopes.ofRoot(adm))
+	c.resumes, c.chained, c.found = chain, true, map[foundKey]foundRecord{}
+	r := &FollowsRead{c: c, adm: adm, sha: admissionSHA256, scopes: scopes}
+	if len(chain) > 0 {
+		r.resume = chain[0]
+	}
+	return r, nil
+}
+
+// Scope is CheckScope's own check of taskID: a scope other than 0, for the
+// root's own attempt, names the task.
+func (r *FollowsRead) Scope(taskID string) error {
+	if r.scopes.Resume != 0 && !slices.Contains(r.resume.Tasks, taskID) {
+		return refuse(ReasonNotAdmitted, true, "resume %d of run %q does not run task %q again", r.scopes.Resume, r.adm.RunID, taskID)
+	}
+	return nil
+}
+
+// Follows is CheckFollows of taskID, on this read.
+func (r *FollowsRead) Follows(ctx context.Context, taskID string) ([]FollowedRecord, error) {
+	refs := FollowedBy(r.adm, taskID)
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if err := r.c.readRuns(ctx, r.adm, refs); err != nil {
+		return nil, err
+	}
+	return ofEach(refs, func(_ int, ref artifacts.FollowRef) (FollowedRecord, error) {
+		return r.c.standing(ctx, r.adm.RunID, ref)
+	})
+}
+
+// Received is CheckReceived of taskID, on this read.
+func (r *FollowsRead) Received(ctx context.Context, taskID string) ([]*orkstackv1.ArtifactRef, error) {
+	names := r.adm.Tasks[taskID].Inputs
+	refs, err := inputRefs(r.adm, names)
+	if err != nil || len(refs) == 0 {
+		return nil, err
+	}
+	if err := r.c.readRuns(ctx, r.adm, refs); err != nil {
+		return nil, err
+	}
+	found, err := receivedOf(ctx, r.c, r.adm, names, refs)
+	return byName(names, found, err)
+}
+
 // established is the resumes of adm's root, newest first, once the scope named
 // is held to be the newest.
 func (f *FollowsCheck) established(ctx context.Context, adm artifacts.Admission, scopes Scopes) ([]artifacts.ResumeRecord, error) {
@@ -199,6 +274,26 @@ func (f *FollowsCheck) records(ctx context.Context, adm artifacts.Admission, adm
 func (f *FollowsCheck) CheckReceived(ctx context.Context, adm artifacts.Admission, admissionSHA256, taskID string, rootScope uint64) ([]*orkstackv1.ArtifactRef, error) {
 	names := adm.Tasks[taskID].Inputs
 	found, err := f.received(ctx, adm, admissionSHA256, names, rootScope)
+	return byName(names, found, err)
+}
+
+// received is CheckReceived for the artifacts of the run's start names name,
+// one for each: nil for one with no record that a failure handler passed.
+func (f *FollowsCheck) received(ctx context.Context, adm artifacts.Admission, admissionSHA256 string, names []string, rootScope uint64) ([]*orkstackv1.ArtifactRef, error) {
+	refs, err := inputRefs(adm, names)
+	if err != nil || len(refs) == 0 {
+		return nil, err
+	}
+	c, err := f.begin(ctx, adm, admissionSHA256, rootScope, refs)
+	if err != nil {
+		return nil, err
+	}
+	return receivedOf(ctx, c, adm, names, refs)
+}
+
+// byName is found, each one with no record a failure handler passed answered
+// by its input's name alone.
+func byName(names []string, found []*orkstackv1.ArtifactRef, err error) ([]*orkstackv1.ArtifactRef, error) {
 	for i, a := range found {
 		if a == nil {
 			found[i] = &orkstackv1.ArtifactRef{Name: names[i]}
@@ -207,12 +302,8 @@ func (f *FollowsCheck) CheckReceived(ctx context.Context, adm artifacts.Admissio
 	return found, err
 }
 
-// received is CheckReceived for the artifacts of the run's start names name,
-// one for each: nil for one with no record that a failure handler passed.
-func (f *FollowsCheck) received(ctx context.Context, adm artifacts.Admission, admissionSHA256 string, names []string, rootScope uint64) ([]*orkstackv1.ArtifactRef, error) {
-	if len(names) == 0 {
-		return nil, nil
-	}
+// inputRefs are the producers of the artifacts of the run's start names name.
+func inputRefs(adm artifacts.Admission, names []string) ([]artifacts.FollowRef, error) {
 	refs := make([]artifacts.FollowRef, len(names))
 	for i, name := range names {
 		src, ok := adm.StartArtifacts[name]
@@ -221,10 +312,12 @@ func (f *FollowsCheck) received(ctx context.Context, adm artifacts.Admission, ad
 		}
 		refs[i] = artifacts.FollowRef{RunID: src.RunID, TaskID: src.TaskID, Kind: src.Kind}
 	}
-	c, err := f.begin(ctx, adm, admissionSHA256, rootScope, refs)
-	if err != nil {
-		return nil, err
-	}
+	return refs, nil
+}
+
+// receivedOf is the artifacts of the run's start names name, read by c, one
+// for each: nil for one with no record that a failure handler passed.
+func receivedOf(ctx context.Context, c *followsRead, adm artifacts.Admission, names []string, refs []artifacts.FollowRef) ([]*orkstackv1.ArtifactRef, error) {
 	found := make([]*orkstackv1.ArtifactRef, len(names))
 	if _, err := ofEach(refs, func(i int, ref artifacts.FollowRef) (FollowedRecord, error) {
 		src := adm.StartArtifacts[names[i]]
@@ -253,11 +346,7 @@ func (f *FollowsCheck) received(ctx context.Context, adm artifacts.Admission, ad
 
 // begin is a read of refs' records: the runs they name, and the root's resumes.
 func (f *FollowsCheck) begin(ctx context.Context, adm artifacts.Admission, admissionSHA256 string, rootScope uint64, refs []artifacts.FollowRef) (*followsRead, error) {
-	c := &followsRead{f: f, runs: map[string]followedRun{adm.RunID: {adm, admissionSHA256}}, root: adm.RunID, newest: rootScope,
-		reads: make(chan struct{}, followsParallel)}
-	if adm.RootRunID != "" {
-		c.root = adm.RootRunID
-	}
+	c := f.newRead(adm, admissionSHA256, rootScope)
 	if err := c.readRuns(ctx, adm, refs); err != nil {
 		return nil, err
 	}
@@ -265,6 +354,17 @@ func (f *FollowsCheck) begin(ctx context.Context, adm artifacts.Admission, admis
 		return nil, err
 	}
 	return c, nil
+}
+
+// newRead is a read of adm's run at the root's resume scope rootScope, which
+// has read nothing yet.
+func (f *FollowsCheck) newRead(adm artifacts.Admission, admissionSHA256 string, rootScope uint64) *followsRead {
+	c := &followsRead{f: f, runs: map[string]followedRun{adm.RunID: {adm, admissionSHA256}}, root: adm.RunID, newest: rootScope,
+		reads: make(chan struct{}, followsParallel)}
+	if adm.RootRunID != "" {
+		c.root = adm.RootRunID
+	}
+	return c
 }
 
 func resultArtifacts(refs []*orkstackv1.ArtifactRef) []ResultArtifact {
@@ -289,9 +389,27 @@ type followsRead struct {
 	root    string
 	newest  uint64
 	resumes []artifacts.ResumeRecord
+	// chained: resumes were read when the read began (Begin).
+	chained bool
 	// reads bounds the records read at a time, a record's own follows
 	// included.
 	reads chan struct{}
+	// found keeps each record found, by what it is of and where it counts,
+	// at most foundMax, for a read Begin made; nil keeps none. mu guards it.
+	mu    sync.Mutex
+	found map[foundKey]foundRecord
+}
+
+// foundKey names a record: of a task of a run, of a kind, at a scope.
+type foundKey struct {
+	run, task, kind string
+	scope           uint64
+}
+
+// foundRecord is a record found, and what it follows.
+type foundRecord struct {
+	rec     FollowedRecord
+	follows []*orkstackv1.RecordedSource
 }
 
 // readRuns reads the admission of each run refs name, walking up from adm
@@ -331,6 +449,9 @@ func (c *followsRead) readRuns(ctx context.Context, adm artifacts.Admission, ref
 // readResumes reads the root's resumes from the newest back, where any run
 // read is the root: a resume decides nothing for the runs below it.
 func (c *followsRead) readResumes(ctx context.Context, namespace string) error {
+	if c.chained {
+		return nil
+	}
 	if _, reads := c.runs[c.root]; !reads {
 		return nil
 	}
@@ -394,6 +515,34 @@ func (c *followsRead) standing(ctx context.Context, own string, ref artifacts.Fo
 // record reads ref's record of run at the scope that decides for it, and
 // what it follows.
 func (c *followsRead) record(ctx context.Context, run string, ref artifacts.FollowRef) (FollowedRecord, []*orkstackv1.RecordedSource, error) {
+	if c.found == nil {
+		return c.read(ctx, run, ref)
+	}
+	if err := ctx.Err(); err != nil {
+		return FollowedRecord{}, nil, unavailableMint("the record of task %q of run %q could not be read: %v", ref.TaskID, run, err)
+	}
+	key := foundKey{run: run, task: ref.TaskID, kind: ref.Kind, scope: c.decides(run, ref.TaskID)}
+	c.mu.Lock()
+	got, ok := c.found[key]
+	c.mu.Unlock()
+	if ok {
+		got.rec.Ref = ref
+		return got.rec, got.follows, nil
+	}
+	rec, follows, err := c.read(ctx, run, ref)
+	if err == nil {
+		c.mu.Lock()
+		if len(c.found) < foundMax {
+			c.found[key] = foundRecord{rec, follows}
+		}
+		c.mu.Unlock()
+	}
+	return rec, follows, err
+}
+
+// read reads ref's record of run at the scope that decides for it, and what
+// it follows.
+func (c *followsRead) read(ctx context.Context, run string, ref artifacts.FollowRef) (FollowedRecord, []*orkstackv1.RecordedSource, error) {
 	select {
 	case c.reads <- struct{}{}:
 		defer func() { <-c.reads }()

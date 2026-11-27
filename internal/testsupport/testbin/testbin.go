@@ -71,27 +71,6 @@ func StaticPath(t testing.TB, pkg string) string {
 	return p
 }
 
-// IdentityGateTag is the build tag that opens task identity in a test's own
-// binaries (internal/dsl, identity_testgate.go).
-const IdentityGateTag = "ork_test_identity"
-
-// GatedPath returns the path of a build of pkg with task identity open
-// (IdentityGateTag), for its end-to-end tests while the gate is closed. It
-// is always built by this process: no proof's binaries carry the tag.
-func GatedPath(t testing.TB, pkg string) string {
-	t.Helper()
-	if err := checkPackage(pkg); err != nil {
-		t.Fatal(err)
-	}
-	p, err := once("gated:"+pkg, func() (string, error) {
-		return compile(pkg, path.Base(pkg)+"-gated/"+path.Base(pkg), false, "-tags="+IdentityGateTag)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
 func checkPackage(pkg string) error {
 	if !strings.HasPrefix(pkg, "./cmd/") && !strings.HasPrefix(pkg, "./test/tools/") {
 		return fmt.Errorf("testbin: %q is not a ./cmd/<name> or ./test/tools/<name> package", pkg)

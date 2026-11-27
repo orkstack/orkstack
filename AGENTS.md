@@ -281,6 +281,12 @@ a key written twice and invalid UTF-8 are refused), never coerced, and the
 stored artifact is always the original bytes. A service image's interface is
 an authored document of its own kind, `ServiceInterface`.
 
+Credentials are files too: `/orkstack/credentials/<name>/`, a read-only mount
+present only for a task that declares one, whose content the Orker replaces
+atomically while the container runs. The platform sets no environment variable
+for them; a task's own `env:` may point a tool at a path. Identity tokens are
+the same kind of file: `/orkstack/identity/<name>/token`.
+
 ### 3.2 Exit status and logs
 
 Exit code `0` means computation succeeded; the Orker then validates and commits
@@ -1305,7 +1311,7 @@ for one decision only, whether an attempt may be issued an identity token: a run
 admission, the record of a start an engine made, the set the API keeps of
 each schedule's accepted records, which is maintained and not written once,
 and the record of which attempts of a task have held an identity. None says
-whether a run is open or who holds its attempt; Temporal does. For a run
+whether a run is open or who holds its attempt; Temporal does. A run's admission is read for one more decision: whether a resume may run that run's identity tasks again, judged from the binder it recorded at submit (may it still submit, does its consent match) as a schedule's own entry is judged; it decides nothing else. For a run
 whose results the engine records, its records are read for these decisions
 and no other: whether an attempt may hold an identity or have its result
 recorded, and whether an honest Orker starts its container; which resolution

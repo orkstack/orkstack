@@ -77,6 +77,30 @@ func OrkerPolicy() Policy {
 	}
 }
 
+// SeaweedActions is p in SeaweedFS's identity actions on bucket, in p's
+// order: Read for get and head, Write for put and delete, List for list,
+// each on the rule's prefix. SeaweedFS's Write covers put and delete
+// together, so a rule that allows only one of them is granted both; no
+// prefix the Orker's scope check asks lies under one of those rules.
+func (p Policy) SeaweedActions(bucket string) []string {
+	var out []string
+	for _, rule := range p {
+		for _, action := range []struct {
+			name  string
+			verbs []Verb
+		}{
+			{"Read", []Verb{Get, Head}},
+			{"Write", []Verb{Put, Delete}},
+			{"List", []Verb{List}},
+		} {
+			if slices.ContainsFunc(action.verbs, func(v Verb) bool { return slices.Contains(rule.Verbs, v) }) {
+				out = append(out, fmt.Sprintf("%s:%s/%s*", action.name, bucket, rule.Prefix))
+			}
+		}
+	}
+	return out
+}
+
 // Everything allows every verb on every key: an unscoped credential.
 func Everything() Policy {
 	return Policy{{Prefix: "", Verbs: []Verb{Put, Get, Head, List, Delete}}}

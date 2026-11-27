@@ -195,6 +195,43 @@ func (s *stand) live(token string) bool {
 	return err == nil
 }
 
+// revokeWait bounds how long a closed login's leases may take to go. Vault
+// revokes a token at once but only marks its leases expired; its lease
+// manager revokes them a moment later (RevokeByToken's lazy revoke), so the
+// promise is eventual and this is its deadline, not a pause.
+const revokeWait = 30 * time.Second
+
+// leaseRevoked reports whether Vault stops holding a bundle's lease within
+// revokeWait, asking again until it does. An answer other than the 400 of a
+// lease Vault does not hold is asked again too, and logged if the wait ends.
+func (s *stand) leaseRevoked(t *testing.T, b provider.Bundle) bool {
+	t.Helper()
+	deadline := time.Now().Add(revokeWait)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	var last error
+	for {
+		_, err := s.v.Do(s.ctx, http.MethodPut, "sys/leases/lookup", map[string]string{"lease_id": b.Handle.(lease).id})
+		var status *vaulttest.StatusError
+		if errors.As(err, &status) && status.Code == http.StatusBadRequest {
+			return true
+		}
+		last = err
+		if time.Now().After(deadline) {
+			if last != nil {
+				t.Logf("the last lookup of the lease: %v", last)
+			}
+			return false
+		}
+		select {
+		case <-s.ctx.Done():
+			t.Logf("the wait for the lease ended: %v", s.ctx.Err())
+			return false
+		case <-tick.C:
+		}
+	}
+}
+
 // TestIntegration_VaultConformance: the shared suite, against a real Vault
 // that verifies the attempt's token itself.
 func TestIntegration_VaultConformance(t *testing.T) {
@@ -426,7 +463,7 @@ path "capped/*" { capabilities = ["read"] }`})
 			Credential:  &provider.Ref{Kind: provider.KindCredential, Locator: "kv/creds/app"},
 			Expires:     true,
 			Values:      func() [][]byte { return [][]byte{[]byte("leased-password-value")} },
-			Revoked:     func(_ *testing.T, b provider.Bundle) bool { return !s.leaseLives(b) },
+			Revoked:     func(t *testing.T, b provider.Bundle) bool { return s.leaseRevoked(t, b) },
 			Outage:      s.outage,
 			Throttle:    s.throttle,
 		})
@@ -459,7 +496,7 @@ path "capped/*" { capabilities = ["read"] }`})
 		t.Errorf("a lease that is not renewable (%+v) renewed: %v", fixed.Handle, err)
 	}
 	must.OK(t, got.Close(s.ctx))
-	if s.leaseLives(renewed) || s.leaseLives(capped) {
-		t.Error("a lease outlived the login that made it")
+	if !s.leaseRevoked(t, renewed) || !s.leaseRevoked(t, capped) {
+		t.Errorf("a lease outlived the login that made it by more than %s", revokeWait)
 	}
 }

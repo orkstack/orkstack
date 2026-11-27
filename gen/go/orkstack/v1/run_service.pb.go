@@ -4039,7 +4039,8 @@ type LiveAttempt struct {
 	Usage *LiveUsage `protobuf:"bytes,22,opt,name=usage,proto3" json:"usage,omitempty"`
 	// reserved is set from E94; unset until it lands (v0.4.0 proto batch).
 	Reserved *ReservedResources `protobuf:"bytes,23,opt,name=reserved,proto3" json:"reserved,omitempty"`
-	// identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// identity is each identity the attempt holds now, by name, with its
+	// state; never a token.
 	Identity      []*LiveIdentity `protobuf:"bytes,24,rep,name=identity,proto3" json:"identity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

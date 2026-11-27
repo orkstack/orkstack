@@ -185,7 +185,8 @@ message Namespace {
   // is first in, first out, whatever the weights.
   double fair_share_weight = 16;
 
-  // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // identity is the namespace's identity policy: the audiences and grants
+  // its tasks may hold (docs/TASK_IDENTITY.md).
   NamespaceIdentity identity = 17;
 }
 

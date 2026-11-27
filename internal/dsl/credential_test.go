@@ -22,32 +22,20 @@ const twoCredentials = `    credentials:
         refresh: best_effort
 `
 
-// TestCompile_CredentialsAreRefusedUntilTaskIdentityLands: a task that
-// declares a credential is refused, naming the key, while this build has no
-// task identity, which a provider logs in with.
-func TestCompile_CredentialsAreRefusedUntilTaskIdentityLands(t *testing.T) {
-	_, err := dsl.Compile([]byte(identitySource(twoCredentials)))
-	if !names(err, "tasks[0].credentials") || !strings.Contains(err.Error(), "not available in this build") {
-		t.Fatalf("a credential before task identity = %v", err)
-	}
-}
-
 // TestCompile_CredentialsCompile: with task identity available, each
 // credential compiles with its name, grant, path, params and refresh policy.
 func TestCompile_CredentialsCompile(t *testing.T) {
-	dsl.WithTaskIdentity(func() {
-		wf, err := dsl.Compile([]byte(identitySource(twoCredentials)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		creds := wf.GetTasks()[0].GetCredentials()
-		if len(creds) != 2 || creds[0].GetName() != "aws" || creds[0].GetGrant() != "deployer" || creds[0].GetPath() != "" ||
-			creds[0].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_REQUIRED ||
-			creds[1].GetPath() != "pki-int/issue/payments-server" || creds[1].GetParams()["ttl"] != "12h" ||
-			creds[1].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_BEST_EFFORT {
-			t.Fatalf("credentials = %v", creds)
-		}
-	})
+	wf, err := dsl.Compile([]byte(identitySource(twoCredentials)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := wf.GetTasks()[0].GetCredentials()
+	if len(creds) != 2 || creds[0].GetName() != "aws" || creds[0].GetGrant() != "deployer" || creds[0].GetPath() != "" ||
+		creds[0].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_REQUIRED ||
+		creds[1].GetPath() != "pki-int/issue/payments-server" || creds[1].GetParams()["ttl"] != "12h" ||
+		creds[1].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_BEST_EFFORT {
+		t.Fatalf("credentials = %v", creds)
+	}
 }
 
 // TestValidate_CredentialRules: one row a rule: 56 (name, grant, path,
@@ -99,31 +87,22 @@ func TestValidate_CredentialRules(t *testing.T) {
 		{"a param of 1024 bytes", identitySource(cred("{name: a, grant: g, path: pki/issue/r, params: {ttl: " + strings.Repeat("v", 1024) + "}}"))},
 		{"a fan-out's literal credentials", identitySource(fanOut + cred("{name: a, grant: g, path: pki/issue/r, params: {ttl: 1h}}"))},
 	}
-	dsl.WithTaskIdentity(func() {
-		for _, c := range cases {
-			_, err := dsl.Compile([]byte(c.source))
-			if !names(err, c.want) {
-				t.Errorf("%s: %v, want it to name %s", c.name, err, c.want)
-			}
-		}
-		for _, c := range noContainer {
-			_, err := dsl.Compile([]byte(c.source))
-			var ve *dsl.ValidationError
-			if !errors.As(err, &ve) || ve.Field != "tasks[0].credentials" {
-				t.Errorf("credentials on %s = %v; want a refusal on tasks[0].credentials", c.name, err)
-			}
-		}
-		for _, c := range atTheBounds {
-			if _, err := dsl.Compile([]byte(c.source)); err != nil {
-				t.Errorf("%s = %v; want it to compile", c.name, err)
-			}
-		}
-	})
-	// And without the gate, the same documents are refused by it alone.
-	for _, c := range atTheBounds {
+	for _, c := range cases {
 		_, err := dsl.Compile([]byte(c.source))
-		if !names(err, "tasks[0].credentials") || !strings.Contains(err.Error(), "not available in this build") {
-			t.Errorf("%s without task identity = %v; want the gate's refusal", c.name, err)
+		if !names(err, c.want) {
+			t.Errorf("%s: %v, want it to name %s", c.name, err, c.want)
+		}
+	}
+	for _, c := range noContainer {
+		_, err := dsl.Compile([]byte(c.source))
+		var ve *dsl.ValidationError
+		if !errors.As(err, &ve) || ve.Field != "tasks[0].credentials" {
+			t.Errorf("credentials on %s = %v; want a refusal on tasks[0].credentials", c.name, err)
+		}
+	}
+	for _, c := range atTheBounds {
+		if _, err := dsl.Compile([]byte(c.source)); err != nil {
+			t.Errorf("%s = %v; want it to compile", c.name, err)
 		}
 	}
 }
@@ -167,19 +146,17 @@ func TestCanonical_DigestUnchangedWithoutCredentials(t *testing.T) {
 	if strings.Contains(string(before), "credentials") {
 		t.Fatalf("a task with no credential has them in its canonical form: %s", before)
 	}
-	dsl.WithTaskIdentity(func() {
-		with, err := dsl.Compile([]byte(identitySource(twoCredentials)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		after, err := dsl.CanonicalOrkflow(with)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(after), `"credentials"`) || !strings.Contains(string(after), "payments.internal") {
-			t.Fatalf("a task's credentials are not in its canonical form: %s", after)
-		}
-	})
+	with, err := dsl.Compile([]byte(identitySource(twoCredentials)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := dsl.CanonicalOrkflow(with)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), `"credentials"`) || !strings.Contains(string(after), "payments.internal") {
+		t.Fatalf("a task's credentials are not in its canonical form: %s", after)
+	}
 }
 
 // TestValidate_ProviderSecretRules: rule 65, one row each, with controls at
@@ -209,24 +186,16 @@ func TestValidate_ProviderSecretRules(t *testing.T) {
 		{"a ciphertext of 8192 characters", secret("{name: s, source: 'aws:kms:alias/k', grant: reader, ciphertext: " + b64(6144) + "}")},
 		{"ciphertexts of exactly 16 KiB a task", identitySource("    secrets:\n      - {name: a, source: 'kv:a', grant: g, ciphertext: " + b64(6144) + "}\n      - {name: b, source: 'kv:b', grant: g, ciphertext: " + b64(6144) + "}\n      - {name: c, source: 'kv:c', grant: g, ciphertext: " + b64(4096) + "}\n")},
 	}
-	dsl.WithTaskIdentity(func() {
-		for _, c := range cases {
-			_, err := dsl.Compile([]byte(c.source))
-			var ve *dsl.ValidationError
-			if !errors.As(err, &ve) || ve.Field != "tasks[0]."+strings.TrimPrefix(c.want, "tasks[0].") {
-				t.Errorf("%s: %v; want a refusal on %s", c.name, err, c.want)
-			}
-		}
-		for _, c := range atTheBounds {
-			if _, err := dsl.Compile([]byte(c.source)); err != nil {
-				t.Errorf("%s = %v; want it to compile", c.name, err)
-			}
-		}
-	})
-	for _, c := range atTheBounds {
+	for _, c := range cases {
 		_, err := dsl.Compile([]byte(c.source))
-		if !names(err, "tasks[0].secrets") || !strings.Contains(err.Error(), "not available in this build") {
-			t.Errorf("%s without task identity = %v; want the gate's refusal", c.name, err)
+		var ve *dsl.ValidationError
+		if !errors.As(err, &ve) || ve.Field != "tasks[0]."+strings.TrimPrefix(c.want, "tasks[0].") {
+			t.Errorf("%s: %v; want a refusal on %s", c.name, err, c.want)
+		}
+	}
+	for _, c := range atTheBounds {
+		if _, err := dsl.Compile([]byte(c.source)); err != nil {
+			t.Errorf("%s = %v; want it to compile", c.name, err)
 		}
 	}
 	// A secret from the Orker's own sources is untouched by all of it.
@@ -248,16 +217,14 @@ func TestCanonical_DigestUnchangedWithoutProviderSecrets(t *testing.T) {
 	if strings.Contains(string(before), "grant") || strings.Contains(string(before), "ciphertext") {
 		t.Fatalf("an env secret's canonical form names a grant or a ciphertext: %s", before)
 	}
-	dsl.WithTaskIdentity(func() {
-		with, err := dsl.Compile([]byte(identitySource("    secrets:\n      - {name: s, source: 'aws:kms:alias/k', grant: reader, ciphertext: QUJD}\n")))
-		if err != nil {
-			t.Fatal(err)
-		}
-		after, _ := dsl.CanonicalOrkflow(with)
-		if !strings.Contains(string(after), `"grant":"reader"`) || !strings.Contains(string(after), `"ciphertext":"QUJD"`) {
-			t.Fatalf("a provider secret's canonical form lacks its grant or ciphertext: %s", after)
-		}
-	})
+	with, err := dsl.Compile([]byte(identitySource("    secrets:\n      - {name: s, source: 'aws:kms:alias/k', grant: reader, ciphertext: QUJD}\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := dsl.CanonicalOrkflow(with)
+	if !strings.Contains(string(after), `"grant":"reader"`) || !strings.Contains(string(after), `"ciphertext":"QUJD"`) {
+		t.Fatalf("a provider secret's canonical form lacks its grant or ciphertext: %s", after)
+	}
 }
 
 // TestCanonical_AnEnvSecretsBytesAreUnchanged pins the canonical form of a

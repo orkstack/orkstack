@@ -164,7 +164,7 @@ func TestExecute_AnIdentityTask(t *testing.T) {
 			Token: "eyJhbGciOiJFUzI1NiJ9.an-identity-token.sig", ExpiresInSeconds: 3600, IssuedAt: timestamppb.Now()}}}, nil
 	}
 	in := baseExportInput("deploy")
-	in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1, Identities: []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts"}}}
+	in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1, AdmissionSha256: testAdmissionSHA, Identities: []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts"}}}
 	// A run that holds an identity has its result recorded by the engine.
 	commits := artifacts.NewMemoryCommitStore()
 	d.Commits = commits

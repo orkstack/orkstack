@@ -1469,3 +1469,47 @@ func TestMemoKey_AProviderSecretsGrantAndCiphertextAreTheirOwnKeys(t *testing.T)
 		t.Error("two ciphertexts of one source share a key")
 	}
 }
+
+// TestMemoKey_WhatATaskHolds: a task that holds an identity, a credential or
+// a secret through a grant is keyed by what it holds, so a result made as one
+// principal is never another's, nor a task's that holds none; a task that
+// holds nothing keeps its key, which carries no identity component.
+func TestMemoKey_WhatATaskHolds(t *testing.T) {
+	config, run := []byte("{}\n"), []byte("{}\n")
+	holding := func(edit func(*orkstackv1.IdentityContext)) memoKey {
+		in, staged := pinnedKeyInput()
+		in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1, AdmissionSha256: testAdmissionSHA,
+			Identities:  []*orkstackv1.IdentityRef{{Name: "aws", Audience: "sts.amazonaws.com"}},
+			Credentials: []*orkstackv1.CredentialRef{{Name: "pki", Grant: "issuer", Path: "pki/issue/r"}},
+			Grants:      []*orkstackv1.IdentityGrant{{Name: "issuer", Provider: "vault", Principal: "role-a"}}}
+		if edit != nil {
+			edit(in.Identity)
+		}
+		return keyOf(t, in, config, run, staged, nil)
+	}
+	in, staged := pinnedKeyInput()
+	plain := keyOf(t, in, config, run, staged, nil)
+	if _, ok := plain.Components["identity"]; ok {
+		t.Fatalf("a task that holds nothing has an identity component: %v", plain.Components)
+	}
+	base := holding(nil)
+	if base.Key == plain.Key || base.Components["identity"] == "" {
+		t.Fatalf("a task that holds an identity shares the key of one that holds none")
+	}
+	for name, edit := range map[string]func(*orkstackv1.IdentityContext){
+		"an identity's audience": func(c *orkstackv1.IdentityContext) { c.Identities[0].Audience = "other" },
+		"a credential's grant":   func(c *orkstackv1.IdentityContext) { c.Credentials[0].Grant = "admin" },
+		"a credential's path":    func(c *orkstackv1.IdentityContext) { c.Credentials[0].Path = "pki/issue/other" },
+		"the grant's principal":  func(c *orkstackv1.IdentityContext) { c.Grants[0].Principal = "role-b" },
+		"the identity removed":   func(c *orkstackv1.IdentityContext) { c.Identities = nil },
+	} {
+		if got := holding(edit); got.Key == base.Key {
+			t.Errorf("%s: the key did not change", name)
+		}
+	}
+	// What the run was admitted under is not what the task holds: a later run
+	// of the same task hits.
+	if got := holding(func(c *orkstackv1.IdentityContext) { c.AdmissionSha256 = strings.Repeat("f", 64); c.ResumeScope = 3 }); got.Key != base.Key {
+		t.Errorf("another run's admission changed the key")
+	}
+}

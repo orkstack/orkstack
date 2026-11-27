@@ -86,8 +86,8 @@ func (a *ForceCancelActivities) Backfill(ctx context.Context, namespace, runID s
 		if err != nil {
 			return fmt.Errorf("force cancel: backfill %s of run %s: %w", kind, runID, err)
 		}
-		if written && kind == forceCancelCompleted && a.counter != nil {
-			a.counter.CountForceCancel(ctx, result.State)
+		if written && kind == forceCancelCompleted {
+			a.countEnding(ctx, *d, result.State, closed.Record.TerminatedExecutionRunID)
 		}
 		if written {
 			slog.InfoContext(ctx, "force cancel: a missing audit record was written from the signed record", "action", kind, "run_id", runID, "request_id", d.RequestID)

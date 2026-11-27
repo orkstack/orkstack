@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,25 +46,11 @@ func seaweedImage(t *testing.T) string {
 
 // seaweedIdentities is the store's identity file: an administrator, which
 // the engine signs with, and the documented Orker policy (s3scope.OrkerPolicy,
-// which a test holds to docs/DEPLOY.md) in SeaweedFS's actions. SeaweedFS's Write covers put and delete together, so the Orker's
-// writes are granted as Write; what the check asks is outside every prefix
-// granted.
+// which a test holds to docs/DEPLOY.md) in SeaweedFS's actions
+// (s3scope.Policy.SeaweedActions, which `make up` grants the development
+// Orker too).
 func seaweedIdentities(bucket string) []byte {
-	var orker []string
-	for _, rule := range s3scope.OrkerPolicy() {
-		for _, action := range []struct {
-			name  string
-			verbs []s3scope.Verb
-		}{
-			{"Read", []s3scope.Verb{s3scope.Get, s3scope.Head}},
-			{"Write", []s3scope.Verb{s3scope.Put, s3scope.Delete}},
-			{"List", []s3scope.Verb{s3scope.List}},
-		} {
-			if slices.ContainsFunc(action.verbs, func(v s3scope.Verb) bool { return slices.Contains(rule.Verbs, v) }) {
-				orker = append(orker, fmt.Sprintf("%s:%s/%s*", action.name, bucket, rule.Prefix))
-			}
-		}
-	}
+	orker := s3scope.OrkerPolicy().SeaweedActions(bucket)
 	doc := map[string]any{"identities": []map[string]any{
 		{"name": "admin", "credentials": []map[string]string{{"accessKey": "scope-admin", "secretKey": "scope-admin-secret"}},
 			"actions": []string{"Admin", "Read", "Write", "List", "Tagging"}},

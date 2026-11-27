@@ -1998,6 +1998,7 @@ and is given. It looks for a **memo** under that key: a small pointer to a
 | `inputs` | SHA-256 of every staged input file's container path, name and content digest, and every fan-out upstream's item count |
 | `item`, `item_as`, `item_index`, `item_count` | for one item of a fan-out: its value, the name it is bound to, its position and the array's length |
 | `profiles` | for a task naming `devices:`: SHA-256 of each profile's name, the identity its run pinned and the Orker's `revision` of it; absent for every other task, whose key is unchanged |
+| `identity` | for a task that holds an identity, a credential or a secret through a grant: SHA-256 of its identities, credentials and the grants they use as its run was admitted with them, so a result made as one principal is never another's, nor a task's that holds none; absent for every other task, whose key is unchanged |
 
 The key document also names the namespace, the scope, the task id and — under
 `orkflow` scope — the Orkflow's name. A task of a shared Orkflow composed from
@@ -2412,9 +2413,11 @@ How each node reads:
 `identities:` is optional: the tokens the task holds, one for each audience (see "Task identity").
 Each is a token for one audience, minted for each attempt of the task and
 refreshed while it runs, so no long-lived credential needs storing for it
-(docs/TASK_IDENTITY.md). **Task identity is not available in this build**:
-validate and create refuse a task that declares one, on
-`tasks[i].identities`, after the rules below.
+(docs/TASK_IDENTITY.md). It needs a deployment that runs an identity issuer
+(`identity.issuer`) and authenticates its callers (`auth.mode: enforce`); a run
+of it is refused at submit elsewhere, `IDENTITY_OFF` or
+`IDENTITY_AUTH_NOT_ENFORCED`, and an attempt of one still open when the mode
+is lowered is refused its tokens, `IDENTITY_ENGINE_REFUSED`.
 
 ```yaml
 tasks:
@@ -2442,9 +2445,7 @@ them; a task's own `env:` may point an SDK at the file.
 A provider issues each for each attempt, as the grant's principal,
 logging in with the attempt's identity token, and the Orker keeps it fresh
 while the container runs ([PROVIDERS.md](./PROVIDERS.md)). It lands in
-`/orkstack/credentials/<name>/`. **Credentials are not available in this
-build**: validate and create refuse a task that declares one, on
-`tasks[i].credentials`, after the rules below.
+`/orkstack/credentials/<name>/`.
 
 ```yaml
 tasks:
@@ -2477,9 +2478,7 @@ is supplied to a local run with `--secret`, from a local source.
 
 A secret's `source` may name a provider of the deployment
 ([PROVIDERS.md](./PROVIDERS.md)), `<provider>:<locator>`, read once before
-the container starts as one of the namespace's grants. **Provider secrets are
-not available in this build**: validate and create refuse a task that reads
-one, on `tasks[i].secrets`, after the rules below.
+the container starts as one of the namespace's grants.
 
 ```yaml
 secrets:

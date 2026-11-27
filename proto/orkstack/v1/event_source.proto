@@ -112,8 +112,8 @@ message EventSource {
   ConsentView consented = 41;
   // secrets are files the instance's container receives, as a task's.
   repeated SecretRef secrets = 42;
-  // identities and credentials are as a task's; refused until task
-  // identity is available.
+  // identities and credentials are as a task's; refused on a source, which
+  // holds none yet.
   repeated IdentityRef identities = 43;
   repeated CredentialRef credentials = 44;
   // env is environment for the container; configuration, never a secret.

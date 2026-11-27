@@ -828,7 +828,7 @@ binds; creating, updating or resuming one also needs `run.submit` on that
 Orkflow, because a source submits it on its binder's behalf
 ([ACCESS.md](ACCESS.md)). In this release no source runs: no container
 starts and no broker is read. A source's own identities, credentials and
-grant-backed secrets are refused until task identity is available, and
+grant-backed secrets are refused (a task holds them, a source does not yet), and
 `env:` holds configuration, never a secret ([EVENT_SOURCES.md](EVENT_SOURCES.md)).
 
 ### Service containers

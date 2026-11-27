@@ -799,7 +799,13 @@ func TestForceCancelWorkflow(t *testing.T) {
 			if tt.in != nil {
 				tt.in(&in)
 			}
-			if got := runFC(t, f, in); got != tt.want {
+			got := runFC(t, f, in)
+			// One that ended a run, or found it ended, names the execution
+			// it acted on; one refused before it found any may not.
+			if got.Execution == "" && (got.State != FCStateFailed || got.Terminated) {
+				t.Errorf("result %+v names no execution", got)
+			}
+			if got.Execution = ""; got != tt.want {
 				t.Errorf("result = %+v\nwant     %+v", got, tt.want)
 			}
 			if tt.check != nil {

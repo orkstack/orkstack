@@ -117,8 +117,11 @@ func TestExecuteTaskInput_IdentityContext(t *testing.T) {
 			t.Errorf("task %q's grants = %v; want only %v", tk.GetId(), got.GetGrants(), want)
 		}
 	}
+	// A run with no admission: a task that holds one carries what it holds
+	// and no admission, which its Orker refuses by name (IDENTITY_NOT_ADMITTED).
 	s.plan.Identity = nil
-	if got := s.executeTaskInput(tasks[0], "holds", -1, "", nil).GetIdentity(); got != nil {
+	if got := s.executeTaskInput(tasks[0], "holds", -1, "", nil).GetIdentity(); got == nil || got.GetAdmissionSha256() != "" ||
+		got.GetIssuer() != "" || len(got.GetIdentities()) != len(tasks[0].GetIdentities()) {
 		t.Fatalf("a run with no admission: %v", got)
 	}
 }

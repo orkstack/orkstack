@@ -130,14 +130,20 @@ func checkAttempt(ctx context.Context, ck attemptChecks, adm artifacts.Admission
 		}
 		return heldAttempt{PendingAttempt: pending}, nil
 	}
-	if err := ck.Follows.CheckScope(ctx, adm, c.TaskID, c.Scopes); err != nil {
+	// One read for the three: the root's resumes and the admissions above are
+	// read once, and a record read for one is not read again for another.
+	read, err := ck.Follows.Begin(ctx, adm, c.AdmissionSHA256, c.Scopes)
+	if err != nil {
 		return heldAttempt{}, asMintError(err, "the resume scope of task %q could not be checked", c.TaskID)
 	}
-	if _, err := ck.Follows.CheckFollows(ctx, adm, c.AdmissionSHA256, c.TaskID, c.Scopes.ofRoot(adm)); err != nil {
+	if err := read.Scope(c.TaskID); err != nil {
+		return heldAttempt{}, asMintError(err, "the resume scope of task %q could not be checked", c.TaskID)
+	}
+	if _, err := read.Follows(ctx, c.TaskID); err != nil {
 		return heldAttempt{}, asMintError(err, "what task %q follows could not be checked", c.TaskID)
 	}
 	// What the task stages of its run's start.
-	received, err := ck.Follows.CheckReceived(ctx, adm, c.AdmissionSHA256, c.TaskID, c.Scopes.ofRoot(adm))
+	received, err := read.Received(ctx, c.TaskID)
 	if err != nil {
 		return heldAttempt{}, asMintError(err, "what task %q receives could not be checked", c.TaskID)
 	}

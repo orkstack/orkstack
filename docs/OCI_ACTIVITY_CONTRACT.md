@@ -2548,7 +2548,7 @@ error (`IMAGE_NOT_PINNED`, §4.2).
 ### 10.3 The contract test suite
 
 ```bash
-orkctl activity test <image> [--timeout 2m] [--grace-period 10s] [--keep]
+orkctl activity test <image> [--timeout 2m] [--grace-period 10s] [--keep] [--with-identity]
 ```
 
 runs an image through the **same `OCIDispatcher` an Orker uses** — workspace
@@ -2573,6 +2573,11 @@ assertions, each because a real defect would have passed without it:
    specially, and 0 succeeds (§14.13).
 6. **SIGTERM reaches the workload within the grace period, and the workload
    observes it** — both halves, because they fail independently (§14.14).
+
+With `--with-identity` it also checks the image's handling of a task identity
+(§3): it is given an identity's files under `/orkstack/identity/<name>/`,
+signed by a key of the test's own, must read them through `current`, and must
+see a refresh swap them while it runs.
 
 The report also shows the `with:` interface the image declares in its
 `org.orkstack.activity.interface` label, read by the resolver that creating an Orkflow uses
@@ -2673,6 +2678,14 @@ A supplied source is held to the Orker's secret floor, as on an Orker: one of
 this machine's own sources is refused at the flag (`docs/SECURITY_MODEL.md`,
 "The Orker's own sources"). No value is printed, reported, or kept with
 `--keep`.
+
+**Identities and credentials.** A local run is no attempt an engine knows, so
+no engine issues it a token and no provider a credential. Each one its task
+declares is supplied or left out by name, as a secret is: `--identity
+NAME=file:PATH` gives a token, whose file is read again at each refresh, and
+`--omit-identity NAME` runs without it; `--credential NAME=dir:PATH` gives a
+credential's files, and `--omit-credential NAME` runs without them. One left
+unaccounted refuses before any byte is fetched.
 
 **What it never does.** It calls only the engine's read and validate RPCs and
 never dials Temporal or object storage. Its dispatcher has no commit, attempt,

@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/identity"
@@ -50,9 +51,13 @@ const admissionWriteBound = 10 * time.Second
 
 // The reasons of a tree that cannot be admitted (docs/REASONS.md).
 const (
-	reasonIdentityOff       = "IDENTITY_OFF"
-	reasonAttemptsOverLimit = "IDENTITY_ATTEMPTS_OVER_LIMIT"
-	reasonTableTooLarge     = "IDENTITY_TABLE_TOO_LARGE"
+	reasonIdentityOff = "IDENTITY_OFF"
+	// reasonIdentityNotEnforced is a tree that holds an identity on an
+	// engine that does not enforce authentication: task identity exists only
+	// where callers are authenticated (AGENTS.md §6).
+	reasonIdentityNotEnforced = "IDENTITY_AUTH_NOT_ENFORCED"
+	reasonAttemptsOverLimit   = "IDENTITY_ATTEMPTS_OVER_LIMIT"
+	reasonTableTooLarge       = "IDENTITY_TABLE_TOO_LARGE"
 )
 
 // admissionTree is a tree's admissions as prepare decides them: everything
@@ -108,6 +113,16 @@ func (s *Service) prepareAdmission(ctx context.Context, ns *orkstackv1.Namespace
 			"%s: Orkflow %s@%s holds a task identity, and this engine issues none (identity.issuer is unset)",
 			reasonIdentityOff, planned.GetName(), planned.GetVersion()))
 	}
+	// The mode the API enforces with (AccessControl.Mode, what its middleware
+	// gives every request), read here for a submit, a fire and a trigger
+	// alike. A lowering that lands while a run is open is the mint's to
+	// refuse: it issues no token outside enforce.
+	if mode := s.enforcedMode(); mode != authn.ModeEnforce {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"%s: Orkflow %s@%s holds a task identity, and this engine does not enforce authentication (auth.mode is %s): "+
+				"a token is issued only for a run its callers were authenticated for",
+			reasonIdentityNotEnforced, planned.GetName(), planned.GetVersion(), mode))
+	}
 	policy, err := s.namespacePolicy(ctx, ns)
 	if err != nil {
 		return nil, policyReadError(ns.GetName(), err)
@@ -152,14 +167,11 @@ func (s *Service) admittedRunOf(ctx context.Context, in grantsIn, common artifac
 		common.Origin.Principal, common.Origin.Verified = "", false
 	}
 	a := common
-	a.Orkflow, a.OrkflowVersion = wf.GetName(), wf.GetVersion()
-	// A record holds the digest's bytes; a definition names its algorithm too.
-	digest, ok := strings.CutPrefix(wf.GetDefinitionDigest(), "sha256:")
-	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("the Orkflow %s@%s has no SHA-256 definition digest: %q",
-			wf.GetName(), wf.GetVersion(), wf.GetDefinitionDigest()))
+	// Before anything is read or written of the Orkflow (orkflowID ensures
+	// its id): a definition with no digest admits nothing.
+	if _, err := definitionDigestOf(wf); err != nil {
+		return nil, err
 	}
-	a.DefinitionDigest = digest
 	// A shared child's planned definition is in the namespace it runs in and
 	// names its owner apart; its record, and so its tokens, are its owner's.
 	owner := common.Namespace
@@ -177,21 +189,18 @@ func (s *Service) admittedRunOf(ctx context.Context, in grantsIn, common artifac
 	if a.Grants, err = s.checkGrants(ctx, in.ns, in.policy, wf, owner, in.rootOrigin, true); err != nil {
 		return nil, grantRefusal(err)
 	}
-	tasks, sets, err := s.admittedTasks(wf, plan, common.AttemptsExtra, a.Grants)
-	if err != nil {
+	var completes []string
+	if a, completes, err = admissionTemplate(a, wf, plan, s.identityAttemptsMax); err != nil {
 		return nil, err
 	}
-	a.Tasks, a.Sets = tasks, sets
 	a.SessionTags = s.sessionTagsOf(a)
-	follows, completes := identity.Follows(wf)
-	a.Follows = follows
 	if start != nil {
 		a.Completes, a.StartFollows, a.StartArtifacts = completes, start.refs, start.artifacts
 	}
 	if err := checkAdmissionTemplate(a); err != nil {
 		return nil, err
 	}
-	plan.Identity = identityPlanOf(a, placeholderAdmission(), s.resultsRecordedIndexed)
+	plan.Identity = IdentityPlanOf(a, placeholderAdmission(), s.resultsRecordedIndexed)
 	run := &admittedRun{template: a, plan: plan}
 	for _, t := range wf.GetTasks() {
 		entry := plan.Children[t.GetId()]
@@ -279,7 +288,7 @@ func followedAbove(a artifacts.Admission, taskID, runID string) []artifacts.Foll
 // admittedTasks is the table of every task of wf that runs a container,
 // and the distinct identity sets they name. A task whose attempts would
 // pass identity.attempts.max is refused, naming it.
-func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, extra int32, grants map[string]artifacts.GrantSelection) (map[string]artifacts.AdmittedTask, []artifacts.IdentitySet, error) {
+func admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, extra int32, grants map[string]artifacts.GrantSelection, attemptsMax int) (map[string]artifacts.AdmittedTask, []artifacts.IdentitySet, error) {
 	tasks := map[string]artifacts.AdmittedTask{}
 	var sets []artifacts.IdentitySet
 	for _, t := range wf.GetTasks() {
@@ -296,7 +305,7 @@ func (s *Service) admittedTasks(wf *orkstackv1.Orkflow, plan *engine.RunPlan, ex
 		}
 		row := artifacts.AdmittedTask{Pool: pool, SpecSHA256: digest, MaxItems: t.GetEach().GetMaxItems(), Inputs: slices.Clone(t.GetInputArtifacts())}
 		if identity.TaskHoldsIdentity(t) {
-			slots, err := identity.Slots(int(t.GetRetry().GetMaximumAttempts()), int(extra), s.identityAttemptsMax)
+			slots, err := identity.Slots(int(t.GetRetry().GetMaximumAttempts()), int(extra), attemptsMax)
 			var over *identity.AttemptsOverLimitError
 			switch {
 			case errors.As(err, &over):
@@ -426,7 +435,7 @@ func (s *Service) admitRun(ctx context.Context, sub *submission, runID string, s
 		if b.run == sub.admission.root {
 			plan = &sub.plan
 		}
-		plan.Identity = identityPlanOf(b.admission, b.sha256Hex, s.resultsRecordedIndexed)
+		plan.Identity = IdentityPlanOf(b.admission, b.sha256Hex, s.resultsRecordedIndexed)
 	}
 	return records, nil
 }
@@ -443,12 +452,10 @@ type builtAdmission struct {
 // child's after its parent's. rootRunID is "" for the root itself, and
 // start is what the run's start follows and receives, nothing for the root.
 func buildAdmissions(run *admittedRun, runID, rootRunID string, start startFollows, starter artifacts.Starter, at time.Time) ([]builtAdmission, error) {
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("draw the admission's nonce: %w", err)
+	a, err := Admitted(run.template, runID, rootRunID, starter, at)
+	if err != nil {
+		return nil, err
 	}
-	a := run.template
-	a.RunID, a.Starter, a.RootRunID, a.Nonce, a.AdmittedAt = runID, starter, rootRunID, hex.EncodeToString(nonce), at
 	a.StartFollows, a.StartArtifacts = start.refs, start.artifacts
 	// Each composed task's child run, by id: what ties a child's start to
 	// the task of its parent that composes it, not only to the parent run.
@@ -556,10 +563,10 @@ func (s *Service) completeChain(ctx context.Context, sub submission, runID, exec
 	}
 }
 
-// identityPlanOf is what a run's plan carries of its admission a, named
+// IdentityPlanOf is what a run's plan carries of its admission a, named
 // sha256Hex: derived from the record, never built beside it, and the boot's
 // answer that the cluster indexes the mark such a run is started with.
-func identityPlanOf(a artifacts.Admission, sha256Hex string, indexed bool) *engine.IdentityPlan {
+func IdentityPlanOf(a artifacts.Admission, sha256Hex string, indexed bool) *engine.IdentityPlan {
 	p := &engine.IdentityPlan{AdmissionSHA256: sha256Hex, Issuer: a.Issuer, TokenTTLSeconds: a.TokenTTL,
 		SpecVersion: uint32(a.SpecVersion), AttemptsExtra: a.AttemptsExtra, CommitWaitSeconds: a.CommitWait, Indexed: indexed}
 	if len(a.Grants) > 0 {
@@ -625,4 +632,71 @@ const admissionHeadroom = 1 << 10
 // record was written: the placeholder prepare measured with is still there.
 func unadmittedPlan(plan engine.RunPlan) bool {
 	return plan.Identity != nil && plan.Identity.AdmissionSHA256 == placeholderAdmission()
+}
+
+// enforcedMode is the authentication mode this engine's API enforces with:
+// asserted where it decides none.
+func (s *Service) enforcedMode() string {
+	if s.access == nil || s.access.Mode == "" {
+		return authn.ModeAsserted
+	}
+	return s.access.Mode
+}
+
+// AdmissionTemplate is what an admission says of the planned definition wf
+// and its plan, beside what common holds (the engine's and the namespace's
+// part, and the grants the run was allowed): the Orkflow and its digest, each
+// task's admitted row, and what each task follows. It is the one way SubmitRun
+// makes it, and a test that admits a run makes it so too. attemptsMax is
+// identity.attempts.max. It decides nothing else: the grants, the Orkflow's
+// id and the template's own check are SubmitRun's (admittedRunOf), and a
+// caller that writes its result has checked none of them.
+func AdmissionTemplate(common artifacts.Admission, wf *orkstackv1.Orkflow, plan *engine.RunPlan, attemptsMax int) (artifacts.Admission, error) {
+	a, _, err := admissionTemplate(common, wf, plan, attemptsMax)
+	return a, err
+}
+
+// admissionTemplate is AdmissionTemplate, and the tasks whose records a child
+// run's outputs complete with.
+func admissionTemplate(common artifacts.Admission, wf *orkstackv1.Orkflow, plan *engine.RunPlan, attemptsMax int) (artifacts.Admission, []string, error) {
+	a := common
+	a.Orkflow, a.OrkflowVersion = wf.GetName(), wf.GetVersion()
+	digest, err := definitionDigestOf(wf)
+	if err != nil {
+		return artifacts.Admission{}, nil, err
+	}
+	a.DefinitionDigest = digest
+	tasks, sets, err := admittedTasks(wf, plan, common.AttemptsExtra, a.Grants, attemptsMax)
+	if err != nil {
+		return artifacts.Admission{}, nil, err
+	}
+	a.Tasks, a.Sets = tasks, sets
+	follows, completes := identity.Follows(wf)
+	a.Follows = follows
+	return a, completes, nil
+}
+
+// definitionDigestOf is wf's digest as a record holds it: its bytes, where a
+// definition names its algorithm too; one with no SHA-256 digest is refused.
+func definitionDigestOf(wf *orkstackv1.Orkflow) (string, error) {
+	digest, ok := strings.CutPrefix(wf.GetDefinitionDigest(), "sha256:")
+	if !ok {
+		return "", connect.NewError(connect.CodeInternal, fmt.Errorf("the Orkflow %s@%s has no SHA-256 definition digest: %q",
+			wf.GetName(), wf.GetVersion(), wf.GetDefinitionDigest()))
+	}
+	return digest, nil
+}
+
+// Admitted is template admitted for run runID, started by starter at at,
+// below root rootRunID ("" for a root), with a nonce of its own: the record
+// SubmitRun writes before it starts the run. It checks nothing. The template's
+// maps are shared with what it answers, as they are between a tree's runs.
+func Admitted(template artifacts.Admission, runID, rootRunID string, starter artifacts.Starter, at time.Time) (artifacts.Admission, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return artifacts.Admission{}, fmt.Errorf("draw the admission's nonce: %w", err)
+	}
+	a := template
+	a.RunID, a.Starter, a.RootRunID, a.Nonce, a.AdmittedAt = runID, starter, rootRunID, hex.EncodeToString(nonce), at
+	return a, nil
 }

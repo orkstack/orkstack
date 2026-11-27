@@ -679,7 +679,8 @@ message TaskAttempt {
   // it. Unset on a record an Orker older than v0.4.0 wrote.
   MeasuredUsage measured = 23;
 
-  // identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // identities are the tokens this attempt was issued, by name, as its Orker
+  // recorded them; never a token.
   repeated AttemptIdentity identities = 24;
 
   // credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).

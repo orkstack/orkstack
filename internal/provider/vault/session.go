@@ -599,8 +599,10 @@ func (s *session) Lifetime() time.Duration {
 }
 
 // Close revokes every login of the session, and with each the leases it
-// made. One that could not be revoked is kept, so
-// a second Close tries it again.
+// made. A token is revoked when Close returns; Vault only marks its leases
+// expired then and its lease manager revokes them shortly after: a session's
+// token may revoke itself, not its leases one by one, so it cannot hasten them. One that
+// could not be revoked is kept, so a second Close tries it again.
 func (s *session) Close(ctx context.Context) error {
 	s.closing.Lock()
 	defer s.closing.Unlock()

@@ -1774,7 +1774,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// What a force cancel could not record through an outage is written as its
 	// run is archived.
 	forceCancelRecords := engine.NewForceCancelActivities(engine.ForceCancelDeps{Client: temporalClient, ClusterNamespace: cfg.temporalNamespace,
-		Reader: reader, Keys: forceCancels, Mode: deployed.Mode, Audit: auditStore, Settings: cfg.forceCancel, Counter: forceCancelInstruments})
+		Reader: reader, Keys: forceCancels, Mode: deployed.Mode, Audit: auditStore, Settings: cfg.forceCancel, Counter: forceCancelInstruments,
+		ResumePlans: resumeRecords, ResetKeys: engine.NewTemporalStarter(temporalClient, "").WithPayloads(reader.PayloadsOf)})
 	historyArchiver := engine.NewHistoryArchiver(reader, archive).WithForceCancelBackfill(forceCancelRecords.Backfill)
 	newestEndings := archivecleanup.NewNewestEndings(endings, reader, cfg.temporalNamespace)
 	sweeper := archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, historyArchiver,
@@ -2020,6 +2021,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Counter: forceCancelInstruments,
 		Client:  temporalClient, ClusterNamespace: cfg.temporalNamespace, Starter: starter, Reader: reader,
 		Snapshots: snapshots, Keys: forceCancels, Mode: deployed.Mode, Audit: auditStore, Settings: cfg.forceCancel,
+		ResumePlans: resumeRecords,
 	}
 	forceCancelSteps := engine.NewForceCancelActivities(forceCancelDeps)
 	engine.RegisterForceCancelActivities(runWorker, forceCancelSteps)
@@ -2096,7 +2098,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	} else {
 		logger.Warn("the run archive cannot be listed for a restore reconcile; ReconcileRestore answers FAILED_PRECONDITION")
 	}
-	minter, issuedRecords, err := newMinter(ctx, cfg, issuer, temporalClient, namespaces, incarnations)
+	minter, checks, issuedRecords, err := newMinter(ctx, cfg, issuer, temporalClient, namespaces, incarnations)
 	if err != nil {
 		return err
 	}
@@ -2111,7 +2113,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	// The build the recorder names is the one an admission records, by the
 	// same rule, so the two compare.
-	recorder := newRecorder(minter, issuedRecords, orkflows.Get, engineBuild(cfg.deployment.BuildID))
+	recorder := newRecorder(checks, issuedRecords, orkflows.Get, engineBuild(cfg.deployment.BuildID))
 	// The two local activities that record a child run's outputs and a
 	// composed task's values, of a run whose results the engine records.
 	valuesRecorder := newValuesRecorder(minter, issuedRecords, orkflows.Get, compose, engineBuild(cfg.deployment.BuildID))

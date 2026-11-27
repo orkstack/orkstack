@@ -21,23 +21,20 @@ import (
 // nil for both when it issues none, which the API answers
 // IDENTITY_ENGINE_REFUSED and unimplemented.
 func newMinter(ctx context.Context, cfg config, issuer *identity.Issuer, temporal client.Client,
-	namespaces engine.NamespaceRegistry, policies *artifacts.IncarnationStore) (*identity.Minter, *artifacts.RecordStore, error) {
+	namespaces engine.NamespaceRegistry, policies *artifacts.IncarnationStore) (*identity.Minter, *engine.IdentityChecks, *artifacts.RecordStore, error) {
 	if !cfg.identity.enabled() || issuer == nil || temporal == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	records, err := artifacts.NewRecordStore(ctx, artifacts.ConfigFromEnv())
 	if err != nil {
-		return nil, nil, fmt.Errorf("the identity mint's record store: %w", err)
+		return nil, nil, nil, fmt.Errorf("the identity mint's record store: %w", err)
 	}
-	starts := identity.ClusterStarts{RecordStore: records, Temporal: temporal, Plans: engine.NewTemporalRunReader(temporal)}
-	admissions := identity.NewAdmissionCache(records, int64(cfg.identity.admissionCacheBytes))
+	checks := engine.NewIdentityChecks(records, temporal, int64(cfg.identity.admissionCacheBytes))
 	return &identity.Minter{
-		Stores:  admissions,
-		Starts:  starts,
-		Follows: &identity.FollowsCheck{Store: followsStore{RecordStore: records, admissions: admissions}},
-		Describe: func(ctx context.Context, runID string) (identity.ExecutionFacts, error) {
-			return starts.Describe(ctx, runID, "")
-		},
+		Stores:   checks.Admissions,
+		Starts:   checks.Starts,
+		Follows:  checks.Follows,
+		Describe: checks.Describe,
 		Policy: func(ctx context.Context, namespace, namespaceID string) (artifacts.NamespacePolicy, error) {
 			return namespacePolicy(ctx, namespaces, policies, namespace, namespaceID)
 		},
@@ -49,18 +46,7 @@ func newMinter(ctx context.Context, cfg config, issuer *identity.Issuer, tempora
 		RecordIssuance: cfg.identity.issuanceRecords != "off",
 		Now:            time.Now,
 		NewJTI:         typeid.New,
-	}, records, nil
-}
-
-// followsStore reads admissions through the mint's cache, and every other
-// record from the record store.
-type followsStore struct {
-	*artifacts.RecordStore
-	admissions *identity.AdmissionCache
-}
-
-func (s followsStore) ReadAdmission(ctx context.Context, namespace, runID, sha256Hex string) (artifacts.RecordRead[artifacts.Admission], error) {
-	return s.admissions.ReadAdmission(ctx, namespace, runID, sha256Hex)
+	}, &checks, records, nil
 }
 
 // awaitRecords is what the await doors read and write for a run whose
@@ -146,7 +132,7 @@ func createdAt(ns *orkstackv1.Namespace) time.Time { return ns.GetCreatedAt().As
 // chainCompleter is the switch's completion of a root run's chain record:
 // identity.CompleteRootChain on the cluster and the records.
 func chainCompleter(records *artifacts.RecordStore, temporal client.Client) engine.ChainCompleter {
-	starts := identity.ClusterStarts{RecordStore: records, Temporal: temporal, Plans: engine.NewTemporalRunReader(temporal)}
+	starts := engine.NewClusterStarts(records, temporal)
 	return func(ctx context.Context, namespace, runID, admissionSHA256 string) error {
 		if answer := identity.CompleteRootChain(ctx, starts, namespace, runID, admissionSHA256); answer.Verdict != identity.StartAdmitted {
 			return errors.New(answer.Reason)

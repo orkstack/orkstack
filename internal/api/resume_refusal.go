@@ -30,6 +30,8 @@ const (
 	resumePoolUnserved     engine.ResumeRefusalCode = "RERUN_POOL_UNSERVED"
 	resumeImagePolicy      engine.ResumeRefusalCode = "IMAGE_POLICY_CHANGED"
 	resumeTaskOverCap      engine.ResumeRefusalCode = "TASK_OVER_CAP"
+	resumeIdentityPolicy   engine.ResumeRefusalCode = "IDENTITY_POLICY_CHANGED"
+	resumeStoreUnscoped    engine.ResumeRefusalCode = "RERUN_STORE_UNSCOPED"
 )
 
 // The causes RESUME_UNCONFIRMED carries, which the CLI and UI read to say

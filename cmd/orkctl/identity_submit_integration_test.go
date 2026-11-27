@@ -42,8 +42,8 @@ const (
 
 // identityStack is a deployment that issues task identity, as an operator
 // runs one: an engine that enforces authentication and an Orker with its own
-// credential and a scoped storage credential, both built with the gate open
-// (testbin.GatedPath), and orkctl as an admin. Nothing in it is in-process.
+// credential and a scoped storage credential, the proof's own binaries
+// (testbin.Path), and orkctl as an admin. Nothing in it is in-process.
 type identityStack struct {
 	t      *testing.T
 	ctx    context.Context
@@ -119,7 +119,7 @@ func newIdentityStack(t *testing.T, more ...string) *identityStack {
 	s.env = append(s.env, more...)
 	s.first = s.replica("ork")
 	s.proxy = s3scope.New(t, cfg.S3Endpoint, cfg.S3Bucket, s3scope.OrkerPolicy())
-	startOrkerWithEnv(ctx, t, temporal, testbin.GatedPath(t, "./cmd/orker"), address, namespace, queue,
+	startOrkerWithEnv(ctx, t, temporal, testbin.Path(t, "./cmd/orker"), address, namespace, queue,
 		"ORK_ORKER_ID="+orkerID,
 		"ORK_S3_ENDPOINT="+s.proxy.URL,
 		"ORK_ORKER_ENGINE_URL=http://"+s.addr,
@@ -140,7 +140,7 @@ func newIdentityStack(t *testing.T, more ...string) *identityStack {
 // replica starts another engine, which the stack's orkctl then asks.
 func (s *identityStack) replica(name string) launched {
 	s.t.Helper()
-	p := launch(s.ctx, s.parent, name, testbin.GatedPath(s.t, "./cmd/ork"), s.env...)
+	p := launch(s.ctx, s.parent, name, testbin.Path(s.t, "./cmd/ork"), s.env...)
 	s.addr = p.api(s.ctx, s.t)
 	s.await(name+" to answer its admin", func() (bool, string) {
 		out, stderr, code := s.try("whoami")

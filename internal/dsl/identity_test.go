@@ -24,14 +24,8 @@ const twoIdentities = `    identities:
         refresh: best_effort
 `
 
-// TestCompile_IdentitiesAreRefusedUntilTaskIdentityLands: a task that
-// declares an identity is refused, naming the key, while this build has no
-// task identity; a document without one compiles as it did.
-func TestCompile_IdentitiesAreRefusedUntilTaskIdentityLands(t *testing.T) {
-	_, err := dsl.Compile([]byte(identitySource(twoIdentities)))
-	if !names(err, "tasks[0].identities") || !strings.Contains(err.Error(), "not available in this build") {
-		t.Fatalf("an identity before task identity = %v", err)
-	}
+// TestCompile_ATaskWithNoIdentity: a document without one compiles as it did.
+func TestCompile_ATaskWithNoIdentity(t *testing.T) {
 	if _, err := dsl.Compile([]byte(identitySource(""))); err != nil {
 		t.Fatalf("a task with no identity = %v", err)
 	}
@@ -40,19 +34,17 @@ func TestCompile_IdentitiesAreRefusedUntilTaskIdentityLands(t *testing.T) {
 // TestCompile_IdentitiesCompile: with task identity available, each
 // identity compiles with its name, audience, life and refresh policy.
 func TestCompile_IdentitiesCompile(t *testing.T) {
-	dsl.WithTaskIdentity(func() {
-		wf, err := dsl.Compile([]byte(identitySource(twoIdentities)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		ids := wf.GetTasks()[0].GetIdentities()
-		if len(ids) != 2 || ids[0].GetName() != "gcp" || ids[0].GetTtlSeconds() != 1800 ||
-			ids[0].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_REQUIRED ||
-			ids[1].GetAudience() != "https://vault.example" || ids[1].GetTtlSeconds() != 0 ||
-			ids[1].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_BEST_EFFORT {
-			t.Fatalf("identities = %v", ids)
-		}
-	})
+	wf, err := dsl.Compile([]byte(identitySource(twoIdentities)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := wf.GetTasks()[0].GetIdentities()
+	if len(ids) != 2 || ids[0].GetName() != "gcp" || ids[0].GetTtlSeconds() != 1800 ||
+		ids[0].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_REQUIRED ||
+		ids[1].GetAudience() != "https://vault.example" || ids[1].GetTtlSeconds() != 0 ||
+		ids[1].GetRefresh() != orkstackv1.RefreshPolicy_REFRESH_POLICY_BEST_EFFORT {
+		t.Fatalf("identities = %v", ids)
+	}
 }
 
 // TestValidate_IdentityRules: one row a rule: 53 (name, audience, life,
@@ -81,18 +73,16 @@ func TestValidate_IdentityRules(t *testing.T) {
 		{"on a sleeping task", "apiVersion: orkstack/v1\nkind: Orkflow\nname: w\ntasks:\n  - id: wait\n    sleep: {seconds: 60}\n" + id("{name: a, audience: a}"), "identities"},
 		{"a fan-out's templated audience", identitySource("    each: {over: '{{ .inputs.files }}', max_items: 5}\n" + id("{name: a, audience: '{{ .item }}'}")), "identities[0].audience"},
 	}
-	dsl.WithTaskIdentity(func() {
-		for _, c := range cases {
-			_, err := dsl.Compile([]byte(c.source))
-			if !names(err, c.want) {
-				t.Errorf("%s: %v, want it to name %s", c.name, err, c.want)
-			}
+	for _, c := range cases {
+		_, err := dsl.Compile([]byte(c.source))
+		if !names(err, c.want) {
+			t.Errorf("%s: %v, want it to name %s", c.name, err, c.want)
 		}
-		ok := identitySource(id("{name: a, audience: a, ttl_seconds: 600}"))
-		if _, err := dsl.Compile([]byte(ok)); err != nil {
-			t.Errorf("a life of exactly ten minutes = %v", err)
-		}
-	})
+	}
+	ok := identitySource(id("{name: a, audience: a, ttl_seconds: 600}"))
+	if _, err := dsl.Compile([]byte(ok)); err != nil {
+		t.Errorf("a life of exactly ten minutes = %v", err)
+	}
 }
 
 // TestCanonical_DigestUnchangedWithoutIdentities: a task's canonical form
@@ -110,19 +100,17 @@ func TestCanonical_DigestUnchangedWithoutIdentities(t *testing.T) {
 	if strings.Contains(string(before), "identities") {
 		t.Fatalf("a task with no identity has them in its canonical form: %s", before)
 	}
-	dsl.WithTaskIdentity(func() {
-		with, err := dsl.Compile([]byte(identitySource(twoIdentities)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		after, err := dsl.CanonicalOrkflow(with)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(after), `"identities"`) || !strings.Contains(string(after), "https://vault.example") {
-			t.Fatalf("a task's identities are not in its canonical form: %s", after)
-		}
-	})
+	with, err := dsl.Compile([]byte(identitySource(twoIdentities)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := dsl.CanonicalOrkflow(with)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), `"identities"`) || !strings.Contains(string(after), "https://vault.example") {
+		t.Fatalf("a task's identities are not in its canonical form: %s", after)
+	}
 }
 
 // names says whether err names want: as the field it is about, or in its

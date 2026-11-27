@@ -1342,7 +1342,8 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
   measured?: MeasuredUsage | undefined;
 
   /**
-   * identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   * identities are the tokens this attempt was issued, by name, as its Orker
+   * recorded them; never a token.
    *
    * @generated from field: repeated orkstack.v1.AttemptIdentity identities = 24;
    */

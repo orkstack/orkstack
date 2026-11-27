@@ -330,7 +330,7 @@ fmt: ## Format Go code
 # never sees what git reads. make check runs these packages uncached, so a
 # change only to what git tracks or ignores re-runs them;
 # TestMakeCheck_RunsGitStatePackagesUncached keeps the list whole.
-GIT_STATE_PACKAGES := ./internal/dist ./internal/docscheck ./internal/engine ./test/tools/proofrun
+GIT_STATE_PACKAGES := ./internal/docscheck ./internal/engine ./test/tools/proofrun
 
 .PHONY: check
 check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integration suites, unit tests (-short, test cache kept but for GIT_STATE_PACKAGES), the UI's type-check and unit tests

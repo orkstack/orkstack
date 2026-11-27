@@ -964,6 +964,145 @@ tests:
   - eval_time: 5m
     alertname: OrkStackForceCancelUnsignedLeft
     exp_alerts: []
+- name: 'OrkStackResumeForceCanceledAgain: appears'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A run that someone resumed after a force cancel was force-canceled again in the last hour.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackresumeforcecanceledagain
+        summary: A run resumed after a force cancel was force-canceled again.
+- name: 'OrkStackResumeForceCanceledAgain: steady for 2 days'
+  interval: 10m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x300
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled",ork_deployment="d"}
+    values: 5x300
+  alert_rule_test:
+  - eval_time: 48h
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts: []
+- name: 'OrkStackResumeForceCanceledAgain: 10m gap, same value'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled",ork_deployment="d"}
+    values: 1x400 _x2 1x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts: []
+- name: 'OrkStackResumeForceCanceledAgain: growth during a 20m gap'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled",ork_deployment="d"}
+    values: 1x400 _x4 2x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A run that someone resumed after a force cancel was force-canceled again in the last hour.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackresumeforcecanceledagain
+        summary: A run resumed after a force cancel was force-canceled again.
+- name: 'OrkStackResumeForceCanceledAgain: same Orker under a new instance'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled",instance="a",ork_deployment="d"}
+    values: 1x400
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled",instance="b",ork_deployment="d"}
+    values: _x390 1x10
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts:
+    - exp_labels:
+        component: runs
+        ork_deployment: d
+        severity: warning
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: A run that someone resumed after a force cancel was force-canceled again in the last hour.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackresumeforcecanceledagain
+        summary: A run resumed after a force cancel was force-canceled again.
+- name: 'OrkStackResumeForceCanceledAgain: a new Prometheus meets a counter already above 0'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x20
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled",ork_deployment="d"}
+    values: 7x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts: []
+- name: 'OrkStackResumeForceCanceledAgain: a run whose resume could not be read'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="unknown",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts: []
+- name: 'OrkStackResumeForceCanceledAgain: a resume of a failed run'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="failed",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts: []
+- name: 'OrkStackResumeForceCanceledAgain: a run never resumed'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="none",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts: []
+- name: 'OrkStackResumeForceCanceledAgain: one another request ended'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_runs_force_canceled_total{ork_cancel_outcome="already_ended",ork_cancel_resumed_from="force_canceled",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackResumeForceCanceledAgain
+    exp_alerts: []
 - name: 'OrkStackAdmissionRefusing: held'
   interval: 1m
   input_series:

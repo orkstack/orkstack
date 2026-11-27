@@ -116,6 +116,16 @@ groups:
       description: A request for a force cancel found another of its run that nobody signed. This deployment signs nothing, so it was left alone, and the request's own runs beside it.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackforcecancelunsignedleft
       summary: Something claims to be a force cancel that nobody signed.
+  - alert: OrkStackResumeForceCanceledAgain
+    expr: sum by (ork_deployment) (((ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled"} - last_over_time(ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled"}[1d] offset 1h)) > 0) or ((ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled"} unless last_over_time(ork_runs_force_canceled_total{ork_cancel_outcome="force_canceled",ork_cancel_resumed_from="force_canceled"}[1d] offset 1h)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 1h)) > 0))) > 0
+    labels:
+      component: runs
+      severity: warning
+    annotations:
+      dashboard: /d/orkstack
+      description: A run that someone resumed after a force cancel was force-canceled again in the last hour.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackresumeforcecanceledagain
+      summary: A run resumed after a force cancel was force-canceled again.
   - alert: OrkStackAdmissionRefusing
     expr: sum by (ork_deployment, ork_namespace, ork_refusal_reason) (rate(ork_runs_refused_total{ork_refusal_reason!="budget_unmeasurable"}[15m])) > 0
     for: 15m

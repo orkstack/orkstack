@@ -119,10 +119,6 @@ func validateCredentials(taskIndex int, task *orkstackv1.Task) error {
 			}
 		}
 	}
-	if !taskIdentityAvailable {
-		return validationError(fmt.Sprintf("tasks[%d].credentials", taskIndex), fmt.Errorf(
-			"task %q declares credentials, and task identity, which a provider logs in with, is not available in this build", task.GetId()))
-	}
 	return nil
 }
 
@@ -137,11 +133,9 @@ const (
 // a provider name and a locator; a ciphertext is base64 within its bounds and
 // comes with a grant. Whether the provider is declared, decrypts, and the
 // grant admits this Orkflow is checked with the deployment and the namespace
-// in hand. Until task identity lands, a provider secret is refused after
-// those rules.
+// in hand.
 func validateProviderSecrets(taskIndex int, task *orkstackv1.Task) error {
 	total := 0
-	provided := false
 	for i, s := range task.GetSecrets() {
 		at := func(field string) string { return fmt.Sprintf("tasks[%d].secrets[%d].%s", taskIndex, i, field) }
 		scheme, locator, hasScheme := provider.SplitSource(s.GetSource())
@@ -159,7 +153,6 @@ func validateProviderSecrets(taskIndex int, task *orkstackv1.Task) error {
 			}
 			continue
 		}
-		provided = true
 		if own {
 			return validationError(at("grant"), fmt.Errorf("task %q: secret %q names a grant, and its source %q is the Orker's own; a grant is for a provider's source", task.GetId(), s.GetName(), scheme+":"))
 		}
@@ -187,10 +180,6 @@ func validateProviderSecrets(taskIndex int, task *orkstackv1.Task) error {
 	}
 	if total > MaxCiphertextTaskBytes {
 		return validationError(fmt.Sprintf("tasks[%d].secrets", taskIndex), fmt.Errorf("task %q's ciphertexts are %d bytes; at most %d a task", task.GetId(), total, MaxCiphertextTaskBytes))
-	}
-	if provided && !taskIdentityAvailable {
-		return validationError(fmt.Sprintf("tasks[%d].secrets", taskIndex), fmt.Errorf(
-			"task %q reads a secret from a provider, and task identity, which a provider logs in with, is not available in this build", task.GetId()))
 	}
 	return nil
 }

@@ -15,7 +15,7 @@ import (
 // TestNewMinter_None: an engine that issues no task identity builds no
 // mint, which the API refuses IDENTITY_ENGINE_REFUSED.
 func TestNewMinter_None(t *testing.T) {
-	m, records, err := newMinter(context.Background(), config{}, nil, nil, nil, nil)
+	m, _, records, err := newMinter(context.Background(), config{}, nil, nil, nil, nil)
 	if m != nil || records != nil || err != nil {
 		t.Fatalf("newMinter with no issuer = %v, %v, %v", m, records, err)
 	}

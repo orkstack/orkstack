@@ -178,6 +178,8 @@ type ForceCancelResult struct {
 	// Released: every gate the run held or queued at was told it is gone.
 	Released          bool `json:"released,omitempty"`
 	TerminalPublished bool `json:"terminal_published,omitempty"`
+	// Execution is the execution of the run it acted on, when it knew one.
+	Execution string `json:"execution,omitempty"`
 	// Unaudited: a record of this force cancel could not be written.
 	Unaudited bool `json:"unaudited,omitempty"`
 	// Cascade is what became of the runs below, of one that cascades.

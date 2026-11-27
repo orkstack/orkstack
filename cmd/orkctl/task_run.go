@@ -179,11 +179,6 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 	flags.StringArrayVar(&opts.credentials, "credential", nil,
 		"supply a declared credential's files as NAME=dir:PATH (repeatable)")
 	flags.StringArrayVar(&opts.omitCredentials, "omit-credential", nil, "run without this declared credential (repeatable)")
-	if !dsl.TaskIdentityAvailable() {
-		for _, name := range []string{"identity", "omit-identity", "credential", "omit-credential"} {
-			_ = flags.MarkHidden(name)
-		}
-	}
 	flags.StringArrayVar(&opts.needs, "need", nil,
 		"a failure handler's direct need and how it ended, TASK=succeeded|failed|skipped|canceled (repeatable); "+
 			"with --from-run it overrides the recorded outcome, without it every direct need must be named")

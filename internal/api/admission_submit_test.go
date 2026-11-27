@@ -33,9 +33,8 @@ import (
 // The admission record at submit (docs/TASK_IDENTITY.md, "The admission
 // record"). Each test runs SubmitRun against a real local record store: the
 // records it writes are read back from that store, and the files under its
-// directory are what a test counts. The task identity gate of this build
-// still refuses `identities:` at apply, so the definitions are put straight
-// into the Orkflow store, as one applied once the gate lifts would be.
+// directory are what a test counts. The definitions are put straight into
+// the Orkflow store, as an applied one would be.
 
 const admissionIssuer = "https://ork-id.admission.test"
 
@@ -139,6 +138,9 @@ func newAdmissionWorld(t *testing.T, o admissionOptions) *admissionWorld {
 		Pools:                  o.pools,
 		ResultsRecordedIndexed: o.resultsRecordedIndexed,
 	})
+	// Task identity is admitted only by an engine that enforces
+	// authentication.
+	svc.SetAccessForTest(&api.AccessControl{Mode: authn.ModeEnforce})
 	return &admissionWorld{svc: svc, records: records, dir: o.dir, starter: starter, runContexts: runContexts}
 }
 
@@ -211,9 +213,14 @@ func composingOrkflows() (parent, child *orkstackv1.Orkflow) {
 	return parent, child
 }
 
+// admissionCaller is the verified caller the world's submissions are from.
+var admissionCaller = &authn.Principal{Kind: authn.KindUser, ID: "user:corp:ada", Issuer: "corp", Method: authn.MethodJWT}
+
 func (w *admissionWorld) submit(t *testing.T, name, key string) (*orkstackv1.Run, error) {
 	t.Helper()
-	resp, err := w.svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name, IdempotencyKey: key}))
+	// A verified caller under enforce, whose own an idempotency key is.
+	ctx := authn.WithPrincipal(authn.WithMode(context.Background(), authn.ModeEnforce), admissionCaller)
+	resp, err := w.svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name, IdempotencyKey: key}))
 	if err != nil {
 		return nil, err
 	}
@@ -346,11 +353,17 @@ func TestSubmitRun_AdmitsNothingForARunThatHoldsNone(t *testing.T) {
 type observedClaimer struct {
 	*sharedClaimer
 	onClaim func()
+	// onClaimKey, when set, is told the key each claim is made under: under
+	// enforce it is the caller's own, which the test cannot spell.
+	onClaimKey func(key string)
 }
 
 func (c *observedClaimer) Claim(ctx context.Context, key string, candidate engine.Claim) (engine.Claim, error) {
 	if c.onClaim != nil {
 		c.onClaim()
+	}
+	if c.onClaimKey != nil {
+		c.onClaimKey(key)
 	}
 	return c.sharedClaimer.Claim(ctx, key, candidate)
 }
@@ -376,9 +389,9 @@ func TestSubmitRun_AKeyedSubmissionAdmitsBeforeTheClaim(t *testing.T) {
 		w := newAdmissionWorld(t, admissionOptions{claimer: claimer, definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
 		winner := &orkstackv1.Run{Id: "ork-winner", OrkflowName: "deploy", OrkflowVersion: "1", Status: orkstackv1.Status_STATUS_PENDING}
 		atClaim := -1
-		claimer.onClaim = func() {
+		claimer.onClaimKey = func(key string) {
 			atClaim = len(w.admissionFiles(t))
-			claimer.bind(claimKeyIn(artifacts.DefaultNamespace, "order-2"), winner)
+			claimer.bind(key, winner)
 		}
 		_, _ = w.submit(t, "deploy", "order-2")
 		if atClaim != 1 {
@@ -893,6 +906,25 @@ func TestSubmitRun_PinsTheResultsRecordedIndex(t *testing.T) {
 		}
 		if plan.Identity.Indexed != indexed || entry.Plan.Identity.Indexed != indexed {
 			t.Errorf("indexed=%v: parent pins %v, child %v", indexed, plan.Identity.Indexed, entry.Plan.Identity.Indexed)
+		}
+	}
+}
+
+// TestSubmitRun_RefusesAnIdentityRunBelowEnforce: an engine that does not
+// enforce authentication admits no run that holds an identity, by name and
+// before anything is written: a token is issued only for a run its callers
+// were authenticated for.
+func TestSubmitRun_RefusesAnIdentityRunBelowEnforce(t *testing.T) {
+	for _, mode := range []string{authn.ModeAsserted, authn.ModeObserve} {
+		w := newAdmissionWorld(t, admissionOptions{definitions: []*orkstackv1.Orkflow{identityOrkflow()}})
+		w.svc.SetAccessForTest(&api.AccessControl{Mode: mode})
+		_, err := w.submit(t, "deploy", "")
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "IDENTITY_AUTH_NOT_ENFORCED") ||
+			!strings.Contains(err.Error(), mode) {
+			t.Fatalf("auth.mode %s: submit = %v; want IDENTITY_AUTH_NOT_ENFORCED naming the mode", mode, err)
+		}
+		if files := w.admissionFiles(t); len(files) != 0 || len(w.starter.startedPlans()) != 0 {
+			t.Fatalf("auth.mode %s: a refused submission wrote %v and started %d", mode, files, len(w.starter.startedPlans()))
 		}
 	}
 }

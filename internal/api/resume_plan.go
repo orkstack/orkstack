@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -294,6 +296,10 @@ func (s *Service) admitResume(ctx context.Context, base *resumeBase, p *resumePl
 	if len(rerun.GetTasks()) == 0 {
 		return nil
 	}
+	needs, holds, err := s.admitResumeIdentity(ctx, ns, base, rerun)
+	if err != nil {
+		return err
+	}
 	sel, err := s.imagePolicySelection(ctx, ns)
 	if err != nil {
 		return err
@@ -304,11 +310,115 @@ func (s *Service) admitResume(ctx context.Context, base *resumeBase, p *resumePl
 		}
 		return refuseResume(resumeImagePolicy, engine.RefusalPermanent, "a task that would run again uses an image no longer allowed: %s", plainError(err))
 	}
-	planned, _, err := s.resolverFor(base.binding).Plan(ctx, ns, rerun, false)
+	resolver := s.resolverFor(base.binding)
+	planned, _, err := resolver.Plan(ctx, ns, rerun, false)
 	if err != nil {
 		return resumePoolError(err)
 	}
+	// What runs again of a run that holds an identity runs only where every
+	// Orker of its pools serves task identity, and declares the providers
+	// its grants need, as at a submit.
+	if holds {
+		if err := resolver.CheckIdentitySupport(ctx, ns, planned, needs); err != nil {
+			return resumePoolError(err)
+		}
+	}
 	return s.refusePinLeases(ctx, base, planned, p)
+}
+
+// admitResumeIdentity asks of a resume what a submit asks of task identity
+// (identity_submit.go), against the namespace's policy, the Orkers and the
+// run's starter as they are now: since the run was submitted the namespace
+// may have taken back an audience or a grant, or let only an Orkflow's
+// current version hold identities; an Orker's storage credential may have
+// stopped being confirmed scoped; the binder of the schedule, trigger or
+// event source that started it may no longer submit it, or not have
+// consented to what it asks for now. The tasks that run again are held to
+// the namespace's policy; a run that holds an identity at all (holds), whose
+// results the engine records even where only a task it keeps held one, is
+// held to scoped Orkers and its starter. A resume runs no composed task
+// again (COMPOSED_TASK), so no child run's definition is asked. It answers
+// the providers the grants of what runs again need, for
+// PoolResolver.CheckIdentitySupport. What is no longer allowed is
+// permanent; an Orker not confirmed scoped, a record that cannot be read and
+// a store that does not answer are waits.
+func (s *Service) admitResumeIdentity(ctx context.Context, ns *orkstackv1.Namespace, base *resumeBase, rerun *orkstackv1.Orkflow) (needs map[string]engine.ProviderNeed, holds bool, err error) {
+	origin := base.run.GetOrigin()
+	if identity.AsksForIdentity(rerun) {
+		if needs, err = s.checkIdentityAtSubmit(ctx, ns, rerun, ns.GetName(), originWord(origin)); err != nil {
+			return nil, false, resumeIdentityRefusal("a task that would run again asks for what the namespace no longer allows it", err)
+		}
+		holds = true
+	}
+	holds = holds || base.start.Plan.Identity != nil
+	if !holds {
+		return nil, false, nil
+	}
+	if err := s.checkStoreScopedForIdentity(ctx); err != nil {
+		switch {
+		case s.fleet == nil:
+			return nil, false, refuseResume(resumeStoreUnscoped, engine.RefusalPermanent, "%s", plainError(err))
+		case connect.CodeOf(err) == connect.CodeFailedPrecondition:
+			return nil, false, waitRefusal(resumeStoreUnscoped, "%s", plainError(err))
+		case connect.CodeOf(err) == connect.CodeUnavailable:
+			return nil, false, resumeUnavailable("the Orkers' storage credentials could not be confirmed scoped now: %s; try again shortly", plainError(err))
+		}
+		return nil, false, err
+	}
+	byObject, err := startedByAnObject(origin)
+	if err != nil {
+		return nil, false, resumeIdentityRefusal("the run's start cannot hold an identity", err)
+	}
+	if byObject {
+		admitted, err := s.admittedBinder(ctx, base)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := s.judgeResumedStarter(ctx, ns, origin, admitted, base.definition.GetName(), base.definition.GetVersion()); err != nil {
+			if reason, ok := starterRefusal(err); ok && reason == reasonStarterNotRecorded {
+				return nil, false, refuseResume(resumeIdentityPolicy, engine.RefusalPermanent,
+					"run %s holds an identity, and a resume cannot tell which binder of %s %q started it: its admission records none it can still be held to; run it again",
+					base.run.GetId(), originWord(origin), cmp.Or(origin.GetDescription(), origin.GetId()))
+			}
+			return nil, false, resumeIdentityRefusal("the binder that started the run may no longer start it with an identity, so it is not resumed; once that is put right, resume it again, or run it again", err)
+		}
+	}
+	return needs, true, nil
+}
+
+// admittedBinder is the binder base's admission recorded at submit, or nil
+// where it recorded none, or no admission of it can be read as found: the
+// resume then cannot tell its binder, and is refused (judgeResumedStarter).
+// A store that does not answer is a wait.
+func (s *Service) admittedBinder(ctx context.Context, base *resumeBase) (*artifacts.AdmittedBinder, error) {
+	planned := base.start.Plan.Identity
+	if planned == nil || planned.AdmissionSHA256 == "" || s.awaitRecords == nil {
+		return nil, nil
+	}
+	read, err := s.awaitRecords.ReadAdmission(ctx, base.namespace, base.run.GetId(), planned.AdmissionSHA256)
+	if err != nil {
+		return nil, resumeUnavailable("run %s's admission could not be read now; try again shortly", base.run.GetId())
+	}
+	if read.Answer != artifacts.RecordFound {
+		return nil, nil
+	}
+	return read.Value.Origin.Binder, nil
+}
+
+// resumeIdentityRefusal is a submit's identity refusal as a resume's, led by
+// lead: what is no longer allowed or no longer there is permanent, and a
+// record that cannot be read, or a store that does not answer, is a wait.
+func resumeIdentityRefusal(lead string, err error) error {
+	switch {
+	case errors.Is(err, artifacts.ErrPolicyUnreadable), errors.Is(err, artifacts.ErrIncarnationUnreadable):
+		return resumeUnavailable("%s", plainError(err))
+	case connect.CodeOf(err) == connect.CodeFailedPrecondition, connect.CodeOf(err) == connect.CodeNotFound,
+		connect.CodeOf(err) == connect.CodePermissionDenied:
+		return refuseResume(resumeIdentityPolicy, engine.RefusalPermanent, "%s: %s", lead, plainError(err))
+	case connect.CodeOf(err) == connect.CodeUnavailable:
+		return resumeUnavailable("%s; try again shortly", plainError(err))
+	}
+	return err
 }
 
 // admitResumeSlot asks of the run's concurrency limit what a submit would be
@@ -358,6 +468,9 @@ func resumePoolError(err error) error {
 		noPin   *engine.PoolNoPinHostError
 		profile *engine.ProfileUnavailableError
 		large   *engine.PoolResourcesUnsatisfiableError
+
+		noIdentity *engine.PoolNoIdentitySupportError
+		noProvider *engine.PoolNoProviderError
 	)
 	switch {
 	case errors.As(err, &empty):
@@ -370,6 +483,12 @@ func resumePoolError(err error) error {
 		return r
 	case errors.As(err, &profile):
 		return waitRefusal(resumePoolUnserved, "%s", profile.Error())
+	case errors.As(err, &noIdentity):
+		r := waitRefusal(resumePoolUnserved, "%s", noIdentity.Error())
+		r.Tasks = noIdentity.Tasks
+		return r
+	case errors.As(err, &noProvider):
+		return waitRefusal(resumePoolUnserved, "%s", noProvider.Error())
 	case errors.As(err, &large):
 		r := refuseResume(resumeTaskOverCap, engine.RefusalPermanent, "task %s asks for more than pool %s allows now", large.Task, large.Pool)
 		r.Tasks = []string{large.Task}

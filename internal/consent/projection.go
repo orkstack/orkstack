@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -73,9 +74,9 @@ type (
 		TTLSeconds int64  `json:"ttl_seconds"`
 	}
 	// credential is a task's credential as the spec projection lists it:
-	// its name, grant, path, params and refresh policy. CredentialRef holds
-	// none of them until P15 lands its fields, and the DSL refuses
-	// `credentials:` until then, so no definition can carry one yet.
+	// its name, grant, path, params and refresh policy, so a version that
+	// logs in as another principal, or asks it for something else, is
+	// another consent.
 	credential struct {
 		Grant   string            `json:"grant"`
 		Name    string            `json:"name"`
@@ -83,9 +84,16 @@ type (
 		Path    string            `json:"path"`
 		Refresh int64             `json:"refresh"`
 	}
+	// secretGrant is a secret read through a grant: its name, the grant,
+	// the source read under it and the SHA-256 of a ciphertext it decrypts
+	// ("" for none), and whether its value is left unmasked, so another
+	// secret, another plaintext or a value shown in logs is another consent.
 	secretGrant struct {
-		Grant string `json:"grant"`
-		Name  string `json:"name"`
+		Ciphertext string `json:"ciphertext_sha256"`
+		Grant      string `json:"grant"`
+		Name       string `json:"name"`
+		Source     string `json:"source"`
+		Unmasked   bool   `json:"unmasked"`
 	}
 	upstream struct {
 		Await *await   `json:"await"`
@@ -199,19 +207,31 @@ func (w *walker) addRole(t *orkstackv1.Task, path []string, ups []upstream) {
 			cmpInt(a.TTLSeconds, b.TTLSeconds), cmpInt(a.Refresh, b.Refresh))
 	})
 	creds := make([]credential, 0, len(t.GetCredentials()))
-	for range t.GetCredentials() {
-		creds = append(creds, credential{Params: map[string]string{}})
+	for _, c := range t.GetCredentials() {
+		params := map[string]string{}
+		maps.Copy(params, c.GetParams())
+		creds = append(creds, credential{Grant: c.GetGrant(), Name: c.GetName(), Params: params, Path: c.GetPath(),
+			Refresh: int64(c.GetRefresh())})
+		w.grants[c.GetGrant()] = true
 	}
+	slices.SortFunc(creds, func(a, b credential) int {
+		return cmpAll(strings.Compare(a.Name, b.Name), strings.Compare(a.Grant, b.Grant), strings.Compare(a.Path, b.Path))
+	})
 	grants := []secretGrant{}
 	for _, s := range t.GetSecrets() {
 		if s.GetGrant() == "" {
 			continue
 		}
-		grants = append(grants, secretGrant{Grant: s.GetGrant(), Name: s.GetName()})
+		ciphertext := ""
+		if c := s.GetCiphertext(); c != "" {
+			sum := sha256.Sum256([]byte(c))
+			ciphertext = hex.EncodeToString(sum[:])
+		}
+		grants = append(grants, secretGrant{Ciphertext: ciphertext, Grant: s.GetGrant(), Name: s.GetName(), Source: s.GetSource(), Unmasked: s.GetUnmasked()})
 		w.grants[s.GetGrant()] = true
 	}
 	slices.SortFunc(grants, func(a, b secretGrant) int {
-		return cmpAll(strings.Compare(a.Name, b.Name), strings.Compare(a.Grant, b.Grant))
+		return cmpAll(strings.Compare(a.Name, b.Name), strings.Compare(a.Grant, b.Grant), strings.Compare(a.Source, b.Source))
 	})
 	sortUpstream(ups)
 	w.tasks = append(w.tasks, roleTask{

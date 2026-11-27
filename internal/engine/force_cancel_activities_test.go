@@ -1110,7 +1110,8 @@ func TestForceCancelAudit_Counts(t *testing.T) {
 	record(forceCancelRequested, "")
 	record(forceCancelCompleted, FCStateForceCanceled)
 	record(forceCancelCompleted, FCStateForceCanceled)
-	if len(got) != 1 || got[FCStateForceCanceled] != 1 {
+	// No execution is named, so what the run was resumed from is unknown.
+	if len(got) != 1 || got[FCStateForceCanceled+"/"+FCResumedUnknown] != 1 {
 		t.Errorf("%v", got)
 	}
 	b, _ := fcActivities(t, keys, d)

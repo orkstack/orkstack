@@ -17,6 +17,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -340,6 +341,19 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 			Files        []memoInputFile    `json:"files"`
 			EachUpstream []memoEachUpstream `json:"each_upstream"`
 		}{files, eachUpstream}),
+	}
+	// A task that holds an identity, a credential or a secret through a grant
+	// is keyed by what it holds too, and only then, so every other task keeps
+	// its key: a result made as one principal is never another's, nor a
+	// task's that holds none of it (docs/TASK_IDENTITY.md, "Results the engine
+	// records"). Its spec digest's three members are the key's component; a
+	// version this build does not compute is no memo.
+	if idc := in.GetIdentity(); len(idc.GetIdentities())+len(idc.GetCredentials())+len(idc.GetGrants()) > 0 {
+		_, members, err := task.IdentitySpecDigest(idc.GetDigestVersion(), task.IdentitySpecOfInput(in))
+		if err != nil {
+			return memoKey{}, false
+		}
+		components["identity"] = sha256Hex([]byte(members["identities"] + members["credentials"] + members["grants"]))
 	}
 	if item != nil {
 		if item.Digest != "" {

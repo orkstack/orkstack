@@ -87,13 +87,17 @@ var narrowerOrkers = []narrowerOrker{
 	{
 		name:   "no engine to issue an identity",
 		reason: ReasonIdentityNotConfigured,
-		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1} },
+		ask: func(in *orkstackv1.ExecuteTaskInput) {
+			in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1, AdmissionSha256: testAdmissionSHA}
+		},
 		narrow: func(d *OCIDispatcher) { d.identity.Store(nil) },
 	},
 	{
 		name:   "an Orker that does not serve task identity",
 		reason: ReasonIdentityNotServed,
-		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1} },
+		ask: func(in *orkstackv1.ExecuteTaskInput) {
+			in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1, AdmissionSha256: testAdmissionSHA}
+		},
 		narrow: func(d *OCIDispatcher) { d.identity.Store(identitySupportOf(false)) },
 	},
 	{

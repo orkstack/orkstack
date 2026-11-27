@@ -124,6 +124,12 @@ func newSourceFixture(t *testing.T, edit func(*api.Config)) *sourceFixture {
 	put("default", "handle-order", orderInputs)
 	put("payments", "handle-order", orderInputs)
 	put("default", "callback", map[string]any{}, &orkstackv1.Task{Id: "wait", Await: &orkstackv1.AwaitSpec{Callback: true}})
+	put("default", "granted", map[string]any{}, &orkstackv1.Task{Id: "read", Uses: "ghcr.io/acme/read:1",
+		Secrets: []*orkstackv1.SecretRef{{Name: "db", Source: "vault:secret/data/db", Grant: "reader"}}})
+	put("default", "holds", map[string]any{}, &orkstackv1.Task{Id: "push", Uses: "ghcr.io/acme/push:1",
+		Identities: []*orkstackv1.IdentityRef{{Name: "reg", Audience: "registry"}}})
+	put("default", "composes", map[string]any{}, &orkstackv1.Task{Id: "child", Uses: "orkflow:holds@1.0.0",
+		Orkflow: &orkstackv1.OrkflowRef{Name: "holds", Version: "1.0.0"}})
 	storeDir := t.TempDir()
 	store, err := artifacts.NewLocalEventSourceStore(storeDir)
 	must.OKf(t, err, "store")
@@ -267,6 +273,8 @@ func TestEventSourceService_CreateRefusals(t *testing.T) {
 		{"no such Orkflow", func(s *orkstackv1.EventSource) { s.OrkflowName = "nope" }, "", connect.CodeNotFound, "nope"},
 		{"a mapping the Orkflow does not declare", func(s *orkstackv1.EventSource) { s.Map["other"] = &orkstackv1.MapRule{Pointer: "/x"} }, "", connect.CodeInvalidArgument, eventsources.ReasonMappingInvalid},
 		{"an Orkflow a source cannot start", func(s *orkstackv1.EventSource) { s.OrkflowName = "callback"; s.Map = nil }, "", connect.CodeFailedPrecondition, eventsources.ReasonOrkflowUnsupported},
+		{"an Orkflow that reads a secret through a grant", func(s *orkstackv1.EventSource) { s.OrkflowName = "granted"; s.Map = nil }, "", connect.CodeFailedPrecondition, eventsources.ReasonOrkflowUnsupported},
+		{"an Orkflow that composes one that holds an identity", func(s *orkstackv1.EventSource) { s.OrkflowName = "composes"; s.Map = nil }, "", connect.CodeFailedPrecondition, eventsources.ReasonOrkflowUnsupported},
 		{"a first-party name", func(s *orkstackv1.EventSource) { s.Uses = "nats-jetstream" }, "", connect.CodeFailedPrecondition, eventsources.ReasonImageUnsupported},
 		{"an image that is no source", func(s *orkstackv1.EventSource) { s.Uses = "ghcr.io/acme/activity:1" }, "", connect.CodeFailedPrecondition, eventsources.ReasonServiceContractUnknown},
 		{"with: against the interface", func(s *orkstackv1.EventSource) { s.With, _ = structpb.NewStruct(map[string]any{}) }, "", connect.CodeInvalidArgument, eventsources.ReasonConfigInvalid},

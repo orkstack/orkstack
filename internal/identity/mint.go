@@ -176,9 +176,9 @@ type MintStores interface {
 // one follows has its record of success there. nil is a build without it,
 // and refuses a scope and an admission that names any follow (fail closed).
 type FollowsChecker interface {
-	CheckScope(ctx context.Context, adm artifacts.Admission, taskID string, scopes Scopes) error
-	CheckFollows(ctx context.Context, adm artifacts.Admission, admissionSHA256, taskID string, rootScope uint64) ([]FollowedRecord, error)
-	CheckReceived(ctx context.Context, adm artifacts.Admission, admissionSHA256, taskID string, rootScope uint64) ([]*orkstackv1.ArtifactRef, error)
+	// Begin holds the scope against the root's resumes and answers the one
+	// read the attempt's checks share (FollowsRead).
+	Begin(ctx context.Context, adm artifacts.Admission, admissionSHA256 string, scopes Scopes) (*FollowsRead, error)
 }
 
 // Minter is the mint's steps 2 and 4 to 8; the API holds steps 1 and 3,

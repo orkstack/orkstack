@@ -580,6 +580,16 @@ Severity warning; fires at once. Something claims to be a force cancel that nobo
 - **Confirm:** the engine log names each ("an execution nobody signed is left alone"); `orkctl admin audit` shows who asked.
 - **Fix:** Nothing, if two people asked. Otherwise find out who holds the cluster's credential, and give the engines signing keys and raise `auth.mode`, so that nothing unsigned is taken.
 
+### OrkStackResumeForceCanceledAgain
+
+Severity warning; fires at once. A run resumed after a force cancel was force-canceled again.
+
+- **What it means:** A resume replays the run on the build it ran on, so whatever kept its workflow from progressing (a workflow-task failure loop, a stuck task) most likely stopped it the same way. The resume's preview warned of it (FORCE_CANCELED_SAME_BUILD).
+- **Impact:** The run is CANCELED `RUN_FORCE_CANCELED` again. Its committed results are kept, and each resume counts against the run's resume limit.
+- **Confirm:** `orkctl run get ID -j` lists the run's `resumes` and how each ended; the engine log names the workflow task that kept failing.
+- **Fix:** Find what stops the run before resuming it again: fix the Orkflow, its input or the build, then resume it from the task that failed, or submit it anew. A run whose resume record could not be read is counted `unknown`, and does not fire this.
+- **Related:** [OrkStackForceCancelUnsignedLeft](#orkstackforcecancelunsignedleft)
+
 ### OrkStackAdmissionRefusing
 
 Severity info; fires after 15m. A namespace refuses submissions.

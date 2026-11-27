@@ -1,0 +1,28 @@
+# A task that holds an identity, for the development stack (`make up`,
+# CONTRIBUTING.md, "Task identity on the development stack"). Its container
+# reads the token the engine minted for its attempt from
+# /orkstack/identity/dev/token and prints the token's claims, never the token:
+# who it says the task is (sub), for whom (aud) and which run (ork_run_id).
+# Nothing verifies it here; a relying party would, against the engine's keys.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: dev-identity
+tasks:
+  - id: whoami
+    uses: docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+    network: none
+    identities:
+      - name: dev
+        audience: dev.orkstack.invalid
+        ttl_seconds: 900
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        p="$(cut -d. -f2 /orkstack/identity/dev/token | tr '_-' '/+')"
+        while [ $(( ${#p} % 4 )) -ne 0 ]; do p="$p="; done
+        printf '%s' "$p" | base64 -d > /orkstack/output/artifacts/claims.json
+        cat /orkstack/output/artifacts/claims.json
+        echo
+        echo '{}' > /orkstack/output/values.json

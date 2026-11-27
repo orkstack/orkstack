@@ -28,6 +28,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/provider"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
@@ -961,6 +962,11 @@ func (d *OCIDispatcher) checkOrkerPolicy(in *orkstackv1.ExecuteTaskInput) *Failu
 func (d *OCIDispatcher) identityFailure(in *orkstackv1.ExecuteTaskInput) *Failure {
 	if in.GetIdentity() == nil {
 		return nil
+	}
+	if in.GetIdentity().GetAdmissionSha256() == "" {
+		return Fail(identity.ReasonNotAdmitted,
+			"task %q holds an identity, a credential or a secret through a grant, and its run was not admitted with one, so nothing may issue it",
+			in.GetTaskId())
 	}
 	check := d.identity.Load()
 	if check == nil {

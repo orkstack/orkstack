@@ -11,8 +11,9 @@ reads files; it needs no SDK and no network path to the provider.
 rules below and two provider types, `aws` ("The `aws` type") and `vault`
 ("The `vault` type"): a deployment can declare either, and its declaration is
 checked at boot. A document that declares another type refuses boot, naming
-it. A task's `credentials:` and the provider sources of `secrets:` come in
-later releases; until then nothing here changes what a task sees.
+it. A task reads them through `credentials:` and the provider sources of
+`secrets:` ([DSL.md](./DSL.md#credentials-credentials)), on a deployment that
+runs task identity. An event source does not yet.
 
 ## The rule that makes it safe
 
@@ -339,10 +340,12 @@ its accessor and lives to its TTL, one for each try:
 | `400`, `403` | Vault itself refused the role, the token's claims or the request |
 
 A login is renewed at a third of its life for as long as Vault extends it, and
-then made again. When the attempt ends its token is revoked, and with it every
-lease it made. If the Orker dies instead, the token ends by itself within
-`max_login_ttl`. A token that could not be revoked is logged at error by its
-accessor, never by itself, so an operator can revoke it.
+then made again. When the attempt ends its token is revoked at once, and every
+lease it made shortly after: Vault marks them expired with the token and its
+lease manager revokes them. A session's token may revoke itself but not leases
+one by one, so it cannot hasten them. If the Orker dies instead, the token ends
+by itself within `max_login_ttl`. A token that could not be revoked is logged
+at error by its accessor, never by itself, so an operator can revoke it.
 
 **Secrets.** `vault:<API path>` reads the path, and `#<field>` takes one field
 of it: `vault:secret/data/payments/db#password` under a KV version 2 mount,

@@ -198,6 +198,11 @@ func (c *counted) CountForceCancel(_ context.Context, outcome string) {
 	(*c)[outcome]++
 }
 
+// CountForceCancelEnding counts an ending as "<outcome>/<resumed from>".
+func (c *counted) CountForceCancelEnding(ctx context.Context, outcome, resumedFrom string) {
+	c.CountForceCancel(ctx, outcome+"/"+resumedFrom)
+}
+
 // TestForceCancelFind: of the open executions named as a run's force cancels,
 // one is joined only when its own decision verifies for that run under the id
 // it has and it is not past its time; one past it is superseded; one whose

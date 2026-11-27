@@ -1103,7 +1103,8 @@ message LiveAttempt {
   // reserved is set from E94; unset until it lands (v0.4.0 proto batch).
   ReservedResources reserved = 23;
 
-  // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // identity is each identity the attempt holds now, by name, with its
+  // state; never a token.
   repeated LiveIdentity identity = 24;
 }
 

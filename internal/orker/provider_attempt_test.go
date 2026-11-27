@@ -132,7 +132,7 @@ func loginInput() *orkstackv1.ExecuteTaskInput {
 	}
 	in.CommitUri = "mem://store/" + key
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "db-url", Source: "vault:secret/db#url", Grant: "db"}}
-	in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1,
+	in.Identity = &orkstackv1.IdentityContext{DigestVersion: 1, AdmissionSha256: testAdmissionSHA,
 		Credentials: []*orkstackv1.CredentialRef{{Name: "lease", Grant: "db", Path: "database/creds/rw"}},
 		Grants:      []*orkstackv1.IdentityGrant{{Name: "db", Provider: "vault", Principal: "payments-app", Audience: "vault.internal"}}}
 	return in

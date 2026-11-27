@@ -226,6 +226,7 @@ Flags:
 - `--grace-period DURATION` (default `10s`) — SIGTERM-to-SIGKILL window used by the cancellation assertion
 - `--keep` — keep the temporary workspaces for inspection
 - `--timeout DURATION` (default `2m0s`) — per-assertion activity timeout
+- `--with-identity` — also check that the image reads an identity's files through current and sees a refresh swap them
 
 Inherited flags:
 
@@ -4777,13 +4778,17 @@ command could not run the task.
 Flags:
 
 - `--artifact STRINGARRAY` — supply one output artifact of an upstream task as TASK/NAME=PATH (repeatable)
+- `--credential STRINGARRAY` — supply a declared credential's files as NAME=dir:PATH (repeatable)
 - `-f, --file STRING` — run this orkflow document, not stored, instead of the stored definition
 - `--from-run STRING` — replay against this run's recorded upstream bytes
+- `--identity STRINGARRAY` — supply a declared identity's token as NAME=file:PATH, read again at each refresh (repeatable)
 - `-i, --input STRINGARRAY` — run input as key=value (repeatable); with --from-run, overrides the run's input
 - `--input-json STRING` — run input as a JSON object; merged under --input values
 - `--item INT32` — run this item of a fan-out task (required for one)
 - `--keep` — keep the work directory and print its path
 - `--need STRINGARRAY` — a failure handler's direct need and how it ended, TASK=succeeded|failed|skipped|canceled (repeatable); with --from-run it overrides the recorded outcome, without it every direct need must be named
+- `--omit-credential STRINGARRAY` — run without this declared credential (repeatable)
+- `--omit-identity STRINGARRAY` — run without this declared identity (repeatable)
 - `--omit-secret STRINGARRAY` — run without this declared secret (repeatable)
 - `-o, --output STRINGARRAY` — supply an upstream task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file
 - `--outputs-file STRING` — a JSON object keyed by task id whose values are the supplied values.json objects

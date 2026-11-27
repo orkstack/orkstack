@@ -399,7 +399,8 @@ export type Task = Message<"orkstack.v1.Task"> & {
   inputArtifacts: string[];
 
   /**
-   * identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   * identities are the tokens the task holds, one for each audience, minted
+   * for each attempt (docs/TASK_IDENTITY.md).
    *
    * @generated from field: repeated orkstack.v1.IdentityRef identities = 28;
    */

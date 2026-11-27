@@ -159,6 +159,15 @@ func TestConcurrency_TaskLimitBounds(t *testing.T) {
 	shared := taskLimitsYAML("", "{limit: 1, key: k}", "{limit: 1, key: k}", "{limit: 1, key: k}")
 	must.OK(t, applyDoc(t, api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Starter: starter, Capabilities: &fakeCapabilities{},
 		Concurrency: few, ConcurrencyReader: &fakeConcReader{}}), shared))
+	// The one waiting is counted: under a bound of one, those three are
+	// refused for two, one holding and one in line.
+	one := engine.DefaultConcurrencySettings()
+	one.MaxRunSlotEntries = 1
+	if err := applyDoc(t, api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Starter: starter, Capabilities: &fakeCapabilities{},
+		Concurrency: one, ConcurrencyReader: &fakeConcReader{}}), shared); connect.CodeOf(err) != connect.CodeInvalidArgument ||
+		!strings.Contains(err.Error(), "for 2 concurrency slots") {
+		t.Fatalf("create = %v; want refused for 2 slots, its waiting one counted", err)
+	}
 	// Three of one key template may each hold a key of its own: three.
 	templated := taskLimitsYAML("", "{limit: 1, key: \"db:{{ .inputs.env }}\"}", "{limit: 1, key: \"db:{{ .inputs.env }}\"}", "{limit: 1, key: \"db:{{ .inputs.env }}\"}")
 	if err := applyDoc(t, narrow(), templated); connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "for 3 concurrency slots") {

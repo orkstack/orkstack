@@ -349,9 +349,8 @@ or validating one also warns, never refuses, of a cached task that holds an
 identity (a memo hit mints nothing, so it is not checked against the policy
 as it is then), of a pin whose members run different images where any holds
 one (a pin is one trust domain), and of an identity task whose pool more
-than one namespace may use (naming the pool and how many, never which). No task can
-use the policy yet; it decides what tasks may hold once task identity is
-available.
+than one namespace may use (naming the pool and how many, never which). It
+decides what tasks may hold.
 
 ## Consent
 
@@ -363,7 +362,9 @@ digest is `c1:` and 64 hexadecimal digits, the SHA-256 of consent
 projection 1: for every task that would hold an identity (an identity, a
 credential or a secret through a grant), in the Orkflow and in every Orkflow
 it composes at the versions they pin, the task's id, its kind, its pool, its
-join, what it asks for, and every task upstream of it, each with its id,
+join, what it asks for (each identity's audience and life; each credential's
+name, grant, path, params and refresh; each granted secret's name, grant,
+source, the digest of its ciphertext and whether it is left unmasked), and every task upstream of it, each with its id,
 kind, join and needs, a composed task's Orkflow and an approval's deadline and
 callback. A version that changes any of that is another consent; one that
 changes only an image, a command or the input is not. An Orkflow that asks

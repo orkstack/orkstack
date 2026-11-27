@@ -340,7 +340,7 @@
           "type": "integer"
         },
         "credentials": {
-          "description": "refused until task identity is available",
+          "description": "refused: a task holds credentials, an event source does not yet",
           "maxItems": 0,
           "type": "array"
         },
@@ -371,7 +371,7 @@
           ]
         },
         "identities": {
-          "description": "refused until task identity is available",
+          "description": "refused: a task holds identities, an event source does not yet",
           "maxItems": 0,
           "type": "array"
         },
@@ -817,7 +817,7 @@
           "type": "integer"
         },
         "credentials": {
-          "description": "refused until task identity is available",
+          "description": "refused: a task holds credentials, an event source does not yet",
           "maxItems": 0,
           "type": "array"
         },
@@ -848,7 +848,7 @@
           ]
         },
         "identities": {
-          "description": "refused until task identity is available",
+          "description": "refused: a task holds identities, an event source does not yet",
           "maxItems": 0,
           "type": "array"
         },

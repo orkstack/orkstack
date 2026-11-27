@@ -193,7 +193,8 @@ type Namespace struct {
 	// (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch
 	// is first in, first out, whatever the weights.
 	FairShareWeight float64 `protobuf:"fixed64,16,opt,name=fair_share_weight,json=fairShareWeight,proto3" json:"fair_share_weight,omitempty"`
-	// identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// identity is the namespace's identity policy: the audiences and grants
+	// its tasks may hold (docs/TASK_IDENTITY.md).
 	Identity      *NamespaceIdentity `protobuf:"bytes,17,opt,name=identity,proto3" json:"identity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -44,7 +44,8 @@ const (
 	// before anything else is read.
 	ReasonInvalid = "EVENT_SOURCE_INVALID"
 	// ReasonIdentityUnsupported refuses identities, credentials and
-	// grant-backed secrets on a source until task identity is available.
+	// grant-backed secrets on a source: a task holds them, and a source
+	// does not yet.
 	ReasonIdentityUnsupported = "EVENT_SOURCE_IDENTITY_UNSUPPORTED"
 )
 

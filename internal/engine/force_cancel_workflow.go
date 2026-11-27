@@ -146,6 +146,7 @@ func (d ForceCancelDecision) isFor(info *workflow.Info) bool {
 // is why the force cancel stopped, for a run that turns out not to have ended.
 func (f *forceCancel) finish(exec, cause string) (ForceCancelResult, error) {
 	f.ended()
+	f.out.Execution = exec
 	// 9: classify by the verified close.
 	closed, ok := f.classify(exec)
 	if !ok {

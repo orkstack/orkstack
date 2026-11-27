@@ -77,7 +77,7 @@ func TestCompute_AskingForNothingIsTheEmptyTable(t *testing.T) {
 // release reproduces them or adds c2:.
 func TestCompute_Golden(t *testing.T) {
 	asks := compute(t, roleDef(), noChildren)
-	const wantBytes = `{"tasks":[{"credentials":[],"grants":[{"grant":"deployer","name":"deploy-key"}],"id":"apply",` +
+	const wantBytes = `{"tasks":[{"credentials":[],"grants":[{"ciphertext_sha256":"","grant":"deployer","name":"deploy-key","source":"","unmasked":false}],"id":"apply",` +
 		`"identities":[{"audience":"sts.amazonaws.com","name":"aws","refresh":2,"ttl_seconds":900},` +
 		`{"audience":"https://vault.example","name":"vault","refresh":0,"ttl_seconds":0}],"join":0,"kind":"container",` +
 		`"path":[],"pool":"prod","upstream":[` +
@@ -86,7 +86,7 @@ func TestCompute_Golden(t *testing.T) {
 	if got := string(asks.canonical); got != wantBytes {
 		t.Fatalf("canonical bytes:\n got %s\nwant %s", got, wantBytes)
 	}
-	const golden = "c1:ab41998df931ffd45ee9d48bc5d2e314beda66e2cbba7bbc51497cc35303eee1"
+	const golden = "c1:11776702449828520ead2f647c346d8a468dcef5e303af03131f03d14d685d83"
 	if asks.Digest != golden {
 		t.Fatalf("digest = %s, want the frozen %s", asks.Digest, golden)
 	}
@@ -128,6 +128,15 @@ func TestCompute_WhatChangesTheConsent(t *testing.T) {
 		{"an audience", func(d *orkstackv1.Orkflow) { task(d, "apply").Identities[0].Audience = "x" }, true},
 		{"a token's life", func(d *orkstackv1.Orkflow) { task(d, "apply").Identities[0].TtlSeconds = 60 }, true},
 		{"a secret's grant", func(d *orkstackv1.Orkflow) { task(d, "apply").Secrets[1].Grant = "admin" }, true},
+		{"a granted secret's source", func(d *orkstackv1.Orkflow) { task(d, "apply").Secrets[1].Source = "vault:secret/data/other" }, true},
+		{"a granted secret left unmasked", func(d *orkstackv1.Orkflow) { task(d, "apply").Secrets[1].Unmasked = true }, true},
+		{"a granted secret's ciphertext", func(d *orkstackv1.Orkflow) { task(d, "apply").Secrets[1].Ciphertext = "QUJD" }, true},
+		{"a credential added", func(d *orkstackv1.Orkflow) { task(d, "apply").Credentials = []*orkstackv1.CredentialRef{cred()} }, true},
+		{"a credential's grant", credEdit(func(c *orkstackv1.CredentialRef) { c.Grant = "admin" }), true},
+		{"a credential's path", credEdit(func(c *orkstackv1.CredentialRef) { c.Path = "pki/issue/other" }), true},
+		{"a credential's params", credEdit(func(c *orkstackv1.CredentialRef) { c.Params["ttl"] = "24h" }), true},
+		{"a credential's name", credEdit(func(c *orkstackv1.CredentialRef) { c.Name = "other" }), true},
+		{"a credential's refresh", credEdit(func(c *orkstackv1.CredentialRef) { c.Refresh = orkstackv1.RefreshPolicy_REFRESH_POLICY_BEST_EFFORT }), true},
 		{"a fan-out", func(d *orkstackv1.Orkflow) {
 			task(d, "apply").Each = &orkstackv1.EachSpec{Over: "x"}
 		}, true},
@@ -157,13 +166,33 @@ func TestCompute_WhatChangesTheConsent(t *testing.T) {
 		{"the version", func(d *orkstackv1.Orkflow) { d.Version = "4" }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			def := roleDef()
+			def, was := roleDef(), base
+			if strings.HasPrefix(tc.name, "a credential's") {
+				task(def, "apply").Credentials = []*orkstackv1.CredentialRef{cred()}
+				was = compute(t, def, noChildren).Digest
+			}
 			tc.edit(def)
 			got := compute(t, def, noChildren).Digest
-			if (got != base) != tc.differ {
+			if (got != was) != tc.differ {
 				t.Fatalf("digest changed = %v, want %v", got != base, tc.differ)
 			}
 		})
+	}
+}
+
+// cred is a credential of the role task.
+func cred() *orkstackv1.CredentialRef {
+	return &orkstackv1.CredentialRef{Name: "pki", Grant: "issuer", Path: "pki/issue/role", Params: map[string]string{"ttl": "1h"}}
+}
+
+// credEdit edits the role task's one credential, which the case adds first.
+func credEdit(edit func(*orkstackv1.CredentialRef)) func(*orkstackv1.Orkflow) {
+	return func(d *orkstackv1.Orkflow) {
+		for _, tk := range d.GetTasks() {
+			for _, c := range tk.GetCredentials() {
+				edit(c)
+			}
+		}
 	}
 }
 

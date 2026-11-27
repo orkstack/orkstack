@@ -226,14 +226,16 @@ export type SecretRef = Message<"orkstack.v1.SecretRef"> & {
   source: string;
 
   /**
-   * grant is set from identity (E83); unset until it lands (v0.4.0 proto batch).
+   * grant names the namespace grant a provider secret is read under; empty
+   * for one of the Orker's own sources.
    *
    * @generated from field: string grant = 3;
    */
   grant: string;
 
   /**
-   * ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+   * ciphertext is the base64 a provider decrypts for this secret, read under
+   * its grant; empty for one that is read, not decrypted.
    *
    * @generated from field: string ciphertext = 4;
    */
@@ -1150,7 +1152,8 @@ export type ExecuteTaskInput = Message<"orkstack.v1.ExecuteTaskInput"> & {
   devices: ProfileRef[];
 
   /**
-   * identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   * identity is what the attempt asks the engine to mint for, set only for a
+   * task that declares an identity.
    *
    * @generated from field: orkstack.v1.IdentityContext identity = 34;
    */

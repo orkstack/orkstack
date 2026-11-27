@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -163,7 +164,11 @@ func TestForceCancelBackfill(t *testing.T) {
 			if tt.store != nil {
 				store = tt.store
 			}
-			a := NewForceCancelActivities(ForceCancelDeps{Client: closedClient{closedCluster: &c}, ClusterNamespace: "ork-main", Keys: keys, Mode: func() string { return "enforce" }, Audit: store})
+			var counts counted
+			resets := &askedResets{reason: ResumePlanKey{Scope: 9, N: 1, PlanDigest: strings.Repeat("a", 64)}.String()}
+			plans := &fakePlans{rec: &orkstackv1.ResumePlanRecord{ForceCanceledBy: &orkstackv1.ResumeForceCanceledBy{}}, answer: artifacts.RecordFound, digest: strings.Repeat("a", 64)}
+			a := NewForceCancelActivities(ForceCancelDeps{Client: closedClient{closedCluster: &c}, ClusterNamespace: "ork-main", Keys: keys, Mode: func() string { return "enforce" }, Audit: store,
+				Counter: &counts, ResumePlans: plans, ResetKeys: resets})
 			for _, kind := range tt.there {
 				rec, err := a.auditRecord(kind, d, ForceCancelResult{})
 				must.OK(t, err)
@@ -195,6 +200,13 @@ func TestForceCancelBackfill(t *testing.T) {
 			}
 			if len(got) != len(tt.want) {
 				t.Errorf("recorded %v, want %v", got, tt.want)
+			}
+			// A completed record it wrote is counted once, by the execution its
+			// signed record says it terminated.
+			wrote := slices.Contains(tt.want, forceCancelCompleted) && !slices.Contains(tt.there, forceCancelCompleted) && !tt.err
+			if wrote && (len(counts) != 1 || counts[FCStateForceCanceled+"/"+FCResumedForceCanceled] != 1 || !slices.Equal(resets.asked, []string{"exec-1"})) ||
+				!wrote && len(counts) != 0 {
+				t.Errorf("counted %v, of executions %v", counts, resets.asked)
 			}
 		})
 	}
@@ -281,4 +293,15 @@ func TestHistoryArchiver_ForceCancelBackfill(t *testing.T) {
 			}
 		})
 	}
+}
+
+// askedResets is fakeResets that records the executions it was asked of.
+type askedResets struct {
+	reason string
+	asked  []string
+}
+
+func (f *askedResets) ResetKeyOf(_ context.Context, _, execution string) (string, bool, error) {
+	f.asked = append(f.asked, execution)
+	return f.reason, true, nil
 }

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -43,9 +42,10 @@ func TestTestIdentity_SignsForAnIssuerNothingResolves(t *testing.T) {
 	}
 }
 
-func TestActivityTest_WithIdentityIsHiddenBehindTheGate(t *testing.T) {
-	f := newActivityTestCommand(&globalFlags{}).Flags().Lookup("with-identity")
-	if f == nil || f.Hidden == dsl.TaskIdentityAvailable() {
-		t.Fatalf("--with-identity: %+v, with task identity available %v", f, dsl.TaskIdentityAvailable())
+// TestActivityTest_WithIdentityIsShown: task identity is available, so its
+// flag is in the help like any other.
+func TestActivityTest_WithIdentityIsShown(t *testing.T) {
+	if f := newActivityTestCommand(&globalFlags{}).Flags().Lookup("with-identity"); f == nil || f.Hidden {
+		t.Fatalf("--with-identity: %+v; want it shown", f)
 	}
 }

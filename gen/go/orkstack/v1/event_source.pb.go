@@ -528,8 +528,8 @@ type EventSource struct {
 	Consented *ConsentView `protobuf:"bytes,41,opt,name=consented,proto3" json:"consented,omitempty"`
 	// secrets are files the instance's container receives, as a task's.
 	Secrets []*SecretRef `protobuf:"bytes,42,rep,name=secrets,proto3" json:"secrets,omitempty"`
-	// identities and credentials are as a task's; refused until task
-	// identity is available.
+	// identities and credentials are as a task's; refused on a source, which
+	// holds none yet.
 	Identities  []*IdentityRef   `protobuf:"bytes,43,rep,name=identities,proto3" json:"identities,omitempty"`
 	Credentials []*CredentialRef `protobuf:"bytes,44,rep,name=credentials,proto3" json:"credentials,omitempty"`
 	// env is environment for the container; configuration, never a secret.

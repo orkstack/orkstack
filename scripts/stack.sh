@@ -86,6 +86,22 @@ DEV_ORKER_ID="dev-orker"
 OIDC_ADDR="${OIDC_ADDR:-127.0.0.1:5556}"
 DEX_DIR="$IDENTITY_DIR/dex"
 
+# With IDENTITY=1 the Orker has a storage key of its own, as an Orker of a
+# deployment must for task identity (docs/DEPLOY.md, "An Orker's own storage
+# credential"): a SeaweedFS identity named for this worktree, granted the
+# documented Orker policy on this stack's bucket alone (test/tools/seaweedscope)
+# through the shared store's own `s3.configure`, which changes no other
+# identity and not the key the engine signs with. make down removes it. A
+# bucket shaped like a proof's own (internal/testsupport/s3bucket) is refused.
+STORE_BUCKET="${ORK_S3_BUCKET:-orkstack-artifacts}"
+STORE_CONTAINER="orkstack-seaweedfs-1"
+STORE_URL="http://localhost:9000"
+ORKER_STORE_SECRET="$IDENTITY_DIR/orker-store.secret"
+ORKER_STORE_MARK="$RUN_DIR/orker-store-user"
+# TASK_AUDIENCE is the one token audience the default namespace allows, the
+# one deploy/dev/identity.ork.yaml asks for.
+TASK_AUDIENCE="dev.orkstack.invalid"
+
 # The image the mount probe uses. A small image most machines already hold, so
 # the probe usually pulls nothing.
 PROBE_IMAGE="${ORK_PROBE_IMAGE:-alpine:3.24}"
@@ -418,8 +434,14 @@ write_run_config() {
 		# The development store's key. No binary falls back to one, and the
 		# engine reads its definitions from the store whatever the backend.
 		echo "  s3:"
-		echo "    access_key: orkstack"
-		echo "    secret_key: orkstack-secret"
+		if [ -n "$IDENTITY" ]; then
+			# The engine's key, and the Orker's own (grant_orker_store_key).
+			echo "    access_key: {ork: orkstack, orker: $(orker_store_user)}"
+			echo "    secret_key: {ork: orkstack-secret, orker: {file: $ORKER_STORE_SECRET}}"
+		else
+			echo "    access_key: orkstack"
+			echo "    secret_key: orkstack-secret"
+		fi
 		echo "orker:"
 		echo "  workdir: $workdir"
 		# A minute's stop grace, so `make down` lets a running task finish
@@ -503,8 +525,8 @@ write_run_config() {
 			# issuer is a name nothing resolves, so the engine serves its
 			# discovery itself, on its own address, and never asks the issuer
 			# for it. Nothing here caches the keys, so a new one signs at
-			# once. The development store has one key, which the Orker
-			# shares, so its scope is reported and not refused.
+			# once. The Orker's storage key is its own and scoped, so an
+			# unscoped one is refused, as a deployment's default.
 			echo "identity:"
 			echo "  issuer: https://orkstack-dev.invalid"
 			echo "  serve_discovery: true"
@@ -514,7 +536,6 @@ write_run_config() {
 			echo "    algorithm: ES256"
 			echo "    activation_delay: 0s"
 			echo "    verify_published: false"
-			echo "  unscoped_orkers: report"
 		fi
 		if wants_admin_addr; then
 			echo "telemetry:"
@@ -547,6 +568,7 @@ cmd_up() {
 	say "  bin/ork bin/orker bin/orkctl"
 	if [ -n "$IDENTITY" ]; then
 		setup_identity
+		grant_orker_store_key
 	fi
 
 	say "== engine and orker =="
@@ -593,6 +615,13 @@ cmd_up() {
 	# all.
 	wait_for "orker (via the engine's DescribeOrker probe)" 60 \
 		bash -c "\"$REPO/bin/orkctl\" --server \"$ENGINE_URL\" pool list --json | grep -q '\"liveOrkerCount\": [1-9]'"
+	if [ -n "$IDENTITY" ]; then
+		# The default namespace's tasks may ask for one audience; adding one
+		# the policy holds already changes nothing.
+		"$REPO/bin/orkctl" --server "$ENGINE_URL" namespace update default --audience "$TASK_AUDIENCE" >/dev/null ||
+			die "the default namespace was not given the task audience $TASK_AUDIENCE"
+		say "  the default namespace's tasks may hold an identity for $TASK_AUDIENCE"
+	fi
 
 	say "== ui (dev server) =="
 	if [ ! -d "$REPO/ui/node_modules" ]; then
@@ -641,6 +670,9 @@ cmd_up() {
 		say "  Or sign in at $UI_URL as dev@example.test, password \"password\" (an admin; deploy/dex/config.yaml"
 		say "  lists the other users), and in a terminal with"
 		say "    orkctl --server $ENGINE_URL login --issuer people --issuer-ca-file $DEX_DIR/tls/ca.pem"
+		say "  A task that holds an identity, and prints its token's claims:"
+		say "    orkctl --server $ENGINE_URL orkflow create deploy/dev/identity.ork.yaml"
+		say "    orkctl --server $ENGINE_URL run submit dev-identity"
 	fi
 	say "  stop           make down"
 }
@@ -707,6 +739,119 @@ stop_dex() {
 	rm -f "$DEX_CID"
 }
 
+# orker_store_user is this worktree's Orker's SeaweedFS identity and access
+# key: one per worktree, so two worktrees' stacks never share or remove each
+# other's.
+orker_store_user() {
+	local sum
+	sum="$( (printf '%s' "$REPO" | sha256sum 2>/dev/null || printf '%s' "$REPO" | shasum -a 256) | cut -c1-12)"
+	case "$sum" in
+	[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+	*) die "neither sha256sum nor shasum hashed the worktree's path" ;;
+	esac
+	printf 'orkstack-dev-orker-%s' "$sum"
+}
+
+# store_shell CMD runs one command of SeaweedFS's `weed shell` in the shared
+# store's container, its input on stdin, so a secret is on no command line of
+# this host. s3.configure reads, changes and writes the store's one identity
+# list, so every worktree's change is made under one host-wide lock, where
+# flock exists.
+STORE_LOCK="${XDG_RUNTIME_DIR:-/tmp}/orkstack-store-identities.lock"
+store_shell() {
+	if command -v flock >/dev/null 2>&1; then
+		printf '%s\n' "$1" | flock -w 60 "$STORE_LOCK" docker exec -i "$STORE_CONTAINER" weed shell
+	else
+		printf '%s\n' "$1" | docker exec -i "$STORE_CONTAINER" weed shell
+	fi
+}
+
+# store_answer KEY SECRET is the HTTP status the store answers a signed read of
+# a key under metadata/probes/ that does not exist: 404 to a key the Orker's
+# policy grants, 403 to one it does not reach.
+# store_listing is the store's identity list, s3.configure's own JSON. It
+# holds every identity's secrets, so it is only ever piped to jq -e, whose
+# answer is its exit status.
+store_listing() {
+	store_shell "s3.configure" 2>/dev/null | sed -n '/^{/,$p'
+}
+
+# The key is given to curl on stdin (-K -), never on its command line.
+store_answer() {
+	printf 'user = "%s:%s"\n' "$1" "$2" | curl -s -K - -o /dev/null -w '%{http_code}' \
+		--aws-sigv4 aws:amz:us-east-1:s3 "$STORE_URL/$STORE_BUCKET/metadata/probes/make-up-$$-$RANDOM"
+}
+
+# grant_orker_store_key gives this worktree's Orker its own key, made once
+# under .data/identity, with the documented policy on STORE_BUCKET, and waits
+# until the store lists it with exactly that policy and honours it. weed
+# shell's own exit status says little, so the store is asked. Granting the
+# same again changes nothing.
+grant_orker_store_key() {
+	local user actions secret
+	case "$STORE_BUCKET" in
+	orkstack-*-[0-9]*-[0-9]*) die "ORK_S3_BUCKET=$STORE_BUCKET is shaped like a proof's own bucket; make up grants nothing on it" ;;
+	esac
+	user="$(orker_store_user)"
+	(cd "$REPO" && go build -o "$REPO/bin/seaweedscope" ./test/tools/seaweedscope)
+	actions="$("$REPO/bin/seaweedscope" -bucket "$STORE_BUCKET")" && [ -n "$actions" ] ||
+		die "no SeaweedFS actions for bucket $STORE_BUCKET (bin/seaweedscope)"
+	if [ ! -s "$ORKER_STORE_SECRET" ]; then
+		(umask 077 && head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$ORKER_STORE_SECRET")
+	fi
+	secret="$(cat "$ORKER_STORE_SECRET")"
+	[ -n "$secret" ] || die "$ORKER_STORE_SECRET is empty: remove it, and make up makes another"
+	mkdir -p "$RUN_DIR"
+	# A key this worktree was granted under another name (it has moved) is
+	# removed first, so none is left behind on the shared store.
+	if [ -f "$ORKER_STORE_MARK" ] && [ "$(head -n1 "$ORKER_STORE_MARK")" != "$user" ]; then
+		revoke_orker_store_key || die "the key this worktree was granted before, $(head -n1 "$ORKER_STORE_MARK"), was not removed"
+	fi
+	printf '%s\n' "$user" >"$ORKER_STORE_MARK"
+	# Its output repeats the store's identities, secrets and all: never shown.
+	store_shell "s3.configure -user=$user -access_key=$user -secret_key=$secret -actions=$actions -apply" >/dev/null 2>&1 ||
+		die "the store did not take the Orker's key ($STORE_CONTAINER, weed shell s3.configure)"
+	store_listing | jq -e --arg u "$user" --arg a "$actions" \
+		'[.identities[]? | select(.name == $u)] | length == 1 and ((.[0].actions // []) | sort) == ($a | split(",") | sort)' >/dev/null ||
+		die "the store does not list the Orker's key $user with the Orker policy on $STORE_BUCKET"
+	local _
+	for _ in $(seq 1 30); do
+		if [ "$(store_answer "$user" "$secret")" = 404 ]; then
+			say "  the Orker's own storage key $user, scoped to $STORE_BUCKET"
+			return 0
+		fi
+		sleep 0.5
+	done
+	die "the store does not honour the Orker's key $user on $STORE_BUCKET"
+}
+
+# revoke_orker_store_key removes the key grant_orker_store_key recorded, and
+# no other, while the store runs, and keeps the record until the store no
+# longer lists it; with no record, or no running store, there is nothing to
+# remove now.
+revoke_orker_store_key() {
+	local user
+	[ -f "$ORKER_STORE_MARK" ] || return 0
+	user="$(head -n1 "$ORKER_STORE_MARK")"
+	# The record is this worktree's own, so the identity it names is too,
+	# even where the worktree has since moved and is named another.
+	case "$user" in
+	orkstack-dev-orker-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+	*) say "  $ORKER_STORE_MARK names no key make up grants: left as it is"; return 1 ;;
+	esac
+	if [ "$(docker container inspect -f '{{.State.Running}}' "$STORE_CONTAINER" 2>/dev/null)" != true ]; then
+		say "  the store is not running: the Orker's key $user stays, and make down removes it once the store runs"
+		return 0
+	fi
+	store_shell "s3.configure -user=$user -delete -apply" >/dev/null 2>&1 || true
+	if ! store_listing | jq -e --arg u "$user" '(.identities | type) == "array" and all(.identities[]; .name != $u)' >/dev/null; then
+		say "  the store still lists the Orker's storage key $user"
+		return 1
+	fi
+	rm -f -- "$ORKER_STORE_MARK"
+	say "  the Orker's storage key $user removed"
+}
+
 cmd_down() {
 	local survived=""
 	say "== stopping engine, orker and ui =="
@@ -729,6 +874,8 @@ cmd_down() {
 		sleep 0.25
 	done
 
+	revoke_orker_store_key || survived="$survived orker-store-key"
+
 	say "== stopping infrastructure =="
 	if [ -e "$OBSERVABILITY_MARK" ]; then
 		"${COMPOSE[@]}" --profile observability down
@@ -739,7 +886,7 @@ cmd_down() {
 
 	# What make up recorded is checked by its record; a stray by its exe,
 	# which an undumpable one hides (AGENTS.md §11.1).
-	[ -z "$survived" ] || die "what make up started survived SIGKILL:$survived (their pidfiles are kept in $RUN_DIR)"
+	[ -z "$survived" ] || die "what make up started survived:$survived (its record is kept in $RUN_DIR)"
 	stray="$(worktree_binary_pids | tr '\n' ' ')"
 	[ -z "$stray" ] || die "processes running this worktree's bin/ork or bin/orker survived: pids $stray"
 	say "OrkStack is down. Data is kept; make reset wipes it."

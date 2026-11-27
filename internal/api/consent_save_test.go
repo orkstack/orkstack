@@ -15,8 +15,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// identityDef is a definition whose task holds an identity. The DSL
-// refuses one until task identity lands, so the store is written directly.
+// identityDef is a definition whose task holds an identity, written to the
+// store directly.
 func identityDef(ns, name, version, audience string) *orkstackv1.Orkflow {
 	return &orkstackv1.Orkflow{Namespace: ns, Name: name, Version: version, Tasks: []*orkstackv1.Task{{
 		Id: "apply", Image: &orkstackv1.ImageRef{Reference: "ghcr.io/acme/apply:1"},

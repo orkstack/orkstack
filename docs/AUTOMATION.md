@@ -227,8 +227,8 @@ anything; a source is stored, read and evaluated.
 | `uses` | a source image's registry reference, **required** | — |
 | `with` | the image's settings, a YAML mapping converted by the strict mapping, checked against the image's declared interface | `{}` |
 | `secrets` | list of `name`, `source`, as a task's | none |
-| `identities` | refused until task identity is available | none |
-| `credentials` | refused until task identity is available | none |
+| `identities` | refused: a task holds identities, an event source does not yet | none |
+| `credentials` | refused: a task holds credentials, an event source does not yet | none |
 | `env` | mapping of strings; configuration, never a secret | none |
 | `pool` | the pool whose source hosts run the instances | the namespace's default |
 | `instances` | 1 to `event_sources.max_instances` | `1` |

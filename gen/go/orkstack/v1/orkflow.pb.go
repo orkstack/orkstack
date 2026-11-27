@@ -506,7 +506,8 @@ type Task struct {
 	// those are staged for it, under the reserved producer _inputs. Part of
 	// canonicalOrkflow(Task) ONLY when set.
 	InputArtifacts []string `protobuf:"bytes,31,rep,name=input_artifacts,json=inputArtifacts,proto3" json:"input_artifacts,omitempty"`
-	// identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// identities are the tokens the task holds, one for each audience, minted
+	// for each attempt (docs/TASK_IDENTITY.md).
 	Identities []*IdentityRef `protobuf:"bytes,28,rep,name=identities,proto3" json:"identities,omitempty"`
 	// credentials are the credentials the task holds, issued for each attempt
 	// by the namespace's grants (docs/PROVIDERS.md). In the canonical

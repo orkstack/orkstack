@@ -15,6 +15,10 @@ const ForceCancelsMetric = "ork.runs.force_canceled"
 // AttrCancelOutcome labels it: a closed set of OrkStack's own words.
 const AttrCancelOutcome = "ork.cancel.outcome"
 
+// AttrCancelResumedFrom labels an ending with what the run it ended was resumed
+// from: none, failed, force_canceled or unknown.
+const AttrCancelResumedFrom = "ork.cancel.resumed_from"
+
 // ForceCancelInstruments counts force cancels on the process's default
 // providers (engine.ForceCancelCounter).
 type ForceCancelInstruments struct {
@@ -45,4 +49,13 @@ func (f *ForceCancelInstruments) CountForceCancel(ctx context.Context, outcome s
 		return
 	}
 	f.runs.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrCancelOutcome, outcome)))
+}
+
+// CountForceCancelEnding counts one that ended, by its outcome and what the run
+// it ended was resumed from. It never blocks and never fails.
+func (f *ForceCancelInstruments) CountForceCancelEnding(ctx context.Context, outcome, resumedFrom string) {
+	if f == nil || f.runs == nil {
+		return
+	}
+	f.runs.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrCancelOutcome, outcome), attribute.String(AttrCancelResumedFrom, resumedFrom)))
 }

@@ -297,8 +297,8 @@ export type EventSource = Message<"orkstack.v1.EventSource"> & {
   secrets: SecretRef[];
 
   /**
-   * identities and credentials are as a task's; refused until task
-   * identity is available.
+   * identities and credentials are as a task's; refused on a source, which
+   * holds none yet.
    *
    * @generated from field: repeated orkstack.v1.IdentityRef identities = 43;
    */

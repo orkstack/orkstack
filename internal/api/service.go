@@ -1544,6 +1544,20 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// Task identity's warnings: a cached or pinned identity task, and a pool
 	// more than one namespace may use (identity_warnings.go). Never an ERROR.
 	issues = append(issues, s.identityIssues(ctx, ns, wf)...)
+	// An engine that issues no task identity takes the document, and says now
+	// what its runs would meet at submit (docs/TASK_IDENTITY.md). A composed
+	// child's ask is told the same way at the parent's submit.
+	if s.issuer == nil || s.identityAdmissions == nil {
+		for i, t := range wf.GetTasks() {
+			if identity.TaskHoldsIdentity(t) {
+				issues = append(issues, composeIssue(fmt.Sprintf("tasks[%d].identities", i), fmt.Sprintf(
+					"task %q holds an identity, a credential or a secret through a grant, and this engine issues no task identity "+
+						"(identity.issuer is unset): a run of this Orkflow is refused at submit, %s", t.GetId(), reasonIdentityOff),
+					orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING))
+				break
+			}
+		}
+	}
 	// Join policies' apply warning (W1): an unguarded read of an ancestor a
 	// join can leave absent. Never an ERROR; rules 37–42 already refused in
 	// Compile.

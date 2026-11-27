@@ -26,6 +26,7 @@ import (
 	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/quantity"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -268,10 +269,21 @@ func (s *Service) sourceOrkflow(ctx context.Context, namespace string, src *orks
 			return nil, nil, sourceError(&eventsources.Error{Reason: eventsources.ReasonOrkflowUnsupported, Field: "orkflow",
 				Message: fmt.Sprintf("task %q awaits a callback whose token nobody would receive from a run a message starts", t.GetId())})
 		}
-		if len(t.GetIdentities()) > 0 || len(t.GetCredentials()) > 0 {
+		if identity.TaskHoldsIdentity(t) {
 			return nil, nil, sourceError(&eventsources.Error{Reason: eventsources.ReasonOrkflowUnsupported, Field: "orkflow",
-				Message: fmt.Sprintf("task %q asks for task identities or credentials, which a run a message starts cannot be given yet", t.GetId())})
+				Message: fmt.Sprintf("task %q holds an identity, a credential or a secret through a grant, which a run a message starts cannot be given yet", t.GetId())})
 		}
+	}
+	// A composed Orkflow that holds one is refused the same way, here rather
+	// than at each message's start.
+	holds, err := s.treeAsksForIdentity(ctx, namespace, wf)
+	if err != nil {
+		return nil, nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			"what Orkflow %s@%s composes could not be read: %w", wf.GetName(), wf.GetVersion(), err))
+	}
+	if holds {
+		return nil, nil, sourceError(&eventsources.Error{Reason: eventsources.ReasonOrkflowUnsupported, Field: "orkflow",
+			Message: fmt.Sprintf("Orkflow %s@%s composes one that holds an identity, a credential or a secret through a grant, which a run a message starts cannot be given yet", wf.GetName(), wf.GetVersion())})
 	}
 	inputs := map[string]eventsources.Input{}
 	for name, decl := range wf.GetInputs().GetFields() {

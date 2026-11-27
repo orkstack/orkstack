@@ -267,7 +267,8 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
   fairShareWeight: number;
 
   /**
-   * identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   * identity is the namespace's identity policy: the audiences and grants
+   * its tasks may hold (docs/TASK_IDENTITY.md).
    *
    * @generated from field: orkstack.v1.NamespaceIdentity identity = 17;
    */

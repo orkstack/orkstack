@@ -1319,9 +1319,11 @@ type SecretRef struct {
 	// source is an Orker-resolvable locator, e.g. "env:DB_PASSWORD" or
 	// "file:/etc/orkstack/secrets/db". Orker policy decides which schemes exist.
 	Source string `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
-	// grant is set from identity (E83); unset until it lands (v0.4.0 proto batch).
+	// grant names the namespace grant a provider secret is read under; empty
+	// for one of the Orker's own sources.
 	Grant string `protobuf:"bytes,3,opt,name=grant,proto3" json:"grant,omitempty"`
-	// ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+	// ciphertext is the base64 a provider decrypts for this secret, read under
+	// its grant; empty for one that is read, not decrypted.
 	Ciphertext string `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 	// unmasked is the DSL's `mask: false`: the value is neither masked in the
 	// task's logs nor looked for in its values.json. Absent means masked. A
@@ -2530,7 +2532,8 @@ type ExecuteTaskInput struct {
 	// identities its run pinned. An Orker that offers none of them refuses the
 	// attempt (PROFILE_NOT_OFFERED).
 	Devices []*ProfileRef `protobuf:"bytes,30,rep,name=devices,proto3" json:"devices,omitempty"`
-	// identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// identity is what the attempt asks the engine to mint for, set only for a
+	// task that declares an identity.
 	Identity *IdentityContext `protobuf:"bytes,34,opt,name=identity,proto3" json:"identity,omitempty"`
 	// run_context is what the task may know about its run beyond its id: the
 	// run-context object's digest, the run's lineage ids, its start times, the

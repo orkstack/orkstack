@@ -11,7 +11,7 @@ import (
 // TestCacheIssues_ACachedTaskWithACredentialWarns: a credential is
 // issued anew for each attempt and a memo hit runs none, so a cached task
 // that declares one is warned about on tasks[i].credentials. Built from the
-// proto: until task identity lands the compiler refuses such a document.
+// proto.
 func TestCacheIssues_ACachedTaskWithACredentialWarns(t *testing.T) {
 	wf := &orkstackv1.Orkflow{Name: "deploys", Tasks: []*orkstackv1.Task{
 		{Id: "plain", Cache: &orkstackv1.CacheSpec{TtlSeconds: 3600}},

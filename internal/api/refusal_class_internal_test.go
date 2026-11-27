@@ -157,7 +157,7 @@ var unmarked = map[string]struct {
 	"s.checkStoreScopedForIdentity": {1, "an engine wired with no Orker inventory"},
 	"s.requireCapability":           {1, "an engine wired to no cluster"},
 	"s.definitionFleetCheck":        {1, "an engine wired to no cluster"},
-	"s.prepareAdmission":            {1, "an engine with no issuer"},
+	"s.prepareAdmission":            {2, "an engine with no issuer, and one that does not enforce authentication"},
 	"policyReadError":               {1, "a record that cannot be read until it is repaired"},
 	"orkflowStoreError":             {1, "a version stored twice, which no read meets"},
 	"s.claimCoordsOf":               {1, "an idempotency key, which a message's start has none of"},

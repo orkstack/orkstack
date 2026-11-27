@@ -19,6 +19,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
@@ -2718,16 +2719,23 @@ func (s *runState) executeTaskInput(
 	}
 }
 
-// identityContextFor is t's IdentityContext, or nil for a run with no
-// admission: the engine records the result of every container task of an
-// admitted run, whatever the task holds. Everything in it comes from the plan
+// identityContextFor is t's IdentityContext: for every container task of an
+// admitted run, whatever the task holds, since the engine records the result
+// of each; for a run with no admission, nil, unless t holds an identity, a
+// credential or a secret through a grant, which no path starts unadmitted:
+// then its identities and credentials and no admission, which its Orker
+// refuses by name (IDENTITY_NOT_ADMITTED) before anything runs, rather than
+// run the task without them. Everything in it comes from the plan
 // the submitting engine pinned and from the definition, copied verbatim, so
 // an Orker that hashes its input computes the digest the admission recorded.
 // The attempt's own resume scope is its dispatch's to name (nameScope).
 func (s *runState) identityContextFor(t *orkstackv1.Task) *orkstackv1.IdentityContext {
 	id := s.plan.Identity
 	if id == nil {
-		return nil
+		if !identity.TaskHoldsIdentity(t) {
+			return nil
+		}
+		return &orkstackv1.IdentityContext{Identities: t.GetIdentities(), Credentials: t.GetCredentials()}
 	}
 	return &orkstackv1.IdentityContext{
 		Issuer:          id.Issuer,

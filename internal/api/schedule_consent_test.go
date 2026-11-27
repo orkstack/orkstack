@@ -18,8 +18,7 @@ import (
 )
 
 // roleOrkflow is a version of "deploy" whose task holds an identity for
-// audience. The DSL refuses `identities:` until task identity lands, so the
-// definition is stored directly.
+// audience, stored directly.
 func roleOrkflow(version, audience string) *orkstackv1.Orkflow {
 	return &orkstackv1.Orkflow{Namespace: "default", Name: "deploy", Version: version, Tasks: []*orkstackv1.Task{{
 		Id: "apply", Image: &orkstackv1.ImageRef{Reference: "ghcr.io/acme/apply:1"},

@@ -238,15 +238,19 @@ func (r *ValuesRecorder) RecordComposed(ctx context.Context, q ComposedAsk) (Rec
 	if err != nil {
 		return none, err
 	}
-	if err := c.check.CheckScope(ctx, c.adm, q.TaskID, q.Scopes); err != nil {
+	read, err := c.check.Begin(ctx, c.adm, c.sha, q.Scopes)
+	if err != nil {
+		return none, c.refused(err)
+	}
+	if err := read.Scope(q.TaskID); err != nil {
 		return none, c.refused(err)
 	}
 	childID, ok := c.adm.Children[q.TaskID]
 	if !ok {
 		return none, c.refuse("task %q composes no run", q.TaskID)
 	}
-	// 2. What the task follows.
-	rows, err := c.check.CheckFollows(ctx, c.adm, c.sha, q.TaskID, c.root)
+	// 2. What the task follows, on the scope's read.
+	rows, err := read.Follows(ctx, q.TaskID)
 	if err != nil {
 		return none, c.refused(err)
 	}

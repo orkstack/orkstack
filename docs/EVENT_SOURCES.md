@@ -112,8 +112,8 @@ source images and are refused until those images ship.
 
 `secrets:` are declared as a task's (`name`, `source`), held to the
 namespace's `allowed_secrets`. A source's own `identities:`, `credentials:`
-and secrets through a grant are refused `EVENT_SOURCE_IDENTITY_UNSUPPORTED`
-until task identity is available. `env:` is configuration, never a secret.
+and secrets through a grant are refused `EVENT_SOURCE_IDENTITY_UNSUPPORTED`:
+a task holds them, and a source does not yet. `env:` is configuration, never a secret.
 
 `resources.memory` must cover a message in hand on every lane:
 `2 × concurrency × max_bytes + 32 MiB`. Less is refused, with the arithmetic.
@@ -142,7 +142,8 @@ would change, one a double does not hold exactly, such as an integer past
 2^53: send it as a string (`MESSAGE_FIELD_TYPE`).
 
 A source cannot bind an Orkflow with an await whose callback nobody would
-receive, nor, yet, one whose tasks ask for identities or credentials:
+receive, nor, yet, one with a task, in it or in an Orkflow it composes, that
+holds an identity, a credential or a secret through a grant:
 `EVENT_SOURCE_ORKFLOW_UNSUPPORTED`.
 
 ## Filtering

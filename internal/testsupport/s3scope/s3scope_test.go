@@ -241,3 +241,35 @@ func TestOpen(t *testing.T) {
 		t.Fatalf("After saw the store after %d and %d requests, and %d more", one, two, len(after))
 	}
 }
+
+func TestPolicy_SeaweedActions(t *testing.T) {
+	b := "orkstack-artifacts/"
+	want := []string{
+		"Read:" + b + "orkflows/*", "Write:" + b + "orkflows/*", "List:" + b + "orkflows/*",
+		"Read:" + b + "manifests/*", "Write:" + b + "manifests/*", "List:" + b + "manifests/*",
+		"Read:" + b + "metadata/commits/*", "Write:" + b + "metadata/commits/*", "List:" + b + "metadata/commits/*",
+		"Read:" + b + "metadata/attested/*", "List:" + b + "metadata/attested/*",
+		"Read:" + b + "metadata/memo/*", "Write:" + b + "metadata/memo/*", "List:" + b + "metadata/memo/*",
+		"Write:" + b + "metadata/logs/*",
+		"Write:" + b + "metadata/attempts/*", "List:" + b + "metadata/attempts/*",
+		"Read:" + b + "metadata/probes/*", "Write:" + b + "metadata/probes/*", "List:" + b + "metadata/probes/*",
+		"Write:" + b + "metadata/receipts/*",
+		"Write:" + b + "metadata/staging/event-sources/*",
+		"Read:" + b + "metadata/run-context/*",
+	}
+	got := OrkerPolicy().SeaweedActions("orkstack-artifacts")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("SeaweedActions:\n got %v\nwant %v", got, want)
+	}
+	// What the Orker may only read is never written, and the run context is
+	// never listed.
+	for _, a := range got {
+		if strings.HasPrefix(a, "Write:") && (strings.Contains(a, "/metadata/attested/") || strings.Contains(a, "/metadata/run-context/")) ||
+			a == "List:"+b+"metadata/run-context/*" {
+			t.Errorf("SeaweedActions grants %s", a)
+		}
+	}
+	if got := (Policy{}).SeaweedActions("x"); len(got) != 0 {
+		t.Errorf("an empty policy grants %v", got)
+	}
+}

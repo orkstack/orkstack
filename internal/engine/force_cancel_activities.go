@@ -49,6 +49,28 @@ type ForceCancelKeys interface {
 // (FCCountUnsigned and the others).
 type ForceCancelCounter interface {
 	CountForceCancel(ctx context.Context, outcome string)
+	// CountForceCancelEnding counts a force cancel that ended, by its state and
+	// what the run it ended was resumed from (FCResumedNone and the others).
+	CountForceCancelEnding(ctx context.Context, outcome, resumedFrom string)
+}
+
+// What the run a force cancel ended was resumed from, as its ending is counted.
+const (
+	FCResumedNone          = "none"           // no resume made the execution it ended
+	FCResumedFailed        = "failed"         // a resume of a run that had failed
+	FCResumedForceCanceled = "force_canceled" // a resume of a run a force cancel had ended
+	FCResumedUnknown       = "unknown"        // the resume's plan record could not be read, or no execution was known
+)
+
+// resumePlanReader reads a resume's plan record (artifacts.RecordStore).
+type resumePlanReader interface {
+	ReadResumePlan(ctx context.Context, namespace, runID string, scope uint64, n int) (artifacts.RecordRead[*orkstackv1.ResumePlanRecord], string, error)
+}
+
+// resetKeyReader answers the plan key of the resume that made an execution
+// (TemporalStarter.ResetKeyOf).
+type resetKeyReader interface {
+	ResetKeyOf(ctx context.Context, runID, executionRunID string) (string, bool, error)
 }
 
 const (
@@ -76,6 +98,8 @@ type ForceCancelActivities struct {
 	audit     artifacts.AuditStore
 	settings  ForceCancelSettings
 	counter   ForceCancelCounter
+	plans     resumePlanReader
+	resets    resetKeyReader
 	now       func() time.Time
 	// self is the execution the activity runs in, as the cluster says it.
 	self func(ctx context.Context) (forceCancelSelf, error)
@@ -111,6 +135,12 @@ type ForceCancelDeps struct {
 	Audit artifacts.AuditStore
 	// Counter counts force cancels; nil counts none.
 	Counter ForceCancelCounter
+	// ResumePlans reads a resume's plan record, and ResetKeys the key of the
+	// resume that made an execution, for what an ended run was resumed from as
+	// it is counted; with either nil that is counted unknown. ResetKeys is
+	// Starter when it is unset.
+	ResumePlans resumePlanReader
+	ResetKeys   resetKeyReader
 	// Settings are this engine's, which a cascade's own force cancels are
 	// decided with.
 	Settings ForceCancelSettings
@@ -119,7 +149,10 @@ type ForceCancelDeps struct {
 // NewForceCancelActivities returns the activities over d.
 func NewForceCancelActivities(d ForceCancelDeps) *ForceCancelActivities {
 	a := &ForceCancelActivities{client: d.Client, namespace: d.ClusterNamespace, starter: d.Starter,
-		reader: d.Reader, snapshots: d.Snapshots, keys: d.Keys, mode: d.Mode, audit: d.Audit, settings: d.Settings, counter: d.Counter, now: time.Now}
+		reader: d.Reader, snapshots: d.Snapshots, keys: d.Keys, mode: d.Mode, audit: d.Audit, settings: d.Settings, counter: d.Counter, plans: d.ResumePlans, resets: d.ResetKeys, now: time.Now}
+	if a.resets == nil && d.Starter != nil {
+		a.resets = d.Starter
+	}
 	a.self = a.ownExecution
 	return a
 }
@@ -590,13 +623,85 @@ func (a *ForceCancelActivities) Audit(ctx context.Context, in FCAuditInput) erro
 		return err
 	}
 	written, err := a.putNew(ctx, rec)
-	if written && in.Kind == forceCancelCompleted && a.counter != nil {
-		switch in.Result.State {
-		case FCStateForceCanceled, FCStateCanceled, FCStateEnded, FCStateAlreadyEnded, FCStateFailed:
-			a.counter.CountForceCancel(ctx, in.Result.State)
-		}
+	if written && in.Kind == forceCancelCompleted {
+		a.countEnding(ctx, *decided, in.Result.State, in.Result.Execution)
 	}
 	return err
+}
+
+// countEnding counts a force cancel that ended in state, of execution, the one
+// it acted on.
+func (a *ForceCancelActivities) countEnding(ctx context.Context, d ForceCancelDecision, state, execution string) {
+	if a.counter == nil {
+		return
+	}
+	switch state {
+	case FCStateForceCanceled, FCStateCanceled, FCStateEnded, FCStateAlreadyEnded, FCStateFailed:
+		a.counter.CountForceCancelEnding(ctx, state, a.resumedFrom(ctx, d.Namespace, d.RunID, execution))
+	}
+}
+
+// resumedFromWait bounds the reads resumedFrom makes, and resumedFromSpare is
+// what they leave of the step they run in: what they answer is a count's
+// label, which nothing waits on, so they never take the time the step's own
+// write needs.
+const (
+	resumedFromWait  = 3 * time.Second
+	resumedFromSpare = time.Second
+)
+
+// resumedFrom is what the run runID was resumed from, by the execution of it a
+// force cancel acted on: from the plan record of the resume that made that
+// execution (ResetKeyOf: its own reset, the resume before a reset by hand, or
+// the one it carried on from), held to the key's digest. What cannot be told
+// is unknown and fails nothing: it only labels a count.
+func (a *ForceCancelActivities) resumedFrom(ctx context.Context, namespace, runID, execution string) string {
+	unknown := func(why string, err error) string {
+		level := slog.LevelWarn
+		if err == nil {
+			level = slog.LevelInfo // not a fault: there was nothing to read
+		}
+		slog.Log(ctx, level, "force cancel: what the run it ended was resumed from cannot be told; it is counted unknown",
+			"run_id", runID, "execution", execution, "why", why, "error", err)
+		return FCResumedUnknown
+	}
+	wait := resumedFromWait
+	if deadline, ok := ctx.Deadline(); ok {
+		wait = min(wait, time.Until(deadline)-resumedFromSpare)
+	}
+	switch {
+	case execution == "":
+		return unknown("no execution of it is known", nil)
+	case a.resets == nil || a.plans == nil:
+		return unknown("this engine reads no resume's plan", nil)
+	case wait <= 0:
+		return unknown("the step has no time left to read it in", nil)
+	}
+	ctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	reason, reset, err := a.resets.ResetKeyOf(ctx, runID, execution)
+	if errors.Is(err, ErrResumeExecutionNotFound) {
+		return unknown("the cluster no longer holds it", nil)
+	}
+	if err != nil {
+		return unknown("its start could not be read", err)
+	}
+	key, resumed := ParseResumePlanKey(reason)
+	if !reset || !resumed {
+		return FCResumedNone // no reset made it, or one by hand alone
+	}
+	read, digest, err := a.plans.ReadResumePlan(ctx, namespace, runID, key.Scope, key.N)
+	switch {
+	case err != nil:
+		return unknown("its plan record could not be read", err)
+	case read.Answer != artifacts.RecordFound || read.Value == nil:
+		return unknown("its plan record cannot be read: "+read.Reason, nil)
+	case digest != key.PlanDigest:
+		return unknown("its plan record is another plan's", nil)
+	case read.Value.GetForceCanceledBy() != nil:
+		return FCResumedForceCanceled
+	}
+	return FCResumedFailed
 }
 
 // auditRecord is the record of kind of a force cancel under d that ended in

@@ -3074,7 +3074,8 @@ type TaskAttempt struct {
 	// measured is what the attempt's container used, as its cgroup reported
 	// it. Unset on a record an Orker older than v0.4.0 wrote.
 	Measured *MeasuredUsage `protobuf:"bytes,23,opt,name=measured,proto3" json:"measured,omitempty"`
-	// identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// identities are the tokens this attempt was issued, by name, as its Orker
+	// recorded them; never a token.
 	Identities []*AttemptIdentity `protobuf:"bytes,24,rep,name=identities,proto3" json:"identities,omitempty"`
 	// credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
 	Credentials []*AttemptCredential `protobuf:"bytes,25,rep,name=credentials,proto3" json:"credentials,omitempty"`

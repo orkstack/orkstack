@@ -3,6 +3,7 @@ package dist_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -11,15 +12,18 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/config"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/orker"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
+	"github.com/orkstack/orkstack/internal/testsupport/s3scope"
 )
 
 // TestDevCompose_PublishesOnlyOnLoopback: the development stack's services
@@ -131,12 +135,12 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 	// enforce needs a signing key, which signs what engines hand each other,
 	// and the tokens of the task identity issuer: a name nothing resolves, so
 	// the engine never asks it whether it serves the key, and serves the
-	// discovery itself, on its own loopback address. The stack's store has one
-	// key, so its Orker's is reported rather than refused.
+	// discovery itself, on its own loopback address. The Orker's storage key
+	// is its own, so an unscoped one is refused, the default.
 	if !strings.HasSuffix(ork["ORK_IDENTITY_SIGNING_KEY_FILES"], filepath.Join(".data", "identity", "engine-signing.key")) ||
 		ork["ORK_IDENTITY_SIGNING_ALGORITHM"] != "ES256" || ork["ORK_IDENTITY_ISSUER"] != "https://orkstack-dev.invalid" ||
 		ork["ORK_IDENTITY_SERVE_DISCOVERY"] != "true" || ork["ORK_IDENTITY_SIGNING_VERIFY_PUBLISHED"] != "false" ||
-		ork["ORK_IDENTITY_SIGNING_ACTIVATION_DELAY"] != "0s" || ork["ORK_IDENTITY_UNSCOPED_ORKERS"] != identity.UnscopedReport {
+		ork["ORK_IDENTITY_SIGNING_ACTIVATION_DELAY"] != "0s" || ork["ORK_IDENTITY_UNSCOPED_ORKERS"] != "" {
 		t.Fatalf("the engine's identity settings = %v", ork)
 	}
 	if _, err := identity.CheckIssuerURL(ork["ORK_IDENTITY_ISSUER"]); err != nil {
@@ -146,6 +150,12 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 	settings := orker.EngineSettingsFromEnv(func(k string) string { return orkerEnv[k] })
 	if err := settings.Validate(); err != nil || settings.Method != orker.EngineAuthTokenFile || orkerEnv["ORK_ORKER_ID"] != "dev-orker" {
 		t.Fatalf("the Orker's engine settings = %+v (%v), id %q", settings, err, orkerEnv["ORK_ORKER_ID"])
+	}
+	// The Orker signs to the store with a key of its own, the engine with the
+	// store's administrator's.
+	if ork["ORK_S3_ACCESS_KEY"] != "orkstack" || ork["ORK_S3_SECRET_KEY"] != "orkstack-secret" ||
+		!strings.HasPrefix(orkerEnv["ORK_S3_ACCESS_KEY"], "orkstack-dev-orker-") || len(orkerEnv["ORK_S3_SECRET_KEY"]) != 48 {
+		t.Fatalf("the storage keys: engine %q, Orker %q (secret of %d)", ork["ORK_S3_ACCESS_KEY"], orkerEnv["ORK_S3_ACCESS_KEY"], len(orkerEnv["ORK_S3_SECRET_KEY"]))
 	}
 	signed, err := os.ReadFile(filepath.Join(s.logs, "devtoken"))
 	must.OK(t, err)
@@ -183,6 +193,187 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 	cid, err := os.ReadFile(filepath.Join(s.root, ".run", "dex.cid"))
 	if err != nil || strings.TrimSpace(string(cid)) != "0123abcd" {
 		t.Fatalf("the Dex container recorded for make down: %q %v", cid, err)
+	}
+}
+
+// storeGrant is the s3.configure make up gives the store for its Orker: one
+// identity named for the worktree, whose access key is its name, a secret of
+// 24 random bytes and the documented Orker policy on the stack's bucket.
+var storeGrant = regexp.MustCompile(`^s3\.configure -user=(orkstack-dev-orker-[0-9a-f]{12}) -access_key=(orkstack-dev-orker-[0-9a-f]{12}) -secret_key=([0-9a-f]{48}) -actions=(\S+) -apply$`)
+
+// TestDevStack_TheOrkerHasAStorageKeyOfItsOwn: with IDENTITY=1, make up
+// gives the store one identity for this worktree's Orker, scoped to the
+// stack's bucket, and the same one again at the next make up; it never names
+// the administrator's key; the default namespace may ask for the task
+// audience; make down removes that identity and no other (CONTRIBUTING.md,
+// "Task identity on the development stack").
+func TestDevStack_TheOrkerHasAStorageKeyOfItsOwn(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	for i := 1; i <= 2; i++ {
+		if code, out := s.up(); code != 0 {
+			t.Fatalf("make up %d exited %d:\n%s", i, code, out)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(s.logs, "store"))
+	must.OK(t, err)
+	grants := changes(raw)
+	if len(grants) != 2 || grants[0] != grants[1] {
+		t.Fatalf("two make ups gave the store %q; want one grant, twice the same", grants)
+	}
+	m := storeGrant.FindStringSubmatch(grants[0])
+	if m == nil || m[1] != m[2] || m[4] != strings.Join(s3scope.OrkerPolicy().SeaweedActions("orkstack-artifacts"), ",") {
+		t.Fatalf("make up gave the store %q", grants[0])
+	}
+	secret, err := os.ReadFile(filepath.Join(s.root, ".data", "identity", "orker-store.secret"))
+	must.OK(t, err)
+	if info, err := os.Stat(filepath.Join(s.root, ".data", "identity", "orker-store.secret")); err != nil ||
+		info.Mode().Perm() != 0o600 || string(secret) != m[3] {
+		t.Fatalf("the Orker's secret file: %v %v", info, err)
+	}
+	if mark, err := os.ReadFile(filepath.Join(s.root, ".run", "orker-store-user")); err != nil || strings.TrimSpace(string(mark)) != m[1] {
+		t.Fatalf("make up recorded %q (%v) for make down; want %s", mark, err, m[1])
+	}
+	calls, err := os.ReadFile(filepath.Join(s.logs, "orkctl"))
+	must.OK(t, err)
+	if !strings.Contains(string(calls), "namespace update default --audience dev.orkstack.invalid") {
+		t.Fatalf("orkctl was called %q; want the default namespace given the task audience", calls)
+	}
+
+	code, out := s.run("down")
+	if code != 0 {
+		t.Fatalf("make down exited %d:\n%s", code, out)
+	}
+	raw, err = os.ReadFile(filepath.Join(s.logs, "store"))
+	must.OK(t, err)
+	if lines := changes(raw); len(lines) != 3 || lines[2] != "s3.configure -user="+m[1]+" -delete -apply" {
+		t.Fatalf("make down gave the store %q; want the Orker's identity deleted, and nothing else", lines[2:])
+	}
+	if _, err := os.Stat(filepath.Join(s.root, ".run", "orker-store-user")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("make down left its record of the Orker's key: %v", err)
+	}
+	if strings.Contains(string(raw), "-user=orkstack ") || strings.Contains(string(raw), "-access_key=orkstack ") {
+		t.Fatalf("the stack named the store's administrator: %q", raw)
+	}
+}
+
+// changes is the identity changes the stand-in store was given, without
+// the listings make up and make down read back.
+func changes(raw []byte) []string {
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.HasPrefix(line, "s3.configure -user=") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+var (
+	seaweedscopeOnce sync.Once
+	seaweedscopeBin  string
+	seaweedscopeErr  error
+)
+
+// seaweedscope is test/tools/seaweedscope, built once for the stand-in
+// stacks: make up grants the actions it prints.
+func seaweedscope(t *testing.T) string {
+	t.Helper()
+	seaweedscopeOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "seaweedscope-")
+		if err != nil {
+			seaweedscopeErr = err
+			return
+		}
+		seaweedscopeBin = filepath.Join(dir, "seaweedscope")
+		cmd := exec.Command("go", "build", "-o", seaweedscopeBin, "./test/tools/seaweedscope")
+		cmd.Dir = repoRoot(t)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			seaweedscopeErr = fmt.Errorf("go build ./test/tools/seaweedscope: %v: %s", err, out)
+		}
+	})
+	must.OK(t, seaweedscopeErr)
+	return seaweedscopeBin
+}
+
+// TestDevStack_AStoreThatIgnoresTheGrantFailsUp: weed shell says nothing
+// of a command that failed, so make up asks the store, and a store that does
+// not list the Orker's key fails it, naming the key.
+func TestDevStack_AStoreThatIgnoresTheGrantFailsUp(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	code, out := s.up("STORE_IGNORES=1")
+
+	if code == 0 || !strings.Contains(out, "does not list the Orker's key orkstack-dev-orker-") {
+		t.Fatalf("make up on a store that ignores the grant: exit %d:\n%s", code, out)
+	}
+}
+
+// TestDevStack_DownKeepsTheRecordOfAKeyItCouldNotRemove: a store that is not
+// running, or still lists the key, leaves make down's record of it, so a
+// later make down removes it; only a store that no longer lists it clears it.
+func TestDevStack_DownKeepsTheRecordOfAKeyItCouldNotRemove(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+	if code, out := s.up(); code != 0 {
+		t.Fatalf("make up exited %d:\n%s", code, out)
+	}
+	mark := filepath.Join(s.root, ".run", "orker-store-user")
+
+	if code, out := s.run("down", "STORE_STOPPED=1"); code != 0 || !strings.Contains(out, "the store is not running") {
+		t.Fatalf("make down with the store stopped: exit %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(mark); err != nil {
+		t.Fatalf("make down with the store stopped dropped its record: %v", err)
+	}
+	if code, out := s.run("down", "STORE_IGNORES=1"); code == 0 || !strings.Contains(out, "still lists the Orker's storage key") {
+		t.Fatalf("make down on a store that ignores the delete: exit %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(mark); err != nil {
+		t.Fatalf("make down that could not remove the key dropped its record: %v", err)
+	}
+	if code, out := s.run("down"); code != 0 {
+		t.Fatalf("make down exited %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(mark); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("make down left its record of a removed key: %v", err)
+	}
+}
+
+// TestDevStack_GrantsNothingOnAProofsBucket: make up refuses a bucket shaped
+// like a proof's own, and tells the store nothing.
+func TestDevStack_GrantsNothingOnAProofsBucket(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	code, out := s.up("ORK_S3_BUCKET=orkstack-it-1234-567")
+
+	if code == 0 || !strings.Contains(out, "shaped like a proof's own bucket") {
+		t.Fatalf("make up on a proof's bucket: exit %d:\n%s", code, out)
+	}
+	// Temporal's health check is a docker exec too, with nothing on stdin.
+	if raw, err := os.ReadFile(filepath.Join(s.logs, "store")); err != nil && !errors.Is(err, fs.ErrNotExist) || len(raw) != 0 {
+		t.Fatalf("make up told the store %q (%v)", raw, err)
+	}
+}
+
+// TestDevStack_TheIdentityTaskAsksForTheStacksAudience: the task make up
+// names holds an identity for the one audience the stack's default namespace
+// allows.
+func TestDevStack_TheIdentityTaskAsksForTheStacksAudience(t *testing.T) {
+	t.Parallel()
+	m := regexp.MustCompile(`(?m)^TASK_AUDIENCE="([^"]+)"$`).FindSubmatch(readRepoFile(t, "scripts/stack.sh"))
+	if m == nil {
+		t.Fatal("scripts/stack.sh sets no TASK_AUDIENCE")
+	}
+	flow, err := dsl.CompileFile(filepath.Join(repoRoot(t), "deploy", "dev", "identity.ork.yaml"))
+	must.OK(t, err)
+	tasks := flow.GetTasks()
+	if len(tasks) != 1 || len(tasks[0].GetIdentities()) != 1 || tasks[0].GetIdentities()[0].GetAudience() != string(m[1]) {
+		t.Fatalf("deploy/dev/identity.ork.yaml's tasks: %v; want one, holding one identity for %s", tasks, m[1])
 	}
 }
 
@@ -258,11 +449,30 @@ func newStackRepo(t *testing.T) *stackRepo {
 	}
 	for path, body := range map[string]string{
 		// `docker info` fails, which skips the script's mount probe.
-		filepath.Join(standIns, "docker"): `[ "$1" != info ] || exit 1` + "\n",
+		// `docker exec -i ... weed shell` is a store of one identity list,
+		// kept in a file, that records every command it was given.
+		filepath.Join(standIns, "docker"): `state=` + shellQuote(filepath.Join(s.logs, "identities")) + `
+case "$1" in
+info) exit 1 ;;
+container) [ "$2" != inspect ] || { [ -n "${STORE_STOPPED:-}" ] && echo false || echo true; exit 0; } ;;
+exec) in="$(cat)"; [ -n "$in" ] || exit 0
+	printf '%s\n' "$in" >> ` + shellQuote(filepath.Join(s.logs, "store")) + `
+	[ -z "${STORE_IGNORES:-}" ] || in=s3.configure
+	case "$in" in
+	"s3.configure -user="*" -delete -apply") : > "$state" ;;
+	"s3.configure -user="*" -apply") u="${in#*-user=}"; a="${in#*-actions=}"; printf '%s %s\n' "${u%% *}" "${a% -apply}" > "$state" ;;
+	s3.configure) if [ -s "$state" ]; then read -r u a < "$state"
+		printf '{"identities": [{"name": "%s", "actions": ["%s"]}]}\n' "$u" "$(printf '%s' "$a" | sed 's/,/", "/g')"
+		else echo '{"identities": []}'; fi ;;
+	esac ;;
+esac
+` + "\n",
 		// One activity, whose image curl does not find, so the script writes no
 		// catalog.
 		filepath.Join(standIns, "make"): `case "$*" in *print-activities*) echo shell ;; esac` + "\n",
+		// A read the Orker's own key may make of a missing key: not found.
 		filepath.Join(standIns, "curl"): `case "$*" in
+*/metadata/probes/*) if [ -s ` + shellQuote(filepath.Join(s.logs, "identities")) + ` ]; then printf 404; else printf 403; fi ;;
 */manifests/*) exit 22 ;;
 */ws/runs/*) printf 404 ;;
 *http_code*) printf 200 ;;
@@ -273,6 +483,7 @@ esac
 		// returns; dexrun's prints the container it started, as dexrun does.
 		filepath.Join(standIns, "go"): `out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; shift; }; shift; done
 case "$out" in
+*/seaweedscope) cp ` + shellQuote(seaweedscope(t)) + ` "$out" ;;
 */dexrun) printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "dexrun")) + `\necho {\\"id\\":\\"0123abcd\\"}\n' > "$out" ;;
 *) printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "devtoken")) + `\n' > "$out" ;;
 esac
@@ -300,9 +511,15 @@ func (s *stackRepo) write(path, content string) {
 // there would change what the script writes.
 func (s *stackRepo) up(env ...string) (int, string) {
 	s.t.Helper()
+	return s.run("up", env...)
+}
+
+// run runs `scripts/stack.sh COMMAND` as up does.
+func (s *stackRepo) run(command string, env ...string) (int, string) {
+	s.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", filepath.Join(s.root, "scripts", "stack.sh"), "up")
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(s.root, "scripts", "stack.sh"), command)
 	cmd.Env = append([]string{"PATH=" + s.path, "HOME=" + s.logs}, env...)
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
@@ -312,7 +529,7 @@ func (s *stackRepo) up(env ...string) (int, string) {
 	case errors.As(err, &exit):
 		return exit.ExitCode(), string(out)
 	}
-	s.t.Fatalf("run scripts/stack.sh up: %v\n%s", err, out)
+	s.t.Fatalf("run scripts/stack.sh %s: %v\n%s", command, err, out)
 	return 0, ""
 }
 

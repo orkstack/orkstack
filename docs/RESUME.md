@@ -71,6 +71,22 @@ nothing.
 - When an earlier attempt may still be running on an Orker that is gone, the
   resume needs `--acknowledge-unknown-attempts` as well. `--yes` does not
   imply it.
+- What runs again is held to the rules a new run is held to now, not those of
+  when the run was submitted: the namespace's admission, its image policy and
+  pools, and, for a task that asks for an identity, a credential or a secret
+  through a grant, the namespace's identity policy. A run that holds an
+  identity also needs every Orker's storage credential confirmed scoped and
+  its pools to serve task identity (`IDENTITY_POLICY_CHANGED`,
+  `RERUN_STORE_UNSCOPED`, `RERUN_POOL_UNSERVED`).
+- A run that holds an identity and that a schedule or trigger started is held to
+  the binder its admission recorded when it was submitted, whatever version the
+  schedule names: that binder must still be allowed to submit the Orkflow, and
+  its consent must cover what the run's version asks for now. The consent
+  judged is the trigger's own, while that binder still binds it, or the newest
+  entry of the schedule for this Orkflow by that binder. A consent changed or
+  revoked since the run was submitted refuses the resume
+  (`IDENTITY_POLICY_CHANGED`); consent again, or run it again. A run an event
+  source started records no binder, so it is run again.
 
 ## Accepting a gap
 
